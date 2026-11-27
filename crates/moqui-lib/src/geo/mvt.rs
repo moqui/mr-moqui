@@ -14,7 +14,7 @@
 
 //! A Mapbox Vector Tile writer (version 2, <https://github.com/mapbox/vector-tile-spec/tree/master/2.1>): one layer of
 //! features in tile coordinates with string properties, encoded as the spec's protobuf message by hand (a tile is a few
-//! length-delimited fields and packed varints), for an overlay generalized into tiles on the server (plans/Maps.md §7;
+//! length-delimited fields and packed varints), for an overlay generalized into tiles on the server (plans/archive/Maps.md §7;
 //! [`super::tiles`]). Written here rather than on the `mvt` crate (MIT or Apache-2.0), which brings a protobuf runtime
 //! and its code generator's output for these few fields.
 

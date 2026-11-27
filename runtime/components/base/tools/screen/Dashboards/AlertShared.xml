@@ -14,30 +14,34 @@
         <actions><script><![CDATA[
             ec.resource.script('component://tools/template/ReportAlerts.js').requireSet()
             if (!['contactPoint','silence','muteTiming'].includes(sharedType)) throw new Error(ec.l10n.localize('Unknown shared alert item type'))
-            const previous=definitionId?ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition:null
-            if (previous && previous.type!==sharedType) throw new Error(ec.l10n.localize('This definition is not a shared alert item of that type'))
-            const list=value=>String(value || '').split(',').map(item=>item.trim()).filter(Boolean)
-            const object=(text,label)=>{const value=JSON.parse(text || '{}');if (!value || typeof value!=='object' || Array.isArray(value)) throw new Error(label);return value}
-            let body
-            if (sharedType==='contactPoint') {
-                body={type:contactType || 'notification',topic:contactType==='notification'?'ReportAlert':undefined,userId:contactUserId || undefined,userGroupId:contactGroupId || undefined,
-                    emailTemplateId:emailTemplateId || undefined,toAddresses:toAddresses || undefined,url:webhookUrl || undefined,urlProperty:urlProperty || undefined,
-                    headerProperties:headerPropertiesJson?object(headerPropertiesJson,ec.l10n.localize('Header properties must be a JSON object')):undefined,groupBy:list(groupBy),
-                    groupWaitSeconds:Math.max(0,Number(groupWaitSeconds || 30)),repeatSeconds:Math.max(60,Number(repeatSeconds || 14400)),matchers:object(matchersJson,ec.l10n.localize('Label matchers must be a JSON object'))}
-            } else if (sharedType==='silence') {
-                if (!/(Z|[+-]\d\d:\d\d)$/.test(String(silenceFrom)) || !/(Z|[+-]\d\d:\d\d)$/.test(String(silenceThru))) throw new Error(ec.l10n.localize('Use ISO times including Z or an explicit UTC offset'))
-                const from=new Date(silenceFrom),thru=new Date(silenceThru)
-                if (!Number.isFinite(from.getTime()) || !(thru.getTime()>from.getTime())) throw new Error(ec.l10n.localize('Silence must end after it starts'))
-                body={from:from.toISOString(),thru:thru.toISOString(),comment:silenceComment || '',matchers:object(silenceMatchers,ec.l10n.localize('Label matchers must be a JSON object'))}
-            } else {
-                if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(muteStart)) || !/^(([01]\d|2[0-3]):[0-5]\d|24:00)$/.test(String(muteEnd))) throw new Error(ec.l10n.localize('Use HH:mm times'))
-                const days=(Array.isArray(weekdays)?weekdays:String(weekdays || '').split(',')).filter(day=>day!=='').map(Number)
-                if (!days.length || days.some(day=>!Number.isInteger(day) || day<0 || day>6)) throw new Error(ec.l10n.localize('Choose weekdays'))
-                body={name:sharedTitle || '',weekdays:days,start:muteStart,end:muteEnd}
+            // an item the viewer may not read (another's unshared one, or none): a form error, not a failure
+            const previous=definitionId?ec.resource.script('component://tools/template/ReportDelivery.js').ask('get#Definition',{definitionId:String(definitionId || '')}).out?.definition:null
+            if (definitionId && !previous) ec.message.addError(ec.l10n.localize('This shared alert item does not exist or is not shared with you'))
+            else {
+                if (previous && previous.type!==sharedType) throw new Error(ec.l10n.localize('This definition is not a shared alert item of that type'))
+                const list=value=>String(value || '').split(',').map(item=>item.trim()).filter(Boolean)
+                const object=(text,label)=>{const value=JSON.parse(text || '{}');if (!value || typeof value!=='object' || Array.isArray(value)) throw new Error(label);return value}
+                let body
+                if (sharedType==='contactPoint') {
+                    body={type:contactType || 'notification',topic:contactType==='notification'?'ReportAlert':undefined,userId:contactUserId || undefined,userGroupId:contactGroupId || undefined,
+                        emailTemplateId:emailTemplateId || undefined,toAddresses:toAddresses || undefined,url:webhookUrl || undefined,urlProperty:urlProperty || undefined,
+                        headerProperties:headerPropertiesJson?object(headerPropertiesJson,ec.l10n.localize('Header properties must be a JSON object')):undefined,groupBy:list(groupBy),
+                        groupWaitSeconds:Math.max(0,Number(groupWaitSeconds || 30)),repeatSeconds:Math.max(60,Number(repeatSeconds || 14400)),matchers:object(matchersJson,ec.l10n.localize('Label matchers must be a JSON object'))}
+                } else if (sharedType==='silence') {
+                    if (!/(Z|[+-]\d\d:\d\d)$/.test(String(silenceFrom)) || !/(Z|[+-]\d\d:\d\d)$/.test(String(silenceThru))) throw new Error(ec.l10n.localize('Use ISO times including Z or an explicit UTC offset'))
+                    const from=new Date(silenceFrom),thru=new Date(silenceThru)
+                    if (!Number.isFinite(from.getTime()) || !(thru.getTime()>from.getTime())) throw new Error(ec.l10n.localize('Silence must end after it starts'))
+                    body={from:from.toISOString(),thru:thru.toISOString(),comment:silenceComment || '',matchers:object(silenceMatchers,ec.l10n.localize('Label matchers must be a JSON object'))}
+                } else {
+                    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(muteStart)) || !/^(([01]\d|2[0-3]):[0-5]\d|24:00)$/.test(String(muteEnd))) throw new Error(ec.l10n.localize('Use HH:mm times'))
+                    const days=(Array.isArray(weekdays)?weekdays:String(weekdays || '').split(',')).filter(day=>day!=='').map(Number)
+                    if (!days.length || days.some(day=>!Number.isInteger(day) || day<0 || day>6)) throw new Error(ec.l10n.localize('Choose weekdays'))
+                    body={name:sharedTitle || '',weekdays:days,start:muteStart,end:muteEnd}
+                }
+                const saved=ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition:{id:definitionId || newId,type:sharedType,title:sharedTitle || definitionId || newId,
+                    userGroupId:userGroupId || null,body,version:previous?previous.version:undefined},note:note || 'Updated shared alert item'}).call().definition
+                definitionId=saved.id
             }
-            const saved=ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition:{id:definitionId || newId,type:sharedType,title:sharedTitle || definitionId || newId,
-                userGroupId:userGroupId || null,body,version:previous?previous.version:undefined},note:note || 'Updated shared alert item'}).call().definition
-            definitionId=saved.id
         ]]></script></actions><default-response url="."><parameter name="definitionId"/><parameter name="sharedType"/></default-response>
     </transition>
     <transition name="delete" method="post" authz-action="delete">
@@ -56,199 +60,211 @@
     </transition>
     <actions><script><![CDATA[
         const kinds={contactPoint:ec.l10n.localize('Contact point'),silence:ec.l10n.localize('Silence'),muteTiming:ec.l10n.localize('Mute timing')}
-        const item=definitionId?ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition:{id:'',type:sharedType || 'contactPoint',title:'',body:{}}
-        if (!kinds[item.type]) throw new Error(ec.l10n.localize('This definition is not a shared contact point, silence or mute timing'))
-        sharedType=item.type;sharedKind=kinds[sharedType];readOnly=item.readOnly===true;component=item.component || '';ownerId=item.ownerId || ''
-        const body=item.body || {}
-        sharedTitle=item.title || '';userGroupId=item.userGroupId || ''
-        contactType=body.type || 'notification';topic=body.topic || 'ReportAlert';contactUserId=body.userId || '';contactGroupId=body.userGroupId || ''
-        emailTemplateId=body.emailTemplateId || '';toAddresses=body.toAddresses || '';webhookUrl=body.url || '';urlProperty=body.urlProperty || ''
-        headerPropertiesJson=body.headerProperties?JSON.stringify(body.headerProperties):'';groupBy=(body.groupBy || []).join(', ')
-        // Preserve the JSON number through text-line formatting and the save action's Number() parser.
-        groupWaitSeconds=String(body.groupWaitSeconds ?? 30);repeatSeconds=String(body.repeatSeconds ?? 14400);matchersJson=JSON.stringify(body.matchers || {})
-        silenceFrom=body.from || new Date().toISOString();silenceThru=body.thru || new Date(Date.now()+3600000).toISOString();silenceComment=body.comment || '';silenceMatchers=JSON.stringify(body.matchers || {})
-        weekdays=(body.weekdays || []).map(String);muteStart=body.start || '00:00';muteEnd=body.end || '24:00'
-        usedIn=definitionId?(ec.service.sync().name('org.moqui.report.ReportServices.find#DefinitionUses').parameters({definitionId}).call().usedIn || []):[]
+        // an item the viewer may not read (another's unshared one, or none) reads as not available, without the engine's
+        // refusal in the page's messages and without failing the page (SharedUnavailable)
+        const item=definitionId?ec.resource.script('component://tools/template/ReportDelivery.js').ask('get#Definition',{definitionId:String(definitionId || '')}).out?.definition:{id:'',type:sharedType || 'contactPoint',title:'',body:{}}
+        sharedAvailable=!!item
+        if (!sharedAvailable) ec.logger.info('Shared alert item '+definitionId+' not available to '+ec.user.userId)
+        else {
+            if (!kinds[item.type]) throw new Error(ec.l10n.localize('This definition is not a shared contact point, silence or mute timing'))
+            sharedType=item.type;sharedKind=kinds[sharedType];readOnly=item.readOnly===true;component=item.component || '';ownerId=item.ownerId || ''
+            const body=item.body || {}
+            sharedTitle=item.title || '';userGroupId=item.userGroupId || ''
+            contactType=body.type || 'notification';topic=body.topic || 'ReportAlert';contactUserId=body.userId || '';contactGroupId=body.userGroupId || ''
+            emailTemplateId=body.emailTemplateId || '';toAddresses=body.toAddresses || '';webhookUrl=body.url || '';urlProperty=body.urlProperty || ''
+            headerPropertiesJson=body.headerProperties?JSON.stringify(body.headerProperties):'';groupBy=(body.groupBy || []).join(', ')
+            // Preserve the JSON number through text-line formatting and the save action's Number() parser.
+            groupWaitSeconds=String(body.groupWaitSeconds ?? 30);repeatSeconds=String(body.repeatSeconds ?? 14400);matchersJson=JSON.stringify(body.matchers || {})
+            silenceFrom=body.from || new Date().toISOString();silenceThru=body.thru || new Date(Date.now()+3600000).toISOString();silenceComment=body.comment || '';silenceMatchers=JSON.stringify(body.matchers || {})
+            weekdays=(body.weekdays || []).map(String);muteStart=body.start || '00:00';muteEnd=body.end || '24:00'
+            usedIn=definitionId?(ec.service.sync().name('org.moqui.report.ReportServices.find#DefinitionUses').parameters({definitionId}).call().usedIn || []):[]
+        }
     ]]></script></actions>
     <widgets>
         <link url="alerts" text="Back to alerts"/>
-        <label text="${sharedKind}" type="h4"/>
-        <render-mode><text type="qvt,html,html-print" template="false"><![CDATA[<div style="width:100%;max-width:1600px">]]></text>
-            <text type="tui" template="false">[]</text></render-mode>
-        <label text="Alert rules name this by its ID. Each rule that references it uses it together with the rule's own contact points, silences and mute timings." type="p"/>
-        <section name="ReadOnlyItem" condition="readOnly"><widgets>
-            <container-box><box-header title="Create an editable copy"/><box-body>
-                <label text="This item is shipped by ${component}. Save a copy to edit it." type="p"/>
-                <form-single name="CopySharedItem" transition="copy">
-                    <field name="definitionId"><default-field><hidden/></default-field></field>
-                    <field name="copyId"><default-field title="New ID"><text-line/></default-field></field>
-                    <field name="copyTitle"><default-field title="Title"><text-line/></default-field></field>
-                    <field name="copy"><default-field title=""><submit text="Save as copy"/></default-field></field>
-                    <field-layout>
-                        <field-ref name="definitionId"/>
-                        <field-row><field-ref name="copyId"/><field-ref name="copyTitle"/></field-row>
-                        <field-ref name="copy"/>
-                    </field-layout>
-                </form-single>
-            </box-body></container-box>
-        </widgets><fail-widgets>
-            <section name="ContactPointForm" condition="sharedType === 'contactPoint'"><widgets>
-                <label text="Choose the delivery type, then fill its section. Grouping, timing and label matchers apply to all delivery types." type="p"/>
-                <label text="Share with user group controls who can read and reuse this contact point. Notification user and Notification group choose who receives its notifications." type="p" style="m-muted"/>
-                <form-single name="SharedContactPoint" transition="save">
-                    <field name="definitionId"><default-field><hidden/></default-field></field>
-                    <field name="sharedType"><default-field><hidden/></default-field></field>
-                    <field name="newId"><conditional-field condition="!definitionId" title="ID"><text-line/></conditional-field><default-field><hidden/></default-field></field>
-                    <field name="sharedTitle"><default-field title="Title"><text-line/></default-field></field>
-                    <field name="userGroupId"><default-field title="Share with user group"><text-line/></default-field></field>
-                    <field name="contactType"><default-field title="Type"><drop-down><option key="notification" text="Notification"/><option key="email" text="Email"/><option key="webhook" text="Webhook"/></drop-down></default-field></field>
-                    <field name="topic"><default-field title="Notification topic"><display text="ReportAlert" also-hidden="false"/></default-field></field>
-                    <field name="contactUserId"><default-field title="Notification user"><text-line/></default-field></field>
-                    <field name="contactGroupId"><default-field title="Notification group"><text-line/></default-field></field>
-                    <field name="emailTemplateId"><default-field title="Email template"><text-line/></default-field></field>
-                    <field name="toAddresses"><default-field title="Email recipients"><text-line/></default-field></field>
-                    <field name="webhookUrl"><default-field title="Webhook URL"><text-line/></default-field></field>
-                    <field name="urlProperty"><default-field title="Webhook URL property (MONITOR_WEBHOOK_* or monitor.webhook.*)"><text-line/></default-field></field>
-                    <field name="headerPropertiesJson"><default-field title="Webhook header properties JSON (header name to property name)"><text-area rows="2" cols="80"/></default-field></field>
-                    <field name="groupBy"><default-field title="Group by labels (comma separated)"><text-line/></default-field></field>
-                    <field name="groupWaitSeconds"><default-field title="Group wait seconds"><text-line/></default-field></field>
-                    <field name="repeatSeconds"><default-field title="Repeat seconds"><text-line/></default-field></field>
-                    <field name="matchersJson"><default-field title="Label matchers JSON"><text-area rows="2" cols="80"/></default-field></field>
-                    <field name="note"><default-field title="Version note"><text-line/></default-field></field>
-                    <field name="save"><default-field title=""><submit text="Save contact point"/></default-field></field>
-                    <field-layout>
-                        <field-ref name="definitionId"/><field-ref name="sharedType"/>
-                        <field-ref name="save"/>
-                        <field-col-row>
-                            <field-col xs="12" md="4">
-                                <field-group title="Identity and delivery type" box="true">
-                                    <field-ref name="newId"/><field-ref name="sharedTitle"/>
-                                    <field-ref name="userGroupId"/><field-ref name="contactType"/>
-                                </field-group>
-                            </field-col>
-                            <field-col xs="12" md="4">
-                                <field-group title="Notification (when selected)" box="true">
-                                    <field-ref name="topic"/><field-ref name="contactUserId"/><field-ref name="contactGroupId"/>
-                                </field-group>
-                            </field-col>
-                            <field-col xs="12" md="4">
-                                <field-group title="Email (when selected)" box="true">
-                                    <field-ref name="emailTemplateId"/><field-ref name="toAddresses"/>
-                                </field-group>
-                                <field-group title="Webhook (when selected)" box="true">
-                                    <field-ref name="webhookUrl"/><field-ref name="urlProperty"/><field-ref name="headerPropertiesJson"/>
-                                </field-group>
-                            </field-col>
-                        </field-col-row>
-                        <field-col-row>
-                            <field-col xs="12" md="6">
-                                <field-group title="Grouping and timing" box="true">
-                                    <field-ref name="groupBy"/>
-                                    <field-row><field-ref name="groupWaitSeconds"/><field-ref name="repeatSeconds"/></field-row>
-                                </field-group>
-                            </field-col>
-                            <field-col xs="12" md="6">
-                                <field-group title="Matching labels and revision" box="true">
-                                    <field-ref name="matchersJson"/><field-ref name="note"/>
-                                </field-group>
-                            </field-col>
-                        </field-col-row>
-                    </field-layout>
-                </form-single>
-            </widgets></section>
-            <section name="SilenceForm" condition="sharedType === 'silence'"><widgets>
-                <label text="With empty label matchers {}, this silence affects only rules that reference it. With matchers, it can also affect matching rules whose owners can read it, even without a reference." type="p"/>
-                <label text="Use ISO dates and times including Z or an explicit UTC offset. Silences suppress notifications while evaluation and state history continue." type="p" style="m-muted"/>
-                <form-single name="SharedSilence" transition="save">
-                    <field name="definitionId"><default-field><hidden/></default-field></field>
-                    <field name="sharedType"><default-field><hidden/></default-field></field>
-                    <field name="newId"><conditional-field condition="!definitionId" title="ID"><text-line/></conditional-field><default-field><hidden/></default-field></field>
-                    <field name="sharedTitle"><default-field title="Title"><text-line/></default-field></field>
-                    <field name="userGroupId"><default-field title="Share with user group"><text-line/></default-field></field>
-                    <field name="silenceFrom"><default-field title="From (ISO time with offset)"><text-line/></default-field></field>
-                    <field name="silenceThru"><default-field title="Through (ISO time with offset)"><text-line/></default-field></field>
-                    <field name="silenceComment"><default-field title="Comment"><text-line/></default-field></field>
-                    <field name="silenceMatchers"><default-field title="Label matchers JSON"><text-area rows="2" cols="80"/></default-field></field>
-                    <field name="note"><default-field title="Version note"><text-line/></default-field></field>
-                    <field name="save"><default-field title=""><submit text="Save silence"/></default-field></field>
-                    <field-layout>
-                        <field-ref name="definitionId"/><field-ref name="sharedType"/>
-                        <field-ref name="save"/>
-                        <field-col-row>
-                            <field-col xs="12" md="7">
-                                <field-group title="Time window" box="true">
-                                    <field-row><field-ref name="silenceFrom"/><field-ref name="silenceThru"/></field-row>
-                                    <field-ref name="silenceComment"/>
-                                </field-group>
-                                <field-group title="Matching labels" box="true"><field-ref name="silenceMatchers"/></field-group>
-                            </field-col>
-                            <field-col xs="12" md="5">
-                                <field-group title="Identity and sharing" box="true">
-                                    <field-ref name="newId"/><field-ref name="sharedTitle"/><field-ref name="userGroupId"/><field-ref name="note"/>
-                                </field-group>
-                            </field-col>
-                        </field-col-row>
-                    </field-layout>
-                </form-single>
-            </widgets></section>
-            <section name="MuteTimingForm" condition="sharedType === 'muteTiming'"><widgets>
-                <label text="Choose recurring quiet periods in each alert rule owner's time zone. The start is inclusive and the end exclusive; 24:00 means the end of the day." type="p"/>
-                <label text="Mute timings suppress notifications for rules that reference them. Evaluation and state history continue." type="p" style="m-muted"/>
-                <form-single name="SharedMuteTiming" transition="save">
-                    <field name="definitionId"><default-field><hidden/></default-field></field>
-                    <field name="sharedType"><default-field><hidden/></default-field></field>
-                    <field name="newId"><conditional-field condition="!definitionId" title="ID"><text-line/></conditional-field><default-field><hidden/></default-field></field>
-                    <field name="sharedTitle"><default-field title="Name"><text-line/></default-field></field>
-                    <field name="userGroupId"><default-field title="Share with user group"><text-line/></default-field></field>
-                    <field name="weekdays"><default-field title="Weekdays"><drop-down allow-multiple="true"><option key="0" text="Monday"/><option key="1" text="Tuesday"/><option key="2" text="Wednesday"/><option key="3" text="Thursday"/><option key="4" text="Friday"/><option key="5" text="Saturday"/><option key="6" text="Sunday"/></drop-down></default-field></field>
-                    <field name="muteStart"><default-field title="Start HH:mm"><text-line/></default-field></field>
-                    <field name="muteEnd"><default-field title="End HH:mm"><text-line/></default-field></field>
-                    <field name="note"><default-field title="Version note"><text-line/></default-field></field>
-                    <field name="save"><default-field title=""><submit text="Save mute timing"/></default-field></field>
-                    <field-layout>
-                        <field-ref name="definitionId"/><field-ref name="sharedType"/>
-                        <field-ref name="save"/>
-                        <field-col-row>
-                            <field-col xs="12" md="7">
-                                <field-group title="Recurring quiet period" box="true">
-                                    <field-ref name="weekdays"/>
-                                    <field-row><field-ref name="muteStart"/><field-ref name="muteEnd"/></field-row>
-                                </field-group>
-                            </field-col>
-                            <field-col xs="12" md="5">
-                                <field-group title="Identity and sharing" box="true">
-                                    <field-ref name="newId"/><field-ref name="sharedTitle"/><field-ref name="userGroupId"/><field-ref name="note"/>
-                                </field-group>
-                            </field-col>
-                        </field-col-row>
-                    </field-layout>
-                </form-single>
-            </widgets></section>
-        </fail-widgets></section>
-        <section name="UsedIn" condition="definitionId"><widgets>
-            <container-box><box-header title="Used in"/><box-body>
-                <section name="SharedItemReferences" condition="usedIn.length"><widgets>
-                    <form-list name="SharedItemUses" list="usedIn" skip-form="true" paginate="false">
-                        <field name="title"><default-field title="Alert rule"><link url="rule" text="${title || id}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
-                        <field name="type"><default-field title="Type"><display/></default-field></field>
-                    </form-list>
-                </widgets><fail-widgets>
-                    <label text="No alert rules explicitly reference this item yet. Add it from an alert rule's Shared item selector." type="p"/>
-                </fail-widgets></section>
-                <label text="A shared silence with label matchers can also affect matching rules without an explicit reference." type="p" style="m-muted" condition="sharedType === 'silence'"/>
-            </box-body></container-box>
+        <section name="SharedUnavailable" condition="!sharedAvailable"><widgets>
+            <label text="Alert item not available" type="h5"/>
+            <label type="p" text="This shared alert item does not exist or is not shared with you."/>
         </widgets></section>
-        <section name="DeleteSharedItem" condition="!readOnly &amp;&amp; definitionId &amp;&amp; ownerId === ec.user.userId"><widgets>
-            <container-box><box-header title="Delete shared item"/><box-body>
-                <label text="Remove this item from the rules listed in Used in before deleting it." type="p"/>
-                <form-single name="DeleteShared" transition="delete">
-                    <field name="definitionId"><default-field><hidden/></default-field></field>
-                    <field name="delete"><default-field title=""><submit text="Delete" confirmation="Delete this shared item? Rules that still reference it must drop it first."/></default-field></field>
-                    <field-layout><field-ref name="definitionId"/><field-ref name="delete"/></field-layout>
-                </form-single>
-            </box-body></container-box>
+        <section name="SharedAvailable" condition="sharedAvailable"><widgets>
+            <label text="${sharedKind}" type="h4"/>
+            <render-mode><text type="qvt,html,html-print" template="false"><![CDATA[<div style="width:100%;max-width:1600px">]]></text>
+                <text type="tui" template="false">[]</text></render-mode>
+            <label text="Alert rules name this by its ID. Each rule that references it uses it together with the rule's own contact points, silences and mute timings." type="p"/>
+            <section name="ReadOnlyItem" condition="readOnly"><widgets>
+                <container-box><box-header title="Create an editable copy"/><box-body>
+                    <label text="This item is shipped by ${component}. Save a copy to edit it." type="p"/>
+                    <form-single name="CopySharedItem" transition="copy">
+                        <field name="definitionId"><default-field><hidden/></default-field></field>
+                        <field name="copyId"><default-field title="New ID"><text-line/></default-field></field>
+                        <field name="copyTitle"><default-field title="Title"><text-line/></default-field></field>
+                        <field name="copy"><default-field title=""><submit text="Save as copy"/></default-field></field>
+                        <field-layout>
+                            <field-ref name="definitionId"/>
+                            <field-row><field-ref name="copyId"/><field-ref name="copyTitle"/></field-row>
+                            <field-ref name="copy"/>
+                        </field-layout>
+                    </form-single>
+                </box-body></container-box>
+            </widgets><fail-widgets>
+                <section name="ContactPointForm" condition="sharedType === 'contactPoint'"><widgets>
+                    <label text="Choose the delivery type, then fill its section. Grouping, timing and label matchers apply to all delivery types." type="p"/>
+                    <label text="Share with user group controls who can read and reuse this contact point. Notification user and Notification group choose who receives its notifications." type="p" style="m-muted"/>
+                    <form-single name="SharedContactPoint" transition="save">
+                        <field name="definitionId"><default-field><hidden/></default-field></field>
+                        <field name="sharedType"><default-field><hidden/></default-field></field>
+                        <field name="newId"><conditional-field condition="!definitionId" title="ID"><text-line/></conditional-field><default-field><hidden/></default-field></field>
+                        <field name="sharedTitle"><default-field title="Title"><text-line/></default-field></field>
+                        <field name="userGroupId"><default-field title="Share with user group"><text-line/></default-field></field>
+                        <field name="contactType"><default-field title="Type"><drop-down><option key="notification" text="Notification"/><option key="email" text="Email"/><option key="webhook" text="Webhook"/></drop-down></default-field></field>
+                        <field name="topic"><default-field title="Notification topic"><display text="ReportAlert" also-hidden="false"/></default-field></field>
+                        <field name="contactUserId"><default-field title="Notification user"><text-line/></default-field></field>
+                        <field name="contactGroupId"><default-field title="Notification group"><text-line/></default-field></field>
+                        <field name="emailTemplateId"><default-field title="Email template"><text-line/></default-field></field>
+                        <field name="toAddresses"><default-field title="Email recipients"><text-line/></default-field></field>
+                        <field name="webhookUrl"><default-field title="Webhook URL"><text-line/></default-field></field>
+                        <field name="urlProperty"><default-field title="Webhook URL property (MONITOR_WEBHOOK_* or monitor.webhook.*)"><text-line/></default-field></field>
+                        <field name="headerPropertiesJson"><default-field title="Webhook header properties JSON (header name to property name)"><text-area rows="2" cols="80"/></default-field></field>
+                        <field name="groupBy"><default-field title="Group by labels (comma separated)"><text-line/></default-field></field>
+                        <field name="groupWaitSeconds"><default-field title="Group wait seconds"><text-line/></default-field></field>
+                        <field name="repeatSeconds"><default-field title="Repeat seconds"><text-line/></default-field></field>
+                        <field name="matchersJson"><default-field title="Label matchers JSON"><text-area rows="2" cols="80"/></default-field></field>
+                        <field name="note"><default-field title="Version note"><text-line/></default-field></field>
+                        <field name="save"><default-field title=""><submit text="Save contact point"/></default-field></field>
+                        <field-layout>
+                            <field-ref name="definitionId"/><field-ref name="sharedType"/>
+                            <field-ref name="save"/>
+                            <field-col-row>
+                                <field-col xs="12" md="4">
+                                    <field-group title="Identity and delivery type" box="true">
+                                        <field-ref name="newId"/><field-ref name="sharedTitle"/>
+                                        <field-ref name="userGroupId"/><field-ref name="contactType"/>
+                                    </field-group>
+                                </field-col>
+                                <field-col xs="12" md="4">
+                                    <field-group title="Notification (when selected)" box="true">
+                                        <field-ref name="topic"/><field-ref name="contactUserId"/><field-ref name="contactGroupId"/>
+                                    </field-group>
+                                </field-col>
+                                <field-col xs="12" md="4">
+                                    <field-group title="Email (when selected)" box="true">
+                                        <field-ref name="emailTemplateId"/><field-ref name="toAddresses"/>
+                                    </field-group>
+                                    <field-group title="Webhook (when selected)" box="true">
+                                        <field-ref name="webhookUrl"/><field-ref name="urlProperty"/><field-ref name="headerPropertiesJson"/>
+                                    </field-group>
+                                </field-col>
+                            </field-col-row>
+                            <field-col-row>
+                                <field-col xs="12" md="6">
+                                    <field-group title="Grouping and timing" box="true">
+                                        <field-ref name="groupBy"/>
+                                        <field-row><field-ref name="groupWaitSeconds"/><field-ref name="repeatSeconds"/></field-row>
+                                    </field-group>
+                                </field-col>
+                                <field-col xs="12" md="6">
+                                    <field-group title="Matching labels and revision" box="true">
+                                        <field-ref name="matchersJson"/><field-ref name="note"/>
+                                    </field-group>
+                                </field-col>
+                            </field-col-row>
+                        </field-layout>
+                    </form-single>
+                </widgets></section>
+                <section name="SilenceForm" condition="sharedType === 'silence'"><widgets>
+                    <label text="With empty label matchers {}, this silence affects only rules that reference it. With matchers, it can also affect matching rules whose owners can read it, even without a reference." type="p"/>
+                    <label text="Use ISO dates and times including Z or an explicit UTC offset. Silences suppress notifications while evaluation and state history continue." type="p" style="m-muted"/>
+                    <form-single name="SharedSilence" transition="save">
+                        <field name="definitionId"><default-field><hidden/></default-field></field>
+                        <field name="sharedType"><default-field><hidden/></default-field></field>
+                        <field name="newId"><conditional-field condition="!definitionId" title="ID"><text-line/></conditional-field><default-field><hidden/></default-field></field>
+                        <field name="sharedTitle"><default-field title="Title"><text-line/></default-field></field>
+                        <field name="userGroupId"><default-field title="Share with user group"><text-line/></default-field></field>
+                        <field name="silenceFrom"><default-field title="From (ISO time with offset)"><text-line/></default-field></field>
+                        <field name="silenceThru"><default-field title="Through (ISO time with offset)"><text-line/></default-field></field>
+                        <field name="silenceComment"><default-field title="Comment"><text-line/></default-field></field>
+                        <field name="silenceMatchers"><default-field title="Label matchers JSON"><text-area rows="2" cols="80"/></default-field></field>
+                        <field name="note"><default-field title="Version note"><text-line/></default-field></field>
+                        <field name="save"><default-field title=""><submit text="Save silence"/></default-field></field>
+                        <field-layout>
+                            <field-ref name="definitionId"/><field-ref name="sharedType"/>
+                            <field-ref name="save"/>
+                            <field-col-row>
+                                <field-col xs="12" md="7">
+                                    <field-group title="Time window" box="true">
+                                        <field-row><field-ref name="silenceFrom"/><field-ref name="silenceThru"/></field-row>
+                                        <field-ref name="silenceComment"/>
+                                    </field-group>
+                                    <field-group title="Matching labels" box="true"><field-ref name="silenceMatchers"/></field-group>
+                                </field-col>
+                                <field-col xs="12" md="5">
+                                    <field-group title="Identity and sharing" box="true">
+                                        <field-ref name="newId"/><field-ref name="sharedTitle"/><field-ref name="userGroupId"/><field-ref name="note"/>
+                                    </field-group>
+                                </field-col>
+                            </field-col-row>
+                        </field-layout>
+                    </form-single>
+                </widgets></section>
+                <section name="MuteTimingForm" condition="sharedType === 'muteTiming'"><widgets>
+                    <label text="Choose recurring quiet periods in each alert rule owner's time zone. The start is inclusive and the end exclusive; 24:00 means the end of the day." type="p"/>
+                    <label text="Mute timings suppress notifications for rules that reference them. Evaluation and state history continue." type="p" style="m-muted"/>
+                    <form-single name="SharedMuteTiming" transition="save">
+                        <field name="definitionId"><default-field><hidden/></default-field></field>
+                        <field name="sharedType"><default-field><hidden/></default-field></field>
+                        <field name="newId"><conditional-field condition="!definitionId" title="ID"><text-line/></conditional-field><default-field><hidden/></default-field></field>
+                        <field name="sharedTitle"><default-field title="Name"><text-line/></default-field></field>
+                        <field name="userGroupId"><default-field title="Share with user group"><text-line/></default-field></field>
+                        <field name="weekdays"><default-field title="Weekdays"><drop-down allow-multiple="true"><option key="0" text="Monday"/><option key="1" text="Tuesday"/><option key="2" text="Wednesday"/><option key="3" text="Thursday"/><option key="4" text="Friday"/><option key="5" text="Saturday"/><option key="6" text="Sunday"/></drop-down></default-field></field>
+                        <field name="muteStart"><default-field title="Start HH:mm"><text-line/></default-field></field>
+                        <field name="muteEnd"><default-field title="End HH:mm"><text-line/></default-field></field>
+                        <field name="note"><default-field title="Version note"><text-line/></default-field></field>
+                        <field name="save"><default-field title=""><submit text="Save mute timing"/></default-field></field>
+                        <field-layout>
+                            <field-ref name="definitionId"/><field-ref name="sharedType"/>
+                            <field-ref name="save"/>
+                            <field-col-row>
+                                <field-col xs="12" md="7">
+                                    <field-group title="Recurring quiet period" box="true">
+                                        <field-ref name="weekdays"/>
+                                        <field-row><field-ref name="muteStart"/><field-ref name="muteEnd"/></field-row>
+                                    </field-group>
+                                </field-col>
+                                <field-col xs="12" md="5">
+                                    <field-group title="Identity and sharing" box="true">
+                                        <field-ref name="newId"/><field-ref name="sharedTitle"/><field-ref name="userGroupId"/><field-ref name="note"/>
+                                    </field-group>
+                                </field-col>
+                            </field-col-row>
+                        </field-layout>
+                    </form-single>
+                </widgets></section>
+            </fail-widgets></section>
+            <section name="UsedIn" condition="definitionId"><widgets>
+                <container-box><box-header title="Used in"/><box-body>
+                    <section name="SharedItemReferences" condition="usedIn.length"><widgets>
+                        <form-list name="SharedItemUses" list="usedIn" skip-form="true" paginate="false">
+                            <field name="title"><default-field title="Alert rule"><link url="rule" text="${title || id}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
+                            <field name="type"><default-field title="Type"><display/></default-field></field>
+                        </form-list>
+                    </widgets><fail-widgets>
+                        <label text="No alert rules explicitly reference this item yet. Add it from an alert rule's Shared item selector." type="p"/>
+                    </fail-widgets></section>
+                    <label text="A shared silence with label matchers can also affect matching rules without an explicit reference." type="p" style="m-muted" condition="sharedType === 'silence'"/>
+                </box-body></container-box>
+            </widgets></section>
+            <section name="DeleteSharedItem" condition="!readOnly &amp;&amp; definitionId &amp;&amp; ownerId === ec.user.userId"><widgets>
+                <container-box><box-header title="Delete shared item"/><box-body>
+                    <label text="Remove this item from the rules listed in Used in before deleting it." type="p"/>
+                    <form-single name="DeleteShared" transition="delete">
+                        <field name="definitionId"><default-field><hidden/></default-field></field>
+                        <field name="delete"><default-field title=""><submit text="Delete" confirmation="Delete this shared item? Rules that still reference it must drop it first."/></default-field></field>
+                        <field-layout><field-ref name="definitionId"/><field-ref name="delete"/></field-layout>
+                    </form-single>
+                </box-body></container-box>
+            </widgets></section>
+            <render-mode><text type="qvt,html,html-print" template="false"><![CDATA[</div>]]></text>
+                <text type="tui" template="false">[]</text></render-mode>
         </widgets></section>
-        <render-mode><text type="qvt,html,html-print" template="false"><![CDATA[</div>]]></text>
-            <text type="tui" template="false">[]</text></render-mode>
     </widgets>
 </screen>

@@ -10,7 +10,7 @@
 # Nov 18, 2026: proofs raised with the user's agreement for P4's first batch (nine new proofs): 2.3 s measured, set to 3.
 # Nov 20, 2026: raised with the user's agreement (the measured share, rounded up) for the vaults, sealed start and managed
 # instances build (plans/archive/Vault-Instances.md V0 to V5, M1 to M6; plans/Sealed-Secrets.md S3, S4, S11): server 28.3 s measured, set to 29.
-# Nov 26, 2026: raised with the user's agreement (the measured share, rounded up) for the Maps build (plans/Maps.md P0 to P4,
+# Nov 26, 2026: raised with the user's agreement (the measured share, rounded up) for the Maps build (plans/archive/Maps.md P0 to P4,
 # O1, O2) with the merged upstream work of the same days: server 32.0 s measured, set to 33.
 server = 33
 # Nov 20, 2026: raised with the user's agreement (the measured share, rounded up) for the vaults, sealed start and managed

@@ -34,7 +34,7 @@ use super::csv::load_csv_reader;
 use super::json::load_json_reader;
 use super::xml::{load_xml_reader, load_xml_text};
 use super::zip::load_zip_reader;
-use super::{error_chain, with_load_slot, DataFileService, LoadOptions, LoadResult};
+use super::{error_chain, with_load_slot, DataFileService, LoadFailure, LoadOptions, LoadResult};
 use crate::entity::facade::EntityFacade;
 use crate::entity::fk::fk_scope;
 use crate::entity::value::EntityValue;
@@ -108,9 +108,9 @@ pub fn load_entity_data(facade: &EntityFacade, location: &str, options: &LoadOpt
     let _scope = fk_scope(options.dummy_fks, options.disable_fk_create);
     let _seed = (!options.restrict_sensitive_entities).then(SeedLoad::enter);
     let path = resolve_location(facade, location)?;
-    let mut failed_files = 0;
-    let records = load_path(facade, location, &path, options, &mut failed_files)?;
-    Ok(LoadResult { records, failed_files })
+    let mut failures = Vec::new();
+    let records = load_path(facade, location, &path, options, &mut failures)?;
+    Ok(LoadResult { records, failures })
 }
 
 /// Load entity XML text, as `EntityDataLoader.xmlText`. `location` names the text in errors.
@@ -126,7 +126,7 @@ pub fn load_entity_xml_text(
     })?;
     Ok(LoadResult {
         records,
-        failed_files: 0,
+        failures: Vec::new(),
     })
 }
 
@@ -152,7 +152,7 @@ pub fn load_entity_text(
     })?;
     Ok(LoadResult {
         records,
-        failed_files: 0,
+        failures: Vec::new(),
     })
 }
 
@@ -161,10 +161,10 @@ fn load_path(
     location: &str,
     path: &Path,
     options: &LoadOptions,
-    failed_files: &mut u64,
+    failures: &mut Vec<LoadFailure>,
 ) -> Result<u64, Error> {
     if moqui_lib::vfs::is_dir(path) {
-        return load_directory(facade, path, options, failed_files);
+        return load_directory(facade, path, options, failures);
     }
     super::check::check_file(location, options, || {
         in_file_transaction(facade, options, || load_file(facade, location, path, options))
@@ -220,12 +220,12 @@ fn load_file(facade: &EntityFacade, location: &str, path: &Path, options: &LoadO
 }
 
 /// Each file of the directory, by name. As in Java's `loadAllData`, a file that fails is logged and the load goes
-/// on with the next file; the failure is counted in `failed_files`.
+/// on with the next file; the failure is added to `failures` with its reason.
 fn load_directory(
     facade: &EntityFacade,
     path: &Path,
     options: &LoadOptions,
-    failed_files: &mut u64,
+    failures: &mut Vec<LoadFailure>,
 ) -> Result<u64, Error> {
     let mut names = Vec::new();
     // with the files built into the binary that are not on disk (moqui_lib::vfs)
@@ -241,14 +241,12 @@ fn load_directory(
     let mut total = 0_u64;
     for child in names {
         let location = child.display().to_string();
-        match load_path(facade, &location, &child, options, failed_files) {
+        match load_path(facade, &location, &child, options, failures) {
             Ok(records) => total = total.saturating_add(records),
             Err(err) => {
-                tracing::error!(
-                    "Skipping to next file after error loading {location}: {}",
-                    error_chain(&err)
-                );
-                *failed_files += 1;
+                let reason = error_chain(&err);
+                tracing::error!("Skipping to next file after error loading {location}: {reason}");
+                failures.push(LoadFailure { location, reason });
             }
         }
     }

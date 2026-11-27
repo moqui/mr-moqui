@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! An OGC service's GetCapabilities read for a map (plans/Maps.md §4.1, P4a; the framework's `MapOgc.js` records what
+//! An OGC service's GetCapabilities read for a map (plans/archive/Maps.md §4.1, P4a; the framework's `MapOgc.js` records what
 //! this answers): WMS 1.3.0, WMTS 1.0.0 and WFS 2.0.0. The document is read by [`crate::node`], which refuses a DOCTYPE,
 //! an entity declaration and an entity it does not know, so no DTD or external entity is ever read. What is kept is what
 //! a map and the Configuration's Add OGC layer need, each text cut short: the service's version, its image (or GeoJSON)

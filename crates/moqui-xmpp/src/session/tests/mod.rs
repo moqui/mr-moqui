@@ -32,7 +32,7 @@ use crate::framing::Frame;
 use crate::registry::Inbound;
 use crate::scram::ClientExchange;
 use crate::{fast, ns, Config, Server};
-use fake::{Fake, FULL_JID, FULL_NODE, JANE_PASSWORD, JOHN_PASSWORD};
+use fake::{Fake, FULL_JID, FULL_NODE, JANE_PASSWORD, JOHN_PASSWORD, SERVICE_REFUSED_NODE};
 
 const EXPORTER: [u8; 32] = [9; 32];
 
@@ -662,6 +662,122 @@ async fn pep_keeps_omemo_device_lists_in_both_namespaces_and_notifies_who_asked(
                <field var='pubsub#access_model'><value>whitelist</value></field></x></publish-options></pubsub></iq>")
         .await;
     assert!(text_of(&out).contains("precondition-not-met"), "{}", text_of(&out));
+}
+
+/// User location (XEP-0080) is refused until live location sharing maps it (plans/Location-Sharing.md): nothing is
+/// stored or pushed, a location kept earlier is not served, and the other PEP nodes work as before.
+#[tokio::test]
+async fn pep_refuses_the_user_location_node_and_keeps_the_others() {
+    const GEOLOC: &str = "http://jabber.org/protocol/geoloc";
+    let (server, fake) = server();
+    let (mut john, _) = sign_in(&server, "john.doe", JOHN_PASSWORD, "phone").await;
+    let (mut jane, _) = sign_in(&server, "jane", JANE_PASSWORD, "laptop").await;
+    // jane's client asks for location and device list notifications
+    let asked = jane
+        .send("<presence><c xmlns='http://jabber.org/protocol/caps' hash='sha-1' node='https://dino.im' ver='abc='/></presence>")
+        .await;
+    let id = find(&asked, "iq", ns::CLIENT).unwrap().attr("id").unwrap().to_string();
+    jane.send(&format!(
+        "<iq type='result' id='{id}' to='jane@moqui.local'><query xmlns='http://jabber.org/protocol/disco#info'>\
+         <feature var='{GEOLOC}+notify'/><feature var='urn:xmpp:omemo:2:devices+notify'/></query></iq>"
+    ))
+    .await;
+    let wanted: Vec<String> = server
+        .registry
+        .sessions_of("U2")
+        .iter()
+        .flat_map(|entry| moqui_lib::sync::lock(&entry.notify).iter().cloned().collect::<Vec<_>>())
+        .collect();
+    assert_eq!(
+        wanted,
+        ["urn:xmpp:omemo:2:devices"],
+        "no interest in the location node is kept"
+    );
+    let calls = fake.state.lock().unwrap().calls.len();
+    let out = text_of(
+        &john
+            .send(&format!(
+                "<iq type='set' id='loc'><pubsub xmlns='http://jabber.org/protocol/pubsub'><publish node='{GEOLOC}'>\
+                 <item id='current'><geoloc xmlns='{GEOLOC}'><lat>48.85</lat><lon>2.35</lon></geoloc></item>\
+                 </publish></pubsub></iq>"
+            ))
+            .await,
+    );
+    assert!(
+        out.contains("type='error'") && out.contains("<forbidden") && out.contains("type='auth'"),
+        "{out}"
+    );
+    assert_eq!(fake.state.lock().unwrap().calls.len(), calls, "no service is called");
+    assert!(!fake.state.lock().unwrap().pep.keys().any(|(_, node)| node == GEOLOC));
+    assert!(!text_of(&jane.pump().await).contains("geoloc"), "nothing is pushed");
+    // a location kept before the rule is not served, to its owner or to anyone else
+    fake.state.lock().unwrap().pep.insert(
+        ("U1".into(), GEOLOC.into()),
+        (
+            "open".into(),
+            vec![(
+                "current".into(),
+                format!("<geoloc xmlns='{GEOLOC}'><lat>1</lat></geoloc>"),
+            )],
+        ),
+    );
+    // in any spelling: a case-insensitive collation would find the row by a variant of the name
+    for (owner, node) in [
+        (false, GEOLOC),
+        (true, GEOLOC),
+        (false, " HTTP://Jabber.org/protocol/GEOLOC "),
+    ] {
+        let (who, to) = if owner {
+            (&mut john, "")
+        } else {
+            (&mut jane, " to='john.doe@moqui.local'")
+        };
+        let out = text_of(
+            &who.send(&format!(
+                "<iq type='get' id='g'{to}><pubsub xmlns='http://jabber.org/protocol/pubsub'><items node='{node}'/></pubsub></iq>"
+            ))
+            .await,
+        );
+        assert!(out.contains("<forbidden") && !out.contains("<lat>"), "{node}: {out}");
+    }
+    assert!(super::pep::refused_node("\tHttp://JABBER.org/protocol/geoloc\n"));
+    assert!(!super::pep::refused_node("http://jabber.org/protocol/geoloc+notify"));
+    // ASCII whitespace alone is trimmed, as the services trim it: U+FEFF is part of the name on both sides
+    assert!(!super::pep::refused_node("\u{feff}http://jabber.org/protocol/geoloc"));
+    // a node the services refuse is forbidden too, a publish, a fetch and its configuration, not an internal error or
+    // item-not-found
+    for request in [
+        format!(
+            "<iq type='get' id='r'><pubsub xmlns='http://jabber.org/protocol/pubsub#owner'><configure node='{SERVICE_REFUSED_NODE}'/></pubsub></iq>"
+        ),
+        format!(
+            "<iq type='set' id='r'><pubsub xmlns='http://jabber.org/protocol/pubsub'><publish node='{SERVICE_REFUSED_NODE}'>\
+             <item id='current'><data xmlns='urn:xmpp:test'/></item></publish></pubsub></iq>"
+        ),
+        format!(
+            "<iq type='get' id='r'><pubsub xmlns='http://jabber.org/protocol/pubsub'><items node='{SERVICE_REFUSED_NODE}'/></pubsub></iq>"
+        ),
+    ] {
+        let out = text_of(&john.send(&request).await);
+        assert!(
+            out.contains("<forbidden")
+                && out.contains("type='auth'")
+                && !out.contains("internal-server-error")
+                && !out.contains("item-not-found"),
+            "{request}: {out}"
+        );
+    }
+    // an ordinary node is stored and pushed as before
+    let out = text_of(
+        &john
+            .send(
+                "<iq type='set' id='dev'><pubsub xmlns='http://jabber.org/protocol/pubsub'><publish node='urn:xmpp:omemo:2:devices'>\
+                 <item id='current'><devices xmlns='urn:xmpp:omemo:2'><device id='31415'/></devices></item></publish></pubsub></iq>",
+            )
+            .await,
+    );
+    assert!(out.contains("type='result'"), "{out}");
+    assert!(text_of(&jane.pump().await).contains("31415"));
 }
 
 /// SEC-COM-20: a publish, a block or a push registration the services refuse past a cap is `resource-constraint`.

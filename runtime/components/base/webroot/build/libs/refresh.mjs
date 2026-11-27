@@ -162,7 +162,7 @@ const OPENUI_PATCHES = [
   'patches/openui-lang-core-0.2.18-failed-query.patch',
 ];
 
-// The map of m-map (js/WebrootMap.js, plans/Maps.md §3.2): OpenLayers with ol-mapbox-style, ol-pmtiles and pmtiles, bundled
+// The map of m-map (js/WebrootMap.js, plans/archive/Maps.md §3.2): OpenLayers with ol-mapbox-style, ol-pmtiles and pmtiles, bundled
 // as the global MoquiOl. OPENLAYERS_PACKAGES are the packages the bundle holds whose license file is in the package;
 // pmtiles and ol-pmtiles carry none, so their license is PMTILES_LICENSE. The build fails when the bundle holds a package
 // that is in neither list, or a second copy of one under another's node_modules.
@@ -175,7 +175,7 @@ const OPENLAYERS_PACKAGES = [
   'pbf', 'rbush', 'quickselect', 'fflate',
 ];
 const PMTILES_PACKAGES = ['pmtiles', 'ol-pmtiles'];
-// The lazy raster and projection part (plans/Maps.md P4c): geotiff.js and its decoders, proj4 with mgrs and wkt-parser.
+// The lazy raster and projection part (plans/archive/Maps.md P4c): geotiff.js and its decoders, proj4 with mgrs and wkt-parser.
 // Each carries its license file but lerc, whose notice is LERC_NOTICE. web-worker, a dependency of geotiff, is not in the
 // bundle: GEOTIFF_WORKER_CREATE replaces the module that would use it (and that holds every decoder again as a string).
 const RASTER_PACKAGES = ['geotiff', '@petamoriken/float16', 'pako', 'quick-lru', 'xml-utils', 'zstddec', 'proj4', 'mgrs',
@@ -185,7 +185,7 @@ const LERC_PACKAGE = 'lerc';
 // and of the Natural Earth outline (TopoJSON), the controls, the default interactions with Select, Modify and Draw to
 // pick a point, the style classes, an Overlay for a popup, Geolocation, ol-mapbox-style's apply, applyStyle and
 // applyBackground for a MapLibre style, and the PMTiles sources, with pmtiles' FetchSource and FileSource for a source
-// m-map makes itself. The OGC layers (plans/Maps.md P4a): TileWMS and ImageWMS with the Image layer, WMTS with its tile
+// m-map makes itself. The OGC layers (plans/archive/Maps.md P4a): TileWMS and ImageWMS with the Image layer, WMTS with its tile
 // grid made from a matrix set the server recorded (createFromCapabilitiesMatrixSet), and the bbox loading strategy of a
 // WFS layer read as GeoJSON.
 const OPENLAYERS_ENTRY = `export { default as Map } from 'ol/Map.js';
@@ -359,7 +359,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.`;
 // (OPENLAYERS_HOSTS). That is the Fontsource layout, so each face is that package's own CSS (every subset, each by
 // unicode-range), with only the woff2 sources.
 const MAP_FONT_FACES = ['400', '400-italic', '500', '700'];
-// The local Protomaps profile (plans/Maps.md §4.1, §5): a regional Protomaps PMTiles archive registered as a layer draws
+// The local Protomaps profile (plans/archive/Maps.md §4.1, §5): a regional Protomaps PMTiles archive registered as a layer draws
 // with these. The styles are the output of @protomaps/basemaps (layers() of a namedFlavor, lang "en"), generated here
 // with Node from the package's CommonJS build into protomaps/light.json and protomaps/dark.json, each with one vector
 // source, "protomaps", that m-map binds to the archive (applyStyle, updateSource false), its sprite at
@@ -812,7 +812,7 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
     produce: (ctx) => ctx.typescriptFiles(),
   },
   {
-    // The map of m-map (js/WebrootMap.js, plans/Maps.md §3.2), imported (an ES module, import()) when the first map mounts.
+    // The map of m-map (js/WebrootMap.js, plans/archive/Maps.md §3.2), imported (an ES module, import()) when the first map mounts.
     // OpenLayers, ol-mapbox-style, ol-pmtiles and pmtiles ship ES modules, so this is a bundle of what OPENLAYERS_ENTRY
     // exports, split by esbuild with the lazy raster part (RASTER_ENTRY) and its decoder worker (TIFF_WORKER_ENTRY) so the
     // three share one copy of OpenLayers. Pinned Nov 25, 2026: each is the newest release of its line at least two weeks old
@@ -866,7 +866,7 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
     licenseFiles: ['LICENSE'],
   },
   {
-    // The local Protomaps profile's styles and sprites (PROTOMAPS_FLAVORS; plans/Maps.md §4.1), for a regional archive
+    // The local Protomaps profile's styles and sprites (PROTOMAPS_FLAVORS; plans/archive/Maps.md §4.1), for a regional archive
     // registered as the LOCAL_PROTOMAPS layers (framework data/MapsSetupData.xml). Pinned Nov 25, 2026: 5.7.2 of Mar 10.
     id: 'protomaps', name: 'Protomaps basemap styles (generated) and sprites', npm: '@protomaps/basemaps',
     license: 'BSD-3-Clause AND CC0-1.0 AND MIT',

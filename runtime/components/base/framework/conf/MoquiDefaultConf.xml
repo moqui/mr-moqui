@@ -151,15 +151,15 @@
         instance, max-users the most users a run may have. -->
     <load-runner targets="" max-runs="1" max-users="1000"/>
 
-    <!-- Maps (plans/Maps.md §4.2, §6.4). external-requests false stops the server's own outside requests for maps (a
+    <!-- Maps (plans/archive/Maps.md §4.2, §6.4). external-requests false stops the server's own outside requests for maps (a
         geocoder, a Geo data download) and stops it handing a browser a map profile with outside URLs; local maps and
         postal lookup still work. A fresh install makes none either way: the hosted provider is seeded disabled.
         import-max-bytes is the largest Geo data download or operator file, and the largest it may unzip to (512 MiB:
         well past every registered source, GeoNames' allCountries at 19 MB zipped, and under the 2 GiB upload).
         max-features is the most features one overlay or one viewport query of a layer adapter returns; 0 turns record
         layers off. overture-catalog is the STAC root Overture releases are found in and overture-max-area the largest
-        Overture region in km² (plans/Maps-Overture.md). package-max-bytes is the largest offline map package a user
-        may build (2 GiB; refused at its estimate), and package-keep-days how long a package's file is kept with no
+        Overture region in km² (plans/archive/Maps-Overture.md). package-max-bytes is the largest offline map package a
+        user may build (2 GiB; refused at its estimate), and package-keep-days how long a package's file is kept with no
         download before the hourly clean removes it (plans/Maps-Offline.md). -->
     <maps external-requests="true" import-max-bytes="536870912" max-features="5000" overlay-max-bytes="10485760"
             overture-catalog="https://stac.overturemaps.org/catalog.json" overture-max-area="2500"

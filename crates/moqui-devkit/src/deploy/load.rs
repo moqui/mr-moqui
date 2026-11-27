@@ -478,8 +478,8 @@ fn load_data(
             match load_entity_data(&facade, &location, &options) {
                 Ok(result) => {
                     records += result.records;
-                    let error =
-                        (result.failed_files > 0).then(|| format!("{} files failed to load", result.failed_files));
+                    let error = (!result.failures.is_empty())
+                        .then(|| format!("{} files failed to load", result.failures.len()));
                     out.push(DataFile {
                         location,
                         records: result.records,

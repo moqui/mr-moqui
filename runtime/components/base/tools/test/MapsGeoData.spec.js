@@ -1,4 +1,4 @@
-// Maps › Configuration › Geo data (plans/Maps.md §6.4; docs/tools/Maps.md "Geo data"), a plain XML screen rendered once (html):
+// Maps › Configuration › Geo data (plans/archive/Maps.md §6.4; docs/tools/Maps.md "Geo data"), a plain XML screen rendered once (html):
 // for an administrator its data sets with their licenses and Import, and refused to a Maps user (MAPS_ADMIN denies
 // MAPS_USERS); its Import dialog (GeoData/ImportDialog.xml) offers GeoNames' countries only; Acknowledge license records who, and Import starts a run of the GeoDataImport ServiceJob with its pending run,
 // never the import in the request (an operator's file here, so no download).

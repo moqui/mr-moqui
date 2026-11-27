@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The map projection registry's seed (moqui.maps.MapProjection, plans/Maps.md §4.1, P4c): WGS 84 and Web Mercator, NAD83,
+<!-- The map projection registry's seed (moqui.maps.MapProjection, plans/archive/Maps.md §4.1, P4c): WGS 84 and Web Mercator, NAD83,
     the 120 WGS 84 UTM zones and NAD83's North American zones 1 to 23, the British National Grid, Lambert-93, LAEA Europe,
     the US Albers and the two polar stereographic projections NASA GIBS and NSIDC draw. Each definition is the EPSG
     Geodetic Parameter Dataset's parameters for the code (IOGP; its terms of use let the dataset's data be used and

@@ -1,4 +1,4 @@
-// Users' overlays and saved places (plans/Maps.md §4.1, §4.2, §8; org.moqui.maps.MapServices store#Overlay, get#OverlayContent,
+// Users' overlays and saved places (plans/archive/Maps.md §4.1, §4.2, §8; org.moqui.maps.MapServices store#Overlay, get#OverlayContent,
 // find#Overlays, store#Place; MapOverlays.js; tools screen/Maps/Browse.xml overlay): a file is read before it is kept (one
 // that cannot be drawn is refused with nothing written, a format that is not GeoJSON, GPX or KML, more than
 // maps@max-features features), an upload is kept in Maps/overlays of the personal drive with its bad feature counted and

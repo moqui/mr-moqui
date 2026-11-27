@@ -12,13 +12,13 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The header and metadata of a PMTiles version 3 archive (plans/Maps.md §4.1, §5; the format:
+//! The header and metadata of a PMTiles version 3 archive (plans/archive/Maps.md §4.1, §5; the format:
 //! <https://github.com/protomaps/PMTiles/blob/main/spec/v3/spec.md>), read when a map archive is registered: the 127
 //! bytes at its start and its JSON metadata, checked so that an archive a map cannot draw is refused by name before a
 //! browser asks for it. No ExecutionContext: the service that reads the bytes through the resource facade is
 //! `moqui_tools::maps_archive`.
 //!
-//! Also the archive's directories and tile IDs, for the Z/X/Y tile endpoint (`moqui_tools::maps_tiles`, plans/Maps.md §5
+//! Also the archive's directories and tile IDs, for the Z/X/Y tile endpoint (`moqui_tools::maps_tiles`, plans/archive/Maps.md §5
 //! "a later Rust endpoint returning individual Z/X/Y tiles"): a tile's ID in the format's Hilbert order ([`tile_id`]), a
 //! directory decoded ([`decode_directory`]) and a tile found through the root and its leaves, run lengths included
 //! ([`locate_tile`]); and an archive written as its tiles come ([`ArchiveWriter`]: the tile data streamed to a part

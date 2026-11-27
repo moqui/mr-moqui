@@ -1,5 +1,5 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
-// MapsBrowseWalk (plans/Maps.md §3.1, §9): Maps › Browse in a browser on the qvt shell, at desktop and phone width, as a Maps
+// MapsBrowseWalk (plans/archive/Maps.md §3.1, §9): Maps › Browse in a browser on the qvt shell, at desktop and phone width, as a Maps
 // user (MapsWalkFixtures: maps.walk, a record layer of the framework's test adapter on the outline profile, a saved view):
 // the map draws with its scale line and attribution; Layers names the record layer and says its features were cut;
 // Search finds the saved place, a record, and a postal code (MapsWalkFixtures' 60601) with its places as choices, going to

@@ -1021,7 +1021,7 @@ fn lfs_files_through_git_locations_are_content_blobs_behind_pointers() {
 }
 
 /// A pinned revision of an LFS file (`location#version`) opens by range from its content blob with its oid as the
-/// strong tag, never read whole (`plans/Maps.md` §5); the content address tells an LFS object from a git object, at
+/// strong tag, never read whole (`plans/archive/Maps.md` §5); the content address tells an LFS object from a git object, at
 /// the head and at a version.
 #[test]
 fn a_version_of_an_lfs_file_opens_by_range_and_names_its_object() {

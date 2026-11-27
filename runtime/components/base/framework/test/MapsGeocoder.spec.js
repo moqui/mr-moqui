@@ -1,4 +1,4 @@
-// Address and place search (plans/Maps.md §6.1, §6.2, §8; org.moqui.maps.MapServices.find#Places, MapGeocoders.js, the
+// Address and place search (plans/archive/Maps.md §6.1, §6.2, §8; org.moqui.maps.MapServices.find#Places, MapGeocoders.js, the
 // geocoder kinds of the mapProvider connection kind): nothing is sent without an enabled geocoder that passed its test,
 // nor with outside requests off; the connection test sends a fixed public address, never a user's text; the US Census
 // geocoder's answer, through the HTTP fixtures, is street-range interpolation with several matches ambiguous, and Browse's

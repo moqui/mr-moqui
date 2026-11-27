@@ -1,4 +1,4 @@
-// MapsOvertureAddresses (plans/Maps-Overture.md §O2): Overture's Addresses theme imported for a region through the O1 run
+// MapsOvertureAddresses (plans/archive/Maps-Overture.md §O2): Overture's Addresses theme imported for a region through the O1 run
 // (HttpFixtures answer for a small STAC catalog and serve test/fixtures/overture/addresses-r*.parquet by range, goldens of
 // the moqui-maps crate's tests), and the local geocoder (MPK_GEOCODER_OVERTURE) over its index. A non-holder's import is
 // refused; a holder's first run waits for review of the source licenses its acknowledgement does not cover and is active

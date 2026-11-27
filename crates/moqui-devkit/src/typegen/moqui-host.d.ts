@@ -555,11 +555,56 @@ interface ServiceResultFuture<S extends string> {
     get(timeoutMillis?: number): MoquiOut<S>;
 }
 
+/** A file or location a data load could not load, and why. */
+interface DataLoadFailure {
+    location: string;
+    reason: string;
+}
+
+/** `ec.entity.makeDataLoader()`: each setter returns the loader; `load`, `check`, `checkInfo` and `list` run it. */
+interface EntityDataLoader {
+    location(location: string): EntityDataLoader;
+    locationList(locations: Iterable<string>): EntityDataLoader;
+    xmlText(text: string): EntityDataLoader;
+    csvText(text: string): EntityDataLoader;
+    jsonText(text: string): EntityDataLoader;
+    dataTypes(types: Iterable<string>): EntityDataLoader;
+    componentNameList(names: Iterable<string>): EntityDataLoader;
+    defaultValues(values: MoquiMap): EntityDataLoader;
+    csvEntityName(name: string): EntityDataLoader;
+    csvFieldNames(names: Iterable<string>): EntityDataLoader;
+    csvDelimiter(delimiter: string): EntityDataLoader;
+    csvCommentStart(commentStart: string): EntityDataLoader;
+    csvQuoteChar(quoteChar: string): EntityDataLoader;
+    transactionTimeout(seconds: number): EntityDataLoader;
+    useTryInsert(flag: boolean): EntityDataLoader;
+    onlyCreate(flag: boolean): EntityDataLoader;
+    dummyFks(flag: boolean): EntityDataLoader;
+    disableEntityEca(flag: boolean): EntityDataLoader;
+    disableAuditLog(flag: boolean): EntityDataLoader;
+    disableFkCreate(flag: boolean): EntityDataLoader;
+    disableDataFeed(flag: boolean): EntityDataLoader;
+    messageNoActionFiles(flag: boolean): EntityDataLoader;
+    restrictSensitiveEntities(flag: boolean): EntityDataLoader;
+    protectUserAccounts(flag: boolean): EntityDataLoader;
+    /** The records loaded. A file or location that failed is in the messages and, as `{location, reason}`, in failures; a text that fails throws. */
+    load(messages?: string[], failures?: DataLoadFailure[]): number;
+    /** With no argument the messages of what did not match; with an array, the fields checked. */
+    check(): string[];
+    check(messages: string[]): number;
+    /** With no argument the diff rows; with arrays, the fields checked. */
+    checkInfo(): MoquiMap[];
+    checkInfo(diffInfoList: MoquiMap[], messages?: string[]): number;
+    /** The values of the records the data has, with nothing written; a location that failed is in the arrays given. */
+    list(messages?: string[], failures?: DataLoadFailure[]): EntityList;
+}
+
 // ---- server ec: the facade surface ----
 
 interface MoquiEntityFacade {
     find<N extends (keyof MoquiEntityMap & string) | (string & {})>(entityName: N): EntityFind<N>;
     makeValue<N extends (keyof MoquiEntityMap & string) | (string & {})>(entityName: N): EntityValue<N>;
+    makeDataLoader(): EntityDataLoader;
     getDataDocuments(...args: unknown[]): MoquiMap[];
     /** Flatten a graph to unpersisted values, inheriting keys and skipping read-only relationships. */
     getValueListFromPlainMap(graph: MoquiMap, entityName: string): EntityList;

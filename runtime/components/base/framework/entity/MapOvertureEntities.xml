@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Optional Overture data for Maps (plans/Maps-Overture.md §4, stages O1 and O2 of plans/Maps.md §4.3): the themes with
+<!-- Optional Overture data for Maps (plans/archive/Maps-Overture.md §4, stages O1 and O2 of plans/archive/Maps.md §4.3): the themes with
     their licenses, an administrator's regions, the runs that import a theme of a region from a pinned release, and the
     places and address points of each run. An import writes only these, its PMTiles archives and its own map layer: never a Mantle record, a Geo,
     a point or a record's location. The services are service/org/moqui/maps/OvertureServices.xml; the reader is the

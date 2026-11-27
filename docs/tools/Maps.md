@@ -2,7 +2,7 @@
 
 Maps is the framework's map app, beside Dashboards, System and Tools (`runtime/components/base/tools`, mounted as
 `/apps/maps` and `/qapps/maps`). It needs no BOSS, HOME, PASS or Mantle: those components add record adapters and
-mount its dialog under their own routes. The design is [plans/Maps.md](../../plans/Maps.md); the map widget
+mount its dialog under their own routes. The design is [plans/archive/Maps.md](../../plans/archive/Maps.md); the map widget
 (`map-view`, `m-map`) is in [Qvt-Client](../ui/Qvt-Client.md) and the terminal's `map` component in
 [TUI](../ui/TUI.md#components).
 
@@ -109,7 +109,7 @@ but it still sees every area viewed (as this server's requests), and this server
 ## OGC services
 
 A WMS, WMTS or WFS service is a map provider of the kind `MPK_WMS` (WMS 1.3.0), `MPK_WMTS` (WMTS 1.0.0) or `MPK_WFS`
-(WFS 2.0.0, read as GeoJSON) (`MapOgc.js`, plans/Maps.md §4.1). Its URL is the service's (`https://host/geoserver/ows`,
+(WFS 2.0.0, read as GeoJSON) (`MapOgc.js`, plans/archive/Maps.md §4.1). Its URL is the service's (`https://host/geoserver/ows`,
 a MapServer URL with its own `map=` query, or a WMTS service's `WMTSCapabilities.xml`); an https URL, as every provider's.
 The seed has the USGS National Map's topographic WMTS (provider `USGS_NATIONAL_MAP`, layer and profile `USGS_TOPO`; public
 domain, the United States only), disabled until its provider passes a test and the profile is enabled.
@@ -170,7 +170,7 @@ answer is passed on as it came, at most 4 MiB, refused when it carries the key. 
 
 ## Archives
 
-A PMTiles archive on this server draws a map with no outside request (plans/Maps.md §4.1, §5). The seed has the local
+A PMTiles archive on this server draws a map with no outside request (plans/archive/Maps.md §4.1, §5). The seed has the local
 Protomaps profile, `LOCAL_PROTOMAPS`, with its layers `LOCAL_PROTOMAPS_LIGHT` and `LOCAL_PROTOMAPS_DARK` (format
 `MLF_PMTILES_VECTOR`), all disabled: they draw a regional [Protomaps extract](https://docs.protomaps.com/basemaps/downloads)
 with the styles, sprites and fonts packaged under `/libs` (`protomaps/light.json`, `dark.json`, `protomaps/sprites/v4/`,
@@ -206,7 +206,13 @@ Enable the profile and make it the default on the same page. To replace an archi
 location and register it again: a map drawing the old revision is refused it (409) and loads its configuration again,
 so no map mixes the two. The readiness provider `maps.archives` says when a newer revision is stored but not registered
 (`NEWER_REVISION`), and when the registered one is gone, or a file on disk has changed in place (a change of its size or
-modification time, which also makes the map-source transition answer 409 until it is registered again).
+modification time, which also makes the map-source transition answer 409 until it is registered again). Its
+`maps.archive.space` check warns (`ARCHIVE_SPACE_LOW`) when the filesystem an archive is on has less free room than the
+largest archive on it once more (the old revision is kept while maps move): the runtime's for one on disk, the database's
+for one in a drive or git when its content database is the embedded one. While the scheduled backup runs, the filesystem
+its directory is on (a watched one: the database's, the runtime's, ...) needs the database's archives once more for the
+next local backup. It reads the status map's filesystems; an external database's room is not measured, nor a backup
+directory outside the runtime, and off Unix nothing is (`ARCHIVE_SPACE_EXTERNAL_DB`, `ARCHIVE_SPACE_UNREAD`).
 
 **Reading.** A map reads an archive at `/apps/maps/LocalMap/source?layerId=...&revision=...` (the effective configuration
 hands that URL to a user it lets read the archive, and to no other). Every request, each range included, checks the
@@ -253,7 +259,7 @@ range the browser has read is not asked again while it keeps it.
 
 A raster of measurements or imagery (an elevation model, a satellite scene, a scanned map) is a layer of the format
 `MLF_COG` (P4c), drawn by the browser itself with geotiff.js and OpenLayers' WebGL tiles, reading only the ranges of the
-tiles in view (plans/Maps.md §4.1). It is either:
+tiles in view (plans/archive/Maps.md §4.1). It is either:
 
 - **a registered resource**, registered as a PMTiles archive is (Configuration › Archives, `register#ArchiveLayer`: a drive,
   a Git LFS object or `runtime://maps/`), its revision pinned and read through the map-source transition with the same
@@ -263,6 +269,9 @@ tiles in view (plans/Maps.md §4.1). It is either:
   is allowed the private network), which must answer 206 (`NO_RANGES`) and allow other origins by CORS (`NO_CORS`: the
   browser reads it directly, with no credentials of the page); it is drawn only while its provider is enabled and tested
   and outside requests are on, as any provider layer, never through this server's proxy, and nothing of it is pinned.
+  Its provider is a raster-tiles provider: for a host that serves only COGs (a bucket), give it the URL of one of them
+  (a `.tif` or `.tiff` path with no tile placeholder), and its test reads that COG as registering one does (the range,
+  CORS and the header; a failure names its reason, `NO_RANGES`, `NO_CORS`, `COG_INVALID` and so on).
 
 **The header** is read in Rust (`MapSourceServices.read#CogHeader`, `moqui-lib` `geo/tiff.rs`), never a tile: the TIFF or
 BigTIFF header, in either byte order, and its image directories, at most 64 of them (one seen twice is a loop, refused), at
@@ -455,7 +464,7 @@ a declared CRS or anything the map does not keep) stays as it is, and the edit i
 file there is replaced), which the overlay draws from then on, its row keeping the original as `sourcePath` with what
 reading the original found (its CRS and notes). A reader of the original through a share of that file alone does not
 read the edited copy; a share of the folder reaches both. An overlay with no feature left is refused (remove it
-instead); places may all be removed. A WFS layer is not edited (WFS-T, plans/Maps.md §4.1).
+instead); places may all be removed. A WFS layer is not edited (WFS-T, plans/archive/Maps.md §4.1).
 
 **Saved places** are named points in one GeoJSON file, `Maps/places.geojson` of the personal drive: Save place on the
 selected place or search result (`store#Place`, written through `FileServices.save#Text`, so the drive keeps each change
@@ -550,10 +559,16 @@ whose routes the record's [links](#record-links) resolve to; Open in Maps carrie
 
 A Dashboards geomap ([Monitoring](Monitoring.md)) opens Maps where a country or a point is clicked (or chosen with Enter):
 Browse centered on the country's largest land area (`extent=west,south,east,north`, so an overseas territory does not
-widen it) or on the point (`longitude`, `latitude`), and nothing else of the panel's rows. It is offered only to a viewer
-whose own grants open the Maps app (`Dashboard.xml` sets `appLinks.maps` by `isPermittedOwn` of `Maps.xml`; an app's
-grant on the screen that shows the dashboard does not count); without it the geomap is as it was. The terminal's geomap
-offers no link yet.
+widen it; west greater than east for one across the antimeridian, such as Russia) or on the point (`longitude`,
+`latitude`), and nothing else of the panel's rows. It is offered only to a viewer whose own grants open the Maps app
+(`Dashboard.xml` sets `appLinks.maps` by `isPermittedOwn` of `Maps.xml`; an app's grant on the screen that shows the
+dashboard does not count); without it the geomap is as it was. The terminal's geomap does the same where the link is
+offered: in a dashboard's table mode (`g`) or on a report panel of its own, `M` opens the table's current row in Maps
+(its country or its latitude and longitude, the fields the geomap reads, a point south of the drawing's 60°S too) with
+the same extent or point, and the listed place of that row is highlighted; the table's own keys (rows, data links,
+filters) are unchanged. `M` because `o` is the shell's Open in browser and `m` the dashboard's panel menu. The
+countries' extents are a table built from the same outline (`COUNTRY_EXTENTS` in
+`crates/moqui-tui/src/components/world.rs`).
 
 ### Under an app's route
 
@@ -645,7 +660,7 @@ file (5), then Census (10), then GeoNames (20).
   confirmation with an estimate (`everyCountryEstimate`), a queue of runs, one pending run a country with a country Geo
   sharing a `queueId`, run one after another (each run starts the next when it ends, whatever its end), each its own run
   and edition; a run holds one country's records while it loads, so the queue's peak memory is that of its largest
-  country (plans/Maps.md §6.3). A refusal every run would meet (the set disabled, its license, outside requests off) cancels
+  country (plans/archive/Maps.md §6.3). A refusal every run would meet (the set disabled, its license, outside requests off) cancels
   the waiting runs with its reason. **Imported** shows the queue's progress with **Cancel the rest** (`cancel#GeoDataImport`
   with the `queueId`: the countries waiting are cancelled, the one running stops at its next step; a run with no word for
   an hour is taken as abandoned and ended at once). An operator's file is uploaded (at most `maps@import-max-bytes`, refused before it is
@@ -710,8 +725,8 @@ was cancelled after them) and a Remove clear it. Every signed-in user may call i
 
 ## Overture places and buildings
 
-Optional regional data from an [Overture Maps](https://overturemaps.org/) release (plans/Maps-Overture.md, stage O1 of
-plans/Maps.md §4.3): **Places**, named destinations with their categories, for Browse's search, and **Buildings**, footprints
+Optional regional data from an [Overture Maps](https://overturemaps.org/) release (plans/archive/Maps-Overture.md, stage O1 of
+plans/archive/Maps.md §4.3): **Places**, named destinations with their categories, for Browse's search, and **Buildings**, footprints
 drawn as a map layer. Nothing of it ships and nothing is read until an administrator imports a region; maps, archives and
 postal lookup need none of it. It is the `moqui-maps` crate, which the host links under its `overture` feature (Maximal and
 Enterprise, not Lite); a server without it keeps what was imported usable and says it cannot import.
@@ -794,7 +809,7 @@ import of a region theme failed, and when regions are set up on a server built w
 
 ## Overture addresses
 
-Stage O2 ([Maps-Overture §8](../../plans/Maps-Overture.md#8-o2-regional-addresses)): Overture's **Addresses** theme for a
+Stage O2 ([Maps-Overture §8](../../plans/archive/Maps-Overture.md#8-o2-regional-addresses)): Overture's **Addresses** theme for a
 region, imported as Places are (Configuration › Overture: the theme `ADDRESSES`, a run pinned to a release, read by range,
 staged, checked, activated, rolled back, removed), and searched by a geocoder of this server, **Overture addresses (local)**
 (`MPK_GEOCODER_OVERTURE`, seeded disabled as `OVERTURE_ADDRESSES`). The dataset alone is not a geocoder: the parsing,
@@ -918,13 +933,15 @@ package is 404) and answers 409 for a revision that is no longer the package's. 
 
 ## Tests
 
-The regression spec is `tools/test/MapsScreens.spec.js` (Browse in qvue and tui, its terminal's overlays and postal search; LocalMap, a plain XML screen, once in
-qvt for a writer and once in html for a user it refuses the record; the access rules, Save location, the profile
-rules); the configuration services' rules are `framework/test/MapsConfig.spec.js` (with a record link resolved to the host
+The regression spec is `tools/test/MapsScreens.spec.js` (Browse in tui, its terminal's overlays, postal search and the
+view it is opened on; LocalMap, a plain XML screen, once in qvt for a writer and once in html for a user it refuses the
+record; the access rules, Save location, the profile rules), with Browse's one qvue render in a browser in the client
+spec `tools/test/client/MapsBrowseExtent.spec.js` (the MapsBrowse component and its map, opened on an extent across the
+antimeridian at the first load, and the extent check's refusals); the configuration services' rules are `framework/test/MapsConfig.spec.js` (with a record link resolved to the host
 app's route, else one of no app, and left out for a non-holder, and a profile's view projection: a registered one handed
 to the map with its definition, refused for a vector-style basemap and for an unknown code), and the archives'
 (registering, the map-source transition's access, ranges, revocation and stale revisions, and the tile transition's tile,
-304, 204, non-holder and stale revision) `framework/test/MapsSource.spec.js`, with the header's, the tile IDs', the
+304, 204, non-holder and stale revision, and readiness's room to replace an archive) `framework/test/MapsSource.spec.js`, with the header's, the tile IDs', the
 directories' and the archive writer's in Rust (`moqui-lib` `pmtiles_tests.rs`) and the tile reader's (`moqui-tools`
 `maps_tiles_tests.rs`: gzip or plain by the client, a missing tile, `If-None-Match`, a changed archive, the cache's
 bound). Overlays and places: `framework/test/MapsOverlays.spec.js`
@@ -946,7 +963,9 @@ found by authority, name or parameters); a COG's header (`geo/tiff_tests.rs`: cl
 what a map cannot draw, and hostile files: a loop, a directory past the end, a count that overflows, too many directories
 or entries); `MapsSource` registers a COG of a drive, refuses one in strips and reads its ranges for a holder of its share
 and not another user, with its projection in the holder's configuration and the holder's own band settings kept (a band
-it lacks refused); `MapsOverlays` converts a UTM and a British
+it lacks refused), and a real public Sentinel-2 COG (the bucket OpenLayers' COG example reads) registered from its
+provider's URL (the provider tested by a range of that COG), its header recorded and its full image's first tile read by
+range is the acceptance test `MapsCogPublic`; `MapsOverlays` converts a UTM and a British
 National Grid overlay and the tiler's (`geo/tiles_tests.rs`:
 the budgets against a pathological file, a stop within a zoom, points, the poles and the antimeridian;
 `geo/simplify_tests.rs`, `geo/mvt_tests.rs`); the geocoder: `framework/test/MapsGeocoder.spec.js`

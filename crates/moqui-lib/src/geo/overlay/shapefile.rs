@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A zipped shapefile as an overlay (plans/Maps.md §4.1, §7; the ESRI Shapefile Technical Description, 1998, and
+//! A zipped shapefile as an overlay (plans/archive/Maps.md §4.1, §7; the ESRI Shapefile Technical Description, 1998, and
 //! dBASE III): the zip's one `.shp`, read record by record in order (its `.shx` index is not needed), with the `.dbf`
 //! record of the same number as the feature's properties (read as a GeoJSON feature's are: name, title or label and
 //! description or desc kept as plain text, the other fields counted), the `.prj` for its CRS and the `.cpg` for the

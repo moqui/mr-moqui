@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Optional Overture data for Maps (plans/Maps-Overture.md; OvertureServices.xml): the themes O1 and O2 import with their
+<!-- Optional Overture data for Maps (plans/archive/Maps-Overture.md; OvertureServices.xml): the themes O1 and O2 import with their
     licenses by source (https://docs.overturemaps.org/attribution/, read November 26, 2026), the import's job and
     notification, and the maps.overture readiness provider. Nothing is imported until an administrator acknowledges a
     theme's license and starts a run. -->
@@ -54,7 +54,7 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.service.job.ServiceJob jobName="OvertureImport" description="Import a theme of a region from an Overture release"
             serviceName="org.moqui.maps.OvertureServices.run#OvertureImport" topic="OvertureImport" transactionTimeout="86400" noTimeLimit="Y"/>
 
-    <!-- Maps' Overture data (plans/Maps-Overture.md), OvertureServices.check#OvertureReadiness (OvertureData.js; its grant is
+    <!-- Maps' Overture data (plans/archive/Maps-Overture.md), OvertureServices.check#OvertureReadiness (OvertureData.js; its grant is
         tools data/MapsSecurityData.xml MAPS_READINESS) -->
     <moqui.server.ReadinessProvider providerKey="maps.overture" version="1" ownerApp="Maps" title="Overture data"
             description="No Overture run waits for license review, the last import of each region theme did not fail, and regions are not set up on a server built without the overture feature"

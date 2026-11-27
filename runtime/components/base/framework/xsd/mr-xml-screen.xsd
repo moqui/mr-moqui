@@ -1480,7 +1480,7 @@ along with this software (see the LICENSE.md file). If not, see
     </xs:complexType></xs:element>
 
     <xs:element name="map-view" substitutionGroup="AllWidgets"><xs:annotation><xs:documentation>
-        A map (plans/Maps.md §3.2): in qvt an m-map, which loads js/WebrootMap.js and the vendored OpenLayers bundle when it
+        A map (plans/archive/Maps.md §3.2): in qvt an m-map, which loads js/WebrootMap.js and the vendored OpenLayers bundle when it
         first mounts and draws the profile's basemap (the Natural Earth country outline when no provider is configured), its
         layers and the places given, with a scale line, attribution, a coordinate readout, Locate me (on request only) and,
         with pick, the choice of a point; when the map cannot draw it lists the places instead. Bound over the screen's data

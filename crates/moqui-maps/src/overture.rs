@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Overture's themes in its schema 2.x (plans/Maps-Overture.md §3.2): the columns each theme reads, and a region read
+//! Overture's themes in its schema 2.x (plans/archive/Maps-Overture.md §3.2): the columns each theme reads, and a region read
 //! from one GeoParquet file ([`read_region`]): the row groups whose `bbox` statistics meet the region, only the
 //! projected columns of each, one column at a time, and the rows whose own box meets it, each a [`Place`], a
 //! [`Building`] or an [`AddressPoint`] handed to the caller with its source datasets and licenses. A row with no ID or a

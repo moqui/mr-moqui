@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Removing a source's Geo data (plans/Maps.md §6.4, Settings: Remove): the rows its source key owns in a scope are
+//! Removing a source's Geo data (plans/archive/Maps.md §6.4, Settings: Remove): the rows its source key owns in a scope are
 //! deleted where nothing refers to them, and end-dated where something does. Its place names and point associations go
 //! first; a point, a code or a Geo then goes only when no row of any entity refers to it (found from the entity model:
 //! every relationship to `Geo` or `GeoPoint`), another source's points and place names included, so a code another

@@ -126,7 +126,10 @@ with an `artifact` override and the receiver limits written out:
   (OpenSearch) added in place when the server starts; rows written before have them empty. Any other change to a
   telemetry mapping is refused, so history is never dropped.
 - **Capacity:** `queue-records` (8192), `queue-bytes` (33554432), `tail-traces` (1024) and `tail-trace-spans` (512)
-  on `<telemetry>`. A sixteenth of the queue is kept for request and job roots. A bad value warns and keeps the default.
+  on `<telemetry>`. A sixteenth of the queue is kept for request and job roots. `tail-trace-spans` is the spans one
+  trace holds while its root decides, on the thread under an open root and in the export's buffer; past it a span is
+  dropped and counted; on the thread a failed or slow frame takes the place of an ordinary one. A bad value warns and keeps the
+  default.
 - **Retention** is per index and per metric granularity, in days; the `clean_TelemetryData_daily` job applies it and
   `rollup_TelemetryMetrics_hourly` rolls minutes into hours and days.
 - **Day partitions** (Postgres search backend): `<search-facade><postgres partition-telemetry="true"
@@ -419,7 +422,8 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
     countries from a country field: a Moqui `geoId` (ISO alpha-3), alpha-2 or a numeric code. The outline is Natural
     Earth's 110m countries (`libs/naturalearth`, inlined into the print document). The TUI plots braille points over
     a land mask. For a viewer whose own grants open the Maps app, a country or a point opens Maps' Browse there
-    (`appLinks.maps`; [Maps, From a dashboard](Maps.md#from-a-dashboard)), with a plain extent or point.
+    (`appLinks.maps`; [Maps, From a dashboard](Maps.md#from-a-dashboard)), with a plain extent or point; in the TUI,
+    `M` on a table row in table mode.
   - Two query modes over spans feed the first two:
     - `mode: "serviceMap"` gives the calls between services: a span whose parent is in another service, a CLIENT span
       to a database (`db:<system>`), and a CLIENT span to a `server.address` that no span answered.

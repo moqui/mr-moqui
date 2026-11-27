@@ -1,4 +1,4 @@
-// The Geo data settings of org.moqui.maps.GeoDataServices (plans/Maps.md §6.4; docs/tools/Maps.md "Geo data"), around the
+// The Geo data settings of org.moqui.maps.GeoDataServices (plans/archive/Maps.md §6.4; docs/tools/Maps.md "Geo data"), around the
 // importer (import#GeoData, cancel#GeoDataImport and remove#GeoData, in crates/moqui-tools/src/geo): what Maps ›
 // Configuration › Geo data shows (each data set with its license, the countries imported with their edition, counts and
 // last run, the run history and the refresh schedule), the license acknowledgement, an import started as a run of the
@@ -6,7 +6,7 @@
 // now or on its schedule) and the maps.geodata readiness checks of org.moqui.maps.MapServices.
 //
 // A scope is a data set's source key (the sets sharing it: a mirror, a later year) and a country. Every country of a set read
-// a country at a time is imported as a queue (plans/Maps.md §6.3, §6.4): a pending run a country sharing a queueId, run one
+// a country at a time is imported as a queue (plans/archive/Maps.md §6.3, §6.4): a pending run a country sharing a queueId, run one
 // after another (each run starts the next when it ends, import#GeoData), each its own run and edition, cancelled as a group,
 // after a confirmation that gives the estimate of everyCountryEstimate.
 // The services are MAPS_ADMIN's (the artifact group names GeoDataServices); the rows they write (a pending run, the job's
@@ -30,7 +30,7 @@ const STATUS_TEXT = {
 // the refresh schedules offered: a Quartz expression each (moqui_lib::cron), at a quiet hour
 const SCHEDULES = {weekly: "0 20 3 ? * SUN", monthly: "0 20 3 1 * ?"}
 const MAX_RUNS = 50
-// The estimate an import of every GeoNames country is confirmed with (plans/Maps.md §6.3): the rows of the 124 country
+// The estimate an import of every GeoNames country is confirmed with (plans/archive/Maps.md §6.3): the rows of the 124 country
 // files, as allCountries.zip counted them on November 25, 2026 (1,836,751; its Canadian, Dutch and British codes the
 // first part only, as the country files), and the database rows a file row came to and the file rows a second a queue
 // loaded, as GeoDataEveryCountry measured them (five countries under 52,000 rows, 119,956 rows in 42 s; Brazil, Portugal
@@ -862,7 +862,7 @@ const operations = {
     readiness
 }
 // The services an operation runs for, asked of the caller's own grants (isPermittedOwn): MAPS_ADMIN names them, and an allow
-// of Maps.xml an app grants its own group is inheritable, so it would reach them from a screen under Maps (plans/Maps.md
+// of Maps.xml an app grants its own group is inheritable, so it would reach them from a screen under Maps (plans/archive/Maps.md
 // §8). runRefresh is the GeoDataRefresh job's (its import#GeoData checks the user it runs as) and readiness checks
 // ADMIN_OVERVIEW_VIEW.
 const OWN_GRANTS = {

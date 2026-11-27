@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Address matching of O2 (plans/Maps-Overture.md §O2, plans/Maps.md §6.1): the parts of an address a person typed
+//! Address matching of O2 (plans/archive/Maps-Overture.md §O2, plans/archive/Maps.md §6.1): the parts of an address a person typed
 //! ([`parse`]), the keys an address point and a query are compared by ([`street_key`], [`number_key`], [`unit_key`],
 //! [`postcode_key`], [`fold`]) and the ranking of the points found into candidates ([`rank`]). No database and no
 //! context: the service reads the rows (`address_service::search_overture_addresses`) and hands them here.
@@ -731,7 +731,7 @@ pub enum Tier {
 }
 
 impl Tier {
-    /// The GeoPointPrecision a candidate of the tier has (plans/Maps.md §6.1).
+    /// The GeoPointPrecision a candidate of the tier has (plans/archive/Maps.md §6.1).
     #[must_use]
     pub fn precision(self) -> &'static str {
         match self {
@@ -775,7 +775,7 @@ impl Candidate {
         self.postcode_agrees == Some(false) || self.locality_agrees == Some(false)
     }
 
-    /// Its GeoPointPrecision (plans/Maps.md §6.1): an address match only for a number and street whose postal code and
+    /// Its GeoPointPrecision (plans/archive/Maps.md §6.1): an address match only for a number and street whose postal code and
     /// locality do not differ from what was asked; otherwise an estimate.
     #[must_use]
     pub fn precision(&self) -> &'static str {

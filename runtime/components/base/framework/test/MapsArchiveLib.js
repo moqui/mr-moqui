@@ -1,4 +1,4 @@
-// PMTiles version 3 archives made in a spec (plans/Maps.md §5), and a small Cloud Optimized GeoTIFF (cog), for the map archive specs (MapsSource, MapsArchiveBackends,
+// PMTiles version 3 archives made in a spec (plans/archive/Maps.md §5), and a small Cloud Optimized GeoTIFF (cog), for the map archive specs (MapsSource, MapsArchiveBackends,
 // MapsLocalFixtures): an archive of given tiles with an uncompressed root directory and metadata, the tile IDs of the format
 // (pmtiles' zxyToTileId, its Hilbert order), tiles of ASCII text a range read can be compared by, and a vector tile (MVT)
 // of an "earth" polygon and a "water" polygon that the Protomaps styles draw. Loaded with

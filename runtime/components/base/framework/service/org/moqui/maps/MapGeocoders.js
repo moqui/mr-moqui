@@ -1,4 +1,4 @@
-// Address and place search of org.moqui.maps.MapServices.find#Places (plans/Maps.md §6.1, §6.2, §7, §8; docs/tools/Maps.md
+// Address and place search of org.moqui.maps.MapServices.find#Places (plans/archive/Maps.md §6.1, §6.2, §7, §8; docs/tools/Maps.md
 // "Address and place search"): a text to candidate places from one configured geocoder, and the geocoder's connection test.
 //
 // A geocoder is a MapProvider of a geocoder kind (MapProviderKind under MPK_GEOCODER: MPK_GEOCODER_CENSUS,
@@ -6,7 +6,7 @@
 // answer. A new service is a new kind and an entry of ADAPTERS; the provider row holds only its endpoint, attribution and
 // policy, never a service name or code.
 //
-// A local geocoder (MPK_GEOCODER_OVERTURE, plans/Maps-Overture.md §O2) is this server's: the address points of the active
+// A local geocoder (MPK_GEOCODER_OVERTURE, plans/archive/Maps-Overture.md §O2) is this server's: the address points of the active
 // Overture Addresses runs, searched by search#OvertureAddresses (moqui-maps) with no outside request, so it works with
 // outside requests off, has no URL, rate or day's count, and is available only while a region's addresses are active
 // (and the server has the overture feature). Its test is a fixed query made from its own data. A text it does not match
@@ -230,7 +230,7 @@ function callLocal(name, parameters) {
     }
 }
 const listOf = value => (value == null ? null : Array.from(value).map(num))
-// A candidate of the local geocoder: its precision said as plans/Maps.md §6.1 asks, never exact and never a rooftop
+// A candidate of the local geocoder: its precision said as plans/archive/Maps.md §6.1 asks, never exact and never a rooftop
 function overtureCandidate(found) {
     const position = point(found.lon, found.lat)
     if (!position) return null
@@ -496,7 +496,7 @@ const operationAllowed = provider => {
         .filter(each => each)
     return !operations.length || operations.includes("geocode") || operations.includes("search")
 }
-// The public demo servers whose policies forbid an application's traffic beyond a trickle (plans/Maps.md §6.2): said by
+// The public demo servers whose policies forbid an application's traffic beyond a trickle (plans/archive/Maps.md §6.2): said by
 // the test and readiness, never refused, since an administrator may have an agreement
 const PUBLIC_HOSTS = ["nominatim.openstreetmap.org", "photon.komoot.io"]
 const publicHost = provider => {
