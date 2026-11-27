@@ -525,15 +525,8 @@ impl Run<'_> {
             let _ = remove_tree(unpacked);
             return self.cancelled(dir);
         }
-        let _ = remove_tree(&aside);
-        let moved = target.exists() && std::fs::rename(&target, &aside).is_ok();
-        let renamed = std::fs::rename(unpacked, &target);
-        let restored = renamed.is_err() && moved && std::fs::rename(&aside, &target).is_ok();
+        let renamed = put_in_place(unpacked, &target, &aside);
         drop(jobs);
-        // the revision set aside goes once the new one is in place or it is back; else it is all there is of it
-        if renamed.is_ok() || restored {
-            let _ = remove_tree(&aside);
-        }
         if let Err(err) = renamed {
             let _ = remove_tree(unpacked);
             return self.failed(
@@ -572,6 +565,24 @@ impl Run<'_> {
             revision: self.revision,
         }
     }
+}
+
+/// Put `unpacked` in place at `target`, a copy of `target` there before set aside at `aside` first and removed once
+/// the new one is in place, or put back when the rename fails, so a failure keeps what was installed. A copy a run
+/// before left only at `aside` (its renames both failed) is put back first, never removed for nothing.
+pub(crate) fn put_in_place(unpacked: &Path, target: &Path, aside: &Path) -> std::io::Result<()> {
+    if !target.exists() && aside.exists() {
+        std::fs::rename(aside, target)?;
+    }
+    let _ = remove_tree(aside);
+    let moved = target.exists() && std::fs::rename(target, aside).is_ok();
+    let renamed = std::fs::rename(unpacked, target);
+    let restored = renamed.is_err() && moved && std::fs::rename(aside, target).is_ok();
+    // the copy set aside goes once the new one is in place or it is back; else it is all there is of it
+    if renamed.is_ok() || restored {
+        let _ = remove_tree(aside);
+    }
+    renamed
 }
 
 /// The part file of a revision's zip.

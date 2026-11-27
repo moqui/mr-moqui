@@ -963,12 +963,12 @@ fn a_whole_answer_cut_short_is_tried_again_and_a_give_up_is_final() {
     let packages = packages(&dir);
     let server = Fake::new(package(1), 1);
     server.next.lock().unwrap().push(Next::WholeShort(5000));
-    let ended = download(&packages, &server, ACCOUNT, PACKAGE, 1, MAX);
+    let ended = download_by(&packages, &server, ACCOUNT, PACKAGE, 1, MAX, Some("work-1"));
     assert!(
         matches!(&ended, Status::Failed { code, retry: true, .. } if code == "SERVER"),
         "{ended:?}"
     );
-    let given = packages.give_up(ACCOUNT, PACKAGE).unwrap();
+    let given = packages.give_up(ACCOUNT, PACKAGE, 1, "work-1", "it failed").unwrap();
     assert!(matches!(&given, Status::Failed { retry: false, .. }), "{given:?}");
     // a revision under 1 is not downloaded
     assert!(matches!(
@@ -1182,5 +1182,86 @@ fn a_zip64_package_is_read_by_its_zip64_records() {
     let mut copied = Vec::new();
     unzip::copy_entry(&mut file, &entries[0], &mut copied, &|| false).unwrap();
     assert_eq!(copied, data);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The third review of OF2: a revision left only aside (`.N.old`) by a run whose renames both failed is put back
+/// before the next swap, not removed; a swap that fails keeps what was there.
+#[test]
+fn a_revision_left_aside_is_put_back_not_removed() {
+    let dir = dir("aside");
+    let (target, aside, unpacked) = (dir.join("1"), dir.join(".1.old"), dir.join(".1.unpack"));
+    std::fs::create_dir_all(&aside).unwrap();
+    std::fs::write(aside.join("manifest.json"), b"old").unwrap();
+    // nothing unpacked to put in place: the rename fails, and the copy aside is back as the revision
+    assert!(download::put_in_place(&unpacked, &target, &aside).is_err());
+    assert_eq!(std::fs::read(target.join("manifest.json")).unwrap(), b"old");
+    assert!(!aside.exists());
+    // a new one in place: the old one goes
+    std::fs::create_dir_all(&unpacked).unwrap();
+    std::fs::write(unpacked.join("manifest.json"), b"new").unwrap();
+    download::put_in_place(&unpacked, &target, &aside).unwrap();
+    assert_eq!(std::fs::read(target.join("manifest.json")).unwrap(), b"new");
+    assert!(!aside.exists() && !unpacked.exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The third review of OF2: a job installed already gives no run of its own revision (a worker replaced before it
+/// took its job), so the package is not downloaded a second time; a download asked again is.
+#[test]
+fn an_installed_job_is_not_downloaded_again_by_a_late_worker() {
+    let dir = dir("installed-late");
+    let packages = packages(&dir);
+    let server = Fake::new(package(1), 1);
+    assert_eq!(
+        download_by(&packages, &server, ACCOUNT, PACKAGE, 1, MAX, Some("work-1")),
+        Status::Installed { revision: 1 }
+    );
+    let asked = server.asked.lock().unwrap().len();
+    assert!(packages.take(ACCOUNT, PACKAGE, 1, Some("work-2")).is_none());
+    assert_eq!(
+        download_by(&packages, &server, ACCOUNT, PACKAGE, 1, MAX, Some("work-2")),
+        Status::Installed { revision: 1 }
+    );
+    assert_eq!(server.asked.lock().unwrap().len(), asked);
+    assert!(packages.queue(ACCOUNT, PACKAGE, 1).unwrap().1);
+    assert!(packages.take(ACCOUNT, PACKAGE, 1, Some("work-3")).is_some());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The third review of OF2: only the runner that last took or tried a job, of its revision, gives it up: a stale run
+/// leaves a job a new tap queued as it is; a run that never took it (no network) gives it up with its own reason.
+#[test]
+fn a_give_up_is_the_last_runners_of_its_revision() {
+    let dir = dir("give-up-runner");
+    let packages = packages(&dir);
+    let server = Fake::new(package(1), 1);
+    server.next.lock().unwrap().push(Next::CutAfter(1000));
+    let cut = download_by(&packages, &server, ACCOUNT, PACKAGE, 1, MAX, Some("work-1"));
+    assert!(matches!(&cut, Status::Failed { retry: true, .. }), "{cut:?}");
+    // another runner, another revision: nothing changes
+    for (revision, runner) in [(1, "work-2"), (2, "work-1")] {
+        let kept = packages.give_up(ACCOUNT, PACKAGE, revision, runner, "x").unwrap();
+        assert!(
+            matches!(&kept, Status::Failed { retry: true, .. }),
+            "{revision} {runner}: {kept:?}"
+        );
+    }
+    // a new tap queues a new job: the stale run cannot end it
+    assert!(packages.queue(ACCOUNT, PACKAGE, 1).unwrap().1);
+    assert_eq!(
+        packages.give_up(ACCOUNT, PACKAGE, 1, "work-1", "x"),
+        Some(Status::Queued { revision: 1 })
+    );
+    // its own worker, which tried with no network, gives it up with what stopped it
+    packages.tried_by(ACCOUNT, PACKAGE, 1, "work-3");
+    let given = packages
+        .give_up(ACCOUNT, PACKAGE, 1, "work-3", "there was no network")
+        .unwrap();
+    assert!(
+        matches!(&given, Status::Failed { code, reason, retry: false, .. }
+            if code == "GAVE_UP" && reason.contains("no network")),
+        "{given:?}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
