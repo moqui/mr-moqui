@@ -17,7 +17,7 @@ use gix::objs::Kind;
 
 use super::super::ops::{self, Author, Edit};
 use super::super::store::{GitStore, MemoryStore};
-use super::write_commit;
+use super::{write_commit, write_commit_within, WriteLimits};
 
 fn author() -> Author {
     Author {
@@ -126,5 +126,44 @@ fn a_commit_is_written_to_a_plain_directory() {
     .unwrap();
     let paths: Vec<String> = changes.into_iter().map(|change| change.path).collect();
     assert_eq!(paths, ["component.xml"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-GIT-20: a tree entry no file system should take (`.GIT` in any case, a `\\`) is left out and named, as an archive
+/// leaves it out; a tree past the entry, byte or depth limit is refused.
+#[test]
+fn unsafe_names_are_left_out_and_a_tree_past_its_limits_is_refused() {
+    let store = MemoryStore::default();
+    let edits = vec![
+        Edit::Put(path("component.xml"), EntryKind::Blob, blob(&store, "<component/>")),
+        Edit::Put(path(".GIT/config"), EntryKind::Blob, blob(&store, "[core]")),
+        Edit::Put(path("a\\b"), EntryKind::Blob, blob(&store, "x")),
+        Edit::Put(path("d1/d2/d3/f.txt"), EntryKind::Blob, blob(&store, "deep")),
+    ];
+    commit(&store, edits);
+    let dir = std::env::temp_dir().join(format!("moqui-git-checkout-limits-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let written = write_commit(&store, "main", None, &dir.join("ok")).unwrap();
+    assert!(
+        written.skipped.iter().any(|name| name == ".GIT"),
+        "{:?}",
+        written.skipped
+    );
+    assert!(
+        written.skipped.iter().any(|name| name == "a\\b"),
+        "{:?}",
+        written.skipped
+    );
+    assert!(!dir.join("ok/.GIT").exists() && dir.join("ok/component.xml").is_file());
+    let limited = |limits: WriteLimits, name: &str| write_commit_within(&store, "main", None, &dir.join(name), limits);
+    let wide = WriteLimits {
+        entries: 1000,
+        bytes: 1 << 20,
+        depth: 64,
+    };
+    assert!(limited(WriteLimits { entries: 3, ..wide }, "entries").is_err());
+    assert!(limited(WriteLimits { bytes: 10, ..wide }, "bytes").is_err());
+    assert!(limited(WriteLimits { depth: 2, ..wide }, "depth").is_err());
+    limited(wide, "wide").unwrap();
     let _ = std::fs::remove_dir_all(&dir);
 }

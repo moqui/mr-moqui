@@ -177,11 +177,43 @@ fn commit_of(store: &dyn GitStore, branch: &str, revision: Option<&str>) -> Resu
     found.ok_or_else(|| Error::new(format!("no commit {} on branch {branch}", revision.unwrap_or("head"))))
 }
 
+/// What [`write_commit`] writes at most: as an archive of the same tree may hold (`archive.rs`), so a pushed tree cannot
+/// make a deploy write without end (SEC-GIT-20).
+#[derive(Clone, Copy, Debug)]
+struct WriteLimits {
+    /// The most entries: files, links, directories and trees read.
+    entries: usize,
+    /// The most bytes of file content.
+    bytes: u64,
+    /// The deepest directory.
+    depth: usize,
+}
+
+const WRITE_LIMITS: WriteLimits = WriteLimits {
+    entries: super::archive::DEFAULT_MAX_ENTRIES,
+    bytes: super::archive::DEFAULT_MAX_BYTES,
+    depth: super::archive::MAX_DEPTH,
+};
+
 fn write_commit(
     store: &dyn GitStore,
     branch: &str,
     revision: Option<&str>,
     target: &Path,
+) -> Result<WrittenTree, Error> {
+    write_commit_within(store, branch, revision, target, WRITE_LIMITS)
+}
+
+/// [`write_commit`] within `limits`. An entry whose name a file system must not take (`.git` in any case, `.`, `..`, a
+/// `/`, `\` or NUL, not UTF-8: `archive.rs` `entry_name`), or that repeats a name of its directory (in any case, as a
+/// file system that ignores case reads it), is left out and named; a tree past the limits writes nothing more and is
+/// refused.
+fn write_commit_within(
+    store: &dyn GitStore,
+    branch: &str,
+    revision: Option<&str>,
+    target: &Path,
+    limits: WriteLimits,
 ) -> Result<WrittenTree, Error> {
     if target.exists() {
         return Err(Error::new(format!("{} exists already", target.display())));
@@ -193,27 +225,55 @@ fn write_commit(
         ..WrittenTree::default()
     };
     std::fs::create_dir_all(target).map_err(|err| io(target, &err))?;
-    let mut pending: Vec<(ObjectId, PathBuf, String)> = vec![(tree, target.to_path_buf(), String::new())];
-    while let Some((tree, dir, prefix)) = pending.pop() {
+    let (mut entries, mut bytes) = (0usize, 0u64);
+    let mut pending: Vec<(ObjectId, PathBuf, String, usize)> = vec![(tree, target.to_path_buf(), String::new(), 0)];
+    while let Some((tree, dir, prefix, depth)) = pending.pop() {
+        let mut names = std::collections::HashSet::new();
         for entry in ops::read_tree(store, &tree)?.entries {
-            let name = entry.filename.to_string();
-            if name == ".git" || name == "." || name == ".." || name.contains('/') {
+            entries += 1;
+            if entries > limits.entries {
+                return Err(Error::new(format!(
+                    "the tree of {commit} has more than {} entries; nothing more is written",
+                    limits.entries
+                )));
+            }
+            let raw: &[u8] = entry.filename.as_ref();
+            let Some(name) = super::archive::entry_name(raw).map(str::to_string) else {
+                written
+                    .skipped
+                    .push(format!("{prefix}{}", String::from_utf8_lossy(raw)));
+                continue;
+            };
+            if !names.insert(name.to_lowercase()) {
                 written.skipped.push(format!("{prefix}{name}"));
                 continue;
             }
             let path = dir.join(&name);
             let relative = format!("{prefix}{name}");
             if entry.mode.is_tree() {
+                if depth + 1 > limits.depth {
+                    return Err(Error::new(format!(
+                        "{relative} is more than {} directories deep; nothing more is written",
+                        limits.depth
+                    )));
+                }
                 std::fs::create_dir_all(&path).map_err(|err| io(&path, &err))?;
-                pending.push((entry.oid, path, format!("{relative}/")));
+                pending.push((entry.oid, path, format!("{relative}/"), depth + 1));
             } else if entry.mode.is_link() || entry.mode.is_commit() {
                 written.skipped.push(relative);
             } else {
-                let bytes = ops::object(store, &entry.oid, Kind::Blob)?;
-                if bytes.starts_with(b"version https://git-lfs.github.com/spec/") {
+                let content = ops::object(store, &entry.oid, Kind::Blob)?;
+                bytes = bytes.saturating_add(content.len() as u64);
+                if bytes > limits.bytes {
+                    return Err(Error::new(format!(
+                        "the files of {commit} are over {} bytes; nothing more is written",
+                        limits.bytes
+                    )));
+                }
+                if content.starts_with(b"version https://git-lfs.github.com/spec/") {
                     written.lfs_pointers.push(relative.clone());
                 }
-                std::fs::write(&path, &bytes).map_err(|err| io(&path, &err))?;
+                std::fs::write(&path, &content).map_err(|err| io(&path, &err))?;
                 #[cfg(unix)]
                 if entry.mode.is_executable() {
                     use std::os::unix::fs::PermissionsExt;

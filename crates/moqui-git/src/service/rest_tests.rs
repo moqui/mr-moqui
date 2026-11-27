@@ -385,6 +385,24 @@ fn an_application_keeps_its_repositories_writes_to_its_own_rest() {
     );
     let (unknown, _) = rest(&fixture, Some(READER), "get", "moqui/git/free/agreement", &[]);
     assert_eq!(to_plain_string(&field(&unknown, "known")), "false");
+    // SEC-GIT-21: another author's answer is a reviewer's, not any viewer's
+    let (_, errors) = rest(
+        &fixture,
+        Some(READER),
+        "get",
+        "moqui/hosting/agreement",
+        &[("repositoryId", s("kept")), ("authorEmail", s("someone@example.com"))],
+    );
+    assert!(errors.contains("update right"), "{errors}");
+    let (theirs, errors) = rest(
+        &fixture,
+        Some(WRITER),
+        "get",
+        "moqui/hosting/agreement",
+        &[("repositoryId", s("kept")), ("authorEmail", s("someone@example.com"))],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    assert_eq!(to_plain_string(&field(&theirs, "known")), "true");
 
     // the repository behind a clone URL, an SSH URL and a page URL
     for url in [
