@@ -512,7 +512,8 @@ fn a_checksum_mismatch_keeps_the_previous_revision() {
         download(&packages, &first, ACCOUNT, PACKAGE, 1, MAX),
         Status::Installed { revision: 1 }
     );
-    // revision 2, whose bytes are not the tag the server names
+    // revision 2, whose bytes are not the tag the server names; asked for as the host asks
+    packages.queue(ACCOUNT, PACKAGE, 2).unwrap();
     let mut second = Fake::new(package(2), 2);
     second.tag = format!("sha256-{}", sha(b"another file"));
     let ended = download(&packages, &second, ACCOUNT, PACKAGE, 2, MAX);
@@ -772,10 +773,11 @@ fn a_cancel_stops_a_download_and_keeps_nothing_of_it() {
         packages.queue(ACCOUNT, PACKAGE, 1).unwrap(),
         (Status::Queued { revision: 1 }, true)
     );
-    // asked again: the same job, not queued a second time; a revision under 1 refused
+    // asked again before it ran: started again (its worker replaced, its Wi-Fi choice with it); a revision under 1
+    // refused
     assert_eq!(
         packages.queue(ACCOUNT, PACKAGE, 1).unwrap(),
-        (Status::Queued { revision: 1 }, false)
+        (Status::Queued { revision: 1 }, true)
     );
     assert!(packages.queue(ACCOUNT, PACKAGE, 0).is_err());
     assert!(packages.cancel(ACCOUNT, PACKAGE));
@@ -783,6 +785,15 @@ fn a_cancel_stops_a_download_and_keeps_nothing_of_it() {
         packages.job_status(ACCOUNT, PACKAGE),
         Some(Status::Cancelled { revision: 1 })
     );
+    // the cancel stands: a run of it (a worker that comes late) does nothing and ends, done
+    let late = Fake::new(package(1), 1);
+    assert_eq!(
+        download(&packages, &late, ACCOUNT, PACKAGE, 1, MAX),
+        Status::Cancelled { revision: 1 }
+    );
+    assert!(late.asked.lock().unwrap().is_empty());
+    // a download asked again runs
+    assert!(packages.queue(ACCOUNT, PACKAGE, 1).unwrap().1);
     // cancelled between ranges: the server's first range comes, the cancel is seen before the next
     struct CancelAfterFirst<'a>(&'a Fake, &'a Packages);
     impl PackageServer for CancelAfterFirst<'_> {
@@ -807,6 +818,7 @@ fn a_cancel_stops_a_download_and_keeps_nothing_of_it() {
     assert_eq!(server.ranges().len(), 1);
     assert!(!dir.join(format!("data/{ACCOUNT}.packages/{PACKAGE}")).exists());
     // delete removes an installed one
+    packages.queue(ACCOUNT, PACKAGE, 1).unwrap();
     assert_eq!(
         download(&packages, &server, ACCOUNT, PACKAGE, 1, MAX),
         Status::Installed { revision: 1 }
@@ -1009,8 +1021,85 @@ fn a_windows_device_name_is_no_member_path() {
     ] {
         assert!(unzip::plain_path(path), "{path}");
     }
-    assert!(!crate::files::plain_name("con.example.com-0123456789ab"));
-    assert!(crate::files::plain_name("console.example.com-0123456789ab"));
+    // a package id is refused one too; an account id is a plain name everywhere (what an earlier version wrote is
+    // found and forgotten), and a name a new file may take but on Windows
+    assert!(Packages::new(Path::new("/x")).package_dir(ACCOUNT, "NUL").is_none());
+    assert!(crate::files::plain_name("con.example.com-0123456789ab"));
+    assert_eq!(
+        crate::files::writable_name("con.example.com-0123456789ab"),
+        !cfg!(windows)
+    );
+    assert!(crate::files::writable_name("console.example.com-0123456789ab"));
+}
+
+/// The second review of OF2: an account of `aux.corp.net` is an account on Linux, macOS and Android: its store opens,
+/// its packages download, and it is forgotten whole; a forget never refuses a name.
+#[test]
+fn an_account_named_like_a_windows_device_opens_and_is_forgotten() {
+    let dir = dir("aux-account");
+    let account = "aux.corp.net-0123456789ab";
+    let packages = packages(&dir);
+    let server = Fake::new(package(1), 1);
+    if !cfg!(windows) {
+        let store = crate::store::Store::open(&dir, account, 1 << 20).unwrap();
+        drop(store);
+        assert!(dir.join(format!("data/{account}.db")).exists());
+        assert_eq!(
+            download(&packages, &server, account, PACKAGE, 1, MAX),
+            Status::Installed { revision: 1 }
+        );
+    } else {
+        std::fs::create_dir_all(dir.join(format!("data/{account}.packages/{PACKAGE}/1"))).unwrap();
+    }
+    packages.forget(account);
+    crate::store::forget(&dir, account).unwrap();
+    assert!(!dir.join(format!("data/{account}.packages")).exists());
+    assert!(!dir.join(format!("data/{account}.db")).exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The second review of OF2: a package deleted (or its account forgotten) while its cancelled run still goes keeps a
+/// tombstone until that run ends: no download of it is queued or run on the same files meanwhile.
+#[test]
+fn a_package_deleted_while_its_run_goes_is_not_downloaded_again_meanwhile() {
+    for forget in [false, true] {
+        let dir = dir(&format!("tombstone-{forget}"));
+        let packages = packages(&dir);
+        struct DeleteOnFirst<'a>(&'a Fake, &'a Packages, bool, Mutex<Option<(bool, bool, Status)>>);
+        impl PackageServer for DeleteOnFirst<'_> {
+            fn get(&self, path: &str, headers: &[(String, String)]) -> Result<ServerAnswer, String> {
+                let answer = self.0.get(path, headers)?;
+                if answer.status == 206 && self.3.lock().unwrap().is_none() {
+                    if self.2 {
+                        self.1.forget(ACCOUNT);
+                    } else {
+                        self.1.delete(ACCOUNT, PACKAGE).unwrap();
+                    }
+                    let refused = self.1.queue(ACCOUNT, PACKAGE, 1).is_err();
+                    let listed = self.1.status(ACCOUNT).as_array().is_some_and(|list| list.is_empty());
+                    let second = download(self.1, self.0, ACCOUNT, PACKAGE, 1, MAX);
+                    *self.3.lock().unwrap() = Some((refused, listed, second));
+                }
+                Ok(answer)
+            }
+        }
+        let server = Fake::new(package(1), 1);
+        let deleting = DeleteOnFirst(&server, &packages, forget, Mutex::new(None));
+        assert_eq!(
+            download(&packages, &deleting, ACCOUNT, PACKAGE, 1, MAX),
+            Status::Cancelled { revision: 1 }
+        );
+        let (refused, listed, second) = deleting.3.lock().unwrap().clone().unwrap();
+        assert!(refused, "a download queued while the deleted run went");
+        assert!(listed, "the tombstone is not the shell's");
+        assert!(!second.ended(), "{second:?}");
+        assert_eq!(server.ranges().len(), 1, "one run asked for bytes");
+        assert!(!dir.join(format!("data/{ACCOUNT}.packages")).exists());
+        // once the run ended, its tombstone is gone and a download may be asked again
+        assert_eq!(packages.job_status(ACCOUNT, PACKAGE), None);
+        assert!(packages.queue(ACCOUNT, PACKAGE, 1).unwrap().1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 /// A zip64 package: the end record's fields at their markers and the members' sizes and offset in their zip64 extra

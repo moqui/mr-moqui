@@ -185,10 +185,11 @@ pub fn download_by(
     if revision < 1 {
         return Status::failed(revision, "NOT_FOUND", "Not a revision of the package", false);
     }
+    // no run: the job's own state, a cancel that stands as Cancelled (an end, so the worker is done), a run under way
+    // as where it is (not ended, so the worker comes back)
     let Some(job) = packages.take(account, package_id, revision, runner) else {
         return packages
             .job_status(account, package_id)
-            .filter(|status| !status.ended())
             .unwrap_or(Status::Queued { revision });
     };
     let ended = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -527,11 +528,12 @@ impl Run<'_> {
         let _ = remove_tree(&aside);
         let moved = target.exists() && std::fs::rename(&target, &aside).is_ok();
         let renamed = std::fs::rename(unpacked, &target);
-        if renamed.is_err() && moved {
-            let _ = std::fs::rename(&aside, &target);
-        }
+        let restored = renamed.is_err() && moved && std::fs::rename(&aside, &target).is_ok();
         drop(jobs);
-        let _ = remove_tree(&aside);
+        // the revision set aside goes once the new one is in place or it is back; else it is all there is of it
+        if renamed.is_ok() || restored {
+            let _ = remove_tree(&aside);
+        }
         if let Err(err) = renamed {
             let _ = remove_tree(unpacked);
             return self.failed(

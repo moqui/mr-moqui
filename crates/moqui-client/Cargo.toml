@@ -36,7 +36,7 @@ zeroize = { workspace = true }
 rustix = { workspace = true, features = ["fs"] }
 # ... and on Windows (GetDiskFreeSpaceExW): the windows-sys the tree already has.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 # The test servers' certificates of the TLS proofs (src/tls_tests.rs), as the host's tests make theirs.
