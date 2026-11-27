@@ -109,6 +109,10 @@ struct Harness {
 
 impl Harness {
     async fn start(limits: RegistrarLimits) -> Harness {
+        Harness::start_with(limits, crate::guard::RequestLimits::default()).await
+    }
+
+    async fn start_with(limits: RegistrarLimits, request_limits: crate::guard::RequestLimits) -> Harness {
         let (tx, events) = mpsc::unbounded_channel();
         let directory = Arc::new(Directory::default());
         directory.put("D1", "p100", 1, PASSWORD, &[Algorithm::Sha256]);
@@ -126,6 +130,7 @@ impl Harness {
                     limits,
                     directory: Arc::clone(&directory) as Arc<dyn DeviceDirectory>,
                 }),
+                limits: request_limits,
                 ..Default::default()
             },
             tx,
@@ -1045,4 +1050,60 @@ async fn a_forged_nonce_is_not_looked_up_and_a_via_does_not_choose_the_transport
     let added = h.binding(BindingChange::Added).await;
     assert_eq!((added.flow.transport, added.flow.source), (Transport::Udp, phone.addr));
     h.ua.shutdown();
+}
+
+/// SEC-COM-26: a phone that REGISTERed over TCP and then sends only CRLF keepalives is kept past
+/// `sip-server/limits@unauthenticated-seconds`, as its connection authenticated.
+#[tokio::test]
+async fn a_registered_phones_connection_is_kept_past_the_unauthenticated_deadline() {
+    let mut h = Harness::start_with(
+        RegistrarLimits::default(),
+        crate::guard::RequestLimits {
+            unauthenticated_seconds: 1,
+            ..Default::default()
+        },
+    )
+    .await;
+    // the listener starts with the endpoint's loop
+    let mut tcp = None;
+    for _ in 0..50 {
+        if let Ok(stream) = TcpStream::connect(h.tcp).await {
+            tcp = Some(stream);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let mut tcp = tcp.expect("the SIP TCP listener started");
+    let registered = Reg {
+        contact: "<sip:p100@192.168.1.20:5099;transport=tcp;ob>;+sip.instance=\"<urn:uuid:00000000-0000-1000-8000-000a95a0e129>\";reg-id=1",
+        expires: Some(3600),
+        extra: "Supported: outbound, path\r\n",
+        call_id: "reg-kept",
+        ..Default::default()
+    };
+    let sent_by = "192.168.1.20:5099";
+    tcp.write_all(register_text(&registered, "TCP", sent_by, h.tcp, None).as_bytes())
+        .await
+        .unwrap();
+    let mut reader = StreamReader::default();
+    let challenge = reader.response(&mut tcp).await;
+    let auth = authorization(&challenge, &registered, h.tcp);
+    let signed = Reg { cseq: 2, ..registered };
+    tcp.write_all(register_text(&signed, "TCP", sent_by, h.tcp, Some(&auth)).as_bytes())
+        .await
+        .unwrap();
+    assert_eq!(code(&reader.response(&mut tcp).await), 200);
+    h.binding(BindingChange::Added).await;
+    // past the deadline, only keepalives: each still answered
+    for _ in 0..4 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        tcp.write_all(b"\r\n\r\n").await.unwrap();
+        let mut pong = [0u8; 2];
+        tokio::time::timeout(WAIT, tcp.read_exact(&mut pong))
+            .await
+            .expect("a pong in time")
+            .expect("the connection stays open");
+        assert_eq!(&pong, b"\r\n");
+    }
+    assert_eq!(h.ua.bindings("p100").len(), 1);
 }

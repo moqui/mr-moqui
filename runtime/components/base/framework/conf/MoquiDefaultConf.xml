@@ -233,7 +233,8 @@
         (0 turns one off): sip-server/limits@request-rate new requests a second from one source, sip-server/limits@request-burst of them at once;
         sip-server/limits@max-transactions, past which new requests are dropped; sip-server/limits@max-connections, TCP and TLS connections at once,
         and sip-server/limits@max-connections-per-source of them from one source, sip-server/limits@max-connections-per-unknown-source
-        from one with no trunk's address, phone's binding or authenticated connection; an accepted TCP or TLS connection on
+        from one with no trunk's address, phone's binding or authenticated connection, and sip-server/limits@max-unknown-connections
+        from all such sources together; an accepted TCP or TLS connection on
         which no request authenticated (a phone's REGISTER, a PBX trunk's digest) is closed after
         sip-server/limits@unauthenticated-seconds unless it is a trunk's. On a local node, an edge node's engine
         reports its own blocks (kept apart from this node's engines'): sip-server/limits@edge-blocks-per-hour new blocked
@@ -246,7 +247,8 @@
     <sip-server port="" host="127.0.0.1" tls-port="" tls-host="" tls-ca-file="" rtp-ports="20000-20999" rtp-host=""
             public-address="" domain="">
         <limits request-rate="20" request-burst="100" max-transactions="2000" max-connections="500"
-                max-connections-per-source="100" edge-blocks-per-hour="200" edge-alerts-per-hour="10"/>
+                max-connections-per-source="100" max-connections-per-unknown-source="10" max-unknown-connections="250"
+                unauthenticated-seconds="30" edge-blocks-per-hour="200" edge-alerts-per-hour="10"/>
         <registrar enabled="false" min-expires="60" max-expires="3600" default-expires="600" nat-expires="60"/>
     </sip-server>
 

@@ -461,6 +461,8 @@ struct BlockInspector {
     listen_ports: Vec<u16>,
     /// How long an accepted connection may go without authenticating; zero for no limit.
     unauthenticated: Duration,
+    /// The open connections counted as an unknown source's when they opened, by remote address.
+    unknown_connections: Mutex<HashSet<SocketAddr>>,
 }
 
 /// How long an admitted INVITE's key is kept: an INVITE server transaction's life (Timer H, 64 T1, with Timer I).
@@ -609,6 +611,10 @@ impl TransportEventInspector for BlockInspector {
             TransportEvent::New(connection) if connection.is_reliable() => {
                 let source = remote_ip(connection);
                 let known = source.is_some_and(|ip| self.source_known(ip));
+                // the gate's count of unknown sources' connections goes down with the same connection's close
+                if let (false, Some(remote)) = (known, remote_addr(connection)) {
+                    lock(&self.unknown_connections).insert(remote);
+                }
                 if !lock(&self.gate).connection_opened(source, known) {
                     tracing::warn!("SIP: too many connections, {} closed", connection.get_addr());
                     let connection = connection.clone();
@@ -620,10 +626,12 @@ impl TransportEventInspector for BlockInspector {
                 }
             }
             TransportEvent::Closed(connection) if connection.is_reliable() => {
+                let mut known = true;
                 if let Some(remote) = remote_addr(connection) {
                     lock(&self.authenticated).remove(&remote);
+                    known = !lock(&self.unknown_connections).remove(&remote);
                 }
-                lock(&self.gate).connection_closed(remote_ip(connection));
+                lock(&self.gate).connection_closed(remote_ip(connection), known);
                 if let Some((registrar, events)) = &self.phones {
                     phones::connection_closed(registrar, events, connection);
                 }
@@ -632,6 +640,24 @@ impl TransportEventInspector for BlockInspector {
         }
         Some(event)
     }
+}
+
+/// Whether `request`'s Contact names a transport other than UDP (`;transport=tcp`, `tls`, `ws`, `wss`, `sctp`, or a
+/// `sips:` URI), for a request that came over UDP (SEC-COM-84).
+fn contact_transport_differs(request: &Request) -> bool {
+    header_values(&request.headers, "Contact").iter().any(|contact| {
+        let lower = contact.to_ascii_lowercase();
+        let uri = match lower.split_once('<') {
+            Some((_, rest)) => rest.split('>').next().unwrap_or_default(),
+            None => lower.as_str(),
+        };
+        uri.trim().starts_with("sips:")
+            || uri
+                .split(';')
+                .skip(1)
+                .filter_map(|param| param.trim().strip_prefix("transport="))
+                .any(|transport| transport.trim() != "udp")
+    })
 }
 
 /// The address a stream connection is from.
@@ -654,7 +680,9 @@ fn known_source(
     registrar: Option<&Arc<Mutex<Registrar>>>,
     ip: IpAddr,
 ) -> bool {
-    lock(authenticated).iter().any(|addr| addr.ip() == ip)
+    // by the source as the gate counts it (an IPv6 /64 is one), so a known phone's neighbours in its /64 are known too
+    let key = crate::guard::source_key(ip);
+    lock(authenticated).iter().any(|addr| crate::guard::source_key(addr.ip()) == key)
         || registrar.is_some_and(|registrar| lock(registrar).has_flow_from(ip))
         || inner
             .get()
@@ -888,6 +916,7 @@ impl Ua {
                     .map(|addr| addr.port())
                     .collect(),
                 unauthenticated: Duration::from_secs(config.limits.unauthenticated_seconds),
+                unknown_connections: Mutex::default(),
             }))
             .build();
         let mut incoming = endpoint.incoming_transactions().map_err(sip_err)?;
@@ -2115,6 +2144,13 @@ impl Inner {
 
     async fn new_call(self: Arc<Self>, mut tx: Transaction, caller: Caller, source: Option<SocketAddr>) {
         let request = tx.original.clone();
+        // a dialog over UDP is routed by the peer's Contact: one that names another transport would have this side
+        // dial a new stream connection where it says (SEC-COM-84), so such a call is not taken
+        if phones::transport_in(&tx) == Transport::Udp && contact_transport_differs(&request) {
+            tracing::info!("SIP INVITE from {source:?}: its Contact names a stream transport over UDP; refused");
+            let _ = tx.reply(StatusCode::BadRequest).await;
+            return;
+        }
         // a trunk's call, or a registered phone's over the transport it came by
         let (trunk_id, device, transport) = match caller {
             Caller::Trunk(trunk) => (trunk.id, None, trunk.transport),

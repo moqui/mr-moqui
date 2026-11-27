@@ -62,13 +62,13 @@ fn the_transaction_and_connection_caps() {
     assert!(gate.connection_opened(None, true));
     assert!(gate.connection_opened(None, true));
     assert!(!gate.connection_opened(None, true), "the third is closed");
-    gate.connection_closed(None);
+    gate.connection_closed(None, true);
     assert!(
         !gate.connection_opened(None, true),
         "still two open with the one past the cap counted until its close"
     );
-    gate.connection_closed(None);
-    gate.connection_closed(None);
+    gate.connection_closed(None, true);
+    gate.connection_closed(None, true);
     assert!(gate.connection_opened(None, true));
     assert_eq!(RequestLimits::default().max_connections, 500);
 }
@@ -93,8 +93,8 @@ fn one_source_cannot_hold_every_connection() {
         "another source still connects"
     );
     // the one past the cap closes, then one of the two: the source may open one again
-    gate.connection_closed(Some(flood));
-    gate.connection_closed(Some(flood));
+    gate.connection_closed(Some(flood), true);
+    gate.connection_closed(Some(flood), true);
     assert!(gate.connection_opened(Some(flood), true));
     // the same /64 is the same source
     let a: IpAddr = "2001:db8:1:2::1".parse().unwrap();
@@ -130,6 +130,22 @@ fn an_unknown_source_holds_fewer_connections() {
         "a known source has the full share"
     );
     assert_eq!(RequestLimits::default().max_connections_per_unknown_source, 10);
+    // the unknown sources together hold at most their total; a known source is not counted in it
+    let mut gate = RequestGate::new(RequestLimits {
+        max_connections: 100,
+        max_connections_per_unknown_source: 2,
+        max_unknown_connections: 3,
+        ..Default::default()
+    });
+    let stranger = |n: u8| Some(IpAddr::from([203, 0, 113, n]));
+    assert!(gate.connection_opened(stranger(1), false));
+    assert!(gate.connection_opened(stranger(2), false));
+    assert!(gate.connection_opened(stranger(3), false));
+    assert!(!gate.connection_opened(stranger(4), false), "past the unknown sources' total");
+    assert!(gate.connection_opened(Some(office), true));
+    gate.connection_closed(stranger(4), false);
+    gate.connection_closed(stranger(1), false);
+    assert!(gate.connection_opened(stranger(5), false), "room again");
 }
 
 #[test]

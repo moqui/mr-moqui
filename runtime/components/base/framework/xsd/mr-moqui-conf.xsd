@@ -2513,6 +2513,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:attribute name="max-connections" type="xs:string" default="500"/>
                     <xs:attribute name="max-connections-per-source" type="xs:string" default="100"/>
                     <xs:attribute name="max-connections-per-unknown-source" type="xs:string" default="10"/>
+                    <xs:attribute name="max-unknown-connections" type="xs:string" default="250"/>
                     <xs:attribute name="unauthenticated-seconds" type="xs:string" default="30"/>
                     <xs:attribute name="edge-blocks-per-hour" type="xs:string" default="200"><xs:annotation><xs:documentation>On a local node, the most new sources its edge node's SIP engine reports blocked in an hour; kept apart from this node's engines' blocks.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="edge-alerts-per-hour" type="xs:string" default="10"><xs:annotation><xs:documentation>On a local node, the most voice alerts (a blocked source, a failed trunk) its edge node's SIP engine raises in an hour; past it they are logged only.</xs:documentation></xs:annotation></xs:attribute>

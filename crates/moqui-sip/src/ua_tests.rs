@@ -1703,3 +1703,25 @@ async fn an_unauthenticated_stream_connection_is_closed_after_its_deadline() {
     assert!(read.is_err(), "still open, nothing to read: {read:?}");
     ua.shutdown();
 }
+
+/// SEC-COM-84 (the part done): a call over UDP whose Contact names a stream transport is refused before any dialog,
+/// so this side never dials the connection it names.
+#[test]
+fn a_contact_naming_a_stream_transport_over_udp_is_refused() {
+    let request = |contact: &str| {
+        Request::try_from(
+            format!(
+                "INVITE sip:100@127.0.0.1 SIP/2.0\r\nVia: SIP/2.0/UDP 127.0.0.1:5070;branch=z9hG4bK-1\r\n\
+                 From: <sip:p@x>;tag=1\r\nTo: <sip:100@127.0.0.1>\r\nCall-ID: c1\r\nCSeq: 1 INVITE\r\n\
+                 Contact: {contact}\r\nContent-Length: 0\r\n\r\n"
+            )
+            .as_str(),
+        )
+        .unwrap()
+    };
+    assert!(!contact_transport_differs(&request("<sip:p@192.0.2.1:5060>")));
+    assert!(!contact_transport_differs(&request("<sip:p@192.0.2.1:5060;transport=UDP>")));
+    assert!(contact_transport_differs(&request("<sip:p@127.0.0.1:5432;transport=tcp>")));
+    assert!(contact_transport_differs(&request("\"Sips\" <sips:p@10.0.0.1>")));
+    assert!(contact_transport_differs(&request("sip:p@10.0.0.1;transport=tls")));
+}

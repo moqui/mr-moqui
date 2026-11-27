@@ -396,12 +396,14 @@ impl Registrar {
         gone
     }
 
-    /// Whether any binding's flow is from `ip` (SEC-COM-26: a phone's source is a known one).
+    /// Whether any binding's flow is from the source of `ip` as the request gate counts sources (an IPv6 /64 is one;
+    /// SEC-COM-26: a phone's source is a known one).
     pub fn has_flow_from(&self, ip: std::net::IpAddr) -> bool {
+        let key = crate::guard::source_key(ip);
         self.bindings
             .values()
             .flatten()
-            .any(|binding| binding.flow.source.ip() == ip)
+            .any(|binding| crate::guard::source_key(binding.flow.source.ip()) == key)
     }
 
     /// How many bindings there are, over every device.
