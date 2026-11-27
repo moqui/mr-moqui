@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The transitions of stickers and locations (plans/Comms-Messaging.md §18.3 phase 20; org.moqui.chat.ChatStickerServices,
     ChatLocationServices), each included by name: in Chat.xml stickerPacks (the picker's packs), stickerImage (a sticker's
     picture or its thumbnail, sent inline with nosniff), sendSticker and sendLocation (a plain room's; an encrypted room's
-    are the browser's own encrypted sends); in Settings/Stickers.xml and System/ChatStickers.xml the pack management
+    are the browser's own encrypted sends), and live location's (below; plans/Location-Sharing.md §3.5); in Settings/Stickers.xml and System/ChatStickers.xml the pack management
     (createStickerPack, updateStickerPack, deleteStickerPack, addSticker, removeSticker), which go back to
     the screen with its message. A JSON refusal is answered with its reasonCode and the errors, as send's is. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd">
@@ -56,6 +56,83 @@ along with this software (see the LICENSE.md file). If not, see
                 threadRootEventSeq: threadRootEventSeq ? Number(threadRootEventSeq) : null, clientRef: clientRef || null,
                 roomUrl: (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call() || {}
             ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {eventSeq: out.eventSeq, event: out.event, clientRef: clientRef || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <!-- Live location in a room (plans/Location-Sharing.md §3.5, LL4; ChatLocationServices send#LiveLocation and
+        get#LiveLocation, over LocationServices): sendLiveLocation starts a share with the room's members and posts its
+        message (thruDate epoch millis); liveLocation reads a live location message's share as the caller may see it (its
+        audience checked by get#Share); reportLiveLocation is a browser page's position for a share of the user's own
+        (report#Position, which remembers no parameters), answered as statusCode with the share's latest as its audience
+        reads it, as Maps › Browse's reportPosition is; sendLiveFromHere takes a share over to this page (update#Share
+        sendFromHere) and stopLiveLocation stops it. No position is in an error or a log. -->
+    <transition name="sendLiveLocation" method="post">
+        <actions><script><![CDATA[
+            const thru = Number(thruDate)
+            const out = ec.service.sync().name('org.moqui.chat.ChatLocationServices.send#LiveLocation').parameters({chatRoomId: chatRoomId || '',
+                thruDate: Number.isFinite(thru) ? new Date(thru) : null, precisionEnumId: precisionEnumId === 'LspApproximate' ? 'LspApproximate' : 'LspExact',
+                label: label || null, replyToEventSeq: replyToEventSeq ? Number(replyToEventSeq) : null,
+                threadRootEventSeq: threadRootEventSeq ? Number(threadRootEventSeq) : null, clientRef: clientRef || null,
+                roomUrl: (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {eventSeq: out.eventSeq, event: out.event, shareId: out.shareId,
+                thruDate: out.thruDate, intervalSeconds: out.intervalSeconds, duplicate: !!out.duplicate, clientRef: clientRef || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="liveLocation" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatLocationServices.get#LiveLocation').parameters({chatRoomId: chatRoomId || '',
+                eventSeq: eventSeq ? Number(eventSeq) : null}).call() || {}
+            if (ec.message.hasError()) { ec.message.clearErrors(); ec.web.sendJsonResponse({state: null, reasonCode: out.reasonCode || 'notFound'}) }
+            else ec.web.sendJsonResponse({state: out.state, owner: !!out.owner, share: out.share || null, latest: out.latest || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="reportLiveLocation" method="post">
+        <actions><script><![CDATA[
+            const value = (name) => (context[name] == null ? null : String(context[name]).trim() || null)
+            const observed = Number(context.observedDate)
+            let answer = {statusCode: 500, reasonCode: 'FAILED'}
+            ec.message.pushErrors()
+            try {
+                const out = ec.service.sync().name('org.moqui.maps.LocationServices.report#Position').requireNewTransaction(true)
+                    .parameters({shareId: String(shareId ?? ''), latitude: value('latitude'), longitude: value('longitude'), accuracy: value('accuracy'),
+                        heading: value('heading'), speed: value('speed'), audienceVersion: value('audienceVersion'),
+                        observedDate: value('observedDate') && Number.isFinite(observed) ? new Date(observed) : null}).call() || {}
+                answer = {statusCode: Number(out.statusCode) || (ec.message.hasError() ? 400 : 200), reasonCode: out.reasonCode || null,
+                    retryAfterSeconds: out.retryAfterSeconds == null ? null : Number(out.retryAfterSeconds)}
+            } catch (err) {
+                // the failure's text may hold what was posted: it is not logged or answered
+                answer = {statusCode: 500, reasonCode: 'FAILED'}
+            } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            if (answer.statusCode === 200) {
+                ec.message.pushErrors()
+                try {
+                    const got = ec.service.sync().name('org.moqui.maps.LocationServices.get#Share').parameters({shareId: String(shareId ?? ''), trailPageSize: 1})
+                        .requireNewTransaction(true).call() || {}
+                    if (!ec.message.hasError() && got.latest) answer.latest = got.latest
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            }
+            ec.web.sendJsonResponse(answer)
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="sendLiveFromHere" method="post">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.maps.LocationServices.update#Share').requireNewTransaction(true)
+                .parameters({shareId: String(shareId ?? ''), sendFromHere: true}).call() || {}
+            if (ec.message.hasError()) { const reason = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({applied: false, reasonCode: out.reasonCode, reason}) }
+            else ec.web.sendJsonResponse({applied: true, thruDate: out.thruDate ? ec.user.timestampMillis(out.thruDate) : null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="stopLiveLocation" method="post">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.maps.LocationServices.stop#Share').requireNewTransaction(true)
+                .parameters({shareId: String(shareId ?? '')}).call() || {}
+            if (ec.message.hasError()) { const reason = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({applied: false, reasonCode: out.reasonCode, reason}) }
+            else ec.web.sendJsonResponse({applied: true})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>

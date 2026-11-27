@@ -1484,7 +1484,7 @@ module.exports = {
         noteSending(off) {
             if (!moqui.shellIndicators) return;
             const here = !off && !this.closed && this.sending.length > 0;
-            moqui.shellIndicators.note(INDICATOR_KEY, this.nativeSending.length ? t('sending from this phone') : here ? t('sending here') : null);
+            moqui.shellIndicators.noteFrom(INDICATOR_KEY, 'maps', this.nativeSending.length ? t('sending from this phone') : here ? t('sending here') : null);
         },
         note(shareId, text) { this.sendNotes = Object.assign({}, this.sendNotes, { [shareId]: text }); },
         // a share's report interval in milliseconds: its own, else the listed share's, else location@min-interval-seconds' default

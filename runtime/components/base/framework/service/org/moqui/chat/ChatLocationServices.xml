@@ -14,7 +14,9 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Location messages (plans/Comms-Messaging.md §18.3 phase 20): a message with content.location (coordinates, an address
     or both, a label) whose body is its words and an OpenStreetMap link, so every client, bridge and text shows it. No map,
-    no geocoding, no outside request. The logic is ChatLocation.js beside this file. -->
+    no geocoding, no outside request. A live location (plans/Location-Sharing.md §3.5) is a LocationServices share with
+    the room's members and a message that carries the share's id, never a position (send#LiveLocation, get#LiveLocation).
+    The logic is ChatLocation.js beside this file. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="send" noun="Location">
@@ -40,6 +42,71 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatLocation.js').execute('send', context))</script></actions>
+    </service>
+
+    <service verb="send" noun="LiveLocation">
+        <description>Share the current user's live location with a plain room's members (plans/Location-Sharing.md §3.5,
+            LL4): a share (LocationServices.create#Share) whose audience is the room's local users in it now, as users,
+            but the caller, its agents, those who put the room out of sight, accounts that cannot sign in, those the
+            caller blocked, and those the chat directory keeps from the caller or who blocked them; until thruDate (within
+            location@max-share-hours), exact or approximate (precisionEnumId), no trail; then a message whose words say
+            whose live location it is (the full name, never the username), for how long from now, and that live updates
+            are in the app (with the room's link when the server's address is known), and whose content.location is
+            {liveShareId, label, thruDate, approximate, source live}: the share's id, never a position, so a bridge or a
+            text gets those words only; the room and message kept with the share's id (ChatLiveShare). A person who joins
+            the room later is not added, one who leaves by themselves stays in the share until its owner takes them out
+            (Who sees my location), and one taken out of the room by another or blocked by the owner loses it
+            (revokeLive). replyToEventSeq, threadRootEventSeq, clientRef (a send again by it answers the first message with
+            its share's shareId, thruDate and intervalSeconds, duplicate true, and starts no second share) and roomUrl as
+            send#Message. Refused: not a member (notMember, checked first, so a non-member learns nothing of the room),
+            an encrypted room (encryptedRoom: the server would see each position), nobody else to see it (noAudience),
+            and create#Share's refusals (its reasonCode, and nothing kept). Out: eventSeq, event (with location),
+            shareId, thruDate (epoch millis), intervalSeconds (the share's report interval), duplicate,
+            reasonCode.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="thruDate" type="Timestamp" required="true"/>
+            <parameter name="precisionEnumId" default-value="LspExact"/>
+            <parameter name="label"/>
+            <parameter name="replyToEventSeq" type="Integer"/>
+            <parameter name="threadRootEventSeq" type="Integer"/>
+            <parameter name="clientRef"/>
+            <parameter name="roomUrl"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="eventSeq" type="Integer"/>
+            <parameter name="event" type="Map"/>
+            <parameter name="shareId"/>
+            <parameter name="thruDate" type="Long"/>
+            <parameter name="intervalSeconds" type="Integer"/>
+            <parameter name="duplicate" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatLocation.js').execute('live', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="LiveLocation">
+        <description>A live location message's share as the current user may see it (plans/Location-Sharing.md §3.5): the
+            message read by get#Timeline (only one who reads the room gets anything), the share through
+            LocationServices.get#Share (which checks its current audience and is the only read of a position). state live
+            (latest: the position received since the caller was reached, or none yet), ended, or notShared (on, and the
+            caller is not in its audience: one who joined the room after it started, or whom its owner took out); owner;
+            share {shareId, label, ownerName, thruDate, approximate, and for the owner audienceVersion, sentFromDevice,
+            deviceName, fromThisDevice, audienceCount, intervalSeconds, leftRoomNames: the people it still reaches who
+            left the room by themselves}. A share id in a message not by the share's owner reads as no
+            share. Refused: notFound.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="state"/>
+            <parameter name="owner" type="Boolean"/>
+            <parameter name="share" type="Map"/>
+            <parameter name="latest" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatLocation.js').execute('liveView', context))</script></actions>
     </service>
 
     <service verb="words" noun="Location" allow-remote="false">

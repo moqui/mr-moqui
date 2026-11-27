@@ -656,12 +656,47 @@ function revoke(p) {
     if (!share) return notFound()
     const row = find(AUDIENCE).condition("shareId", share.shareId).condition("audienceSeqId", text(p.audienceSeqId)).one()
     if (!row || row.revokedDate != null) return refuse("AUDIENCE_NOT_FOUND", "That person or link is not in this share")
+    revokeRows(share, [row], now)
+    return {}
+}
+
+/** Audience entries of a share revoked now: the users it no longer reaches, and the owner, told on its topic. */
+function revokeRows(share, rows, now) {
     const before = currentUserIds(share)
-    row.revokedDate = new Date(now)
-    row.update()
+    for (const row of rows) {
+        row.revokedDate = new Date(now)
+        row.update()
+    }
     const after = new Set(currentUserIds(share))
     push(share, before.filter(id => !after.has(id)).concat([share.ownerUserId]), {event: "revoked"})
-    return {}
+}
+
+/**
+ * revoke#ChatAudience (internal, plans/Location-Sharing.md §3.5): a person's own entry (LsaUser) taken out of the active
+ * shares named, as revoke#Audience takes one out, whoever the caller is: Chat calls it when a member is taken out of a
+ * room by another, or blocked by a share's owner, for that room's live shares (moqui.chat.ChatLiveShare). It only narrows
+ * who sees a share. Each share in a transaction of its own: one that fails is logged by its id and the rest go on.
+ */
+function revokeChatAudience(p) {
+    const userId = text(p.userId)
+    let revokedCount = 0
+    if (!userId) return {revokedCount}
+    for (const shareId of Array.from(new Set(Array.from(p.shareIdList || []).map(text).filter(Boolean)))) {
+        try {
+            const count = ec.transaction.runRequireNew(30, "Could not take a person out of location share " + shareId, () => {
+                const now = nowMillis()
+                const share = shareOf(shareId, true)
+                if (!isActive(share, now) || share.ownerUserId === userId) return 0
+                const rows = activeAudience(share.shareId).filter(row => row.audienceTypeEnumId === "LsaUser" && row.userId === userId)
+                if (rows.length) revokeRows(share, rows, now)
+                return rows.length
+            })
+            revokedCount += Number(count) || 0
+        } catch (err) {
+            ec.logger.error(`A person was not taken out of location share ${shareId}: ${err && err.message ? err.message : err}`)
+        }
+    }
+    return {revokedCount}
 }
 
 const numberOf = value => (blank(value) ? null : Number(String(value).trim()))
@@ -1322,6 +1357,17 @@ function deviceShares(p) {
     return {stoppedCount}
 }
 
+/**
+ * get#ShareStatus (internal): whether a share of this owner is active, and nothing else of it; for Chat's live location
+ * card (plans/Location-Sharing.md §3.5), which says "Live location ended" rather than "not shared with you" to a member of
+ * the room the share's message is in, once get#Share has refused them. A share of another owner answers as none.
+ */
+function status(p) {
+    const ownerUserId = text(p.ownerUserId)
+    const share = ownerUserId ? shareOf(p.shareId, false, ownerUserId) : null
+    return {found: !!share, active: isActive(share, nowMillis())}
+}
+
 // ----- guest links (plans/Location-Sharing.md §3.7): the public page Maps/SharedLocation.xml at /location/<selector>, its
 // secret in the link's fragment, posted by the page. The page answers the share's label, its purpose text and its latest
 // position with its age, on the outline or a basemap the installation marks public, and nothing else. -----
@@ -1461,8 +1507,8 @@ function recordShares(p) {
     return {stoppedCount}
 }
 
-const operations = {create, update, stop, revoke, report, findMine, findShared, get, deleteTrail, clean, indicator, appShare, deviceShares,
-    linkCheck, linkRead, shareRecord, recordShares}
+const operations = {create, update, stop, revoke, report, findMine, findShared, get, deleteTrail, clean, indicator, appShare, deviceShares, status,
+    chatAudience: revokeChatAudience, linkCheck, linkRead, shareRecord, recordShares}
 
 function execute(op, parameters) {
     if (!operations[op]) throw new Error("Unknown location share operation " + op)
