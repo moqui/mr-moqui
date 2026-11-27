@@ -911,6 +911,7 @@ pub(super) fn deliver_edge_outbound_mail(
         content_location: None,
     };
     // its own transaction, committed now: the relay took it, so whatever happens to this apply it is not relayed again
+    #[cfg(feature = "imap")]
     let paired_node = node.clone();
     let node = Some(node.as_str()).filter(|node| !node.is_empty());
     let queued = facade.transactions_for(queue::QUEUE_ITEM).and_then(|tx| {
