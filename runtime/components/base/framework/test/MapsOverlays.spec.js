@@ -272,6 +272,8 @@ feature(
             const invalid = {label: "", longitude: "-71.03", latitude: "42.34", clientRef: "maps-ovl-place-3"}
             out.invalid = savePlace(OWNER, invalid)
             out.valid = savePlace(OWNER, Object.assign({}, invalid, {label: "Wharf"}))
+            // a ref that is not one: the claim's refusal, answered as its error (never a 500), nothing saved
+            out.badRef = savePlace(OWNER, {label: "Jetty", longitude: "-71.02", latitude: "42.33", clientRef: "not a ref!"})
             out.file = JSON.parse(fileText(ownerDrive(), "Maps/places.geojson") || "{}")
             return out
         },
@@ -292,6 +294,9 @@ feature(
             out.valid.applied == true
             out.valid.duplicate == false
             out.file.features.filter(feature => feature.properties.name === "Wharf").length == 1
+            !!out.badRef.errors
+            out.badRef.applied == null
+            out.file.features.filter(feature => feature.properties.name === "Jetty").length == 0
         }
     }
 )
@@ -316,10 +321,10 @@ feature(
             })
             return {
                 held: afterFailure(OWNER, {clientRef: "maps-ovl-place-held"}),
-                heldErrored: afterFailure(OWNER, {clientRef: "maps-ovl-place-held", serviceErrored: true}),
+                heldErrored: afterFailure(OWNER, {clientRef: "maps-ovl-place-held", unprocessable: true}),
                 otherUser: afterFailure(READER, {clientRef: "maps-ovl-place-held"}),
                 none: afterFailure(OWNER, {clientRef: "maps-ovl-place-none"}),
-                refused: afterFailure(OWNER, {clientRef: "maps-ovl-place-none", serviceErrored: true})
+                refused: afterFailure(OWNER, {clientRef: "maps-ovl-place-none", unprocessable: true})
             }
         },
         then(out) {

@@ -1005,9 +1005,10 @@ function storePlace(p) {
 // clientRef whose claim, save and kept result were rolled back together. Two sends of one ref can overlap (the apps'
 // outbox sends again after a lost answer): the second's claim misses the first's row while it is uncommitted, then its
 // insert meets the row's key and its transaction fails. So the ref is read again, now committed: a row there is the first
-// send's, answered as the duplicate it is with its kept result. With none, a failure of store#Place's own (its message:
-// a refusal or a parameter not valid) is answered as that error, which will not pass; any other (the overlapping send not
-// yet committed, a lock wait, a deadlock, a timeout) is thrown again, a 500 the outbox tries again later.
+// send's, answered as the duplicate it is with its kept result. With none, a service's own refusal of its input
+// (unprocessable: the Unprocessable kind throwOnError marks, a ref that is not one or a parameter not valid) is answered as
+// that error, which will not pass; any other (the overlapping send not yet committed, a lock wait, a deadlock, a timeout)
+// is thrown again, a 500 the outbox tries again later.
 // {outcome: duplicate (with result), errors, or rethrow}
 function placeAfterFailure(p) {
     const row = ec.entity
@@ -1024,7 +1025,7 @@ function placeAfterFailure(p) {
         }
         return {outcome: "duplicate", result}
     }
-    return {outcome: yes(p.serviceErrored) ? "errors" : "rethrow", result: null}
+    return {outcome: yes(p.unprocessable) ? "errors" : "rethrow", result: null}
 }
 function deletePlace(p) {
     if (!text(ec.user.userId)) throw new Error(L("Sign in to remove a place"))
