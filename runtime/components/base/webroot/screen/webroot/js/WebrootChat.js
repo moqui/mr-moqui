@@ -2764,14 +2764,15 @@
     const labelsOf = (vm) => Object.assign({}, localizeTree(chat.labels), vm.$root && vm.$root.labels);
     const components = moqui.qvtComponents = moqui.qvtComponents || {};
 
-    // The status part of the account menu: a row that opens the status dialog (the current status and its message with a clear
-    // button, or "Set a status message" while there is none), then the four statuses with a check on the current one.
+    // The status part of the account menu: a row that opens the status dialog (the current status, and its message or "Set a
+    // status message"), a clear button beside it while there is a message, then the four statuses with a check on the current one.
     components["m-user-status-menu"] = {
         name: "mUserStatusMenu",
         computed: {
             labels() { return labelsOf(this); },
             me() { return chat.state.me || {}; },
             current() { return this.me.status || "online"; },
+            hasText() { return !!(this.me.statusText || this.me.emoji); },
             currentDot() { return chat.myPresence() || "offline"; },
             currentLabel() { return this.labels["status" + this.current.charAt(0).toUpperCase() + this.current.slice(1)] || this.current; },
             options() {
@@ -2781,22 +2782,28 @@
         methods: {
             choose(status) { chat.setStatus({ status }); },
             openDialog() { chat.openStatusDialog(); },
-            clearText() { chat.setStatus({ clearStatus: true }); }
+            // the clear button goes once the message is cleared: focus the row first, so it does not drop to the page
+            clearText() {
+                const row = this.$refs.current && this.$refs.current.$el;
+                if (row && row.focus) row.focus();
+                chat.setStatus({ clearStatus: true });
+            }
         },
         template:
             '<div class="m-user-status">' +
-                '<q-item id="m-status-current" class="q-ma-md" clickable v-close-popup data-status="message" :title="labels.setStatus" @click="openDialog">' +
-                    '<q-item-section side avatar class="m-status-avatar"><span class="m-status-dot" :class="\'m-presence-\' + currentDot"></span></q-item-section>' +
-                    '<q-item-section v-if="me.statusText || me.emoji">' +
-                        '<q-item-label>{{currentLabel}}</q-item-label>' +
-                        '<q-item-label caption class="m-status-text">{{me.emoji ? me.emoji + \' \' : \'\'}}{{me.statusText}}</q-item-label>' +
-                    '</q-item-section>' +
-                    '<q-item-section v-else>{{labels.setStatus}}</q-item-section>' +
-                    '<q-item-section v-if="me.statusText || me.emoji" side>' +
-                        '<q-btn flat round dense icon="sym_o_close" data-status="clear" :aria-label="labels.clearStatus" :title="labels.clearStatus" @click.stop.prevent="clearText" @keyup.enter.stop/>' +
-                    '</q-item-section>' +
-                '</q-item>' +
-                '<q-item v-for="option in options" :key="option.value" dense clickable v-close-popup :active="current === option.value" :data-status="option.value" @click="choose(option.value)">' +
+                '<div class="m-status-row row no-wrap items-center q-ma-md">' +
+                    '<q-item id="m-status-current" ref="current" class="col" clickable v-close-popup data-status="message" :title="labels.setStatus" @click="openDialog">' +
+                        '<q-item-section side avatar class="m-status-avatar"><span class="m-status-dot" :class="\'m-presence-\' + currentDot"></span></q-item-section>' +
+                        '<q-item-section>' +
+                            '<q-item-label>{{currentLabel}}</q-item-label>' +
+                            '<q-item-label v-if="hasText" caption class="m-status-text">{{me.emoji ? me.emoji + \' \' : \'\'}}{{me.statusText}}</q-item-label>' +
+                            '<q-item-label v-else caption>{{labels.setStatus}}</q-item-label>' +
+                        '</q-item-section>' +
+                    '</q-item>' +
+                    // beside the row, not in it: a button in the row's button would not be a button of its own to a screen reader
+                    '<q-btn v-if="hasText" flat round dense icon="sym_o_close" class="q-mr-xs" data-status="clear" :aria-label="labels.clearStatus" :title="labels.clearStatus" @click.stop="clearText"/>' +
+                '</div>' +
+                '<q-item v-for="option in options" :key="option.value" dense clickable v-close-popup :active="current === option.value" :aria-current="current === option.value ? \'true\' : null" :data-status="option.value" @click="choose(option.value)">' +
                     '<q-item-section avatar class="m-status-avatar"><span class="m-status-dot" :class="\'m-presence-\' + option.dot"></span></q-item-section>' +
                     '<q-item-section>{{option.label}}</q-item-section>' +
                     '<q-item-section side v-if="current === option.value"><q-icon name="sym_o_check"/></q-item-section>' +

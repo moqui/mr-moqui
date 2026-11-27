@@ -967,9 +967,10 @@ fn the_record_panels_and_the_rich_text_editor_work_in_chromium() {
 
 /// Presence and the account menu's status (IronStone M10, `js/WebrootChat.js`): the heartbeat makes the user online, which the
 /// dot of the account avatar and of an avatar with the user's id in a screen (the gallery Chatter) show; the menu checks the
-/// current status, sets do not disturb (the dot follows, the page's toasts are off) and a status message from its first row,
-/// whose clear button clears it without opening the dialog; another user's status, set on the server, comes to the page on
-/// the userStatus topic because the two share a room.
+/// current status in words and with a check, sets do not disturb (the dot follows, the page's toasts are off) and a status
+/// message from its first row, and the clear button beside that row (not in it) clears it without opening the dialog, focus
+/// going to the row; another user's status, set on the server, comes to the page on the userStatus topic because the two
+/// share a room.
 #[test]
 fn the_account_status_and_the_presence_dots_work_in_chromium() {
     if !crate::common::own_process() {
@@ -1011,13 +1012,19 @@ fn the_account_status_and_the_presence_dots_work_in_chromium() {
     );
     assert_clean(&mut browser, "presence");
 
-    // the account menu: the status message row, the statuses with a check on the current one, then do not disturb
+    // the account menu: the status message row with the status in words, the statuses with a check on the current one, then
+    // do not disturb
     browser.click("the account menu", "document.getElementById('m-account')");
     browser.wait_for(
         "the status in the account menu",
-        "!!document.getElementById('m-status-current') && document.getElementById('m-status-current').innerText.indexOf('Set a status message') >= 0 \
+        "!!document.getElementById('m-status-current') && document.getElementById('m-status-current').innerText.indexOf('Online') >= 0 \
+         && document.getElementById('m-status-current').innerText.indexOf('Set a status message') >= 0 \
          && !!document.querySelector('.m-user-status [data-status=online] .q-item__section--side .q-icon')",
         WAIT,
+    );
+    assert_eq!(
+        browser.eval("Array.from(document.querySelectorAll('.m-user-status [aria-current=true]')).map((el) => el.dataset.status).join(',')"),
+        "online"
     );
     assert_eq!(
         browser.eval("Array.from(document.querySelectorAll('.m-user-status [data-status]')).map((el) => el.dataset.status).join(',')"),
@@ -1055,6 +1062,10 @@ fn the_account_status_and_the_presence_dots_work_in_chromium() {
          && !!document.querySelector('.m-user-status [data-status=dnd] .q-item__section--side .q-icon') \
          && !document.querySelector('.m-user-status [data-status=online] .q-item__section--side .q-icon')",
         WAIT,
+    );
+    assert_eq!(
+        browser.eval("Array.from(document.querySelectorAll('.m-user-status [aria-current=true]')).map((el) => el.dataset.status).join(',')"),
+        "dnd"
     );
     browser.click(
         "Set a status message",
@@ -1112,25 +1123,31 @@ fn the_account_status_and_the_presence_dots_work_in_chromium() {
         drop(authz);
         drop(entered);
     }
-    // the clear button of the row clears the message; the dialog does not open and the menu stays, the row back to its label
+    // the clear button, beside the row and not in it, clears the message; the dialog does not open, the menu stays with the
+    // row back to its label, and the focus is on the row
     assert_eq!(
-        browser.eval("document.querySelector('#m-status-current [data-status=clear]').getAttribute('aria-label')"),
-        "Clear status message"
+        browser.eval("(() => { const clear = document.querySelector('.m-user-status [data-status=clear]'); \
+            return clear.getAttribute('aria-label') + '|' + document.getElementById('m-status-current').contains(clear) \
+            + '|' + clear.parentElement.classList.contains('m-status-row'); })()"),
+        "Clear status message|false|true"
     );
     browser.click(
         "Clear status message",
-        "document.querySelector('#m-status-current [data-status=clear]')",
+        "document.querySelector('.m-user-status [data-status=clear]')",
     );
     browser.wait_for(
         "the status message cleared",
         "moqui.chat.state.me && !moqui.chat.state.me.statusText && !moqui.chat.state.me.emoji \
          && !!document.getElementById('m-status-current') && document.getElementById('m-status-current').innerText.indexOf('Set a status message') >= 0 \
-         && !document.querySelector('#m-status-current [data-status=clear]')",
+         && !document.querySelector('.m-user-status [data-status=clear]')",
         WAIT,
     );
     assert_eq!(
-        browser.eval("!!document.querySelector('.q-dialog input[name=statusText]')"),
-        false
+        browser.eval(
+            "!!document.querySelector('.q-dialog input[name=statusText]') + '|' \
+            + (document.activeElement === document.getElementById('m-status-current'))"
+        ),
+        "false|true"
     );
     browser.press("Escape");
 
