@@ -30,11 +30,11 @@ The November 25 nine-plan execution queue is superseded. Its 147 rows, counts an
 
 ### November 26 revocation and Load rechecks
 
-Three of the four findings from the preceding follow-up passed live on `c89d193f6`. DASH-UI-008 passed the active-editor and owner-cell checks. Its mounted dashboard range still needs a fix.
+**All four findings from this follow-up have now passed their live rechecks.** Three passed on `c89d193f6`. DASH-UI-008’s remaining mounted-range branch passed on `0b75ac2e2`.
 
 | Finding | Live outcome |
 |---|---|
-| DASH-UI-008 · P1 · Partial | The editor cleared within one second, and the owner’s cells remained intact. The already-open dashboard still showed its previously rendered header and value after 31 seconds. Refresh now cleared both. Recheck automatic removal on that same mounted panel. [DASH-B07](ui-review-dashboards.md#dash-b07--november-26-live-revocation-recheck) |
+| DASH-UI-008 · P1 · Passed | On c89d193f6 the editor cleared, but the mounted range retained its values for 31 seconds. On 0b75ac2e2 the same open dashboard followed the owner’s edit and cleared the header and value on revocation without a refresh. The owner retained the edited cell. [DASH-B07](ui-review-dashboards.md#dash-b07--november-26-live-revocation-recheck), [DASH-B09](ui-review-dashboards.md#dash-b09--november-26-mounted-range-recheck) |
 | TOOL-UI-006 · P2 · Passed | The form named the rejected file alongside the successful count. Grid confirmed partial success and the corrected retry. A missing file produced a named error. [TOOL-B09](ui-review-tools.md#tool-b09--november-26-live-load-error-rechecks) |
 | TOOL-UI-007 · P2 · Passed | Invalid worker input stayed on the form with the field, value and no-job explanation. Independent reads confirmed zero jobs and no new row. [TOOL-B09](ui-review-tools.md#tool-b09--november-26-live-load-error-rechecks) |
 | DASH-UI-007 · P2 · Passed | The same bookmark gave the former reader a clear unavailable message and still opened the dashboard for its owner. [DASH-B08](ui-review-dashboards.md#dash-b08--november-26-revoked-bookmark) |
