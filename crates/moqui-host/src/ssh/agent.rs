@@ -51,17 +51,28 @@ struct Held {
     _slot: SessionSlot,
 }
 
-/// The sessions of `agent-apps open`, by id.
+/// The sessions of `agent-apps open`, by id, each with its user's name beside it: a look-up never waits on a session's
+/// lock, which a command holds while it runs (SEC-FIL-91).
 #[derive(Default)]
 pub(super) struct AgentSessions {
-    live: Mutex<HashMap<String, Arc<Mutex<Held>>>>,
+    live: Mutex<HashMap<String, Owned>>,
+}
+
+/// A held session with the name of the user it is for.
+type Owned = (String, Arc<Mutex<Held>>);
+
+/// The session `id` in `live` when `username` holds it, read from the name kept beside it, not from the session.
+fn owned<'a, T>(live: &'a HashMap<String, (String, T)>, id: &str, username: &str) -> Option<&'a T> {
+    live.get(id)
+        .filter(|(owner, _)| owner == username)
+        .map(|(_, held)| held)
 }
 
 impl AgentSessions {
     /// Drop the sessions no command has used for `IDLE`, which gives their slots back. One in use is left.
     fn reap(&self) {
         let mut live = lock(&self.live);
-        live.retain(|id, held| match held.try_lock() {
+        live.retain(|id, (_, held)| match held.try_lock() {
             Ok(held) => {
                 let keep = held.last_used.elapsed() < IDLE;
                 if !keep {
@@ -77,10 +88,7 @@ impl AgentSessions {
     }
 
     fn get(&self, id: &str, username: &str) -> Option<Arc<Mutex<Held>>> {
-        let live = lock(&self.live);
-        let held = live.get(id)?;
-        let mine = lock(held).username == username;
-        mine.then(|| Arc::clone(held))
+        owned(&lock(&self.live), id, username).map(Arc::clone)
     }
 }
 
@@ -184,7 +192,7 @@ pub(super) async fn one_shot(access: &AgentAccess, args: &str) -> Option<(String
                         _slot: slot,
                     };
                     lock(&access.agents.live)
-                        .insert(id.clone(), Arc::new(Mutex::new(held)));
+                        .insert(id.clone(), (access.username.clone(), Arc::new(Mutex::new(held))));
                     tracing::info!("SSH agent-apps session {id} of {} started", access.username);
                     (opened(&id, &answer), status(&answer))
                 }
@@ -290,7 +298,19 @@ pub(super) async fn lines<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S, acc
 
 #[cfg(test)]
 mod tests {
-    use super::parse_open;
+    use super::{owned, parse_open};
+
+    /// SEC-FIL-91: finding a session reads the name beside it, so a session whose lock a running command holds is
+    /// found without waiting, and another user's is not.
+    #[test]
+    fn a_session_is_found_without_its_lock() {
+        let held = std::sync::Mutex::new(());
+        let live = std::collections::HashMap::from([("a1".to_string(), ("alice".to_string(), held))]);
+        let _running = live["a1"].1.lock().unwrap();
+        assert!(owned(&live, "a1", "alice").is_some());
+        assert!(owned(&live, "a1", "bob").is_none());
+        assert!(owned(&live, "a2", "alice").is_none());
+    }
 
     #[test]
     fn open_takes_a_path_a_size_and_json() {

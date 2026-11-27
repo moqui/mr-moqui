@@ -43,7 +43,8 @@ along with this software (see the LICENSE.md file). If not, see
             upload-only share); viaShareId when a share gave the level. drive is the drive's fields with its storage
             (folder, git-db, git-local, git-remote), readOnly, and its repository's kind, branch, head and fetch state.
             With no user and authorization disabled (a job), or internal with authorization disabled (a public link's
-            file drop, which checked its token), the level is manage.
+            file drop, which checked its token), the level is manage. A path in the hidden trash folder (.trash) is the
+            owner's only: level 0 for anyone else (SEC-FIL-98).
 
             A records drive (driveKindEnumId RdkRecords): below the manage level, a path (the drive's top included) must be
             in the drive's folder map and in records the user may see (check#RecordPaths: the record visibility hook, each
@@ -157,6 +158,11 @@ along with this software (see the LICENSE.md file). If not, see
                     && ec.service.sync().name('org.moqui.chat.ChatServices.get#ExternalUsers').parameter('userIdList', [userId])
                         .disableAuthz().call()?.anyExternal !== false) {
                 level = 0; canUpload = false; viaShareId = null; isOwner = false; recordList = []
+            }
+            // the hidden trash folder is the owner's only, at every service that takes a path (SEC-FIL-98): copy, move,
+            // rename, a text save, a new folder in it; a job (no user) and an internal call keep their level
+            if (path != null && clean(path).split('/')[0] === '.trash' && userId && !isOwner && !(internal && authzOff)) {
+                level = 0; canUpload = false; viaShareId = null
             }
             permissionEnumId = [null, 'RdpView', 'RdpEdit', 'RdpManage'][level]
             canWrite = level >= 2 && !readOnly
@@ -331,6 +337,9 @@ along with this software (see the LICENSE.md file). If not, see
             const userinfo = (/^[a-z][a-z0-9+.-]*:\/\/([^\/?#]*)@/i.exec(String(remoteUrl || '')) || [])[1]
             if (storage === 'mirror' && userinfo != null && (userinfo.includes(':') || /^https?:/i.test(String(remoteUrl)))) {
                 ec.message.addError(ec.l10n.localize('A mirror URL has no user or password in it: give them as the username and access token')); return }
+            // the access token answers every fetch's credential request: never in clear (SEC-FIL-101)
+            if (storage === 'mirror' && accessToken && /^(http|git):\/\//i.test(String(remoteUrl || '').trim())) {
+                ec.message.addError(ec.l10n.localize('A mirror with an access token fetches over https or ssh')); return }
             if (!driveKindEnumId) driveKindEnumId = storage === 'mirror' ? 'RdkMirror' : 'RdkShared'
             if (driveKindEnumId === 'RdkPersonal') { ec.message.addError('A personal drive is made by ensure#PersonalDrive'); return }
             // localPath is a place on the server's disk, used as given (an absolute path, '..'), as rootLocation is
@@ -419,6 +428,14 @@ along with this software (see the LICENSE.md file). If not, see
                 if (userinfo != null && (userinfo.includes(':') || /^https?:/i.test(String(remoteUrl)))) {
                     ec.message.addError(ec.l10n.localize('A mirror URL has no user or password in it: give them as the username and access token')); return }
             }
+            if (mirrorRow) {
+                // the token the mirror will send with each fetch (kept only for the same URL and user): never in clear
+                // (SEC-FIL-101)
+                const userChanged = username != null && (username || null) !== (mirrorRow.username || null)
+                const token = accessToken || (urlChanged || userChanged ? null : mirrorRow.accessToken)
+                if (token && /^(http|git):\/\//i.test(String(remoteUrl || mirrorRow.remoteUrl || '').trim())) {
+                    ec.message.addError(ec.l10n.localize('A mirror with an access token fetches over https or ssh')); return }
+            }
             const row = ec.entity.find('moqui.resource.ResourceDrive').condition('driveId', driveId).one()
             if (driveName) row.driveName = driveName
             if (description != null) row.description = description
@@ -484,8 +501,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="transfer" noun="DriveOwner" allow-remote="false">
         <description>A shared drive's owner changed from fromUserId to toUserId: by its owner, or with DRIVE_OWNER_CHANGE. The new
             owner must be an enabled account, not ended and not an external user (EXTERNAL_USER); a current member row of the new
-            owner ends, as the owner manages; the former owner keeps no access of their own. A personal drive, a records drive,
-            a mirror and an archived drive are refused. Logged with the reason.</description>
+            owner ends, as the owner manages; the former owner keeps no access of their own, and the links and shares they made
+            on the drive are revoked (SEC-FIL-10). A personal drive, a records drive, a mirror and an archived drive are
+            refused. Logged with the reason.</description>
         <implements service="org.moqui.admin.IdentityServices.define#OwnedResourceTransfer"/>
         <in-parameters><parameter name="driveId" required="true"/></in-parameters>
         <actions><script><![CDATA[
@@ -514,6 +532,12 @@ along with this software (see the LICENSE.md file). If not, see
             }
             row.ownerUserId = toUserId
             row.update()
+            // a link the former owner made would go on serving the drive's files to whoever holds it (SEC-FIL-10)
+            for (const share of ec.entity.find('moqui.resource.ResourceShare').condition('driveId', driveId)
+                    .condition('createdByUserId', fromUserId).condition('revokedDate', null).disableAuthz().list()) {
+                share.revokedDate = ec.user.nowTimestamp
+                share.update()
+            }
             transferred = true
             ec.logger.info(`Drive ${driveId} owner ${fromUserId} -> ${toUserId} by ${ec.user.username}${reason ? ': ' + reason : ''}`)
         ]]></script></actions>
@@ -558,7 +582,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="remove" noun="DriveMember">
         <description>End a drive membership (thruDate now): by driveMemberId, or the current rows of a userId or
-            userGroupId. Manage permission.</description>
+            userGroupId. Manage permission. The links and shares a removed user made on the drive are revoked with it
+            (SEC-FIL-10); a group's removal leaves its users' own, as they may reach the drive otherwise.</description>
         <in-parameters>
             <parameter name="driveId" required="true"/>
             <parameter name="driveMemberId"/>
@@ -576,10 +601,21 @@ along with this software (see the LICENSE.md file). If not, see
             else if (userId) find = find.condition('userId', userId)
             else if (userGroupId) find = find.condition('userGroupId', userGroupId)
             else { ec.message.addError('Name the member to remove'); return }
+            const removedUsers = new Set()
             for (const row of find.list()) {
                 row.thruDate = ec.user.nowTimestamp
                 row.update()
                 removedCount++
+                if (row.userId) removedUsers.add(row.userId)
+            }
+            // a link the removed user made would go on serving the drive's files to whoever holds it (SEC-FIL-10)
+            for (const removed of removedUsers) {
+                if (removed === access.drive.ownerUserId) continue
+                for (const share of ec.entity.find('moqui.resource.ResourceShare').condition('driveId', driveId)
+                        .condition('createdByUserId', removed).condition('revokedDate', null).disableAuthz().list()) {
+                    share.revokedDate = ec.user.nowTimestamp
+                    share.update()
+                }
             }
         ]]></script></actions>
     </service>

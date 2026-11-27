@@ -363,7 +363,19 @@ pub(crate) fn param_value(text: &str) -> String {
 }
 
 /// A content line folded at 75 octets, never inside a UTF-8 character; the continuation lines start with a space.
+/// A line break or other control character in it (a stored value written as it is, such as an RRULE or a URL a
+/// quoted-printable PUT decoded) is left out, so no value adds a content line of its own (SEC-FIL-94).
 pub(crate) fn fold(line: &str) -> String {
+    let cleaned;
+    let line = if line.chars().any(|ch| ch.is_control() && ch != '\t') {
+        cleaned = line
+            .chars()
+            .filter(|ch| !ch.is_control() || *ch == '\t')
+            .collect::<String>();
+        cleaned.as_str()
+    } else {
+        line
+    };
     if line.len() <= 75 {
         return line.to_string();
     }
@@ -446,6 +458,18 @@ mod tests {
         let folded = fold(&long);
         assert!(folded.split("\r\n").all(|line| line.len() <= 75), "{folded}");
         assert_eq!(unfold(&folded), [long]);
+    }
+
+    /// SEC-FIL-94: a stored value with a line break in it (a quoted-printable RRULE or URL) adds no content line.
+    #[test]
+    fn a_line_break_in_a_value_adds_no_content_line() {
+        assert_eq!(
+            fold("RRULE:FREQ=DAILY;X=1\r\nATTENDEE:mailto:x@example.com"),
+            "RRULE:FREQ=DAILY;X=1ATTENDEE:mailto:x@example.com"
+        );
+        let long = format!("URL:https://example.com/{}\nX-INJECTED:1", "a".repeat(80));
+        assert_eq!(unfold(&fold(&long)).len(), 1);
+        assert_eq!(fold("SUMMARY:a\tb"), "SUMMARY:a\tb");
     }
 
     #[test]

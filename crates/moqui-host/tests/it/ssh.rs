@@ -783,6 +783,59 @@ fn sftp_and_the_admin_shell_run_on_the_built_in_server() {
     .unwrap();
     assert!(!refused, "a stranger key logged in as the cluster");
 
+    // SEC-FIL-11: a permission taken away refuses what an open connection asks for next: shell.only's second exec on
+    // one connection, after its group membership (SSH_SHELL) ended, is refused.
+    struct Accept;
+    impl russh::client::Handler for Accept {
+        type Error = russh::Error;
+        async fn check_server_key(&mut self, _key: &russh::keys::PublicKeyOrCertificate) -> Result<bool, Self::Error> {
+            Ok(true)
+        }
+    }
+    async fn run(handle: &russh::client::Handle<Accept>, command: &str) -> Result<u32, String> {
+        let mut channel = handle.channel_open_session().await.map_err(|err| err.to_string())?;
+        channel.exec(true, command).await.map_err(|err| err.to_string())?;
+        let mut status = None;
+        while let Some(message) = channel.wait().await {
+            match message {
+                russh::ChannelMsg::ExitStatus { exit_status } => status = Some(exit_status),
+                russh::ChannelMsg::Failure => return Err("channel request refused".to_string()),
+                _ => {}
+            }
+        }
+        Ok(status.unwrap_or(255))
+    }
+    let (handle, first) = moqui_host::edge::block_on(async move {
+        let config = Arc::new(russh::client::Config::default());
+        let mut handle = russh::client::connect(config, address, Accept).await.unwrap();
+        assert!(handle
+            .authenticate_password("shell.only", "moqui")
+            .await
+            .unwrap()
+            .success());
+        let first = run(&handle, "help").await;
+        (handle, first)
+    })
+    .unwrap();
+    assert!(first.is_ok(), "{first:?}");
+    let entity = factory.entity().unwrap();
+    let mut member = entity
+        .find("moqui.security.UserGroupMember")
+        .unwrap()
+        .disable_authz()
+        .eq("userId", Value::string("SHELL_ONLY"))
+        .eq("userGroupId", Value::string("SHELL_ONLY"))
+        .one()
+        .unwrap()
+        .unwrap();
+    member.set(
+        "thruDate",
+        moqui_lib::object::basic_convert(&Value::I64(1_265_184_000_001), "Timestamp").value,
+    );
+    member.update(&entity).unwrap();
+    let second = moqui_host::edge::block_on(async move { run(&handle, "help").await }).unwrap();
+    assert_eq!(second, Err("channel request refused".to_string()));
+
     drop(authz);
     drop(_entered);
     drop(context);
@@ -1437,7 +1490,9 @@ fn attach_at_the_ssh_prompt_takes_a_kept_session() {
     })
     .unwrap();
     assert!(
-        attached.lines().any(|line| line.contains(&id) && line.contains("running")),
+        attached
+            .lines()
+            .any(|line| line.contains(&id) && line.contains("running")),
         "the session goes on after the detach: {attached}"
     );
     // the browser's window was let go when SSH took the session

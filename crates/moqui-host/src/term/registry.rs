@@ -253,6 +253,7 @@ impl Registry {
             size: size.subscribe(),
             facts: spec.facts.clone(),
             session_id: spec.id.clone(),
+            signed_in: None,
         });
         #[cfg(not(unix))]
         let host = crate::command::HostCommand;

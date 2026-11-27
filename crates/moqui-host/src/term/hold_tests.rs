@@ -14,7 +14,14 @@
 
 use std::path::Path;
 
-use super::{read_line, socket_path, write_line, PROTOCOL};
+use super::{peer_is_own_user, read_line, socket_path, write_line, PROTOCOL};
+
+/// SEC-FIL-66: the holder reads its peer's user from the kernel; a connection of its own user passes.
+#[tokio::test]
+async fn a_peer_of_the_holders_own_user_is_taken() {
+    let (one, _other) = tokio::net::UnixStream::pair().unwrap();
+    assert!(peer_is_own_user(&one));
+}
 
 #[tokio::test]
 async fn a_line_of_json_is_read_without_what_follows_it() {

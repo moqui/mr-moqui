@@ -74,11 +74,19 @@ async fn may_attach(access: &HostAccess, kind: Kind) -> Result<(), String> {
     }
     let username = access.username.clone();
     let facts = access.facts.clone();
+    let signed_in = access.signed_in;
     let checked = crate::worker::on_pool(&access.factory, move |factory| {
         moqui_core::user::internal_login_user(&username)?;
         let permitted = |permission: &str| moqui_core::user::has_permission(permission).unwrap_or(false);
-        // the SSH sign-in is the recent one, as for `sh`
-        Ok(access::check(access::Switches::of(factory), kind, &facts, &permitted, &|_| true))
+        // the SSH sign-in is the recent one while it is recent, as for `sh` (SEC-FIL-97)
+        let recent = |millis: i64| crate::command::host::signed_in_within(signed_in, millis);
+        Ok(access::check(
+            access::Switches::of(factory),
+            kind,
+            &facts,
+            &permitted,
+            &recent,
+        ))
     })
     .await;
     match checked {

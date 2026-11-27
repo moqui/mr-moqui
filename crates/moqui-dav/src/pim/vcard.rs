@@ -28,9 +28,14 @@ use moqui_lib::object::{to_plain_string, Value};
 
 use super::line::{self, Property};
 
+/// The most properties one card keeps; the rest are left out, so a hostile card's reading stays bounded (SEC-FIL-95).
+const MAX_CARD_PROPERTIES: usize = 10_000;
+
 struct Card {
     version: String,
     properties: Vec<Property>,
+    /// The first X-ABLabel of each group (lower case), read once, not for each property that asks (SEC-FIL-95).
+    labels: std::collections::HashMap<String, String>,
 }
 
 fn cards(text: &str) -> Vec<Card> {
@@ -51,6 +56,7 @@ fn cards(text: &str) -> Vec<Card> {
                     current = Some(Card {
                         version: "3.0".to_string(),
                         properties: Vec::new(),
+                        labels: std::collections::HashMap::new(),
                     });
                 }
             }
@@ -68,6 +74,21 @@ fn cards(text: &str) -> Vec<Card> {
             }
             _ if nested == 0 => {
                 if let Some(card) = current.as_mut() {
+                    if card.properties.len() == MAX_CARD_PROPERTIES {
+                        tracing::warn!(
+                            "a contact card has more than {MAX_CARD_PROPERTIES} properties; the rest are left out"
+                        );
+                    }
+                    if card.properties.len() >= MAX_CARD_PROPERTIES {
+                        continue;
+                    }
+                    if property.name == "X-ABLABEL" {
+                        if let Some(group) = property.group.as_deref() {
+                            card.labels
+                                .entry(group.to_ascii_lowercase())
+                                .or_insert_with(|| property.value.clone());
+                        }
+                    }
                     card.properties.push(property);
                 }
             }
@@ -133,12 +154,9 @@ impl Card {
     /// The X-ABLabel of the property's group (Apple's itemN).
     fn label_of(&self, property: &Property) -> Option<String> {
         let group = property.group.as_deref()?;
-        self.properties
-            .iter()
-            .find(|other| {
-                other.name == "X-ABLABEL" && other.group.as_deref().is_some_and(|g| g.eq_ignore_ascii_case(group))
-            })
-            .map(|other| apple_label(&line::unescape(&other.value)))
+        self.labels
+            .get(&group.to_ascii_lowercase())
+            .map(|value| apple_label(&line::unescape(value)))
             .filter(|label| !label.is_empty())
     }
 

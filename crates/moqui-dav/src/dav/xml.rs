@@ -16,6 +16,8 @@
 //! keeps a prefixed name as written and refuses a DOCTYPE, so no entity of a request is ever expanded), and the
 //! escaping of what the server writes.
 
+use std::collections::HashMap;
+
 use moqui_lib::node::MNode;
 
 pub(crate) const DAV: &str = "DAV:";
@@ -65,37 +67,46 @@ pub(crate) fn parse(body: &[u8]) -> Result<Option<Element>, String> {
     }
     let root =
         MNode::parse_text_raw("dav-request", text).map_err(|err| format!("the request body is not XML: {err}"))?;
-    Ok(Some(resolve(&root, &[])))
+    Ok(Some(resolve(&root, &mut HashMap::new())))
 }
 
-/// `node` with its names resolved against the prefixes in scope: `scope` holds (prefix, namespace) pairs, the innermost
-/// last; the empty prefix is the default namespace.
-fn resolve(node: &MNode, scope: &[(String, String)]) -> Element {
-    let mut inner: Vec<(String, String)> = scope.to_vec();
+/// `node` with its names resolved against the prefixes in scope: `scope` holds each prefix's namespaces, the innermost
+/// last, pushed for an element's declarations and popped after its children, so no element copies its parents' scope
+/// and a look-up does not scan it (SEC-FIL-95); the empty prefix is the default namespace.
+fn resolve(node: &MNode, scope: &mut HashMap<String, Vec<String>>) -> Element {
+    let mut declared: Vec<String> = Vec::new();
     let mut attributes = Vec::new();
     for (key, value) in node.attributes() {
-        if key == "xmlns" {
-            inner.push((String::new(), value));
+        let prefix = if key == "xmlns" {
+            String::new()
         } else if let Some(prefix) = key.strip_prefix("xmlns:") {
-            inner.push((prefix.to_string(), value));
+            prefix.to_string()
         } else {
             attributes.push((key, value));
-        }
+            continue;
+        };
+        scope.entry(prefix.clone()).or_default().push(value);
+        declared.push(prefix);
     }
     let name = node.name();
     let (prefix, local) = name.split_once(':').unwrap_or(("", name.as_str()));
-    let ns = inner
-        .iter()
-        .rev()
-        .find(|(known, _)| known == prefix)
-        .map(|(_, ns)| ns.clone())
+    let ns = scope
+        .get(prefix)
+        .and_then(|namespaces| namespaces.last())
+        .cloned()
         .unwrap_or_default();
+    let children = node.children().iter().map(|child| resolve(child, scope)).collect();
+    for prefix in declared {
+        if let Some(namespaces) = scope.get_mut(&prefix) {
+            namespaces.pop();
+        }
+    }
     Element {
         ns,
         name: local.to_string(),
         attributes,
         text: node.text().unwrap_or_default(),
-        children: node.children().iter().map(|child| resolve(child, &inner)).collect(),
+        children,
     }
 }
 
@@ -177,6 +188,28 @@ mod tests {
         );
         assert!(parse(b"  ").unwrap().is_none());
         assert!(parse(b"<!DOCTYPE x [<!ENTITY a 'b'>]><x>&a;</x>").is_err());
+    }
+
+    /// SEC-FIL-95: the scope is pushed and popped, not copied per element: a prefix an element declares is gone for its
+    /// next sibling, and an inner default namespace ends with its element.
+    #[test]
+    fn a_declaration_is_scoped_to_its_element() {
+        let body = br#"<propfind xmlns="DAV:"><prop xmlns="urn:x" xmlns:a="urn:a"><a:one/><two/></prop><prop><a:three/><four/></prop></propfind>"#;
+        let root = parse(body).unwrap().unwrap();
+        let names: Vec<Vec<(String, String)>> = root
+            .children
+            .iter()
+            .map(|prop| prop.children.iter().map(|c| (c.ns.clone(), c.name.clone())).collect())
+            .collect();
+        let pair = |ns: &str, name: &str| (ns.to_string(), name.to_string());
+        assert_eq!(
+            names,
+            [
+                vec![pair("urn:a", "one"), pair("urn:x", "two")],
+                vec![pair("", "three"), pair(DAV, "four")]
+            ]
+        );
+        assert_eq!(root.children[1].ns, DAV);
     }
 
     #[test]
