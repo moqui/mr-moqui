@@ -29,7 +29,19 @@ along with this software (see the LICENSE.md file). If not, see
     through a colormap, the stretch's minimum and maximum and a no-data value, drawn at once and kept as the user's own
     (rasterBands; a saved view keeps them too). Below 600 px the panel is a bottom sheet over the map. Full screen is the browser's, on request. The last view
     is posted (rememberView) only when the user turned Restore my last view on. Brand color names and Quasar classes
-    only. -->
+    only.
+    Live location (plans/Location-Sharing.md §3.3): the configuration's locationShares, drawn by m-map's live layer (which
+    follows each share's topic and tells this screen what it holds by live-change); the Live location panel with Shared with
+    me (each person, the age, Show on map, Directions: geo: in the Android app, OpenStreetMap elsewhere) and Who sees my
+    location (each share of the user's own with its audience and end: Stop, Extend (the new end alone, never the audience
+    again), Delete trail, a person or group taken out, and Add the group again, the one act that sends a group to
+    update#Share again); the Share my location dialog (people, groups, XMPP contacts when the server has XMPP, a guest link
+    whose token is shown once, until, exact or approximate, a trail); and a banner above the map for each active share of
+    the user's own, with Stop. While this page is open it sends the shares it started (kept in this browser's storage) by
+    watchPosition through reportPosition, at most one a share's reportIntervalSeconds, and handles its statuses (429 waits,
+    410 and 404 stop sending, 409 STALE is passed over and CLOCK_AHEAD sends with the server's time); the page closed, the
+    share stays active and its audience sees its position age. There is no tray item: the shell's tray has no hook for an
+    app's item. -->
 <template><div ref="frame" class="m-maps-browse column no-wrap" :class="fullscreen ? ($q.dark.isActive ? 'bg-dark' : 'bg-white') : ''">
     <div class="row items-center no-wrap q-gutter-x-xs q-px-sm q-py-xs">
         <div class="col" style="max-width:420px">
@@ -48,6 +60,10 @@ along with this software (see the LICENSE.md file). If not, see
         </q-btn>
         <q-btn dense flat no-caps icon="sym_o_bookmarks" :label="phone ? '' : t('Saved views')" :aria-label="t('Saved views')"
                 :class="panel === 'views' ? 'm-tonal text-primary' : ''" :aria-pressed="panel === 'views' ? 'true' : 'false'" @click="togglePanel('views')"></q-btn>
+        <q-btn dense flat no-caps icon="sym_o_share_location" :label="phone ? '' : t('Live location')" :aria-label="t('Live location')" id="MapsLiveButton"
+                :class="panel === 'live' ? 'm-tonal text-primary' : ''" :aria-pressed="panel === 'live' ? 'true' : 'false'" @click="togglePanel('live')">
+            <q-badge v-if="sharedWithMe.length" floating color="primary" rounded>{{sharedWithMe.length}}</q-badge>
+        </q-btn>
         <q-btn dense unelevated no-caps class="m-btn-tonal" icon="sym_o_bookmark_add" :label="phone ? '' : t('Save view')" :aria-label="t('Save view')"
                 :disable="!lastView" @click="openSave"></q-btn>
         <q-btn v-if="fullscreenAvailable" dense flat :icon="fullscreen ? 'fullscreen_exit' : 'fullscreen'"
@@ -56,6 +72,22 @@ along with this software (see the LICENSE.md file). If not, see
         </q-btn>
     </div>
     <div v-if="error" class="text-negative q-px-sm" role="alert">{{error}}</div>
+    <!-- each active share of the user's own, always in sight here (plans/Location-Sharing.md §1, "Visible to everyone it
+        concerns"), with Stop; while this page sends it, it says so -->
+    <div v-for="share in myShares" :key="'banner' + share.shareId" class="m-maps-sharing row items-center no-wrap q-px-sm q-py-xs m-tonal" role="status"
+            :data-maps-sharing="share.shareId">
+        <q-icon :name="sending.includes(share.shareId) ? 'sym_o_share_location' : 'sym_o_location_off'" :color="sending.includes(share.shareId) ? 'positive' : 'warning'"
+                class="q-mr-sm"></q-icon>
+        <div class="col text-body2">
+            <span>{{t('Sharing your location with')}} {{audienceText(share)}} {{t('until')}} {{untilText(share.thruDate)}}</span>
+            <span class="text-caption m-muted"> · {{sending.includes(share.shareId) ? t('sent from this page while it is open') : t('not sent from this page') + ': ' + ageWords(share)}}</span>
+            <span v-if="sendNotes[share.shareId]" class="text-caption text-warning"> · {{sendNotes[share.shareId]}}</span>
+        </div>
+        <q-btn v-if="!sending.includes(share.shareId)" dense flat no-caps size="sm" :label="t('Send from here')" @click="startSending(share.shareId)"></q-btn>
+        <q-btn dense flat no-caps size="sm" color="negative" icon="sym_o_location_off" :label="t('Stop')" :aria-label="t('Stop sharing') + ': ' + audienceText(share)"
+                @click="stopShare(share)" :data-maps-stop="share.shareId"></q-btn>
+    </div>
+    <div v-if="geoError && sending.length" class="text-warning text-caption q-px-sm" role="alert">{{geoError}}</div>
 
     <div class="row no-wrap">
         <component :is="phone ? 'q-card' : 'div'" v-if="panel" :flat="phone ? true : undefined" :bordered="phone ? true : undefined"
@@ -205,6 +237,67 @@ along with this software (see the LICENSE.md file). If not, see
                 <a class="text-caption q-mt-sm block" :href="siblingUrl('Views')" @click.prevent="$root.setUrl(siblingUrl('Views'))">{{t('Manage saved views')}}</a>
             </template>
 
+            <template v-if="panel === 'live'">
+                <q-btn dense unelevated no-caps color="primary" icon="sym_o_share_location" :label="t('Share my location')" id="MapsShareLocation"
+                        @click="openShare"></q-btn>
+                <div class="text-caption m-muted q-mt-md">{{t('Shared with me')}}</div>
+                <div v-if="!sharedWithMe.length" class="text-caption m-muted" id="MapsSharedNone">{{t('Nobody shares their location with you now.')}}</div>
+                <q-list dense separator>
+                    <q-item v-for="share in sharedWithMe" :key="share.shareId" :data-maps-shared="share.shareId" :active="liveSelected === share.shareId"
+                            active-class="m-tonal">
+                        <q-item-section>
+                            <q-item-label>{{share.label}}</q-item-label>
+                            <q-item-label caption>{{[ageWords(share), t('until') + ' ' + untilText(share.thruDate), share.approximate ? t('approximate, about 1 km') : '']
+                                .filter(Boolean).join(' · ')}}</q-item-label>
+                            <q-item-label v-if="share.purposeText" caption>{{share.purposeText}}</q-item-label>
+                        </q-item-section>
+                        <q-item-section side>
+                            <div class="row no-wrap">
+                                <q-btn dense flat round size="sm" icon="sym_o_my_location" :disable="!share.position" :aria-label="t('Show on map') + ': ' + share.label"
+                                        @click="showShare(share)" data-maps-show="true"><q-tooltip>{{t('Show on map')}}</q-tooltip></q-btn>
+                                <q-btn dense flat round size="sm" icon="sym_o_directions" :disable="!share.position" :aria-label="t('Directions') + ': ' + share.label"
+                                        @click="directions(share)" data-maps-directions="true"><q-tooltip>{{t('Directions')}}</q-tooltip></q-btn>
+                            </div>
+                        </q-item-section>
+                    </q-item>
+                </q-list>
+                <div class="text-caption m-muted q-mt-md">{{t('Who sees my location')}}</div>
+                <div v-if="!myShares.length" class="text-caption m-muted" id="MapsMineNone">{{t('You share your location with nobody now.')}}</div>
+                <q-card v-for="share in myShares" :key="share.shareId" flat bordered class="q-pa-sm q-mt-xs" :data-maps-mine="share.shareId">
+                    <div class="text-body2">{{share.label}}</div>
+                    <div class="text-caption m-muted">{{[t('until') + ' ' + untilText(share.thruDate), share.approximate ? t('approximate, about 1 km') : t('exact'),
+                        share.keepTrail ? t('trail kept') + ' (' + (share.trailCount || 0) + ' ' + t('points') + ')' : t('no trail kept')].join(' · ')}}</div>
+                    <div class="text-caption m-muted">{{t('Last position')}}: {{ageWords(share)}}</div>
+                    <q-list dense>
+                        <q-item v-for="entry in share.audience" :key="entry.audienceSeqId" class="q-px-none" :data-maps-audience="entry.audienceSeqId">
+                            <q-item-section avatar style="min-width:28px"><q-icon :name="audienceIcon(entry)" size="xs"></q-icon></q-item-section>
+                            <q-item-section>{{entry.name}}</q-item-section>
+                            <q-item-section side>
+                                <div class="row no-wrap items-center">
+                                    <q-btn v-if="entry.audienceTypeEnumId === 'LsaUserGroup'" dense flat no-caps size="sm" :label="t('Add the group again')"
+                                            @click="addGroupAgain(share, entry)" data-maps-readd="true">
+                                        <q-tooltip>{{t('Lets in who joined the group since, and leaves out who left it')}}</q-tooltip></q-btn>
+                                    <q-btn dense flat round size="sm" icon="close" :aria-label="t('Stop sharing with') + ' ' + entry.name" @click="revokeAudience(share, entry)"></q-btn>
+                                </div>
+                            </q-item-section>
+                        </q-item>
+                    </q-list>
+                    <div class="row q-gutter-xs q-mt-xs">
+                        <q-btn-dropdown dense flat no-caps size="sm" icon="sym_o_more_time" :label="t('Extend')" data-maps-extend="true">
+                            <q-list dense>
+                                <q-item v-for="option in untilOptions" :key="option.value" clickable v-close-popup @click="extendShare(share, option.value)">
+                                    <q-item-section>{{option.label}} {{t('from now')}}</q-item-section>
+                                </q-item>
+                            </q-list>
+                        </q-btn-dropdown>
+                        <q-btn v-if="share.keepTrail && share.trailCount" dense flat no-caps size="sm" icon="sym_o_delete" :label="t('Delete trail')" @click="deleteTrail(share)"></q-btn>
+                        <q-space></q-space>
+                        <q-btn dense flat no-caps size="sm" color="negative" icon="sym_o_location_off" :label="t('Stop')" @click="stopShare(share)"></q-btn>
+                    </div>
+                </q-card>
+                <div class="text-caption m-muted q-mt-sm">{{t('Only you and the people you share with see these: no administrator reads them. A share ends at its time; the server keeps its latest position only, and a trail only when you keep one.')}}</div>
+            </template>
+
             <template v-if="panel === 'edit' && editing">
                 <div class="text-body1 text-weight-medium">{{editing.label}}</div>
                 <div class="text-caption m-muted" id="MapsEditWhere">{{editing.inPlace
@@ -256,7 +349,7 @@ along with this software (see the LICENSE.md file). If not, see
 
         <div class="col" ref="mapHolder" style="min-width:0">
             <m-map v-if="mapConfig" ref="map" id="MapsBrowseMap" :config="mapConfig" :height="mapPx + 'px'" @select="onSelect" @view-change="onViewChange"
-                    @edit-change="onEditChange"></m-map>
+                    @edit-change="onEditChange" @live-change="onLiveChange"></m-map>
             <div v-else class="flex flex-center" :style="{height: mapPx + 'px'}"><q-spinner size="2em"></q-spinner></div>
         </div>
     </div>
@@ -332,11 +425,59 @@ along with this software (see the LICENSE.md file). If not, see
             </div>
         </div>
     </m-dialog>
+
+    <!-- Share my location (plans/Location-Sharing.md §3.3): who sees it, until when, exact or approximate, a trail or not;
+        started only by this act, sent from this page while it is open; a guest link's token shown once -->
+    <m-dialog v-model="shareShown" :title="t('Share my location')" width="480">
+        <div id="MapsShareDialog">
+            <template v-if="shareMade">
+                <div class="text-body2">{{t('Your location is shared until')}} {{untilText(shareMade.thruDate)}}. {{t('This page sends it while it is open; close it and the people you chose see how old the last position is.')}}</div>
+                <div v-if="shareMade.linkToken" class="q-mt-sm m-tonal q-pa-sm" id="MapsShareLinkToken">
+                    <div class="text-caption">{{t('The guest link\'s token, shown this once: keep it now. The guest page that opens it is not built yet.')}}</div>
+                    <div class="row items-center no-wrap q-mt-xs">
+                        <code class="col" style="overflow-wrap:anywhere">{{shareMade.linkToken}}</code>
+                        <q-btn dense flat round icon="sym_o_content_copy" :aria-label="t('Copy')" @click="copyText(shareMade.linkToken)"></q-btn>
+                    </div>
+                </div>
+                <div class="row justify-end q-mt-md"><q-btn dense unelevated no-caps color="primary" :label="t('Done')" @click="shareShown = false"></q-btn></div>
+            </template>
+            <template v-else>
+                <q-select v-model="shareForm.users" multiple use-input use-chips dense outlined :options="shareUserOptions" @filter="filterShareUsers"
+                        :label="t('People')" input-debounce="250" id="MapsShareUsers">
+                    <template v-slot:no-option><q-item><q-item-section class="text-caption m-muted">{{t('Type a name')}}</q-item-section></q-item></template>
+                </q-select>
+                <q-select v-if="shareTargets.groups.length" v-model="shareForm.groups" multiple use-chips dense outlined emit-value map-options class="q-mt-sm"
+                        :options="shareTargets.groups" option-value="userGroupId" option-label="label" :label="t('Groups you are in')" id="MapsShareGroups"></q-select>
+                <div v-if="shareForm.groups.length" class="text-caption m-muted">{{t('A group is seen by its members now; someone who joins later sees it once you add the group again.')}}</div>
+                <q-select v-if="shareTargets.xmpp" v-model="shareForm.jids" multiple use-chips dense outlined emit-value map-options class="q-mt-sm"
+                        :options="shareTargets.contacts" option-value="jid" option-label="label" :label="t('XMPP contacts')" id="MapsShareJids"></q-select>
+                <q-toggle v-model="shareForm.link" dense :label="t('A guest link (its token is shown once)')" class="q-mt-sm" id="MapsShareLink"></q-toggle>
+                <div class="text-caption m-muted q-mt-sm">{{t('Until')}}</div>
+                <q-btn-toggle v-model="shareForm.hours" dense no-caps unelevated toggle-color="primary" :options="untilOptions" id="MapsShareUntil"></q-btn-toggle>
+                <div class="text-caption m-muted q-mt-sm">{{t('Where you are')}}</div>
+                <q-btn-toggle v-model="shareForm.precision" dense no-caps unelevated toggle-color="primary" id="MapsSharePrecision"
+                        :options="[{label: t('Exact'), value: 'LspExact'}, {label: t('Approximate, about 1 km'), value: 'LspApproximate'}]"></q-btn-toggle>
+                <q-toggle v-model="shareForm.keepTrail" dense class="q-mt-sm" id="MapsShareTrail"
+                        :label="t('Keep a trail') + ' (' + t('up to') + ' ' + shareTargets.trailMaxDays + ' ' + t('days after it ends; you can delete it') + ')'"></q-toggle>
+                <m-text-line v-model="shareForm.label" name="shareLabel" id="MapsShareLabel" :label="t('Name they see (your name when empty)')" class="q-mt-sm"></m-text-line>
+                <div v-if="shareError" class="text-negative text-caption q-mt-xs" role="alert">{{shareError}}</div>
+                <div class="text-caption m-muted q-mt-sm">{{t('Each person is told that you share with them and until when. Nothing else starts a share, and you can stop it at once.')}}</div>
+                <div class="row justify-end q-mt-md q-gutter-sm">
+                    <q-btn flat dense no-caps :label="t('Cancel')" @click="shareShown = false"></q-btn>
+                    <q-btn dense unelevated no-caps color="primary" icon="sym_o_share_location" :label="t('Share')" :loading="shareSaving" :disable="!shareAudience.length"
+                            @click="createShare" id="MapsShareCreate"></q-btn>
+                </div>
+            </template>
+        </div>
+    </m-dialog>
 </div></template>
 
 <script>
 const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
 const OVERLAY_ACCEPT = '.geojson,.json,.topojson,.esrijson,.gpx,.kml,.gml,.wkt,.wkb,.csv,.tsv,.zip';
+// the shares of the user's own that this browser sends while their page is open (a per-browser convenience: the share itself
+// is the server's)
+const SENDING_KEY = 'moqui.maps.sendingShares';
 const PRECISION = { GPP_USER_CONFIRMED: 'User-confirmed point', GPP_ADDRESS_MATCH: 'Address match', GPP_STREET_RANGE: 'Street-range interpolation',
     GPP_POSTAL_AREA: 'Postal-area representative point', GPP_PLACE_ESTIMATE: 'Place estimate' };
 
@@ -351,7 +492,13 @@ module.exports = {
             editing: null, editState: { count: 0, dirty: false, selected: null, sketch: 0 }, editLabel: '', editDescription: '', editNotes: [],
             editSaving: false, editLoading: false, editStale: false,
             rasters: {}, bandLayerId: '', bandForm: { mode: 'rgb', rgb: [1, 2, 3], band: 1, colormap: 'grey', min: '', max: '', nodata: '' }, bandError: '', bandSaving: false,
-            picker: { drives: [], driveId: null, crumbs: [], rows: [], loading: false, text: '', searching: false } };
+            picker: { drives: [], driveId: null, crumbs: [], rows: [], loading: false, text: '', searching: false },
+            // live location (plans/Location-Sharing.md §3.3): m-map's shares as it holds them (live-change), the page's clock for
+            // ages, the shares this page sends and the newest position the browser gave
+            live: null, liveGone: [], liveSelected: '', sharesLoadedAt: Date.now(), now: Date.now(), sending: [], sendNotes: {}, geoError: '',
+            shareShown: false, shareSaving: false, shareError: '', shareMade: null, shareUserOptions: [],
+            shareForm: { users: [], groups: [], jids: [], link: false, hours: 1, precision: 'LspExact', keepTrail: false, label: '' },
+            shareTargets: { loaded: false, groups: [], xmpp: false, contacts: [], maxShareHours: 24, trailMaxDays: 30 } };
     },
     computed: {
         screenPath() { return this.mScreen ? this.mScreen.path : this.$root.basePath + '/' + this.$root.currentPathList.join('/'); },
@@ -373,7 +520,37 @@ module.exports = {
         colormapOptions() { return [{ label: t('Grey'), value: 'grey' }, { label: 'Viridis', value: 'viridis' }, { label: t('Terrain'), value: 'terrain' }, { label: 'Magma', value: 'magma' }]; },
         problemCount() { return this.layerErrors.length + (this.effective && this.effective.featuresTruncated ? 1 : 0); },
         panelTitle() {
-            return { search: t('Search results'), layers: t('Layers'), views: t('Saved views'), details: t('Selected'), edit: t('Edit') }[this.panel] || '';
+            return { search: t('Search results'), layers: t('Layers'), views: t('Saved views'), details: t('Selected'), edit: t('Edit'), live: t('Live location') }[this.panel] || '';
+        },
+        // the configuration's shares (getConfig, locationShares) with what m-map holds of each since (its pushes: a newer
+        // position, a new end; one it took off, ended or revoked, is gone here too), and none past its end
+        locationShares() {
+            const given = this.effective ? this.effective.locationShares || [] : [];
+            const live = this.live || [];
+            return given.map((share) => {
+                const held = live.find((one) => one.shareId === share.shareId) || null;
+                if (this.liveGone.includes(share.shareId)) return null;
+                const latest = share.latest || null;
+                const position = held && held.latest ? { lat: held.latest.lat, lon: held.latest.lon }
+                    : latest && latest.latitude !== null && latest.latitude !== undefined ? { lat: Number(latest.latitude), lon: Number(latest.longitude) } : null;
+                const seenAt = held ? held.seenAt : latest && latest.ageSeconds !== null && latest.ageSeconds !== undefined ? this.sharesLoadedAt - latest.ageSeconds * 1000 : null;
+                return Object.assign({}, share, { position, seenAt, thruDate: held && held.thruDate ? held.thruDate : share.thruDate });
+            }).filter((share) => share && (!share.thruDate || share.thruDate > this.now));
+        },
+        myShares() { return this.locationShares.filter((share) => share.role === 'owner'); },
+        sharedWithMe() { return this.locationShares.filter((share) => share.role !== 'owner'); },
+        // the ends offered, within location@max-share-hours
+        untilOptions() {
+            return [0.25, 1, 2, 8, 24].filter((hours) => hours <= this.shareTargets.maxShareHours)
+                .map((hours) => ({ label: hours < 1 ? Math.round(hours * 60) + ' ' + t('min') : hours + ' ' + t('h'), value: hours }));
+        },
+        // the audience the dialog sends: people, groups, XMPP contacts and a link, as create#Share takes them
+        shareAudience() {
+            const form = this.shareForm;
+            return form.users.map((user) => ({ audienceTypeEnumId: 'LsaUser', userId: user.value }))
+                .concat(form.groups.map((userGroupId) => ({ audienceTypeEnumId: 'LsaUserGroup', userGroupId })))
+                .concat(form.jids.map((jid) => ({ audienceTypeEnumId: 'LsaXmpp', jid })))
+                .concat(form.link ? [{ audienceTypeEnumId: 'LsaLink' }] : []);
         },
         // a saved place is a point: its file draws nothing else
         drawOptions() {
@@ -414,7 +591,15 @@ module.exports = {
     },
     watch: {
         // another record or place: the layer choices start again from the profile's
-        parameters: { deep: true, handler(value, before) { if (JSON.stringify(value) !== JSON.stringify(before)) { this.hidden = {}; this.load(); } } }
+        parameters: { deep: true, handler(value, before) { if (JSON.stringify(value) !== JSON.stringify(before)) { this.hidden = {}; this.load(); } } },
+        // a share of the user's own that ended (stopped, past its end, or ended elsewhere) is no longer sent; the banners
+        // above the map change its height
+        myShares(value, before) {
+            const ids = value.map((share) => share.shareId);
+            const had = (before || []).map((share) => share.shareId);
+            this.sending.filter((id) => had.includes(id) && !ids.includes(id)).forEach((id) => this.stopSending(id));
+            if (value.length !== (before || []).length) this.$nextTick(() => this.measure());
+        }
     },
     methods: {
         t,
@@ -519,6 +704,8 @@ module.exports = {
             const asked = typeof extraLayerId === 'string' ? extraLayerId : '';
             return this.request('getConfig', { params: this.configParameters(asked) }).then((config) => {
                 this.effective = config;
+                this.sharesLoadedAt = Date.now();
+                this.restoreSending();
                 this.watchTiles();
                 const p = this.parameters;
                 const lon = Number(p.longitude), lat = Number(p.latitude);
@@ -619,6 +806,8 @@ module.exports = {
                     .some((feature) => feature.properties && feature.properties.layerId === layer.id))) this.load(layer.id);
         },
         onSelect(place) {
+            // a live share's marker: the Live location panel, with that share marked
+            if (place.kind === 'liveShare') { this.liveSelected = place.shareId; this.panel = 'live'; return; }
             // an overlay's feature: its label and description (plain text, shown as text), its overlay and where it is; a
             // place of the user's own places file can be removed
             if (place.kind === 'overlay') {
@@ -870,6 +1059,246 @@ module.exports = {
             clipboard.writeText(text).then(() => moqui.notifyMessages([{ type: 'success', message: t('Copied') + ': ' + text }], null),
                 (err) => console.warn('Maps: the coordinates were not copied', err));
         },
+        // ---- live location (plans/Location-Sharing.md §3.3; the transitions are Browse.xml's, over LocationServices) ----
+        // m-map's shares after a change: one it held before and holds no more (ended, revoked for this viewer, or no longer read)
+        // is gone from the panels too
+        onLiveChange(change) {
+            const shares = change && Array.isArray(change.shares) ? change.shares : [];
+            const ids = new Set(shares.map((share) => share.shareId));
+            const gone = (this.live || []).map((share) => share.shareId).filter((id) => !ids.has(id) && !this.liveGone.includes(id));
+            if (gone.length) this.liveGone = this.liveGone.concat(gone);
+            this.live = shares;
+        },
+        // the shares read again after a change of the user's own; m-map takes them without drawing the map again
+        refreshShares() {
+            return this.request('locationShares').then((json) => {
+                if (!this.effective) return;
+                this.effective = Object.assign({}, this.effective, { locationShares: json.locationShares || [] });
+                this.sharesLoadedAt = Date.now();
+            }, (err) => console.warn('Maps: the location shares were not read again', err));
+        },
+        untilText(millis) {
+            if (!millis) return '';
+            const at = new Date(Number(millis));
+            const time = at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            return at.toDateString() === new Date(this.now).toDateString() ? time : at.toLocaleDateString([], { weekday: 'short' }) + ' ' + time;
+        },
+        ageWords(share) {
+            if (!share.position || share.seenAt === null || share.seenAt === undefined) return t('No position yet');
+            const seconds = Math.max(0, Math.round((this.now - share.seenAt) / 1000));
+            const words = seconds < 60 ? t('just now') : seconds < 3600 ? Math.floor(seconds / 60) + ' ' + t('min ago')
+                : seconds < 86400 ? Math.floor(seconds / 3600) + ' ' + t('h ago') : Math.floor(seconds / 86400) + ' ' + t('d ago');
+            return seconds > 300 ? words + ' (' + t('stale') + ')' : words;
+        },
+        // whom an own share is with: "Sam, Pat and 2 others"
+        audienceText(share) {
+            const names = (share.audience || []).map((entry) => entry.name).filter(Boolean);
+            if (!names.length) return t('nobody now');
+            return names.length <= 2 ? names.join(' ' + t('and') + ' ') : names.slice(0, 2).join(', ') + ' ' + t('and') + ' ' + (names.length - 2) + ' ' + t('others');
+        },
+        audienceIcon(entry) {
+            return { LsaUser: 'sym_o_person', LsaUserGroup: 'sym_o_group', LsaXmpp: 'sym_o_forum', LsaLink: 'sym_o_link' }[entry.audienceTypeEnumId] || 'sym_o_person';
+        },
+        showShare(share) {
+            if (!share.position) return;
+            this.liveSelected = share.shareId;
+            this.view = { center: [share.position.lon, share.position.lat], zoom: 15 };
+            if (this.phone) this.panel = '';
+        },
+        // the geo: URI the phone's maps app opens for directions (RFC 5870 with Android's q and the label), as Chat's Open in maps
+        geoUri(share) {
+            const at = Number(share.position.lat).toFixed(6) + ',' + Number(share.position.lon).toFixed(6);
+            return 'geo:' + at + '?q=' + at + (share.label ? '(' + encodeURIComponent(share.label) + ')' : '');
+        },
+        osmUrl(share) {
+            const lat = Number(share.position.lat).toFixed(6), lon = Number(share.position.lon).toFixed(6);
+            return 'https://www.openstreetmap.org/?mlat=' + lat + '&mlon=' + lon + '#map=17/' + lat + '/' + lon;
+        },
+        // Directions: in the Android app the phone's maps app (geo:, which its openExternal hands to the system); elsewhere the
+        // place on OpenStreetMap, in a new window: the position leaves this server only by this act
+        directions(share) {
+            if (!share.position) return;
+            const desktop = window.moquiDesktop;
+            const phone = !!(desktop && typeof desktop.dialAccount === 'function' && typeof desktop.openExternal === 'function');
+            if (phone) { Promise.resolve(desktop.openExternal(this.geoUri(share))).catch(() => window.open(this.osmUrl(share), '_blank', 'noopener')); return; }
+            if (desktop && typeof desktop.openExternal === 'function') { Promise.resolve(desktop.openExternal(this.osmUrl(share))).catch(() => {}); return; }
+            window.open(this.osmUrl(share), '_blank', 'noopener');
+        },
+        loadShareTargets() {
+            if (this.shareTargets.loaded) return Promise.resolve();
+            return this.request('shareTargets').then((json) => {
+                this.shareTargets = { loaded: true, groups: json.groups || [], xmpp: !!json.xmpp, contacts: json.contacts || [],
+                    maxShareHours: Number(json.maxShareHours) || 24, trailMaxDays: Number(json.trailMaxDays) || 30 };
+            }, (err) => console.warn('Maps: the share choices were not read', err));
+        },
+        openShare() {
+            this.shareForm = { users: [], groups: [], jids: [], link: false, hours: 1, precision: 'LspExact', keepTrail: false, label: '' };
+            this.shareError = '';
+            this.shareMade = null;
+            this.shareShown = true;
+            this.loadShareTargets();
+        },
+        filterShareUsers(text, update) {
+            const term = String(text || '').trim();
+            if (term.length < 2) { update(() => { this.shareUserOptions = []; }); return; }
+            this.request('shareUsers', { params: { term } }).then((list) => {
+                update(() => { this.shareUserOptions = Array.isArray(list) ? list : []; });
+            }, () => update(() => { this.shareUserOptions = []; }));
+        },
+        createShare() {
+            if (this.shareSaving || !this.shareAudience.length) return Promise.resolve(null);
+            this.shareSaving = true;
+            this.shareError = '';
+            const params = { audience: JSON.stringify(this.shareAudience), thruDate: String(Date.now() + this.shareForm.hours * 3600000),
+                precisionEnumId: this.shareForm.precision, keepTrail: this.shareForm.keepTrail ? 'true' : 'false', label: this.shareForm.label.trim() };
+            return this.request('createShare', { method: 'POST', params }).then((json) => {
+                if (!json.applied) { this.shareError = json.reason || t('Your location was not shared'); return null; }
+                this.shareMade = { shareId: json.shareId, thruDate: json.thruDate, linkToken: json.linkToken || null };
+                // shared by this page from now on, while it is open
+                this.startSending(json.shareId);
+                if (!json.linkToken) this.shareShown = false;
+                moqui.notifyMessages([{ type: 'success', message: t('Your location is shared until') + ' ' + this.untilText(json.thruDate) }], null);
+                return this.refreshShares().then(() => json.shareId);
+            }, (err) => { this.shareError = String(err && err.message || err); return null; }).then((shareId) => { this.shareSaving = false; return shareId; });
+        },
+        // an action on a share of the user's own, then the shares read again
+        shareAction(name, params, done) {
+            return this.request(name, { method: 'POST', params }).then((json) => {
+                if (!json.applied) { moqui.notifyMessages(null, [json.reason || t('That did not change the share')]); return; }
+                if (done) done(json);
+                this.refreshShares();
+            }, (err) => moqui.notifyMessages(null, [String(err && err.message || err)]));
+        },
+        stopShare(share) {
+            this.stopSending(share.shareId);
+            this.shareAction('stopShare', { shareId: share.shareId }, () => moqui.notifyMessages([{ type: 'success', message: t('Sharing stopped') }], null));
+        },
+        // Extend sends the new end alone, never the audience again
+        extendShare(share, hours) {
+            this.shareAction('extendShare', { shareId: share.shareId, thruDate: String(Date.now() + hours * 3600000) },
+                (json) => moqui.notifyMessages([{ type: 'success', message: t('Shared until') + ' ' + this.untilText(json.thruDate) }], null));
+        },
+        addGroupAgain(share, entry) {
+            this.shareAction('addGroupAgain', { shareId: share.shareId, userGroupId: entry.userGroupId }, (json) => {
+                const added = (json.addedUserList || []).map((user) => user.userName).filter(Boolean);
+                moqui.notifyMessages([{ type: 'success', message: added.length ? t('Now also shared with') + ' ' + added.join(', ') : t('The group was added again: nobody new') }], null);
+            });
+        },
+        revokeAudience(share, entry) { this.shareAction('revokeAudience', { shareId: share.shareId, audienceSeqId: entry.audienceSeqId }); },
+        deleteTrail(share) {
+            if (!window.confirm(t('Delete the trail of this share now?'))) return;
+            this.shareAction('deleteTrail', { shareId: share.shareId });
+        },
+        copyText(value) {
+            const clipboard = navigator.clipboard;
+            if (clipboard) clipboard.writeText(String(value)).then(() => moqui.notifyMessages([{ type: 'success', message: t('Copied') }], null), () => {});
+        },
+        // ---- sending from this page: watchPosition while a share of the user's own that this page started (or was asked to
+        // send) is active and the page is open; the page closed, the share stays active and goes stale. The shares sent are
+        // kept in this browser's storage so a reload of the page goes on sending them. ----
+        storedSending() {
+            try { const value = JSON.parse(window.localStorage.getItem(SENDING_KEY) || '[]'); return Array.isArray(value) ? value.map(String) : []; } catch (err) { return []; }
+        },
+        storeSending() {
+            try { window.localStorage.setItem(SENDING_KEY, JSON.stringify(this.sending)); } catch (err) { /* sending goes on for this page alone */ }
+        },
+        restoreSending() {
+            const mine = this.myShares.map((share) => share.shareId);
+            this.storedSending().filter((id) => mine.includes(id) && !this.sending.includes(id)).forEach((id) => this.startSending(id, true));
+        },
+        startSending(shareId, restored) {
+            if (!this.sending.includes(shareId)) this.sending = this.sending.concat([shareId]);
+            if (!restored) this.storeSending();
+            this.sendState = this.sendState || {};
+            this.sendState[shareId] = { nextAt: 0, sentAt: 0, inFlight: false, serverTime: false };
+            this.watchFixes();
+        },
+        stopSending(shareId) {
+            if (!this.sending.includes(shareId)) return;
+            this.sending = this.sending.filter((id) => id !== shareId);
+            this.storeSending();
+            if (this.sendState) delete this.sendState[shareId];
+            const notes = Object.assign({}, this.sendNotes);
+            delete notes[shareId];
+            this.sendNotes = notes;
+            if (!this.sending.length) this.unwatchFixes();
+        },
+        note(shareId, text) { this.sendNotes = Object.assign({}, this.sendNotes, { [shareId]: text }); },
+        watchFixes() {
+            const geo = navigator.geolocation;
+            if (!geo) { this.geoError = t('This browser cannot give its location, so nothing is sent from here'); return; }
+            if (this.watchId === undefined || this.watchId === null) {
+                // exact while any share sent is exact
+                const exact = this.myShares.some((share) => this.sending.includes(share.shareId) && !share.approximate);
+                this.watchId = geo.watchPosition((position) => {
+                    this.geoError = '';
+                    const c = position.coords;
+                    this.fix = { latitude: c.latitude, longitude: c.longitude, accuracy: c.accuracy, heading: c.heading, speed: c.speed, timestamp: position.timestamp || Date.now() };
+                    this.pumpReports();
+                }, (error) => {
+                    this.geoError = t('The browser did not give its location, so the people you share with see your last one') + (error && error.message ? ': ' + error.message : '');
+                }, { enableHighAccuracy: exact, maximumAge: 5000, timeout: 60000 });
+            }
+            if (!this.pumpTimer) this.pumpTimer = setInterval(() => this.pumpReports(), 1000);
+        },
+        unwatchFixes() {
+            if (this.watchId !== undefined && this.watchId !== null && navigator.geolocation) navigator.geolocation.clearWatch(this.watchId);
+            this.watchId = null;
+            clearInterval(this.pumpTimer);
+            this.pumpTimer = null;
+            this.fix = null;
+        },
+        // the newest fix to each share sent, at most one a share's interval (location@min-interval-seconds, or the approximate one)
+        pumpReports() {
+            const fix = this.fix;
+            if (!fix) return;
+            const now = Date.now();
+            this.sending.forEach((shareId) => {
+                const state = this.sendState && this.sendState[shareId];
+                if (!state || state.inFlight || now < state.nextAt || fix.timestamp <= state.sentAt) return;
+                this.report(shareId, state, fix);
+            });
+        },
+        // report#Position's outcome, statusCode in the answer: 200 taken (the latest as its audience reads it shown on this
+        // map); 429 too soon, sent again after retryAfterSeconds; 410 ended or 404 not the user's, no longer sent; 409 STALE
+        // passed over, CLOCK_AHEAD sent from then on with the server's time; 400 a value refused, passed over
+        report(shareId, state, fix) {
+            const share = this.myShares.find((one) => one.shareId === shareId);
+            const interval = Math.max(1, Number(share && share.reportIntervalSeconds) || 5) * 1000;
+            const num = (value) => (value === null || value === undefined || !Number.isFinite(Number(value)) ? '' : String(value));
+            const params = { shareId, latitude: num(fix.latitude), longitude: num(fix.longitude), accuracy: num(fix.accuracy), heading: num(fix.heading), speed: num(fix.speed),
+                observedDate: state.serverTime ? '' : String(fix.timestamp) };
+            state.inFlight = true;
+            this.request('reportPosition', { method: 'POST', params }).then((json) => {
+                const status = Number(json.statusCode);
+                const now = Date.now();
+                if (status === 200) {
+                    state.sentAt = fix.timestamp;
+                    state.nextAt = now + interval;
+                    if (this.sendNotes[shareId] && !state.serverTime) this.note(shareId, '');
+                    if (json.latest) this.showOwnLatest(shareId, json.latest);
+                } else if (status === 429) state.nextAt = now + Math.max(1, Number(json.retryAfterSeconds) || 1) * 1000;
+                else if (status === 410 || status === 404) {
+                    this.stopSending(shareId);
+                    this.refreshShares();
+                } else if (status === 409 && json.reasonCode === 'CLOCK_AHEAD') {
+                    state.serverTime = true;
+                    state.nextAt = now;
+                    this.note(shareId, t('this device\'s clock is ahead of the server\'s, so its positions are timed by the server'));
+                } else if (status === 409 || status === 400) {
+                    state.sentAt = fix.timestamp;
+                    state.nextAt = now + interval;
+                    if (status === 400) this.note(shareId, t('a position was refused'));
+                } else state.nextAt = now + interval;
+            }, () => { state.nextAt = Date.now() + interval; }).then(() => { state.inFlight = false; });
+        },
+        // the user's own latest, as the audience reads it, put on this map without drawing it again
+        showOwnLatest(shareId, latest) {
+            if (!this.effective) return;
+            const shares = (this.effective.locationShares || []).map((share) => (share.shareId === shareId ? Object.assign({}, share, { latest: Object.assign({}, latest, { ageSeconds: 0 }) }) : share));
+            this.effective = Object.assign({}, this.effective, { locationShares: shares });
+            this.sharesLoadedAt = Date.now();
+        },
         toggleFullscreen() {
             if (document.fullscreenElement) document.exitFullscreen();
             else if (this.$refs.frame && this.$refs.frame.requestFullscreen) this.$refs.frame.requestFullscreen();
@@ -898,8 +1327,13 @@ module.exports = {
         this.load();
         this.loadViews();
         this.loadPreferences();
+        // the ages of the live shares move on with the clock
+        this.nowTimer = setInterval(() => { this.now = Date.now(); }, 30000);
     },
     beforeUnmount() {
+        // the page closing stops what it sends; its shares stay active and go stale
+        this.unwatchFixes();
+        clearInterval(this.nowTimer);
         if (this.editing) this.editCommand('stop');
         window.removeEventListener('resize', this.onResize);
         document.removeEventListener('fullscreenchange', this.onFullscreenChange);

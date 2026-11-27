@@ -19,7 +19,10 @@ along with this software (see the LICENSE.md file). If not, see
     the selected feature's details (Save place) beside it, a bottom sheet on a phone, and the editing of the user's own
     overlays and places (overlayEdit, saveOverlayEdit).
     Browse.tui.json is the terminal's: the map component over terminalMap (the places of the saved views and the record
-    layers, the notices and the attribution). A qvue screen only: asked for in html under /apps it opens at the same path
+    layers, the notices and the attribution), then LocationSharesTui, the user's live location shares with Stop. Live location
+    (plans/Location-Sharing.md §3.3): getConfig carries the user's own active shares and those shared with them
+    (locationShares), and the transitions under "Live location" below start, extend, stop and report them through
+    org.moqui.maps.LocationServices. A qvue screen only: asked for in html under /apps it opens at the same path
     under /qapps (screen/render.rs). Search reads saved views and places and the permitted records of the record layers
     (each read through its adapter, which checks the caller), postal codes of the local Geo data, the imported Overture
     places (OvertureData.js searchPlaces: local rows of the active releases, with their sources and licenses) and, only when
@@ -47,7 +50,8 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.maps.MapServices.get#EffectiveConfig').requireNewTransaction(true)
                 .parameters({profileId: profileId || null, layerIds: layerIds || null, adapterKey: adapterKey || null,
-                    recordKey: recordKey || null, addressPurpose: addressPurpose || null, routeApp: routeApp || null}).call()
+                    recordKey: recordKey || null, addressPurpose: addressPurpose || null, routeApp: routeApp || null,
+                    locationShares: true}).call()
             if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
             else {
                 const config = out.config || {}
@@ -67,6 +71,181 @@ along with this software (see the LICENSE.md file). If not, see
                 } finally { ec.message.clearErrors(); ec.message.popErrors() }
                 ec.web.sendJsonResponse(config)
             }
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- ===== Live location (plans/Location-Sharing.md §3.3; docs/tools/Maps.md, Live location) =====
+        Each a call of org.moqui.maps.LocationServices as the user, which checks that the user owns the share or is in its
+        current audience: these transitions read no entity of a share. A position is posted (never in a URL), handed on as
+        text, and named in no log, message or answer but the owner's own latest. -->
+    <!-- the user's own active shares and those shared with them, read again after a change (MapConfig.js liveShares, as
+        getConfig's locationShares) -->
+    <transition name="locationShares" method="get" read-only="true">
+        <actions><script><![CDATA[
+            ec.message.pushErrors()
+            try {
+                const out = ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('liveShares', {})
+                ec.web.sendJsonResponse({locationShares: Array.from(out.locationShares || [])})
+            } catch (err) {
+                ec.logger.warn('Maps Browse: the location shares were not read: ' + (err?.message ?? err))
+                ec.web.sendJsonResponse({errors: ec.l10n.localize('The location shares were not read')})
+            } finally { ec.message.clearErrors(); ec.message.popErrors() }
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- Share my location's choices: the groups the user is in now (create#Share refuses ALL_USERS and a group of external
+        users, and checks the rest again), the XMPP contacts of their roster when this server has XMPP, and the limits -->
+    <transition name="shareTargets" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const me = ec.user.userId
+            const find = (entity) => ec.entity.find(entity).disableAuthz()
+            const ids = Array.from(new Set(Array.from(find('moqui.security.UserGroupMember').condition('userId', me)
+                .conditionDate('fromDate', 'thruDate', null).selectField('userGroupId').list()).map((row) => row.userGroupId)))
+                .filter((id) => id && id !== 'ALL_USERS')
+            const outside = new Set(ids.length ? Array.from(find('moqui.security.UserGroupPermission').condition('userGroupId', 'in', ids)
+                .condition('userPermissionId', 'EXTERNAL_USER').conditionDate('fromDate', 'thruDate', null).selectField('userGroupId').list())
+                .map((row) => row.userGroupId) : [])
+            const groups = ids.length ? Array.from(find('moqui.security.UserGroup').condition('userGroupId', 'in', ids.filter((id) => !outside.has(id)))
+                .selectField('userGroupId,description').orderBy('description').list()).map((row) => ({userGroupId: row.userGroupId,
+                label: row.description || row.userGroupId})) : []
+            const setting = (name, fallback) => { const n = Number(String(ec.factory.getConfValue('location@' + name) || '').trim()); return Number.isInteger(n) && n > 0 ? n : fallback }
+            const domain = String(ec.factory.getConfValue('xmpp-server@domain') || '').trim().toLowerCase()
+            const contacts = []
+            if (domain) {
+                ec.message.pushErrors()
+                try {
+                    const roster = ec.service.sync().name('org.moqui.chat.XmppServices.get#Roster').call() || {}
+                    const userIds = ec.message.hasError() ? [] : Array.from(roster.userIdList || [])
+                    if (userIds.length) for (const row of find('moqui.security.UserAccount').condition('userId', 'in', userIds)
+                            .selectField('userId,username,userFullName').orderBy('userFullName').list())
+                        if (row.username) contacts.push({jid: String(row.username).toLowerCase() + '@' + domain, label: row.userFullName || row.username})
+                } catch (err) {
+                    ec.logger.warn('Maps Browse: the XMPP contacts were not listed: ' + (err?.message ?? err))
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            }
+            ec.web.sendJsonResponse({groups, xmpp: !!domain, contacts, maxShareHours: setting('max-share-hours', 24), trailMaxDays: setting('trail-max-days', 30)})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the people to share with, by name: those the user may message (CommsServices.search#Users, the chat directory's
+        rule), none when basic-comms is not there; create#Share checks each again -->
+    <transition name="shareUsers" method="get" read-only="true">
+        <actions><script><![CDATA[
+            ec.message.pushErrors()
+            let found = []
+            try {
+                const out = ec.service.sync().name('org.moqui.comms.CommsServices.search#Users').parameters({term: String(term || ''), limit: 12}).call() || {}
+                if (!ec.message.hasError()) found = Array.from(out.userList || []).filter((user) => user.id !== ec.user.userId)
+                    .map((user) => ({value: user.id, label: user.label}))
+            } catch (err) {
+                found = []
+            } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            ec.web.sendJsonResponse(found)
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- Share my location: create#Share with the audience chosen (audience: a JSON list of {audienceTypeEnumId, userId,
+        userGroupId, jid}), until thruDate (epoch millis), exact or approximate and a trail or not; a link's token is answered
+        this once -->
+    <transition name="createShare">
+        <actions><script><![CDATA[
+            let audienceList = null
+            try { audienceList = JSON.parse(String(context.audience || '[]')) } catch (err) { audienceList = null }
+            const thru = Number(context.thruDate)
+            const out = !Array.isArray(audienceList) ? null : ec.service.sync().name('org.moqui.maps.LocationServices.create#Share')
+                .requireNewTransaction(true).parameters({audienceList: audienceList.slice(0, 100), thruDate: Number.isFinite(thru) ? new Date(thru) : null,
+                    precisionEnumId: String(context.precisionEnumId || 'LspExact'), keepTrail: String(context.keepTrail) === 'true',
+                    label: String(context.label || '').trim() || null}).call()
+            if (!out) ec.web.sendJsonResponse({applied: false, reason: ec.l10n.localize('Choose who sees your location')})
+            else if (ec.message.hasError()) { const reason = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({applied: false, reasonCode: out.reasonCode, reason}) }
+            else ec.web.sendJsonResponse({applied: true, shareId: out.shareId, thruDate: out.thruDate ? ec.user.timestampMillis(out.thruDate) : null,
+                linkToken: out.linkToken || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- Extend: a new end for an active share of the user's own (update#Share with thruDate alone: the audience is never
+        sent again, so no group's snapshot is taken again) -->
+    <transition name="extendShare">
+        <actions><script><![CDATA[
+            const thru = Number(context.thruDate)
+            const out = ec.service.sync().name('org.moqui.maps.LocationServices.update#Share').requireNewTransaction(true)
+                .parameters({shareId: String(shareId ?? ''), thruDate: Number.isFinite(thru) ? new Date(thru) : null}).call() || {}
+            if (ec.message.hasError()) { const reason = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({applied: false, reasonCode: out.reasonCode, reason}) }
+            else ec.web.sendJsonResponse({applied: true, thruDate: out.thruDate ? ec.user.timestampMillis(out.thruDate) : null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- Add the group again: the one act that sends a group to update#Share, which takes a new snapshot of its members (those
+        who joined since are let in, those it leaves out told); addedUserList names whom it lets in -->
+    <transition name="addGroupAgain">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.maps.LocationServices.update#Share').requireNewTransaction(true)
+                .parameters({shareId: String(shareId ?? ''), addAudienceList: [{audienceTypeEnumId: 'LsaUserGroup', userGroupId: String(userGroupId ?? '')}]})
+                .call() || {}
+            if (ec.message.hasError()) { const reason = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({applied: false, reasonCode: out.reasonCode, reason}) }
+            else ec.web.sendJsonResponse({applied: true, addedUserList: Array.from(out.addedUserList || [])})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="stopShare">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.maps.LocationServices.stop#Share').requireNewTransaction(true)
+                .parameters({shareId: String(shareId ?? '')}).call() || {}
+            if (ec.message.hasError()) { const reason = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({applied: false, reasonCode: out.reasonCode, reason}) }
+            else ec.web.sendJsonResponse({applied: true})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="revokeAudience">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.maps.LocationServices.revoke#Audience').requireNewTransaction(true)
+                .parameters({shareId: String(shareId ?? ''), audienceSeqId: String(audienceSeqId ?? '')}).call() || {}
+            if (ec.message.hasError()) { const reason = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({applied: false, reasonCode: out.reasonCode, reason}) }
+            else ec.web.sendJsonResponse({applied: true})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="deleteTrail">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.maps.LocationServices.delete#Trail').requireNewTransaction(true)
+                .parameters({shareId: String(shareId ?? '')}).call() || {}
+            if (ec.message.hasError()) { const reason = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({applied: false, reasonCode: out.reasonCode, reason}) }
+            else ec.web.sendJsonResponse({applied: true, deletedCount: Number(out.deletedCount) || 0})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- A browser's position for a share of the user's own, while its page is open (report#Position, which remembers no
+        parameters): the latitude, longitude, accuracy, heading and speed as text, and observedDate (epoch millis, none for
+        the server's own time). Its answer is always this transition's JSON, statusCode its outcome: 200 taken (with the
+        share's latest as the audience reads it, rounded for an approximate share), 429 too soon (retryAfterSeconds), 410
+        ended or stopped (stop sending), 404 not the user's, 409 STALE (not later than the latest) or CLOCK_AHEAD (the
+        device's clock is ahead: send without observedDate), 400 a value out of range. No value is in an error or a log. -->
+    <transition name="reportPosition">
+        <actions><script><![CDATA[
+            const value = (name) => (context[name] == null ? null : String(context[name]).trim() || null)
+            const observed = Number(context.observedDate)
+            let answer = {statusCode: 500, reasonCode: 'FAILED'}
+            ec.message.pushErrors()
+            try {
+                const out = ec.service.sync().name('org.moqui.maps.LocationServices.report#Position').requireNewTransaction(true)
+                    .parameters({shareId: String(shareId ?? ''), latitude: value('latitude'), longitude: value('longitude'), accuracy: value('accuracy'),
+                        heading: value('heading'), speed: value('speed'), observedDate: value('observedDate') && Number.isFinite(observed) ? new Date(observed) : null})
+                    .call() || {}
+                answer = {statusCode: Number(out.statusCode) || (ec.message.hasError() ? 400 : 200), reasonCode: out.reasonCode || null,
+                    retryAfterSeconds: out.retryAfterSeconds == null ? null : Number(out.retryAfterSeconds)}
+            } catch (err) {
+                // the failure's text may hold what was posted: it is not logged or answered
+                answer = {statusCode: 500, reasonCode: 'FAILED'}
+            } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            if (answer.statusCode === 200) {
+                ec.message.pushErrors()
+                try {
+                    const got = ec.service.sync().name('org.moqui.maps.LocationServices.get#Share').parameters({shareId: String(shareId ?? ''), trailPageSize: 1})
+                        .requireNewTransaction(true).call() || {}
+                    if (!ec.message.hasError() && got.latest) answer.latest = got.latest
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            }
+            ec.web.sendJsonResponse(answer)
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -472,7 +651,7 @@ along with this software (see the LICENSE.md file). If not, see
     <widgets>
         <render-mode>
             <text type="qvue" location="component://tools/screen/Maps/Browse.qvue" template="false"/>
-            <text type="tui" location="component://tools/screen/Maps/Browse.tui.json" template="false"/>
+            <text type="tui" location="component://tools/screen/Maps/Browse.tui.json" template="fancy"/>
         </render-mode>
     </widgets>
 </screen>

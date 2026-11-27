@@ -14,7 +14,7 @@ searches.
 
 | Screen | What it is |
 | --- | --- |
-| Browse (`Maps/Browse.xml`, `Browse.qvue`, `Browse.tui.json`) | The map filling the page, with optional browser full screen. One panel at a time beside it, a bottom sheet on a phone: Search (saved views and places, the permitted records of the record layers shown, postal codes and, when one is enabled, the geocoder's addresses), Layers (the basemap, overlays and record layers, and the user's own and shared overlays with Add overlay and, on one's own, Edit ([below](#overlays-and-places)); a layer that is not shown is named with Retry; a record layer cut to `maps@max-features` says so), Saved views (and Save view, which keeps where the map is, its basemap and its layers) and the selected feature's details: a place's, a record's (with its [links](#record-links)) or an overlay's feature, selected by a click or by Enter on the map for the feature at its center, with its label and description as plain text, its overlay and its coordinates (Save place; Remove place on one of one's own places). The scale, attribution, coordinate readout and Locate me are the map's. A qvue screen: under `/apps` it opens at the same path under `/qapps`. In the terminal, the `map` component over `terminalMap`: a postal search's places (`s`: a code and its country, the local Geo data's approximate place), the saved places (own and, read-only, shared), the saved views' and the records' places as a list over the braille land mask, then the overlays, own and shared, the notices and the attribution |
+| Browse (`Maps/Browse.xml`, `Browse.qvue`, `Browse.tui.json`) | The map filling the page, with optional browser full screen. One panel at a time beside it, a bottom sheet on a phone: Search (saved views and places, the permitted records of the record layers shown, postal codes and, when one is enabled, the geocoder's addresses), Layers (the basemap, overlays and record layers, and the user's own and shared overlays with Add overlay and, on one's own, Edit ([below](#overlays-and-places)); a layer that is not shown is named with Retry; a record layer cut to `maps@max-features` says so), Saved views (and Save view, which keeps where the map is, its basemap and its layers) and the selected feature's details: a place's, a record's (with its [links](#record-links)) or an overlay's feature, selected by a click or by Enter on the map for the feature at its center, with its label and description as plain text, its overlay and its coordinates (Save place; Remove place on one of one's own places). Live location: the shares of the user's own and those shared with them on the map, the Live location panel and Share my location ([below](#live-location)). The scale, attribution, coordinate readout and Locate me are the map's. A qvue screen: under `/apps` it opens at the same path under `/qapps`. In the terminal, the `map` component over `terminalMap`: a postal search's places (`s`: a code and its country, the local Geo data's approximate place), the saved places (own and, read-only, shared), the saved views' and the records' places as a list over the braille land mask, then the overlays, own and shared, the notices and the attribution, and under it the live location shares with Stop |
 | Saved views (`Maps/Views.xml`) | The user's saved views and those others shared, each with its place, owner and whether its layers are all available; Share, Stop sharing and Delete for one's own, View map for any. Below them the user's overlays and saved places and, read-only, those shared with them, with Remove for one's own |
 | Preferences (`Maps/Preferences.xml`) | The user's map profile, basemap, initial area, units, the layers shown and Restore my last view. Only what an administrator enabled is offered, and a profile's `allowedOverrides` decide what a preference changes. No location is asked for unless Locate me is pressed, and the last view is kept only while its restoring is on |
 | Configuration (`Maps/Configuration.xml`, route key `mapsConfiguration`) | For `MAPS_ADMIN`: readiness, the outside-request policy and limits (read from the conf), map providers (connections of the `mapProvider` kind: a provider's page is `Configuration/ConnectionDetail` over `tools/template/ConnectionParts.xml`), profiles (enable, disable, make the installation default, the view projection) and layers; Archives (`Configuration/Archives.xml`, [below](#archives), PMTiles and COG layers); Projections (`Configuration/Projections.xml`, [below](#projections)); Geo data (`Configuration/GeoData.xml`, [below](#geo-data)); and Overture (`Configuration/Overture.xml`, [below](#overture-places-and-buildings)). Its settings index entry is `maps.configuration` |
@@ -870,9 +870,44 @@ A person shares where they are, until a time they choose, with people they choos
 `org.moqui.maps.LocationServices` (`framework/service/org/moqui/maps/LocationServices.xml`, `LocationShares.js`), the
 entities `LocationShare`, `LocationShareAudience`, `LocationShareAudienceMember`, `LocationShareOwner` (the lock of an
 owner's share count), `LocationLatest` and `LocationTrailPoint` (`moqui.maps`,
-`framework/entity/MapLocationEntities.xml`) and the hourly clean. The Maps live layer and panels, the Android app's
-background sharing, chat's live location, XMPP and the guest page for a link are still to come, so a share is started
-and read through the services only.
+`framework/entity/MapLocationEntities.xml`) and the hourly clean, and Maps shows them (below, "In Maps"). The Android
+app's background sharing, chat's live location, XMPP and the guest page for a link are still to come.
+
+**In Maps** (Browse; LL2):
+
+- **The live layer.** Browse's configuration carries `locationShares` (`get#EffectiveConfig` with `locationShares`
+  true, which only Browse and its terminal twin ask for): the user's own active shares and those shared with them, read
+  through `find#MyShares`, `find#SharedWithMe` and `get#Share` (a kept trail, its latest 500 points, of at most 10
+  shares), so each is checked against the share's current audience. `m-map` draws each share with a position as a
+  marker labelled with its label and the position's age, its accuracy as a ring and a kept trail as a line, the user's
+  own in green and the others' in teal, grey and dashed once no report has come for five minutes (the page that sent it
+  closed, or the device lost its fix); the same shares are listed under the map as text. It follows each share on its
+  topic `locationShare:<shareId>` of the page's notification socket while it shows it: a position moves the marker, a
+  new end is taken, and `ended` (or `revoked`, to a viewer) takes the share off and lets go of its topic.
+- **The Live location panel.** *Shared with me*: each person's label, the age of the position, the end, Show on map, and
+  Directions (in the Android app a `geo:` link its `openExternal` hands to the phone's maps app; elsewhere the place on
+  OpenStreetMap in a new window, which is the only way a position leaves the server from here, by the user's act). *Who
+  sees my location*: each share of the user's own with its audience and end, Stop, Extend (a new end, the audience never
+  sent again), Delete trail, a person or group taken out, and for a group Add the group again, the one act that sends a
+  group to `update#Share` (a new snapshot: who joined since is let in and told, who left or blocked the owner is left
+  out).
+- **Share my location** (the panel's button): people the user may message (as Chat finds them), groups the user is in,
+  XMPP contacts when the server has XMPP, a guest link (its token shown once, in the dialog; the guest page that opens it
+  is still to come), until (15 minutes to `location@max-share-hours`), exact or approximate, and a trail or not. Each
+  person is told by the `LocationShared` notification.
+- **Sending from a browser.** A share started on Browse is sent from that page while it is open: the browser's
+  `watchPosition`, at most one report a share's interval (`location@min-interval-seconds`, or
+  `location@approximate-interval-seconds` for an approximate share) through the `reportPosition` transition, which
+  answers `report#Position`'s outcome as its JSON's `statusCode`: 429 is sent again after `retryAfterSeconds`, 410 and
+  404 stop the page sending it, 409 `STALE` and 400 pass that fix over, and 409 `CLOCK_AHEAD` sends from then on without
+  the device's time (the server's). The shares a browser sends are kept in its storage, so a reload goes on sending them,
+  and Send from here takes over one started elsewhere. When the page closes the share stays active and goes stale; its
+  audience sees the age. A banner above the map names every active share of the user's own (with whom, until when,
+  whether this page sends it) with Stop.
+- **The tray.** No tray item: the shell's tray tabs are the theme's screens, and no hook lets an app add an item to them,
+  so a share's always-visible place in the browser is Browse's banner (and the Android notification, LL3).
+- **The terminal.** Browse's twin lists, under its map, the user's own shares (with whom, until, the last position's age
+  and coordinates, Stop) and those shared with them (`Maps/LocationSharesTui.xml`).
 
 - **The owner's acts.** `create#Share` (the audience, the end, exact or approximate, a trail or not), `update#Share`
   (extend or shorten, add to the audience, change the label or purpose), `stop#Share`, `revoke#Audience` (one person,
@@ -945,10 +980,13 @@ and read through the services only.
 ## Tests
 
 The regression spec is `tools/test/MapsScreens.spec.js` (Browse in tui, its terminal's overlays, postal search and the
-view it is opened on; LocalMap, a plain XML screen, once in qvt for a writer and once in html for a user it refuses the
-record; the access rules, Save location, the profile rules), with Browse's one qvue render in a browser in the client
-spec `tools/test/client/MapsBrowseExtent.spec.js` (the MapsBrowse component and its map, opened on an extent across the
-antimeridian at the first load, and the extent check's refusals); the configuration services' rules are `framework/test/MapsConfig.spec.js` (with a record link resolved to the host
+view it is opened on, and its live location list with Stop; LocalMap, a plain XML screen, once in qvt for a writer and
+once in html for a user it refuses the record; the access rules, Save location, the profile rules), with Browse's one
+qvue render in a browser in the client spec `tools/test/client/MapsBrowseExtent.spec.js` (the MapsBrowse component and
+its map, opened on an extent across the antimeridian at the first load, and the extent check's refusals; a share started
+with a guest link, sent from the page, drawn on the live layer and stopped). The live layer's pushes, stale style, end and
+escaped labels are `webroot/test/client/pages/WebrootMap.page.js`; the share services' rules, with who sees what in the
+effective configuration's `locationShares`, `framework/test/LocationShares.spec.js`. The configuration services' rules are `framework/test/MapsConfig.spec.js` (with a record link resolved to the host
 app's route, else one of no app, and left out for a non-holder, and a profile's view projection: a registered one handed
 to the map with its definition, refused for a vector-style basemap and for an unknown code), and the archives'
 (registering, the map-source transition's access, ranges, revocation and stale revisions, and the tile transition's tile,

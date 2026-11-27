@@ -1,6 +1,7 @@
 // The Maps app's screens (plans/archive/Maps.md §3.1, §3.2; docs/tools/Maps.md): Browse's terminal template (Browse.tui.json over
-// terminalMap; Browse.qvue's one render is in a browser, test/client/MapsBrowseExtent) for a Maps user, and the app
-// refused to a user with ALL_USERS alone; the local-map dialog,
+// terminalMap; Browse.qvue's one render is in a browser, test/client/MapsBrowseExtent) for a Maps user, with its live
+// location list (LocationSharesTui, plans/Location-Sharing.md §3.3: the user's own share and one shared with them, ages and
+// coordinates, Stop for their own only), and the app refused to a user with ALL_USERS alone; the local-map dialog,
 // a plain XML screen rendered once in qvt and once in html: for a Maps user the adapter lets write, the record's place,
 // precision and source from the adapter's answer, Choose location and Open in Maps; for a user with ALL_USERS alone (no
 // MAPS_APP, no System), who opens it, a record the adapter refuses them (DENIED) not available, with nothing of it, no Save
@@ -125,9 +126,49 @@ spec({
     }
 })
 
+/* A LocationServices call as the user (plans/Location-Sharing.md §3.2): its results. */
+function shareCall(userId, verbNoun, parameters) {
+    ec.user.internalLoginUser(usernameOf(userId))
+    try {
+        return (
+            ec.service
+                .sync()
+                .name("org.moqui.maps.LocationServices." + verbNoun)
+                .parameters(parameters || {})
+                .call() || {}
+        )
+    } finally {
+        ec.message.clearErrors()
+        ec.user.logoutUser()
+    }
+}
+
 feature("Browse renders its terminal twin for a Maps user, and the app is refused to a user with ALL_USERS alone", {
     when() {
+        // live location (plans/Location-Sharing.md §3.3): the writer's own share and one shared with them, each with a
+        // position, for the twin's list under the map (LocationSharesTui) and its Stop
+        const thruDate = new Date(Date.now() + 3600000)
+        const own = shareCall(WRITER, "create#Share", {audienceList: [{audienceTypeEnumId: "LsaUser", userId: PLAIN}], thruDate}).shareId
+        shareCall(WRITER, "report#Position", {shareId: own, latitude: "51.5", longitude: "-0.12"})
+        const theirs = shareCall(PLAIN, "create#Share", {
+            audienceList: [{audienceTypeEnumId: "LsaUser", userId: WRITER}],
+            thruDate,
+            label: "Plain walk"
+        }).shareId
+        shareCall(PLAIN, "report#Position", {shareId: theirs, latitude: "48.85", longitude: "2.35"})
+        const shares = as(WRITER, "apps/maps/LocationSharesTui", {}, null, "tui")
+        as(WRITER, "apps/maps/LocationSharesTui/stopShare", {shareId: theirs}, "post")
+        as(WRITER, "apps/maps/LocationSharesTui/stopShare", {shareId: own}, "post")
+        const live = {
+            own,
+            theirs,
+            shares,
+            ownActive: Array.from(shareCall(WRITER, "find#MyShares").shareList || []).some(row => row.shareId === own),
+            theirsActive: Array.from(shareCall(WRITER, "find#SharedWithMe").shareList || []).some(row => row.shareId === theirs)
+        }
+        shareCall(PLAIN, "stop#Share", {shareId: theirs})
         return {
+            live,
             tui: as(WRITER, "apps/maps/Browse", {}, null, "tui"),
             terminal: as(
                 WRITER,
@@ -144,12 +185,29 @@ feature("Browse renders its terminal twin for a Maps user, and the app is refuse
             plainConfig: as(PLAIN, "apps/maps/Browse/getConfig", {}, "get")
         }
     },
-    then({tui, terminal, point, around, russia, plainConfig}) {
-        // Browse.tui.json: the map component over terminalMap, whose places carry their precision as words
+    then({live, tui, terminal, point, around, russia, plainConfig}) {
+        // Browse.tui.json: the map component over terminalMap, whose places carry their precision as words, and the live
+        // location list under it
         tui.status == 200
         tui.errors == ""
         tui.output.includes('"name":"map"')
         tui.output.includes("terminalMap")
+        tui.output.includes('"t":"dynamicContainer"')
+        tui.output.includes("LocationSharesTui")
+        // the list: the writer's own share with whom and Stop, and the one shared with them, each its age and coordinates;
+        // Stop ends the writer's own, and another's share is not theirs to stop
+        live.shares.status == 200
+        live.shares.errors == ""
+        noRenderError(live.shares)
+        live.shares.output.includes("You, with Maps screens MAPS_SCR_PLAIN")
+        live.shares.output.includes("51.50000, -0.12000")
+        live.shares.output.includes("Plain walk")
+        live.shares.output.includes("48.85000, 2.35000")
+        live.shares.output.includes("just now")
+        live.shares.output.includes("stopShare")
+        live.shares.output.includes(live.own)
+        live.ownActive == false
+        live.theirsActive == true
         terminal.status == 200
         json(terminal).attribution == "Natural Earth"
         json(terminal).points.some(
