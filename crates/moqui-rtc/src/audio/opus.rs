@@ -74,14 +74,31 @@ impl OpusDecoder {
         })
     }
 
+    /// A call into the library, which reads a packet's own lengths with indexing that may panic on a hostile one
+    /// (SEC-COM-87), on the media threads of a call: a panic is caught and the decoder made anew, since its state is
+    /// not trusted after one, so one bad packet is one undecodable frame, not the end of the process or of the call.
+    pub(crate) fn guarded<T>(&mut self, call: impl FnOnce(&mut opus_rs::OpusDecoder, &mut [f32]) -> T) -> Option<T> {
+        let (inner, pcm) = (&mut self.inner, &mut self.pcm);
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call(inner, pcm))) {
+            Ok(value) => Some(value),
+            Err(_) => {
+                tracing::warn!("the opus decoder panicked on a packet; it is made anew and the packet dropped");
+                if let Ok(fresh) = opus_rs::OpusDecoder::new(RATE as i32, 1) {
+                    self.inner = fresh;
+                }
+                None
+            }
+        }
+    }
+
     /// Decodes a packet, appending its samples to `out`; the count appended.
     pub fn decode(&mut self, packet: &[u8], out: &mut Vec<i16>) -> Result<usize, CodecError> {
         if packet.is_empty() {
             return Err(CodecError("an empty opus packet".to_string()));
         }
         let n = self
-            .inner
-            .decode(packet, MAX_PACKET_SAMPLES, &mut self.pcm)
+            .guarded(|inner, pcm| inner.decode(packet, MAX_PACKET_SAMPLES, pcm))
+            .ok_or_else(|| CodecError("opus decode: the decoder panicked".to_string()))?
             .map_err(|e| CodecError(format!("opus decode: {e}")))?
             .min(self.pcm.len());
         out.extend(self.pcm[..n].iter().copied().map(to_i16));
@@ -91,7 +108,10 @@ impl OpusDecoder {
     /// Conceals a lost packet of `samples` (a multiple of 2.5 ms), appending them to `out`.
     pub fn conceal(&mut self, samples: usize, out: &mut Vec<i16>) {
         let samples = samples.min(MAX_PACKET_SAMPLES);
-        let n = self.inner.decode(&[], samples, &mut self.pcm).unwrap_or(0).min(samples);
+        let n = self
+            .guarded(|inner, pcm| inner.decode(&[], samples, pcm).unwrap_or(0))
+            .unwrap_or(0)
+            .min(samples);
         out.extend(self.pcm[..n].iter().copied().map(to_i16));
         out.resize(out.len() + samples - n, 0);
     }
@@ -100,7 +120,10 @@ impl OpusDecoder {
     /// as usual), appending them to `out`. Concealed when `next` carries none.
     pub fn recover(&mut self, next: &[u8], samples: usize, out: &mut Vec<i16>) {
         let samples = samples.min(MAX_PACKET_SAMPLES);
-        match self.inner.decode_fec(next, samples, &mut self.pcm) {
+        match self
+            .guarded(|inner, pcm| inner.decode_fec(next, samples, pcm))
+            .unwrap_or(Err("the decoder panicked"))
+        {
             Ok(n) => {
                 let n = n.min(samples);
                 out.extend(self.pcm[..n].iter().copied().map(to_i16));

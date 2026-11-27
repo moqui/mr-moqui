@@ -255,6 +255,25 @@ async fn scram_plus_with_bind_2_then_fast_with_its_binding() {
     );
 }
 
+/// SEC-COM-101: a FAST token signs in only by the mechanism it was issued for: one asked for with channel binding is
+/// refused without it, whatever count it names.
+#[tokio::test]
+async fn a_fast_token_is_taken_only_by_its_own_mechanism() {
+    let (server, _fake) = server();
+    let (_client, token) = sign_in(&server, "john.doe", JOHN_PASSWORD, "Conversations").await;
+    let mut unbound = Client::new(&server, Transport::Tcp { tls: true }, Some(EXPORTER.to_vec()));
+    unbound.open().await;
+    let out = unbound
+        .send(&format!(
+            "<authenticate xmlns='urn:xmpp:sasl:2' mechanism='HT-SHA-256-NONE'><initial-response>{}</initial-response>\
+             <user-agent id='d4565fa7-4d72-4749-b3d3-740edbf87770'/><fast xmlns='urn:xmpp:fast:0' count='9'/></authenticate>",
+            STANDARD.encode(fast::initial_response("john.doe", &token, &[]))
+        ))
+        .await;
+    assert!(find(&out, "failure", ns::SASL2).is_some(), "{}", text_of(&out));
+    assert!(find(&out, "success", ns::SASL2).is_none(), "{}", text_of(&out));
+}
+
 /// SEC-COM-11, SEC-COM-22: a SCRAM or FAST sign-in is put to the backend with the session's peer (which checks the
 /// account's ipAllowed and records the sign-in), and each service call carries the peer; a refused sign-in fails.
 #[tokio::test]
@@ -302,7 +321,11 @@ async fn a_verified_sign_in_is_checked_and_recorded_for_the_sessions_peer() {
         ))
         .await;
     assert!(find(&out, "failure", ns::SASL2).is_some(), "{}", text_of(&out));
-    assert_eq!(fake.state.lock().unwrap().sign_ins.len(), 1, "no refused sign-in is recorded");
+    assert_eq!(
+        fake.state.lock().unwrap().sign_ins.len(),
+        1,
+        "no refused sign-in is recorded"
+    );
 }
 
 #[tokio::test]
@@ -1110,4 +1133,17 @@ fn an_upload_is_logged_by_its_file_name_not_its_token() {
     let logged = super::chat::upload_file_name(url);
     assert_eq!(logged, "photo.jpg");
     assert!(!logged.contains("S3cr3tT0ken"));
+}
+
+/// SEC-COM-24: a name that is no account's asks for SCRAM verifiers as a user's does (it gets none), so the decoy's
+/// challenge takes the same service calls.
+#[tokio::test]
+async fn an_unknown_name_asks_for_verifiers_as_a_user_does() {
+    let (server, fake) = server();
+    decoy_salt(&server, "nobody").await;
+    let calls = fake.state.lock().unwrap().calls.clone();
+    assert!(
+        calls.iter().any(|call| call == crate::backend::services::SCRAM),
+        "{calls:?}"
+    );
 }

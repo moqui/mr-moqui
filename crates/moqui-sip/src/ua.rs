@@ -45,7 +45,7 @@
 //! Each leg has the id the host gives it (the call's `callLegId`). Hold is a re-INVITE either way: the other side's
 //! comes to the host as [`UaEvent::Reoffer`] for its answer; the host's goes out with [`Ua::reinvite`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -423,7 +423,14 @@ struct Inner {
     ca_pem: Option<Vec<u8>>,
     /// The TLS connections opened to trunks, by address and the host name their handshake named.
     tls_flows: Mutex<HashMap<(SocketAddr, String), SipConnection>>,
+    /// The stream connections, by their remote address, on which a request authenticated (SEC-COM-26).
+    authenticated: Authenticated,
 }
+
+/// The stream connections, by remote address, on which a request authenticated: a phone's REGISTER or call, a PBX
+/// trunk's digest. An accepted connection not among them, and not a trunk's, is closed after
+/// `sip-server/limits@unauthenticated-seconds` (SEC-COM-26).
+type Authenticated = Arc<Mutex<HashSet<SocketAddr>>>;
 
 /// The running user agent. Dropping it does not stop it: call [`Ua::shutdown`].
 #[derive(Clone)]
@@ -446,6 +453,14 @@ struct BlockInspector {
     /// The INVITEs this inspector let through lately, by their Via ([`invite_key`]): what a CANCEL or a non-2xx ACK
     /// names, looked up in O(1).
     invites: Mutex<AdmittedInvites>,
+    /// The connections that authenticated, shared with the user agent.
+    authenticated: Authenticated,
+    /// The user agent, once made, for its trunks' addresses.
+    inner: Arc<std::sync::OnceLock<std::sync::Weak<Inner>>>,
+    /// The ports of this side's TCP and TLS listeners: a connection on one was accepted, not dialed.
+    listen_ports: Vec<u16>,
+    /// How long an accepted connection may go without authenticating; zero for no limit.
+    unauthenticated: Duration,
 }
 
 /// How long an admitted INVITE's key is kept: an INVITE server transaction's life (Timer H, 64 T1, with Timer I).
@@ -519,6 +534,17 @@ struct Known<'a> {
 }
 
 impl BlockInspector {
+    /// Whether `ip` is known (SEC-COM-26): a trunk's address, a phone's binding from it, or a connection from it that
+    /// authenticated.
+    fn source_known(&self, ip: IpAddr) -> bool {
+        known_source(
+            &self.authenticated,
+            &self.inner,
+            self.phones.as_ref().map(|(registrar, _)| registrar),
+            ip,
+        )
+    }
+
     /// Whether this side has the dialog `request` names by its Call-ID and both tags.
     fn has_dialog(&self, request: &Request) -> bool {
         let Some(dialogs) = self.dialogs.get().and_then(std::sync::Weak::upgrade) else {
@@ -581,15 +607,22 @@ impl TransportEventInspector for BlockInspector {
                 }
             }
             TransportEvent::New(connection) if connection.is_reliable() => {
-                if !lock(&self.gate).connection_opened(remote_ip(connection)) {
+                let source = remote_ip(connection);
+                let known = source.is_some_and(|ip| self.source_known(ip));
+                if !lock(&self.gate).connection_opened(source, known) {
                     tracing::warn!("SIP: too many connections, {} closed", connection.get_addr());
                     let connection = connection.clone();
                     tokio::spawn(async move {
                         let _ = connection.close().await;
                     });
+                } else if self.accepted(connection) && !self.unauthenticated.is_zero() {
+                    self.close_unless_authenticated(connection.clone());
                 }
             }
             TransportEvent::Closed(connection) if connection.is_reliable() => {
+                if let Some(remote) = remote_addr(connection) {
+                    lock(&self.authenticated).remove(&remote);
+                }
                 lock(&self.gate).connection_closed(remote_ip(connection));
                 if let Some((registrar, events)) = &self.phones {
                     phones::connection_closed(registrar, events, connection);
@@ -603,10 +636,64 @@ impl TransportEventInspector for BlockInspector {
 
 /// The address a stream connection is from.
 fn remote_ip(connection: &SipConnection) -> Option<IpAddr> {
+    remote_addr(connection).map(|addr| addr.ip())
+}
+
+/// The address and port a stream connection is from.
+fn remote_addr(connection: &SipConnection) -> Option<SocketAddr> {
     connection
         .get_remote_addr()
         .and_then(|remote| remote.get_socketaddr().ok())
-        .map(|addr| addr.ip())
+}
+
+/// Whether `ip` is a known source (SEC-COM-26): one a connection authenticated from, a phone's binding's, or a trunk's
+/// address or inbound range.
+fn known_source(
+    authenticated: &Authenticated,
+    inner: &std::sync::OnceLock<std::sync::Weak<Inner>>,
+    registrar: Option<&Arc<Mutex<Registrar>>>,
+    ip: IpAddr,
+) -> bool {
+    lock(authenticated).iter().any(|addr| addr.ip() == ip)
+        || registrar.is_some_and(|registrar| lock(registrar).has_flow_from(ip))
+        || inner
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+            .is_some_and(|inner| inner.trunk_by_address(ip).is_some())
+}
+
+impl BlockInspector {
+    /// Whether `connection` was accepted by one of this side's listeners (its local port is a listener's), not
+    /// dialed by this side.
+    fn accepted(&self, connection: &SipConnection) -> bool {
+        connection
+            .get_addr()
+            .get_socketaddr()
+            .is_ok_and(|local| self.listen_ports.contains(&local.port()))
+    }
+
+    /// Close `connection` after [`Self::unauthenticated`] unless a request on it authenticated by then, or its source
+    /// is a trunk's (SEC-COM-26): a connection that sends nothing but keepalives holds no slot for long.
+    fn close_unless_authenticated(&self, connection: SipConnection) {
+        let authenticated = Arc::clone(&self.authenticated);
+        let inner = Arc::clone(&self.inner);
+        let wait = self.unauthenticated;
+        tokio::spawn(async move {
+            tokio::time::sleep(wait).await;
+            let Some(remote) = remote_addr(&connection) else {
+                return;
+            };
+            let trunk = inner
+                .get()
+                .and_then(std::sync::Weak::upgrade)
+                .is_some_and(|inner| inner.trunk_by_address(remote.ip()).is_some());
+            if trunk || lock(&authenticated).contains(&remote) {
+                return;
+            }
+            tracing::info!("SIP: the connection from {remote} authenticated nothing in {wait:?}; closed");
+            let _ = connection.close().await;
+        });
+    }
 }
 
 fn now_secs() -> u64 {
@@ -779,6 +866,8 @@ impl Ua {
         };
         let endpoint_slot = Arc::new(std::sync::OnceLock::new());
         let dialogs_slot = Arc::new(std::sync::OnceLock::new());
+        let inner_slot: Arc<std::sync::OnceLock<std::sync::Weak<Inner>>> = Arc::new(std::sync::OnceLock::new());
+        let authenticated: Authenticated = Arc::default();
         let phones = config.registrar.as_ref().map(Phones::new);
         let endpoint: Endpoint = EndpointBuilder::new()
             .with_user_agent(user_agent)
@@ -791,6 +880,14 @@ impl Ua {
                 dialogs: Arc::clone(&dialogs_slot),
                 phones: phones.as_ref().map(|p| (Arc::clone(&p.registrar), events.clone())),
                 invites: Mutex::default(),
+                authenticated: Arc::clone(&authenticated),
+                inner: Arc::clone(&inner_slot),
+                listen_ports: [bound.tcp, bound.tls]
+                    .into_iter()
+                    .flatten()
+                    .map(|addr| addr.port())
+                    .collect(),
+                unauthenticated: Duration::from_secs(config.limits.unauthenticated_seconds),
             }))
             .build();
         let mut incoming = endpoint.incoming_transactions().map_err(sip_err)?;
@@ -839,8 +936,10 @@ impl Ua {
             resolver: config.resolver.unwrap_or_else(|| Arc::new(SystemResolver::default())),
             ca_pem: config.ca_pem,
             tls_flows: Mutex::new(HashMap::new()),
+            authenticated,
         });
         let _ = dialogs_slot.set(Arc::downgrade(&inner.dialogs));
+        let _ = inner_slot.set(Arc::downgrade(&inner));
         phones::sweep(&inner);
         {
             let inner = Arc::clone(&inner);
@@ -1949,6 +2048,10 @@ impl Inner {
             Some((Verdict::Valid, Some(caller))) => {
                 if let Some(source) = source {
                     lock(&self.guard).success(source.ip());
+                    // a stream connection it came over has authenticated: it is kept past the deadline (SEC-COM-26)
+                    if phones::transport_in(tx) != Transport::Udp {
+                        lock(&self.authenticated).insert(source);
+                    }
                 }
                 Some(caller)
             }

@@ -116,6 +116,26 @@ fn port(text: &str, name: &str) -> Result<Option<u16>, String> {
 }
 
 /// The TURN settings, None while neither `media-server/turn-server@port` nor `media-server/turn-server@tls-port` nor `media-server/turn-server@tls443-host` is set.
+/// This host's own addresses, which an XMPP user's TURN credential never relays to (SEC-COM-18): `known` (the TURN
+/// and media public addresses), the SIP and the webroot's public addresses when they are addresses, and every address
+/// of the host's interfaces as they are at start; the unspecified ones left out.
+fn own_addresses(property: &dyn Fn(&str) -> String, known: &[IpAddr]) -> Vec<IpAddr> {
+    let mut own: Vec<IpAddr> = known.to_vec();
+    for name in ["sip-server@public-address", "webapp-list/webapp[webroot]@http-host"] {
+        if let Ok(ip) = property(name).trim().parse::<IpAddr>() {
+            own.push(ip);
+        }
+    }
+    match if_addrs::get_if_addrs() {
+        Ok(interfaces) => own.extend(interfaces.iter().map(if_addrs::Interface::ip)),
+        Err(err) => tracing::warn!("TURN: the host's interface addresses were not read: {err}"),
+    }
+    own.retain(|ip| !ip.is_unspecified());
+    own.sort_unstable();
+    own.dedup();
+    own
+}
+
 pub(crate) fn settings(
     property: &dyn Fn(&str) -> String,
     media_bind: SocketAddr,
@@ -227,6 +247,7 @@ pub(crate) fn settings(
         max_kbps: number("media-server/turn-server@max-kbps", 4_000),
         // a node that takes links: its paired nodes' usernames name their pairings (E16)
         pairings: moqui_core::edge::NodeRole::parse(&property(moqui_core::edge::NODE_ROLE)).takes_links(),
+        own_addresses: own_addresses(property, &[public_ip, media_public.ip(), media_bind.ip()]),
     };
     Ok(Some(TurnSettings {
         bind,

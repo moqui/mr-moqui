@@ -395,11 +395,15 @@ feature("an emergency call is refused with what is missing, then routed through 
         const blocked = placeA()
         const routed = placeA({phoneNumber: "911", fromNumber: null})
         const capsAfter = as(A, "get#VoiceCapabilities")
-        const email = sys(() => ec.entity.find("moqui.basic.email.EmailMessage").condition("toAddresses", "front.desk@example.test").count())
+        const emails = sys(() => Array.from(ec.entity.find("moqui.basic.email.EmailMessage").condition("toAddresses", "front.desk@example.test").list()))
+        const email = emails.length
+        // its subject names the caller and the place (SEC-COM-30)
+        const subject = emails.length ? String(emails[0].subject || "") : ""
+        const body = emails.length ? String(emails[0].body || "") : "
         policy({maxConcurrentPerUser: 2})
-        return {missing, emergencyTrunk, ordinary, blocked, routed, capsBefore, capsAfter, email, legs: legs(routed.callSessionId)}
+        return {missing, emergencyTrunk, ordinary, blocked, routed, capsBefore, capsAfter, email, subject, body, legs: legs(routed.callSessionId)}
     },
-    then({missing, emergencyTrunk, ordinary, blocked, routed, capsBefore, capsAfter, email, legs}) {
+    then({missing, emergencyTrunk, ordinary, blocked, routed, capsBefore, capsAfter, email, subject, body, legs}) {
         missing.every(m => m.reasonCode == "emergencyNotReady")
         missing[0].missing.includes("noEmergencyTrunk")
         missing[0].errors.includes("no trunk is set up for emergency calls")
@@ -416,6 +420,8 @@ feature("an emergency call is refused with what is missing, then routed through 
         legs.find(l => l.legTypeEnumId == "CltPstn").phoneNumber == "911"
         capsAfter.emergencyReady == true
         email == 1
+        subject.includes("Head office")
+        !body.startsWith("null")
     }
 })
 

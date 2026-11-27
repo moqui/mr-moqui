@@ -182,6 +182,9 @@ pub struct TurnConfig {
     pub pairings: bool,
     /// Each allocation's relayed data, each way, in kilobits a second.
     pub max_kbps: u64,
+    /// This host's own addresses (its interfaces', its public and its services' public ones): never a peer of an XMPP
+    /// user's credential, whatever the listeners are bound to (SEC-COM-18).
+    pub own_addresses: Vec<std::net::IpAddr>,
 }
 
 impl Default for TurnConfig {
@@ -194,6 +197,7 @@ impl Default for TurnConfig {
             max_per_user: 2,
             max_kbps: 4_000,
             pairings: false,
+            own_addresses: Vec::new(),
         }
     }
 }
@@ -361,6 +365,7 @@ impl Turn {
                 .servers
                 .iter()
                 .any(|s| s.listen_address().ip().to_canonical() == ip)
+            && !self.config.own_addresses.iter().any(|own| own.to_canonical() == ip)
     }
 
     /// A leg refused now: revoked, or of a pairing that is not taken.

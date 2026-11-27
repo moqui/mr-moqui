@@ -17,7 +17,10 @@
 //! - **Chat pushes.** The host subscribes to the notification bus as `/notws` does and hands each chat push here
 //!   ([`Registry::deliver_notice`]): the same `chatRoom:`, `chatUser:` and `userStatus` messages the web client gets,
 //!   to every session of the users the push names. So web and XMPP see the same events, from one source.
-//! - **Between sessions.** A stanza to another local user's full JID (Jingle, a PEP notification) goes to that session.
+//! - **Between sessions.** A stanza to another local user's full JID (Jingle, a PEP notification) goes to that session
+//!   ([`Registry::route`]): not when the target blocks the sender, at most `xmpp-server@routed-rate` a second (with
+//!   `xmpp-server@routed-burst` at once) from one user to another, and never past the target's queue: the stanza is
+//!   refused to its sender then, and the target's session goes on (SEC-COM-19).
 //! - **Resumption.** A session whose connection dropped with stream management on waits, detached, for
 //!   [`crate::Config::resume_timeout`]; a new connection takes it over by its id ([`Registry::take_detached`]).
 //!
@@ -27,6 +30,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use minidom::Element;
 use moqui_lib::sync::lock;
@@ -37,6 +41,27 @@ use tokio::sync::{mpsc, oneshot, Notify};
 pub const QUEUE: usize = 512;
 /// How many detached sessions one user may have waiting for resumption; a session dropped past this ends.
 pub const DETACHED_PER_USER: usize = 10;
+/// The routed stanzas one user may send another a second, and at once, by default (`xmpp-server@routed-rate`,
+/// `xmpp-server@routed-burst`).
+pub const ROUTED_RATE: f64 = 20.0;
+pub const ROUTED_BURST: f64 = 200.0;
+/// The (sender, target) pairs whose allowance is kept; past this the full ones are let go.
+const ROUTED_PAIRS: usize = 10_000;
+
+/// What became of a stanza routed to another session ([`Registry::route`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Routed {
+    Sent,
+    /// The target blocks the sender: dropped, as the target would drop it.
+    Blocked,
+    /// Past the sender's allowance for this target, or the target's queue is full: refused to the sender.
+    Limited,
+    /// The target's session is gone.
+    Closed,
+}
+
+/// A block list a session shares with the senders that route to it: none until the session read it.
+pub type SharedBlocks = Arc<Mutex<Option<HashSet<String>>>>;
 
 /// What reaches a session from outside its connection.
 #[derive(Debug)]
@@ -62,6 +87,8 @@ pub struct Entry {
     /// It sent available presence (a client that did not is not sent messages to its bare JID's resources).
     pub available: Arc<AtomicBool>,
     pub carbons: Arc<AtomicBool>,
+    /// The session's block list, as it read it (bare JIDs), checked before a routed stanza is queued (SEC-COM-19).
+    pub blocked: SharedBlocks,
 }
 
 /// A detached session's hand-over: send it a channel and it sends the session back.
@@ -86,14 +113,73 @@ impl Sessions {
     }
 }
 
-#[derive(Default)]
 pub struct Registry {
     sessions: Mutex<Sessions>,
     detached: Mutex<HashMap<String, (String, Handover)>>,
     next: AtomicU64,
+    /// Each (sender user, target user)'s routed stanza allowance: what is left, and when it was last filled.
+    routed: Mutex<HashMap<(String, String), (f64, Instant)>>,
+    routed_rate: f64,
+    routed_burst: f64,
+}
+
+impl Default for Registry {
+    fn default() -> Self {
+        Self::with_limits(ROUTED_RATE, ROUTED_BURST)
+    }
 }
 
 impl Registry {
+    /// A registry whose routed stanzas are held to `rate` a second, `burst` at once, from one user to another.
+    pub fn with_limits(rate: f64, burst: f64) -> Self {
+        Self {
+            sessions: Mutex::default(),
+            detached: Mutex::default(),
+            next: AtomicU64::default(),
+            routed: Mutex::default(),
+            routed_rate: rate.max(0.0),
+            routed_burst: burst.max(1.0),
+        }
+    }
+
+    /// Route `stanza` from user `sender` (bare JID `sender_bare`) to another user's session `entry` (SEC-COM-19): dropped
+    /// when the target blocks the sender, refused past the sender's allowance for that target or when the target's
+    /// queue is full (the target's session is never closed for it: the sender is told); a user's own sessions are not
+    /// held to an allowance.
+    pub fn route(&self, sender: &str, sender_bare: &str, entry: &Entry, stanza: Element) -> Routed {
+        if entry.blocks(sender_bare) {
+            return Routed::Blocked;
+        }
+        if sender != entry.user_id && !self.take_allowance(sender, &entry.user_id) {
+            return Routed::Limited;
+        }
+        match entry.tx.try_send(Inbound::Stanza(stanza)) {
+            Ok(()) => Routed::Sent,
+            Err(mpsc::error::TrySendError::Full(_)) => Routed::Limited,
+            Err(mpsc::error::TrySendError::Closed(_)) => Routed::Closed,
+        }
+    }
+
+    /// Take one from `sender`'s allowance for `target`, filled at the rate since it was last taken from.
+    fn take_allowance(&self, sender: &str, target: &str) -> bool {
+        let now = Instant::now();
+        let mut routed = lock(&self.routed);
+        if routed.len() >= ROUTED_PAIRS {
+            let (rate, burst) = (self.routed_rate, self.routed_burst);
+            routed.retain(|_, (left, at)| *left + now.duration_since(*at).as_secs_f64() * rate < burst);
+        }
+        let (left, at) = routed
+            .entry((sender.to_string(), target.to_string()))
+            .or_insert((self.routed_burst, now));
+        *left = (*left + now.duration_since(*at).as_secs_f64() * self.routed_rate).min(self.routed_burst);
+        *at = now;
+        if *left < 1.0 {
+            return false;
+        }
+        *left -= 1.0;
+        true
+    }
+
     pub fn next_id(&self) -> u64 {
         self.next.fetch_add(1, Ordering::Relaxed) + 1
     }
@@ -226,6 +312,13 @@ impl Registry {
 }
 
 impl Entry {
+    /// Whether the session's block list, as it read it, holds `bare`; false before it read it.
+    pub fn blocks(&self, bare: &str) -> bool {
+        lock(&self.blocked)
+            .as_ref()
+            .is_some_and(|blocked| blocked.contains(bare))
+    }
+
     pub fn is_available(&self) -> bool {
         self.available.load(Ordering::Relaxed)
     }

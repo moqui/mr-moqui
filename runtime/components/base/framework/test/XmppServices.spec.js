@@ -426,3 +426,26 @@ feature("TURN for XMPP apps is off by default; on, an external user and a user p
         other.serviceList.length == 1
     }
 })
+
+feature("two accounts whose usernames differ only by case are one JID: neither is the account of that name", {
+    when() {
+        const make = (userId, name) => sys(() => {
+            if (ec.entity.find("moqui.security.UserAccount").condition("userId", userId).count() === 0) {
+                const account = ec.entity.makeValue("moqui.security.UserAccount")
+                account.setFields({userId, username: name, userFullName: "Xmpp case " + name, disabled: "N"}, true, null, null)
+                account.create()
+            }
+        })
+        make("XMPP_SPEC_CASE_1", "xmpp.case.twin")
+        const alone = as(null, "get#Account", {username: "Xmpp.Case.Twin"})
+        make("XMPP_SPEC_CASE_2", "Xmpp.Case.Twin")
+        const both = as(null, "get#Account", {username: "xmpp.case.twin"})
+        sys(() => ec.entity.find("moqui.security.UserAccount").condition("userId", "in", ["XMPP_SPEC_CASE_1", "XMPP_SPEC_CASE_2"]).deleteAll())
+        return {alone, both}
+    },
+    then({alone, both}) {
+        alone.userId == "XMPP_SPEC_CASE_1"
+        both.userId == null
+        both.canLogin == false
+    }
+})

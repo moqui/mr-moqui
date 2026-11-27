@@ -33,7 +33,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="Account" authenticate="false" allow-remote="false">
         <description>Internal: the account of a username (compared without case) and whether it may sign in (not disabled,
-            not past its disabledDateTime, not past its terminateDate).</description>
+            not past its disabledDateTime, not past its terminateDate); none when two accounts' usernames differ only by
+            case, which would be one JID.</description>
         <in-parameters><parameter name="username" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="userId"/><parameter name="username"/><parameter name="displayName"/>
@@ -42,11 +43,16 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             canLogin = false
             const name = String(username || '').trim()
-            let account = ec.entity.find('moqui.security.UserAccount').condition('username', name).disableAuthz().one()
-            // a JID's localpart is in lower case; the username may not be
-            if (!account) account = Array.from(ec.entity.find('moqui.security.UserAccount')
+            // a JID's localpart is in lower case; the username may not be. Two accounts whose usernames differ only by
+            // case would be one JID, so neither is found here (SEC-COM-100)
+            const alike = Array.from(ec.entity.find('moqui.security.UserAccount')
                     .condition(ec.entity.conditionFactory.makeCondition('username', 'equals', name).ignoreCase())
-                    .disableAuthz().limit(5).list()).find((row) => String(row.username).toLowerCase() === name.toLowerCase())
+                    .disableAuthz().limit(5).list()).filter((row) => String(row.username).trim().toLowerCase() === name.toLowerCase())
+            if (alike.length > 1) {
+                ec.logger.warn(`XMPP: ${alike.length} accounts have the username ${name} but for case, one JID; none signs in over XMPP`)
+                return
+            }
+            const account = alike[0]
             if (!account) return
             userId = account.userId; username = account.username; displayName = account.userFullName || account.username
             const until = account.disabledDateTime ? Number(account.disabledDateTime) : null
@@ -96,8 +102,9 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="get" noun="FastToken" authenticate="false" allow-remote="false">
-        <description>Internal: the unexpired FAST tokens of a user's client (userAgentId), decrypted, for the HMAC check;
-            not one whose app password was revoked.</description>
+        <description>Internal: the unexpired FAST tokens of a user's client (userAgentId), decrypted, for the HMAC check,
+            each with the mechanism it was issued for (the session takes it only by that one); not one whose app
+            password was revoked.</description>
         <in-parameters><parameter name="username" required="true"/><parameter name="userAgentId"/></in-parameters>
         <out-parameters><parameter name="tokenList" type="List"/></out-parameters>
         <actions><script><![CDATA[
@@ -112,7 +119,8 @@ along with this software (see the LICENSE.md file). If not, see
                 return !!password && password.userId === account.userId && !password.revokedDate
             }
             tokenList = Array.from(rows).filter((row) => live(row.appPasswordId))
-                    .map((row) => ({fastTokenId: row.fastTokenId, token: row.token, appPasswordId: row.appPasswordId}))
+                    .map((row) => ({fastTokenId: row.fastTokenId, token: row.token, appPasswordId: row.appPasswordId,
+                        mechanism: row.mechanism ?? null}))
         ]]></script></actions>
     </service>
 

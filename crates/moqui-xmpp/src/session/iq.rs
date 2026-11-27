@@ -25,7 +25,6 @@ use serde_json::{json, Value as Json};
 use super::xml::{attr, form, iq_result, text_el, E};
 use super::Session;
 use crate::backend::{self, services};
-use crate::registry::Inbound;
 use crate::{features, jids, ns};
 
 /// Where a stanza is addressed.
@@ -154,8 +153,24 @@ impl Session {
             }
             return;
         }
+        let (sender, sender_bare) = (self.user_id(), self.my_bare());
+        let mut limited = false;
         for entry in entries {
-            self.server.registry.send(&entry, Inbound::Stanza(stanza.clone()));
+            let routed = self
+                .server
+                .registry
+                .route(&sender, &sender_bare, &entry, stanza.clone());
+            limited |= routed == crate::registry::Routed::Limited;
+        }
+        // past the sender's allowance or the target's queue: the sender is told, the target's session goes on
+        // (SEC-COM-19)
+        if limited {
+            self.refuse(
+                &stanza,
+                "wait",
+                "resource-constraint",
+                Some("too many stanzas to this user"),
+            );
         }
     }
 
@@ -388,16 +403,18 @@ impl Session {
     }
 
     pub(crate) async fn is_blocked(&mut self, bare: &str) -> bool {
-        if self.blocked.is_none() {
+        if moqui_lib::sync::lock(&self.blocked).is_none() {
             let found = self.call(services::BLOCKS, json!({})).await.unwrap_or(Json::Null);
             let set = backend::list(&found, "jidList")
                 .iter()
                 .filter_map(Json::as_str)
                 .map(str::to_string)
                 .collect();
-            self.blocked = Some(set);
+            *moqui_lib::sync::lock(&self.blocked) = Some(set);
         }
-        self.blocked.as_ref().is_some_and(|blocked| blocked.contains(bare))
+        moqui_lib::sync::lock(&self.blocked)
+            .as_ref()
+            .is_some_and(|blocked| blocked.contains(bare))
     }
 
     async fn blocking(&mut self, iq: &Element, payload: &Element) {
@@ -410,7 +427,8 @@ impl Session {
             ("get", "blocklist") => {
                 self.is_blocked("").await;
                 let mut list = E::new("blocklist", ns::BLOCKING);
-                for jid in self.blocked.clone().unwrap_or_default() {
+                let blocked = moqui_lib::sync::lock(&self.blocked).clone().unwrap_or_default();
+                for jid in blocked {
                     list = list.c(E::new("item", ns::BLOCKING).a("jid", jid));
                 }
                 self.send(iq_result(iq).c(list).build());
@@ -424,14 +442,14 @@ impl Session {
                     }
                     Ok(_) => {}
                 }
-                self.blocked = None;
+                *moqui_lib::sync::lock(&self.blocked) = None;
                 self.send(iq_result(iq).build());
             }
             ("set", "unblock") => {
                 if self.call(services::UNBLOCK, json!({"jidList": jids})).await.is_err() {
                     return self.refuse(iq, "wait", "internal-server-error", None);
                 }
-                self.blocked = None;
+                *moqui_lib::sync::lock(&self.blocked) = None;
                 self.send(iq_result(iq).build());
             }
             _ => self.refuse(iq, "modify", "bad-request", None),

@@ -70,6 +70,10 @@ pub struct Config {
     /// The key the SCRAM salts of unknown users are derived from (`xmpp-server@scram-decoy-key`), so they stay the same across
     /// restarts and nodes; empty uses a random key of this process.
     pub decoy_key: Vec<u8>,
+    /// The stanzas one user may route to another's sessions a second (`xmpp-server@routed-rate`), and at once
+    /// (`xmpp-server@routed-burst`) (SEC-COM-19).
+    pub routed_rate: f64,
+    pub routed_burst: f64,
 }
 
 impl Config {
@@ -87,6 +91,8 @@ impl Config {
             software_version: String::new(),
             turn_enabled: false,
             decoy_key: Vec::new(),
+            routed_rate: registry::ROUTED_RATE,
+            routed_burst: registry::ROUTED_BURST,
             domain,
         }
     }
@@ -114,10 +120,11 @@ impl Server {
         backend: Arc<dyn backend::Backend>,
         outbound: Box<dyn Outbound>,
     ) -> Arc<Server> {
+        let registry = registry::Registry::with_limits(config.routed_rate, config.routed_burst);
         Arc::new(Server {
             config,
             backend,
-            registry: registry::Registry::default(),
+            registry,
             guard: Mutex::new(SourceGuard::new(GuardPolicy::default())),
             outbound,
         })

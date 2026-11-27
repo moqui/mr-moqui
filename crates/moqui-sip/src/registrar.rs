@@ -396,6 +396,14 @@ impl Registrar {
         gone
     }
 
+    /// Whether any binding's flow is from `ip` (SEC-COM-26: a phone's source is a known one).
+    pub fn has_flow_from(&self, ip: std::net::IpAddr) -> bool {
+        self.bindings
+            .values()
+            .flatten()
+            .any(|binding| binding.flow.source.ip() == ip)
+    }
+
     /// How many bindings there are, over every device.
     pub fn len(&self) -> usize {
         self.bindings.values().map(Vec::len).sum()

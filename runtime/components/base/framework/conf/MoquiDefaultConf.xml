@@ -206,7 +206,10 @@
         xmpp-server@turn-enabled true lets external services
         (XEP-0215) hand a user's XMPP app a TURN credential (never an external user's, EXTERNAL_USER), at most
         xmpp-server@turn-per-hour a user an hour; off, the feature is not advertised. xmpp-server@scram-decoy-key derives the SCRAM salts
-        of names that are no user's, so they stay the same across restarts and nodes (generated when unset).
+        of names that are no user's, so they stay the same across restarts and nodes (generated when unset). A stanza one user
+        sends another's session (Jingle, a PEP notification, a presence or message to a full JID) is held to
+        xmpp-server@routed-rate a second and xmpp-server@routed-burst at once from that user to that one; past them, or past the
+        target's queue, it is refused to the sender, and one the target blocks is dropped before it is queued.
         xmpp-server@s2s-port (5269) is for server-to-server (federation, C3b), which is not built: nothing listens on it yet, and
         behind an edge node it will be the edge node's (plans/archive/Edge-Node.md §5.4). On an edge node (moqui_conf__instance__node_role=front_edge) no XMPP
         server starts: its edge@xmpp-port and edge@xmpp-tls-port tunnel clients to the local node. An all-in-one node
@@ -215,7 +218,7 @@
     <xmpp-server domain="" rooms-domain="" upload-domain="" port="" host="0.0.0.0" tls-port="" tls-host="" s2s-port=""
             websocket-enabled="false" resume-seconds="300" fast-token-days="14" pep-max-bytes="20971520"
             block-max-jids="1000" push-max-registrations="50" turn-enabled="false" turn-per-hour="30"
-            scram-decoy-key="CHANGEME">
+            routed-rate="20" routed-burst="200" scram-decoy-key="CHANGEME">
         <upload url="" max-bytes="20971520" seconds="300" unattached-hours="24" root="dbresource://xmpp-upload"
                 secret="CHANGEME"/>
     </xmpp-server>
@@ -229,7 +232,10 @@
         Trunk credentials are VoiceTrunk.authJson, encrypted; the fraud limits are VoicePolicy (System/Voice). The flood caps
         (0 turns one off): sip-server/limits@request-rate new requests a second from one source, sip-server/limits@request-burst of them at once;
         sip-server/limits@max-transactions, past which new requests are dropped; sip-server/limits@max-connections, TCP and TLS connections at once,
-        and sip-server/limits@max-connections-per-source of them from one source. On a local node, an edge node's engine
+        and sip-server/limits@max-connections-per-source of them from one source, sip-server/limits@max-connections-per-unknown-source
+        from one with no trunk's address, phone's binding or authenticated connection; an accepted TCP or TLS connection on
+        which no request authenticated (a phone's REGISTER, a PBX trunk's digest) is closed after
+        sip-server/limits@unauthenticated-seconds unless it is a trunk's. On a local node, an edge node's engine
         reports its own blocks (kept apart from this node's engines'): sip-server/limits@edge-blocks-per-hour new blocked
         sources an hour at most, and sip-server/limits@edge-alerts-per-hour alerts of its blocks and trunks. -->
     <!-- The registrar for desk and soft phones (V4, docs/interfaces/SIP.md "Registrar"): off unless sip-server/registrar@enabled is

@@ -146,6 +146,20 @@ fn g722_codes_the_reference_vector_and_round_trips_a_tone() {
     assert!(level.abs() < 1.0, "G.722 level moved {level:.2} dB");
 }
 
+/// SEC-COM-87: a panic in the opus library on a packet is caught on the decoding thread: that packet is undecodable,
+/// the decoder is made anew and decodes the next one.
+#[test]
+fn a_panic_in_the_opus_decoder_drops_one_packet() {
+    let pcm = tone(440.0, 8_000.0, 48_000, 48_000);
+    let mut encoder = OpusEncoder::new(VOICE_BITRATE).expect("an encoder");
+    let mut decoder = OpusDecoder::new().expect("a decoder");
+    let caught = decoder.guarded(|_, _| -> usize { panic!("a hostile packet") });
+    assert_eq!(caught, None);
+    let packet = encoder.encode(&pcm[..FRAME]).expect("encoded").to_vec();
+    let mut back = Vec::new();
+    assert_eq!(decoder.decode(&packet, &mut back).expect("decoded"), FRAME);
+}
+
 #[test]
 fn opus_round_trips_a_tone_at_its_level() {
     let pcm = tone(440.0, 8_000.0, 48_000, 48_000);

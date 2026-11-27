@@ -545,6 +545,27 @@ fn an_xmpp_users_credential_reaches_no_other_port_of_the_servers_own_addresses()
     assert!(turn.peer_allowed("8.8.4.4:50000".parse().unwrap(), false, xmpp));
 }
 
+/// SEC-COM-18: a public address of this host that no listener is bound to (behind a NAT the listeners hold a wildcard
+/// or a private address) is never an XMPP user's peer; a media node's port on it still is for a call leg.
+#[test]
+fn an_xmpp_users_credential_reaches_none_of_the_hosts_own_addresses() {
+    let listen: SocketAddr = "0.0.0.0:3478".parse().unwrap();
+    let config = TurnConfig {
+        secret: SECRET.to_vec(),
+        allowed_peers: vec!["9.9.9.9:10000".parse().unwrap()],
+        own_addresses: vec!["9.9.9.9".parse().unwrap(), "1.1.1.7".parse().unwrap()],
+        ..TurnConfig::default()
+    };
+    let turn = Turn::new(config, &[(Proto::Udp, listen)]);
+    let xmpp = Some("xmpp.U1");
+    for own in ["1.1.1.7:5060", "[::ffff:1.1.1.7]:5060", "9.9.9.9:5060"] {
+        let own: SocketAddr = own.parse().unwrap();
+        assert!(!turn.peer_allowed(own, false, xmpp), "{own}");
+    }
+    assert!(turn.peer_allowed("9.9.9.9:10000".parse().unwrap(), false, Some("LEG1")));
+    assert!(turn.peer_allowed("8.8.4.4:50000".parse().unwrap(), false, xmpp));
+}
+
 /// The pairings `ids`, each with its salt `ids`'s second part.
 fn pairings(ids: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
     ids.iter()

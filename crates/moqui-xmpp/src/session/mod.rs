@@ -175,7 +175,9 @@ pub struct Session {
     pub(crate) sent_refs: VecDeque<String>,
     /// A client's message id that is not a clientRef, by the clientRef used for it.
     pub(crate) ids: HashMap<String, String>,
-    pub(crate) blocked: Option<HashSet<String>>,
+    /// The user's block list as read (bare JIDs), shared with the registry entry so a sender's stanza is dropped
+    /// before it is queued (SEC-COM-19); none until read.
+    pub(crate) blocked: crate::registry::SharedBlocks,
     /// Capabilities (XEP-0115) asked of the client: iq id → ver; and what a ver answered.
     pub(crate) caps_asked: HashMap<String, String>,
     pub(crate) last_beat: Option<Instant>,
@@ -225,7 +227,7 @@ impl Session {
             user_ids: HashMap::new(),
             sent_refs: VecDeque::new(),
             ids: HashMap::new(),
-            blocked: None,
+            blocked: Arc::new(Mutex::new(None)),
             caps_asked: HashMap::new(),
             last_beat: None,
             detached: false,
@@ -609,6 +611,7 @@ impl Session {
             notify: Arc::clone(&self.notify),
             available: Arc::clone(&self.available),
             carbons: Arc::clone(&self.carbons),
+            blocked: Arc::clone(&self.blocked),
         });
         self.tx = Some(tx);
         self.rx = Some(rx);

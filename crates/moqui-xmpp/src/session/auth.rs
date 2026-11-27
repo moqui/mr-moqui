@@ -241,11 +241,16 @@ impl Session {
     /// The user's verifiers, and the app password of each.
     async fn credentials(&self, first: &ClientFirst) -> Option<(Credentials, Vec<String>)> {
         // the account's own username: a JID's localpart is in lower case, the username may not be
-        let username = self.account_of(&jids::unescape_node(&first.username)).await?.username;
+        let name = jids::unescape_node(&first.username);
+        let account = self.account_of(&name).await;
+        // a name that is no account's asks for verifiers too (it gets none), so its answer takes the same calls as a
+        // user's and the decoy is not told apart by its time (SEC-COM-24)
+        let username = account.as_ref().map_or(name, |account| account.username.clone());
         let found = self
             .call_internal(services::SCRAM, json!({"username": username}))
             .await
             .ok()?;
+        account?;
         let salt = STANDARD.decode(backend::text(&found, "salt")).ok()?;
         let iterations = u32::try_from(backend::number(&found, "iterations")?).ok()?;
         let decode_list = |field: &str| -> Vec<Vec<u8>> {
@@ -298,7 +303,12 @@ impl Session {
     /// (SCRAM, FAST): the backend's [`crate::backend::Backend::sign_in`], which checks the account's `ipAllowed` and
     /// records the sign-in (SEC-COM-11, SEC-COM-22). PLAIN is checked and recorded by its own service.
     async fn signed_in(&self, account: &Account, credential: Option<&str>) -> bool {
-        match self.server.backend.sign_in(&account.username, self.peer, credential).await {
+        match self
+            .server
+            .backend
+            .sign_in(&account.username, self.peer, credential)
+            .await
+        {
             Ok(()) => true,
             Err(err) => {
                 tracing::warn!("XMPP sign-in of {} from {} refused: {err}", account.username, self.peer);
@@ -374,8 +384,12 @@ impl Session {
             .await
             .unwrap_or(Json::Null);
         let token_list = backend::list(&found, "tokenList");
+        // a token signs in only by the mechanism it was issued for, so one asked for with channel binding is never
+        // taken without it (SEC-COM-101)
+        let mechanism = if binds { fast::HT_EXPR } else { fast::HT_NONE };
         let matched = token_list
             .iter()
+            .filter(|token| backend::text(token, "mechanism") == mechanism)
             .find(|token| fast::verify(&backend::text(token, "token"), &binding, &proof));
         let Some(token) = matched.cloned() else {
             return self.sasl_failure(true, "not-authorized").await;

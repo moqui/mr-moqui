@@ -109,8 +109,9 @@ counts commit:
   hour block it for an hour, for every box.
 - A box number with no box, a box with no PIN, and a blocked box are refused the same way, after the same work (a hash
   check against a stand-in), and counted the same way: nothing tells a caller which boxes exist.
-- Three refusals end the call. Setting a new PIN clears the box's count. The daily trash job deletes failure counts a
-  day old.
+- Three refusals end the call, a blocked box's or source's as any other: a block does not end it sooner, so the call
+  does not tell an existing box either. Setting a new PIN clears the box's count. The daily trash job deletes failure
+  counts a day old.
 
 ## Prompts
 
