@@ -216,7 +216,10 @@
             <parameter name="range" required="true"><description>As in a formula: Summary!A1:D20.</description></parameter>
             <parameter name="profileId"/>
         </in-parameters>
-        <out-parameters><parameter name="frame" type="Map"><description>fields, each a name, a type (number or string) and its values.</description></parameter></out-parameters>
+        <out-parameters><parameter name="frame" type="Map"><description>fields, each a name, a type (number or string) and its values.</description></parameter>
+            <parameter name="live" type="Map"><description>How a view of the frame follows the document: kind calc and the
+                room it was read from, whose notification topic (calc:room, joined with watch) says when the document
+                changed, and when the caller left the room (a share taken away), so the view reads the frame again.</description></parameter></out-parameters>
     </service>
     <service verb="revert" noun="CalcDocument" type="rust" location="moqui_calc::service::revert_calc_document" transaction="ignore">
         <description>Discard the edits of a saved document since it was saved, everyone's: its edit log begins again from

@@ -253,8 +253,9 @@ feature("two pages on one document see each other, an edit in one shows in the o
 // A share taken away (DASH-UI-008): john.doe's document is shared with CALC_SHARE_WALK, and calc.share.walk has it open in
 // Dashboards › CalcGrid and a range of it on a dashboard of theirs. When john.doe saves it shared with no group, the open
 // editor stops: its next edit or read is sent to open the document again, which is refused, and the page says the
-// document is no longer available instead of showing its cells. The dashboard's range panel no longer shows the range,
-// and john.doe's cell is as it was saved.
+// document is no longer available instead of showing its cells. The open dashboard's range panel follows the document
+// with no reload: it shows john.doe's edit, and when the share is taken away its values go and it says the range is not
+// available. john.doe's cell is as john.doe left it.
 feature("a share taken away stops the other person's open editor and range panel, and the owner's cell stays", {
     expect() {
         const owner = gridPage()
@@ -292,6 +293,12 @@ feature("a share taken away stops the other person's open editor and range panel
         board.allowProblems(/userPhoto\?userId=/)
         board.goto("/qapps/dashboards/Dashboard?definitionId=walk-calc-share-board").status == 200
         board.waitFor(() => !!document.querySelector(".m-report-panel") && document.querySelector(".m-report-dashboard").textContent.includes("saved value"))
+        // the open dashboard follows the document: the owner's edit shows in its panel, with no reload
+        board.evaluate(() => { window.walkMounted = document.querySelector(".m-report-dashboard"); return true })
+        const edited = owner.evaluate(([grid, roomId]) => moqui.request(grid + "calcEdit", { method: "POST",
+            params: { roomId, opsJson: JSON.stringify([{ op: "input", sheet: 1, row: 2, column: 1, value: "live value" }]) } }).then((result) => (result.json || {}).errors || null), [grid, setup.roomId])
+        edited == null
+        board.waitFor(() => window.walkMounted === document.querySelector(".m-report-dashboard") && window.walkMounted.textContent.includes("live value"))
 
         // the owner takes the share away
         const unshared = owner.evaluate(([grid, roomId]) => moqui.request(grid + "calcSave", { method: "POST", params: { roomId, title: "Walk share", userGroupId: "" } })
@@ -310,18 +317,21 @@ feature("a share taken away stops the other person's open editor and range panel
         })
         editor.waitFor(() => !!document.querySelector(".m-calc-unavailable") && !document.querySelector(".m-calc-grid"), { timeout: 20 })
         editor.text().includes("no longer available to you")
-        // the range panel, read again, no longer shows the range
+        // the open dashboard's range panel, with no reload, no longer shows the range and says it is not available
+        board.waitFor(() => window.walkMounted === document.querySelector(".m-report-dashboard") && !window.walkMounted.textContent.includes("live value")
+            && !window.walkMounted.textContent.includes("Shared range") && window.walkMounted.textContent.includes("may not read"))
+        !/Error rendering|Exception in render|Internal Server Error/.test(board.text())
+        // and opened again, it is the same
         board.goto("/qapps/dashboards/Dashboard?definitionId=walk-calc-share-board").status == 200
         board.waitFor(() => !!document.querySelector(".m-report-panel"))
-        !board.text().includes("saved value")
-        !/Error rendering|Exception in render|Internal Server Error/.test(board.text())
+        !board.text().includes("live value")
 
         // the owner's cell is as it was saved
         const mine = owner.evaluate(([grid, roomId]) => moqui.request(grid + "calcCells", { params: { roomId, sheet: 1, row: 1, column: 1, width: 1, height: 2 } })
             .then((result) => result.json || {}), [grid, setup.roomId])
         !mine.errors
         const cellTexts = JSON.stringify(Array.from(mine.texts || []).map((cell) => [cell.row, cell.column, cell.text]))
-        cellTexts == JSON.stringify([[1, 1, "Shared range"], [2, 1, "saved value"]])
+        cellTexts == JSON.stringify([[1, 1, "Shared range"], [2, 1, "live value"]])
         !JSON.stringify(mine).includes("stale write")
         // the panel taken off the board, the document is deleted
         const removed = board.evaluate((panelId) => moqui.request("/apps/dashboards/Dashboard/removePanel", { method: "POST",

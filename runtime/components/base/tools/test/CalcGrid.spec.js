@@ -603,10 +603,14 @@ feature("a share taken away ends the other person's open editing and frames at o
         !before.panel.json.errors
         before.board.rendered
         before.board.panel.includes("saved value")
+        // the panel names the room its view follows to read it again when the document changes
+        JSON.parse(before.board.panel).live[0].kind == "calc"
+        String(JSON.parse(before.board.panel).live[0].room).startsWith("d")
         // the board is drawn; its range panel says it may not be read, and the page has no error of it
         after.board.rendered
         !after.board.panel.includes("saved value")
         after.board.panel.includes("may not read definition")
+        JSON.parse(after.board.panel).live.length == 0
         after.board.errors == ""
         !saved.json.errors
         String(owner).startsWith("d")
