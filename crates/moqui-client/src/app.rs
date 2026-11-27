@@ -139,24 +139,27 @@ impl Client {
     }
 
     /// Download `revision` of an account's map package and install it (plans/Maps-Offline.md §2.4), on this thread,
-    /// within the conf's `packages-max-mb`; a 401 has `host` check the key. The state it ended in.
+    /// within the conf's `packages-max-mb`; a 401 has `host` check the key; `runner` names who runs it (Android's work
+    /// id, whose stop pauses this run only). The state it ended in.
     pub fn download_package(
         &self,
         host: Option<&dyn ClientHost>,
         account: &str,
         package_id: &str,
         revision: i64,
+        runner: Option<&str>,
     ) -> crate::packages::Status {
         let Some(server) = crate::packages::ProxyServer::of(self, account, host) else {
             return crate::packages::Status::failed(revision, "NOT_FOUND", "The account is not on this device", false);
         };
-        crate::packages::download(
+        crate::packages::download_by(
             &self.packages,
             &server,
             account,
             package_id,
             revision,
             self.conf().packages_max_bytes(),
+            runner,
         )
     }
 

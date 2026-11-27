@@ -20,13 +20,12 @@
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
-use super::{parse_manifest, remove_tree, unzip, Job, PackageEntry, Packages, Status, FREE_MARGIN, LIST_PATH};
+use super::{parse_manifest, prune, remove_tree, unzip, Job, PackageEntry, Packages, Status, FREE_MARGIN, LIST_PATH};
 use super::{MANIFEST_MAX, PACKAGE_PATH, RANGE_LEN};
 use crate::account::Account;
 use crate::app::{Client, ClientHost};
@@ -170,9 +169,26 @@ pub fn download(
     revision: i64,
     max_bytes: u64,
 ) -> Status {
-    let Some(job) = packages.take(account, package_id, revision) else {
+    download_by(packages, server, account, package_id, revision, max_bytes, None)
+}
+
+/// [`download`] by `runner` (Android's WorkManager work id), whose stop pauses this run only ([`Packages::pause`]).
+pub fn download_by(
+    packages: &Packages,
+    server: &dyn PackageServer,
+    account: &str,
+    package_id: &str,
+    revision: i64,
+    max_bytes: u64,
+    runner: Option<&str>,
+) -> Status {
+    if revision < 1 {
+        return Status::failed(revision, "NOT_FOUND", "Not a revision of the package", false);
+    }
+    let Some(job) = packages.take(account, package_id, revision, runner) else {
         return packages
             .job_status(account, package_id)
+            .filter(|status| !status.ended())
             .unwrap_or(Status::Queued { revision });
     };
     let ended = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -188,6 +204,18 @@ pub fn download(
         .run()
     }))
     .unwrap_or_else(|_| Status::failed(revision, "SERVER", "The download failed unexpectedly", true));
+    // a run cancelled meanwhile (a cancel, a wipe) that then failed on its way (its folder gone) ended cancelled, with
+    // nothing of it kept: not a failure to try again
+    let ended = match ended {
+        Status::Failed { .. } if job.cancelled() => {
+            if let Some(dir) = packages.package_dir(account, package_id) {
+                remove_parts(&dir, None);
+                let _ = remove_tree(&unpack_dir(&dir, revision));
+            }
+            Status::Cancelled { revision }
+        }
+        ended => ended,
+    };
     match &ended {
         Status::Failed { code, reason, .. } => {
             tracing::warn!("The offline map {package_id} of {account} was not downloaded ({code}): {reason}");
@@ -196,7 +224,11 @@ pub fn download(
         _ => {}
     }
     job.set(ended.clone());
-    job.running.store(false, Ordering::SeqCst);
+    packages.release(&job);
+    // a package's folder left empty (a refusal, a cancel, a wipe meanwhile) goes, and its account's with it
+    if let Some(dir) = packages.package_dir(account, package_id) {
+        prune(&dir);
+    }
     ended
 }
 
@@ -241,7 +273,10 @@ impl Run<'_> {
                 false,
             );
         };
-        if size.saturating_add(self.packages.used(self.account, self.package_id)) > self.max_bytes {
+        if !self
+            .packages
+            .reserve(self.account, self.package_id, self.job, size, self.max_bytes)
+        {
             return self.failed(
                 "TOO_LARGE",
                 format!(
@@ -309,6 +344,9 @@ impl Run<'_> {
                 Err(status) => return status,
             }
         }
+        if self.job.cancelled() {
+            return self.cancelled(&dir);
+        }
         self.job.set(Status::Checking {
             revision: self.revision,
         });
@@ -343,12 +381,10 @@ impl Run<'_> {
             self.job,
         ) {
             let _ = remove_tree(&unpacked);
-            remove_parts(&dir, None);
             if self.job.cancelled() {
-                return Status::Cancelled {
-                    revision: self.revision,
-                };
+                return self.cancelled(&dir);
             }
+            remove_parts(&dir, None);
             return self.failed("BAD_PACKAGE", format!("{err}: the one on this device is kept"), false);
         }
         self.swap(&dir, &unpacked)
@@ -441,8 +477,12 @@ impl Run<'_> {
                     });
                 }
                 let _ = std::fs::remove_file(part);
-                append(part, answer.body, size)
-                    .map_err(|err| self.failed("OFFLINE", format!("The download was cut off: {err}"), true))
+                let written = append(part, answer.body, size)
+                    .map_err(|err| self.failed("OFFLINE", format!("The download was cut off: {err}"), true))?;
+                if written < size {
+                    return Err(self.failed("SERVER", "The server's whole answer was cut short", true));
+                }
+                Ok(written)
             }
             409 => {
                 remove_parts(dir, None);
@@ -472,18 +512,26 @@ impl Run<'_> {
     }
 
     /// The unpacked revision put in place by rename, under the jobs' lock (which [`Packages::forget`] takes, so
-    /// nothing is installed for an account being forgotten), then the earlier revisions and the part file removed.
+    /// nothing is installed for an account being forgotten), then the earlier revisions and the part file removed. A
+    /// directory of the same revision already there (installed again) is renamed aside first and put back when the
+    /// rename fails, so a failure keeps what was installed.
     fn swap(&self, dir: &Path, unpacked: &Path) -> Status {
         let target = dir.join(self.revision.to_string());
+        let aside = dir.join(format!(".{}.old", self.revision));
         let jobs = moqui_lib::sync::lock(&self.packages.jobs);
         if self.job.cancelled() {
             drop(jobs);
             let _ = remove_tree(unpacked);
             return self.cancelled(dir);
         }
-        let _ = remove_tree(&target);
+        let _ = remove_tree(&aside);
+        let moved = target.exists() && std::fs::rename(&target, &aside).is_ok();
         let renamed = std::fs::rename(unpacked, &target);
+        if renamed.is_err() && moved {
+            let _ = std::fs::rename(&aside, &target);
+        }
         drop(jobs);
+        let _ = remove_tree(&aside);
         if let Err(err) = renamed {
             let _ = remove_tree(unpacked);
             return self.failed(
@@ -516,11 +564,7 @@ impl Run<'_> {
         remove_parts(dir, None);
         let _ = remove_tree(&unpack_dir(dir, self.revision));
         // removed only when empty: a package or an account forgotten meanwhile
-        if std::fs::remove_dir(dir).is_ok() {
-            if let Some(parent) = dir.parent() {
-                let _ = std::fs::remove_dir(parent);
-            }
-        }
+        prune(dir);
         Status::Cancelled {
             revision: self.revision,
         }
@@ -537,20 +581,58 @@ fn unpack_dir(dir: &Path, revision: i64) -> PathBuf {
     dir.join(format!(".{revision}.unpack"))
 }
 
-/// Remove the part files (and their tags) of a package's directory, but `except`'s revision's.
-pub(crate) fn remove_parts(dir: &Path, except: Option<i64>) {
+/// The bytes of a revision's part file in a package's directory.
+pub(crate) fn part_len(dir: &Path, revision: i64) -> u64 {
+    std::fs::metadata(part_path(dir, revision)).map_or(0, |meta| meta.len())
+}
+
+/// Remove the part files (and their tags, and a tag's temporary file a crash left, `.<n>.zip.tag.<pid>.tmp`) of a
+/// package's directory, but `except`'s revision's: how many went.
+pub(crate) fn remove_parts(dir: &Path, except: Option<i64>) -> usize {
+    let mut removed = 0;
     for entry in std::fs::read_dir(dir).into_iter().flatten().filter_map(Result::ok) {
         let name = entry.file_name().to_string_lossy().into_owned();
-        let Some(revision) = name.strip_suffix(".zip.part").or_else(|| name.strip_suffix(".zip.tag")) else {
+        let temporary = name
+            .strip_prefix('.')
+            .and_then(|rest| rest.strip_suffix(".tmp"))
+            .and_then(|rest| rest.rsplit_once('.'))
+            .map(|(file, _pid)| file.to_string());
+        let file = temporary.as_deref().unwrap_or(&name);
+        let Some(revision) = file.strip_suffix(".zip.part").or_else(|| file.strip_suffix(".zip.tag")) else {
             continue;
         };
-        if except.is_some_and(|keep| revision == keep.to_string()) {
+        if except.is_some_and(|keep| revision == keep.to_string()) && temporary.is_none() {
             continue;
         }
-        if let Err(err) = std::fs::remove_file(entry.path()) {
-            tracing::warn!("A map package's part file was not removed: {err}");
+        match std::fs::remove_file(entry.path()) {
+            Ok(()) => removed += 1,
+            Err(err) => tracing::warn!("A map package's part file was not removed: {err}"),
         }
     }
+    removed
+}
+
+/// Make `relative`'s directories under `target`, one at a time and none of `target` itself, so a package's folder
+/// removed meanwhile (a wipe) is not made again.
+fn create_below(target: &Path, relative: &Path) -> std::io::Result<()> {
+    let mut at = target.to_path_buf();
+    for part in relative.components() {
+        at.push(part);
+        // its mode is set on Unix only
+        #[cfg_attr(not(unix), allow(unused_mut))]
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        match builder.create(&at) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists && at.is_dir() => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(())
 }
 
 /// Append at most `limit` bytes of `body` to the part file: the bytes written. On a cut, what came before it stays in
@@ -644,7 +726,7 @@ impl<W: Write> Write for Hashing<W> {
 /// Unpack the zip `part` into `target` with bounds: its manifest (the package and revision this download's), then
 /// each member the manifest lists, within its size and checked against its SHA-256; a member the manifest does not
 /// list, one it lists that is missing, and members past `max_bytes` in all refuse the package. A cancel stops it
-/// between members.
+/// within a MiB, and no directory above `target` is made.
 fn unpack(
     part: &Path,
     target: &Path,
@@ -664,7 +746,7 @@ fn unpack(
         return Err("The offline map's manifest is larger than this app reads".to_string());
     }
     let mut manifest_bytes = Vec::new();
-    unzip::copy_entry(&mut file, manifest_entry, &mut manifest_bytes)?;
+    unzip::copy_entry(&mut file, manifest_entry, &mut manifest_bytes, &|| false)?;
     let manifest = parse_manifest(&manifest_bytes)?;
     let named_id = manifest.package["packageId"].as_str().unwrap_or_default();
     let named_revision = manifest.package["revision"].as_i64();
@@ -695,7 +777,11 @@ fn unpack(
         return Err("The offline map's files are larger than the offline maps may take".to_string());
     }
     remove_tree(target)?;
-    crate::files::create_private_dir(target).map_err(|err| err.to_string())?;
+    // made alone, in the package's folder the part is in: never that folder again after a wipe
+    let (Some(parent), Some(name)) = (target.parent(), target.file_name()) else {
+        return Err("The offline map's folder is not one".to_string());
+    };
+    create_below(parent, Path::new(name)).map_err(|err| err.to_string())?;
     crate::files::write_private(&target.join("manifest.json"), &manifest_bytes).map_err(|err| err.to_string())?;
     for entry in entries.iter().filter(|entry| entry.path != "manifest.json") {
         if job.cancelled() {
@@ -706,15 +792,15 @@ fn unpack(
         };
         // a plain relative path (unzip::plain_path): it stays under target
         let path = target.join(&entry.path);
-        if let Some(parent) = path.parent() {
-            crate::files::create_private_dir(parent).map_err(|err| err.to_string())?;
+        if let Some(parent) = Path::new(&entry.path).parent() {
+            create_below(target, parent).map_err(|err| format!("{}: {err}", entry.path))?;
         }
         let out = private_file(&path, false).map_err(|err| format!("{}: {err}", entry.path))?;
         let mut hashing = Hashing {
             inner: std::io::BufWriter::new(out),
             hasher: Sha256::new(),
         };
-        let written = unzip::copy_entry(&mut file, entry, &mut hashing)?;
+        let written = unzip::copy_entry(&mut file, entry, &mut hashing, &|| job.cancelled())?;
         hashing.flush().map_err(|err| err.to_string())?;
         if written != member.size {
             return Err(format!("{} was cut short", entry.path));
