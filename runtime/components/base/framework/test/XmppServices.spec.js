@@ -281,7 +281,7 @@ feature("user location (XEP-0080) is refused at the services too, in any spellin
         })
         // ASCII whitespace alone is trimmed, as the XMPP session trims it (Rust's trim keeps U+FEFF, JavaScript's strips it)
         const check = (name) => as(null, "get#PepNodeRefused", {node: name}).refused
-        const spaced = check("\t" + GEOLOC + "\r\n"), marked = check("﻿" + GEOLOC)
+        const spaced = check("\t" + GEOLOC + "\r\n"), marked = check("\uFEFF" + GEOLOC)
         return {published, variant, kept, own, coMember, ordinary, spaced, marked}
     },
     then({published, variant, kept, own, coMember, ordinary, spaced, marked}) {

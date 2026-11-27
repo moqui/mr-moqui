@@ -744,8 +744,12 @@ async fn pep_refuses_the_user_location_node_and_keeps_the_others() {
     assert!(!super::pep::refused_node("http://jabber.org/protocol/geoloc+notify"));
     // ASCII whitespace alone is trimmed, as the services trim it: U+FEFF is part of the name on both sides
     assert!(!super::pep::refused_node("\u{feff}http://jabber.org/protocol/geoloc"));
-    // a node the services refuse is forbidden too, a publish and a fetch, not an internal error
+    // a node the services refuse is forbidden too, a publish, a fetch and its configuration, not an internal error or
+    // item-not-found
     for request in [
+        format!(
+            "<iq type='get' id='r'><pubsub xmlns='http://jabber.org/protocol/pubsub#owner'><configure node='{SERVICE_REFUSED_NODE}'/></pubsub></iq>"
+        ),
         format!(
             "<iq type='set' id='r'><pubsub xmlns='http://jabber.org/protocol/pubsub'><publish node='{SERVICE_REFUSED_NODE}'>\
              <item id='current'><data xmlns='urn:xmpp:test'/></item></publish></pubsub></iq>"
@@ -756,7 +760,10 @@ async fn pep_refuses_the_user_location_node_and_keeps_the_others() {
     ] {
         let out = text_of(&john.send(&request).await);
         assert!(
-            out.contains("<forbidden") && out.contains("type='auth'") && !out.contains("internal-server-error"),
+            out.contains("<forbidden")
+                && out.contains("type='auth'")
+                && !out.contains("internal-server-error")
+                && !out.contains("item-not-found"),
             "{request}: {out}"
         );
     }

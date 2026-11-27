@@ -638,7 +638,7 @@ fn a_geomap_row_opens_in_maps_where_the_dashboard_offers_it_and_the_table_keeps_
         press(&mut state, Key::Char('M')),
         Some(vec![Act::Message("This row's Maps link is unavailable".into())])
     );
-    // a panel that is not a geomap keeps its rows, and o opens nothing
+    // a panel that is not a geomap keeps its rows, and M opens nothing
     let table = dashboard(json!({"maps":"/apps/maps/Browse"}), "table");
     let mut state = ComponentState::default();
     let press = |state: &mut ComponentState, key: Key| ReportDashboard.key(&table, state, &KeyPress::plain(key), false);
@@ -648,7 +648,7 @@ fn a_geomap_row_opens_in_maps_where_the_dashboard_offers_it_and_the_table_keeps_
     assert_eq!(state.local["tables"]["sales"]["row"], 2);
     assert!(!shown(&table, &state).contains("open in Maps"));
     assert_eq!(press(&mut state, Key::Char('M')), None);
-    // without the maps link nothing changes: no hint, and o opens nothing
+    // without the maps link nothing changes: no hint, and M opens nothing
     let plain = dashboard(json!({"explore":"/apps/X/Explore"}), "geomap");
     let mut state = ComponentState::default();
     let press = |state: &mut ComponentState, key: Key| ReportDashboard.key(&plain, state, &KeyPress::plain(key), false);

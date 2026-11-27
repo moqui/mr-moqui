@@ -187,15 +187,6 @@
     };
     // A view's extent in WGS84 as view-change gives it: each edge within -180 to 180 (west greater than east across the
     // antimeridian), a view wider than the world the whole of it, latitudes within -90 to 90.
-    // An extent given as text (Browse's extent parameter, a dashboard geomap's country): "west,south,east,north" in WGS84
-    // degrees, each longitude within -180 to 180 and west greater than east across the antimeridian, south at most north;
-    // null otherwise.
-    map.extentParameter = (text) => {
-        const box = String(text ?? "").split(",").map((value) => value.trim() === "" ? NaN : Number(value));
-        const lonOk = (lon) => lon >= -180 && lon <= 180;
-        return box.length === 4 && box.every(Number.isFinite) && lonOk(box[0]) && lonOk(box[2]) && box[1] >= -90 && box[3] <= 90
-            && box[1] <= box[3] ? box : null;
-    };
     map.wrapExtent = (extent) => {
         const [west, south, east, north] = extent;
         const clamp = (lat) => Math.max(-90, Math.min(90, lat));

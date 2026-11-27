@@ -1082,7 +1082,7 @@ fn table_key(
     }
     Some(Vec::new())
 }
-/// The table's selected cell and its keys; `maps` adds `o` (a geomap whose owner offers Maps, `maps_key`).
+/// The table's selected cell and its keys; `maps` adds `M` (a geomap whose owner offers Maps, `maps_key`).
 fn selection_line(frame: &Value, panel: &Value, state: &ComponentState, maps: bool) -> Line {
     let fields = configured_fields(frame, panel);
     let at = state.choosing.unwrap_or(0).min(fields.len().saturating_sub(1));

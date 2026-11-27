@@ -214,9 +214,19 @@ impl Session {
             )
             .await
         {
-            Ok(found) if backend::flag(&found, "exists") => found,
-            _ => return self.refuse(iq, "cancel", "item-not-found", None),
+            Ok(found) => found,
+            Err(_) => return self.refuse(iq, "cancel", "item-not-found", None),
         };
+        // a node the services refuse, then one the user may not read, before one that is not there (as pep_items)
+        if backend::flag(&found, "refused") {
+            return self.refuse(iq, "auth", "forbidden", None);
+        }
+        if backend::flag(&found, "denied") {
+            return self.pubsub_error(iq, "auth", "forbidden", "presence-subscription-required");
+        }
+        if !backend::flag(&found, "exists") {
+            return self.refuse(iq, "cancel", "item-not-found", None);
+        }
         let access = backend::text(&found, "accessModel");
         let max = backend::text(&found, "nodeMaxItems");
         let config = form(

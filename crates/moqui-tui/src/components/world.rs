@@ -423,9 +423,11 @@ mod tests {
             "a numeric code without its leading zero"
         );
         assert_eq!(country_extent("040"), country_extent("at"));
-        // a country across the antimeridian has its own extent, west greater than east; one around a pole the world's.
-        // Fiji's rings are unwrapped before their areas are compared: Viti Levu, not Vanua Levu across the antimeridian
+        // rings are unwrapped before their areas are compared: Fiji is Viti Levu, not Vanua Levu, whose raw ring crosses
+        // the antimeridian
         assert_eq!(country_extent("FJI"), Some([177.2856, -18.2875, 178.7184, -17.3397]));
+        // a country across the antimeridian (Russia) has its own extent, west greater than east; one around a pole the
+        // world's
         let russia = country_extent("RU").unwrap();
         assert!(russia[0] > 0.0 && russia[2] < 0.0, "{russia:?}");
         assert_eq!(
