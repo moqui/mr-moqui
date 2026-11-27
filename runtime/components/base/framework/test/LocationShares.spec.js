@@ -844,11 +844,23 @@ feature(
             const out = {owner: live(A), viewer: live(B), other: live(C), admin: live("EX_JOHN_DOE")}
             out.carried = (config(true).locationShares || []).some(row => row.shareId === shareId)
             out.notAsked = config(false).locationShares === undefined
+            // the app bar's chip (get#ShellIndicator, Maps' shell-indicator provider): the owner's, the count of their own
+            // shares; none for a viewer who shares nothing, who is still told which pushes to read it again on
+            out.indicator = as(A, "get#ShellIndicator")
+            out.noIndicator = as(J, "get#ShellIndicator")
             as(A, "stop#Share", {shareId})
             out.afterStop = live(B)
             return out
         },
-        then({owner, viewer, other, admin, carried, notAsked, afterStop}) {
+        then({owner, viewer, other, admin, carried, notAsked, afterStop, indicator, noIndicator}) {
+            indicator.indicators.length == 1
+            indicator.indicators[0].key == "locationSharing"
+            indicator.indicators[0].label.startsWith("Sharing location")
+            indicator.indicators[0].url == "/qapps/maps/Browse?panel=live"
+            indicator.indicators[0].refreshAt > shared.now
+            indicator.refreshOn[0].topicPrefix == "locationShare:"
+            noIndicator.indicators.length == 0
+            noIndicator.refreshOn.length == 1
             owner.role == "owner"
             owner.label == "Alex live"
             owner.audience.map(entry => entry.name).join() == "Loc B"

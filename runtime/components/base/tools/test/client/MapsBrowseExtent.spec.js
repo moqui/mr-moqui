@@ -3,7 +3,8 @@
 // docs/tools/Maps.md, From a dashboard) it opens on it at the first load. Its check is Browse.qvue's own: moqui.map
 // (WebrootMap.js) loads only as m-map mounts, after the first view is set, so a check there left the extent unread on a
 // fresh page. The view is read once the page settles and Browse has its configuration. On the same render, live location
-// (plans/Location-Sharing.md §3.3): a share started from Browse, sent from the page, drawn on the live layer and stopped.
+// (plans/Location-Sharing.md §3.3): a share started from Browse, sent from the page, drawn on the live layer, shown by the
+// app bar's "Sharing location" chip (a shell indicator, its label text) and stopped.
 const RUSSIA = "27.2865,41.1518,-169.8983,77.6975"
 
 /** The MapsBrowse component of the page, found in the shell's tree of components. */
@@ -46,7 +47,7 @@ feature("Browse is the MapsBrowse component with its map, opened on an extent ac
         // Share my location with a guest link starts one, sent from this page (the browser's position stood in for, as
         // watchPosition gives it) through reportPosition, its banner shown and its latest drawn on m-map's live layer as the
         // audience reads it; Stop ends it and the page stops sending
-        let started, drawn, shown, panel, stopped
+        let started, drawn, shown, chip, markup, panel, stopped
         try {
             started = page.evaluate(`(async () => {
                 const vm = (${browse})()
@@ -74,6 +75,15 @@ feature("Browse is the MapsBrowse component with its map, opened on an extent ac
                     feature: !!(view.liveSource && view.liveSource.getFeatureById("live:" + share.shareId)) } : null })()`, {timeout: 10})
             // the dialog shows the guest link's token this once, until Done
             shown = page.locator("#MapsShareLinkToken").text()
+            // the app bar's chip (the shell's indicator of Maps' shell-indicator provider): Sharing location, sending here;
+            // and an indicator's label is text, whatever it holds
+            chip = page.waitFor(`(() => { const chip = document.getElementById("m-indicator-locationSharing")
+                return chip && /sending here/.test(chip.textContent) ? { text: chip.textContent, aria: chip.getAttribute("aria-label") } : null })()`, {timeout: 10})
+            page.evaluate(`moqui.shellIndicators.set("specMarkup", { label: "<img src=x>Spec" }), true`)
+            markup = page.waitFor(`(() => { const chip = document.getElementById("m-indicator-specMarkup")
+                const out = chip ? { text: chip.textContent, img: !!chip.querySelector("img") } : null
+                if (chip) moqui.shellIndicators.remove("specMarkup")
+                return out })()`, {timeout: 5})
             page.getByRole("button", {name: "Done"}).click()
             page.locator(".q-dialog__backdrop").waitFor({state: "detached", timeout: 5})
             // the Live location panel: Who sees my location lists it with its audience and its acts; nobody shares with this user
@@ -82,7 +92,7 @@ feature("Browse is the MapsBrowse component with its map, opened on an extent ac
                 return card ? { card: card.textContent, none: !!document.getElementById("MapsSharedNone") } : null })()`, {timeout: 5})
             page.click(`[data-maps-stop="${started.shareId}"]`)
             stopped = page.waitFor(`(() => { const vm = (${browse})()
-                return !document.querySelector('[data-maps-sharing="' + ${JSON.stringify(started.shareId)} + '"]') && !vm.sending.length
+                return !document.querySelector('[data-maps-sharing="' + ${JSON.stringify(started.shareId)} + '"]') && !vm.sending.length && !document.getElementById("m-indicator-locationSharing")
                     ? { mine: vm.myShares.length, watching: vm.watchId === null } : null })()`, {timeout: 10})
         } finally {
             // a run that failed on the way leaves no active share: the one the page started is stopped (again, harmlessly)
@@ -106,5 +116,9 @@ feature("Browse is the MapsBrowse component with its map, opened on an extent ac
         panel.card.includes("Stop")
         panel.none == true
         stopped.watching == true
+        chip.text.includes("Sharing location")
+        chip.aria == "Sharing location · sending here"
+        markup.text.includes("<img src=x>Spec")
+        markup.img == false
     }
 })

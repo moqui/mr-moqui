@@ -41,8 +41,9 @@ along with this software (see the LICENSE.md file). If not, see
     in this tab's session storage under the account, forgotten at a sign-out) by
     watchPosition through reportPosition, at most one a share's reportIntervalSeconds, and handles its statuses (429 waits,
     410 and 404 stop sending, 409 STALE is passed over and CLOCK_AHEAD sends with the server's time); the page closed, the
-    share stays active and its audience sees its position age. There is no tray item: the shell's tray has no hook for an
-    app's item. -->
+    share stays active and its audience sees its position age. On every screen the app bar's "Sharing location" chip (a
+    shell indicator of Maps' shell-indicator provider) opens this screen's Live location panel (panel=live); while this page
+    sends, it notes "sending here" on that chip. -->
 <template><div ref="frame" class="m-maps-browse column no-wrap" :class="fullscreen ? ($q.dark.isActive ? 'bg-dark' : 'bg-white') : ''">
     <div class="row items-center no-wrap q-gutter-x-xs q-px-sm q-py-xs">
         <div class="col" style="max-width:420px">
@@ -481,6 +482,8 @@ const OVERLAY_ACCEPT = '.geojson,.json,.topojson,.esrijson,.gpx,.kml,.gml,.wkt,.
 // the shares of the user's own that this tab sends while their page is open (a per-tab convenience: the share itself is
 // the server's), in session storage under a key of the account (moqui.scopedKey: the desktop client's account too)
 const SENDING_PREFIX = 'moqui.maps.sendingShares.';
+// the key of Maps' indicator in the shell's app bar (LocationShares.js indicator)
+const INDICATOR_KEY = 'locationSharing';
 const sendingKey = () => {
     const userId = moqui.webrootVue && moqui.webrootVue.userId;
     return userId ? moqui.scopedKey(SENDING_PREFIX + userId) : null;
@@ -737,6 +740,8 @@ module.exports = {
                 this.effective = config;
                 if (!config.locationSharesFailed) this.pruneSending(config.locationShares, readAt);
                 this.restoreSending();
+                // panel=live (the app bar's "Sharing location" chip): Who sees my location
+                if (this.parameters.panel === 'live') this.panel = 'live';
                 this.watchTiles();
                 const p = this.parameters;
                 const lon = Number(p.longitude), lat = Number(p.latitude);
@@ -1217,6 +1222,8 @@ module.exports = {
                     intervalSeconds: approximate ? this.shareTargets.approximateIntervalSeconds : this.shareTargets.minIntervalSeconds });
                 if (!json.linkToken) this.shareShown = false;
                 moqui.notifyMessages([{ type: 'success', message: t('Your location is shared until') + ' ' + this.untilText(json.thruDate) }], null);
+                // the app bar's chip at once, before the share's started push
+                if (this.$root && this.$root.loadShellIndicators) this.$root.loadShellIndicators();
                 return this.refreshShares().then(() => json.shareId);
             }, (err) => { this.shareError = String(err && err.message || err); return null; }).then((shareId) => { this.shareSaving = false; return shareId; });
         },
@@ -1292,6 +1299,7 @@ module.exports = {
                 thruDate: given.thruDate || null, whomText: given.whomText || '', startedAt: Date.now() } });
             this.storeSending();
             this.sendError = '';
+            this.noteSending();
             if (moqui.beforeLogoutHooks) moqui.beforeLogoutHooks.add(forgetSending);
             this.sendState = this.sendState || {};
             // a fix taken before the share began is refused (BEFORE_SHARE): a new share waits for one taken from now
@@ -1309,6 +1317,12 @@ module.exports = {
             this.sendNotes = notes;
             if (!this.sending.length) this.unwatchFixes();
             else this.watchFixes();
+            this.noteSending();
+        },
+        // the app bar's "Sharing location" chip (the shell's indicator of Maps' shell-indicator provider) says "sending here"
+        // while this page sends a share
+        noteSending(off) {
+            if (moqui.shellIndicators) moqui.shellIndicators.note(INDICATOR_KEY, !off && this.sending.length ? t('sending here') : null);
         },
         note(shareId, text) { this.sendNotes = Object.assign({}, this.sendNotes, { [shareId]: text }); },
         // a share's report interval in milliseconds: its own, else the listed share's, else location@min-interval-seconds' default
@@ -1463,6 +1477,7 @@ module.exports = {
     beforeUnmount() {
         // the page closing stops what it sends; its shares stay active and go stale
         this.unwatchFixes();
+        this.noteSending(true);
         clearInterval(this.nowTimer);
         if (this.editing) this.editCommand('stop');
         window.removeEventListener('resize', this.onResize);

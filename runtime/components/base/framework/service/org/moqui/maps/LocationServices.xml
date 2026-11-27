@@ -209,6 +209,19 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('deleteTrail', context))</script></actions>
     </service>
 
+    <service verb="get" noun="ShellIndicator">
+        <description>The shell-indicator provider of Maps (Maps.xml shell-providers; plans/Location-Sharing.md §3.3): while the
+            current user has any active share of their own, one indicator, "Sharing location" (with the count when more than
+            one), to Maps › Browse's Who sees my location, asked again at the soonest end (refreshAt) and on the user's own
+            pushes of a share's start, change or end (refreshOn); none otherwise. It counts the user's own shares and reads
+            no audience or position.</description>
+        <out-parameters>
+            <parameter name="indicators" type="List"/>
+            <parameter name="refreshOn" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('indicator', context))</script></actions>
+    </service>
+
     <service verb="clean" noun="LocationShares" authenticate="anonymous-all" allow-remote="false" transaction="ignore">
         <description>The hourly job (clean_LocationShares_hourly): ends the shares past their thruDate, oldest first
             (endedDate set, the latest position deleted, the audience told), deletes the trail points of each ended

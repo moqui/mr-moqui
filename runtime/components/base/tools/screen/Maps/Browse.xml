@@ -42,6 +42,8 @@ along with this software (see the LICENSE.md file). If not, see
     <parameter name="savedViewId"/>
     <!-- an area to open on, west,south,east,north (a dashboard geomap's country) -->
     <parameter name="extent"/>
+    <!-- a panel to open on: live, the Live location panel (the app bar's "Sharing location" chip) -->
+    <parameter name="panel"/>
 
     <!-- the effective configuration m-map draws (WebrootMap.js documents its shape); the layers asked for are shown. The
         user's overlays and those shared with them (find#Overlays) follow the profile's layers, each a GeoJSON layer read

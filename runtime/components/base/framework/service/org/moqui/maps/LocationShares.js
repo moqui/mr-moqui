@@ -1037,7 +1037,46 @@ function clean() {
     return counts
 }
 
-const operations = {create, update, stop, revoke, report, findMine, findShared, get, deleteTrail, clean}
+/**
+ * get#ShellIndicator, the shell-indicator provider of Maps (plans/Location-Sharing.md §1 "Visible to everyone it
+ * concerns", §3.3): while the caller has any active share of their own, the app bar's "Sharing location" chip on every
+ * screen, to Maps › Browse's Who sees my location. A count of the caller's own shares, no audience or position read; asked
+ * again by the shell at the soonest end and on the owner's own pushes of a share's start, change or end.
+ */
+function indicator() {
+    const me = ec.user.userId
+    // read again on the owner's own pushes of a start, change or end, whether or not a share is on now
+    const refreshOn = [{topicPrefix: "locationShare:", events: ["started", "changed", "ended"]}]
+    if (!me) return {indicators: [], refreshOn}
+    const now = nowMillis()
+    const ends = Array.from(
+        find(SHARE)
+            .condition("ownerUserId", me)
+            .condition("revokedDate", null)
+            .condition("endedDate", null)
+            .condition("thruDate", "greater", new Date(now))
+            .selectField("thruDate")
+            .list()
+    ).map(row => millis(row.thruDate))
+    if (!ends.length) return {indicators: [], refreshOn}
+    const label = ec.l10n.localize("Sharing location") + (ends.length > 1 ? " (" + ends.length + ")" : "")
+    return {
+        indicators: [
+            {
+                key: "locationSharing",
+                label,
+                icon: "sym_o_share_location",
+                tone: "positive",
+                title: ec.l10n.localize("Who sees my location"),
+                url: "/qapps/maps/Browse?panel=live",
+                refreshAt: Math.min(...ends)
+            }
+        ],
+        refreshOn
+    }
+}
+
+const operations = {create, update, stop, revoke, report, findMine, findShared, get, deleteTrail, clean, indicator}
 
 function execute(op, parameters) {
     if (!operations[op]) throw new Error("Unknown location share operation " + op)

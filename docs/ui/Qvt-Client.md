@@ -1232,7 +1232,30 @@ the client shows it as a native notification instead and does not start Web Push
 - The server's logout deletes the subscriptions the visit stored.
 - The logout link also runs `moqui.beforeLogoutHooks` (a `Set` of functions, each called once and its promise waited on,
   a failing one passed over): what a screen forgets of the user in this browser, such as Maps › Browse's list of the live
-  location shares the tab sends.
+  location shares the tab sends. Among them the shell's own clears every shell indicator (below).
+
+**Shell indicators** (`moqui.shellIndicators`, `WebrootVue.qvt.js`): status chips in the app bar, after its title and
+before Search, on every screen and at every density. The shell keeps them, so they stay across in-app navigation while
+screens come and go. A chip shows its icon and its text (its label and any note), the text alone below 600 px being
+its `aria-label` and tooltip, so it fits the 390 px phone header.
+
+| Member | |
+|---|---|
+| `set(key, {label, icon, tone, title, action, sequence})` | Adds or replaces one. `key`: letters, digits, `_` and `-` (the chip's id is `m-indicator-<key>`). `label` (60 characters) and `title` (the tooltip's, 200) are plain text: controls and bidi overrides are dropped and markup stays text. `icon` a Material Symbols name, `tone` `primary` (the default), `positive`, `warning`, `negative` or `info`. `action`: a path of this site the shell goes to (`setUrl`), as text or `{url}`, or a function, or `{onClick}`. False when the key or label is missing |
+| `remove(key)` | Takes it off |
+| `note(key, text)` | A screen's few words after an indicator's label (40 characters), " · sending here", kept across a `set` of the same key until `note(key, null)` or `clear()` |
+| `get(key)`, `list()` | One indicator; all of them in `sequence` then key order, each with `text` |
+| `clear()` | Takes every one off, and the notes: the shell's `beforeLogoutHooks` entry does it at a sign-out |
+
+The server's indicators come from the apps' `shell-indicator` providers (`mr-xml-screen.xsd`, called with no parameters
+through `ShellServices.get#ShellIndicators`, its `call#Providers` running each as its app by the user's own authorization
+records): `GET /shellIndicators` (`webroot.xml`, 401 without a user)
+answers `{indicators: [{key, label, icon, tone, title, url, refreshAt, sourceId}], refreshOn: [{topicPrefix, events}]}`.
+The shell asks for them with the shell data (at the page's start and after a re-login), sets each with its `url` as the
+action, takes off one it set that is no longer answered, asks again at the soonest `refreshAt`, and on a push of the
+notification socket whose topic starts with a `refreshOn` `topicPrefix` and whose message's `event` is one of its `events`
+(within half a second of the last such push). Maps answers one: "Sharing location" while the user shares theirs
+([Maps, Live location](../tools/Maps.md#live-location)).
 
 A push service answering 404 or 410 disables the subscription; so do 5 failures in a row. The next page load of a user
 who turned notifications on subscribes again.

@@ -26,6 +26,11 @@ along with this software (see the LICENSE.md file). If not, see
         <subscreens-item name="Configuration" location="component://tools/screen/Maps/Configuration.xml" menu-index="9"
                 menu-include="ec.artifactExecution.isPermittedOwn('component://tools/screen/Maps/Configuration.xml', 'AT_XML_SCREEN', 'view')"/>
     </subscreens>
+    <!-- live location's chip in the shell's app bar on every screen while the user shares their location
+        (plans/Location-Sharing.md §3.3; LocationServices get#ShellIndicator) -->
+    <shell-providers>
+        <shell-indicator name="maps.locationSharing" service="org.moqui.maps.LocationServices.get#ShellIndicator" sequence="10"/>
+    </shell-providers>
     <widgets>
         <subscreens-panel id="maps-panel" type="popup"/>
     </widgets>

@@ -1004,8 +1004,14 @@ app's background sharing, chat's live location, XMPP and the guest page for a li
   a sign-out (`moqui.beforeLogoutHooks`); Send from here takes over one started elsewhere. When the page closes the
   share stays active and goes stale; its audience sees the age. A banner above the map names every active share of the
   user's own and every share the page sends (with whom, until when, whether this page sends it) with Stop.
-- **The tray.** No tray item: the shell's tray tabs are the theme's screens, and no hook lets an app add an item to them,
-  so in the browser a share is named only on Browse, by its banner (and by the Android notification, LL3).
+- **The app bar's chip.** While the user has any active share of their own, the shell shows "Sharing location" (with the
+  count when there are more than one) in the app bar on every screen, a shell indicator ([Qvt-Client, Shell
+  indicators](../ui/Qvt-Client.md)) that Maps' `shell-indicator` provider answers (`LocationServices.get#ShellIndicator`,
+  a count of the user's own shares, no audience or position read; `Maps.xml`). The shell reads it once with its shell data
+  and again on the user's own pushes of a share's start, change or end (which every device of the owner gets, so a share
+  started on another device shows too) and at the soonest end. It opens Browse's Who sees my location
+  (`Browse?panel=live`), where Stop is; a page that sends a share adds "· sending here". With Browse's banner, and the
+  Android notification (LL3), it is how the owner sees every active share wherever they are.
 - **The terminal.** Browse's twin lists, under its map, the user's own shares (with whom, until, the last position's age
   and coordinates, Stop) and those shared with them (`Maps/LocationSharesTui.xml`).
 
