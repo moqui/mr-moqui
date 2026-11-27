@@ -209,3 +209,95 @@ feature("a DATABASE_ADMIN user's wrapped snapshot import restores a privileged-g
         restored == 1
     },
 })
+
+// The import between the foreign key jobs of Data › Snapshots' load wrap, as the DATABASE_ADMIN user: its out-parameters
+const wrapSnapshot = (zipFilename) => {
+    ec.user.internalLoginUser("spec.lw.dba")
+    const wrap = ec.service.sync().name("org.moqui.dev.DatabaseServices.plan#LoadWrap").parameters({ db: "group:transactional",
+        entityNames: ["moqui.security.UserGroupMember"], description: "Spec snapshot load wrap" }).call() || {}
+    ec.message.clearErrors()
+    const wrapped = ec.service.sync().name("moqui.tools.DatabaseLoadServices.run#LoadWrap").parameters({ dropJobId: wrap.dropJobId,
+        restoreJobId: wrap.restoreJobId, loadKind: "snapshot", zipFilename }).call() || {}
+    ec.message.clearErrors()
+    return wrapped
+}
+const snapshotFile = (name) => ec.resource.getLocationReference(ec.factory.getRuntimePath() + "/db/snapshot/" + name)
+
+// A snapshot that cannot be read is a failed import, not a clean one with no records: the service's error names the
+// file and the loader's reason, so the ImportEntityDataSnapshot job's run records it, and the wrapped import says it
+// was not loaded (TOOL-UI-008)
+feature("a corrupt snapshot fails the import, its job run and the wrapped import", {
+    expect() {
+        const zipFilename = "SpecCorruptSnapshot.zip"
+        const run = () => {
+            const file = snapshotFile(zipFilename)
+            let jobRunId = null
+            ec.artifactExecution.disableAuthz()
+            try {
+                file.putText("not a zip archive")
+                ec.user.internalLoginUser("john.doe")
+                const direct = ec.service.sync().name("org.moqui.impl.EntityServices.import#EntityDataSnapshot")
+                    .parameters({ zipFilename }).call() || {}
+                const directError = ec.message.errorsString
+                ec.message.clearErrors()
+                // the job Data › Snapshots starts, on a job worker: at most 5 seconds, well inside the spec's budget
+                jobRunId = ec.service.job("ImportEntityDataSnapshot").parameters({ zipFilename }).run()
+                const runOf = () => ec.entity.find("moqui.service.job.ServiceJobRun").condition("jobRunId", jobRunId).useCache(false).one()
+                const until = Date.now() + 5000
+                while (Date.now() < until && runOf()?.endTime == null) sleep(50)
+                const jobRun = runOf()
+                const job = { ended: jobRun?.endTime != null, hasError: jobRun?.hasError, errors: String(jobRun?.errors || "") }
+                const wrapped = wrapSnapshot(zipFilename)
+                return { direct, directError, job, wrapped }
+            } finally {
+                ec.message.clearErrors()
+                if (jobRunId) ec.entity.find("moqui.service.job.ServiceJobRun").condition("jobRunId", jobRunId).deleteAll()
+                // a reference's exists is as it was when made: a new one
+                if (snapshotFile(zipFilename).getExists()) file.delete()
+                ec.artifactExecution.enableAuthz()
+            }
+        }
+        const { direct, directError, job, wrapped } = run()
+        !direct.recordsLoaded
+        directError.includes(zipFilename)
+        job.ended === true
+        job.hasError == "Y"
+        job.errors.includes(zipFilename)
+        wrapped.loaded === false
+        wrapped.outcome.includes(zipFilename)
+        wrapped.restoreStatusId == "DbjsDone"
+    },
+})
+
+// A snapshot directory whose one file fails while another loads reads as a data load with a failed file: the records
+// loaded, and the file that could not be loaded named in the outcome (TOOL-UI-008)
+feature("a wrapped snapshot with a corrupt file beside a good one loads the good one and names the bad one", {
+    expect() {
+        const dirName = "SpecMixedSnapshot"
+        const run = () => {
+            const good = snapshotFile(dirName + "/Good.xml")
+            const bad = snapshotFile(dirName + "/Bad.zip")
+            ec.artifactExecution.disableAuthz()
+            try {
+                good.putText('<entity-facade-xml><moqui.basic.EnumerationType enumTypeId="SPEC_LW_MIXED" description="Spec mixed snapshot"/></entity-facade-xml>')
+                bad.putText("not a zip archive")
+                const wrapped = wrapSnapshot(dirName)
+                const loaded = ec.entity.find("moqui.basic.EnumerationType").condition("enumTypeId", "SPEC_LW_MIXED").useCache(false).count()
+                return { wrapped, loaded }
+            } finally {
+                ec.message.clearErrors()
+                ec.entity.find("moqui.basic.EnumerationType").condition("enumTypeId", "SPEC_LW_MIXED").deleteAll()
+                // a reference's exists is as it was when made: new ones
+                for (const name of ["/Good.xml", "/Bad.zip", ""]) if (snapshotFile(dirName + name).getExists()) snapshotFile(dirName + name).delete()
+                ec.artifactExecution.enableAuthz()
+            }
+        }
+        const { wrapped, loaded } = run()
+        loaded == 1
+        wrapped.loaded === true
+        wrapped.recordsLoaded == 1
+        wrapped.outcome.includes("could not load")
+        wrapped.outcome.includes("Bad.zip")
+        wrapped.restoreStatusId == "DbjsDone"
+    },
+})

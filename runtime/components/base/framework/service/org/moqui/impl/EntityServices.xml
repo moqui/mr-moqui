@@ -303,7 +303,11 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="disableDataFeed" type="Boolean" default="true"/>
             <parameter name="transactionTimeout" type="Integer" default="3600"/>
         </in-parameters>
-        <out-parameters><parameter name="recordsLoaded" type="Long"/></out-parameters>
+        <out-parameters>
+            <parameter name="recordsLoaded" type="Long"/>
+            <!-- each file that failed while the others loaded, as {location, reason}; each is an error too -->
+            <parameter name="failures" type="List"/>
+        </out-parameters>
         <actions>
             <if condition="!WebUtilities.isSafeSinglePathSegment(zipFilename)">
                 <return error="true" message="Snapshot file not found"/></if>
@@ -313,7 +317,12 @@ along with this software (see the LICENSE.md file). If not, see
                         .disableFkCreate(disableFkCreate).disableDataFeed(disableDataFeed)
                         .transactionTimeout(transactionTimeout)
                 edl.location(ec.factory.getRuntimePath() + "/db/snapshot/" + String(zipFilename))
-                recordsLoaded = edl.load()
+                // a file of the snapshot that could not be read or loaded is an error naming it and the loader's
+                // reason, so the import, its job run and the wrapped import fail rather than end clean (TOOL-UI-008)
+                failures = []
+                recordsLoaded = edl.load([], failures)
+                for (const failure of failures) ec.message.addError(ec.resource.expand('Could not load [${location}]: ${reason}', '',
+                    {location: String(failure.location), reason: String(failure.reason)}))
                 // the sequence bank cache of Java; the port's bank is not a cache
                 if (ec.cache.cacheExists("entity.sequence.bank")) ec.cache.getCache("entity.sequence.bank").clear()
             ]]></script>
