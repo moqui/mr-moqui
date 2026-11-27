@@ -19,6 +19,9 @@ their own.
   operating system. You can rename it.
 - **Calls.** A call's audio and video go to your server and the other people in the call, only while it lasts.
 - **Location.** Only when you share a place in a chat: the place you choose, sent to your server as a message.
+- **Live location on the server.** While a share you started lasts (at most a day unless you extend it), your server keeps
+  only its latest position, deleted when the share ends, and a trail only when you choose one for that share, for at most
+  30 days after it ends (`location@trail-max-days`) or until you delete it.
 - **Photos and videos.** Only those you take or pick to send, sent to your server; a photo or video taken in the app
   is kept in the app's cache, not in your gallery, and cleared at its next start.
 - **Logs.** The apps log what they do on this device (the phone's system log, the desktop's log files); a failed

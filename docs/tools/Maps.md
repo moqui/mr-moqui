@@ -848,6 +848,51 @@ fallback), and a refresh is compared by address, not by ID.
   record keeps its own point, and Choose location saves through the adapter: the record's point, then an address match,
   then the postal area, then a point chosen by hand.
 
+## Live location
+
+A person shares where they are, until a time they choose, with people they choose; nothing else starts a share
+([plans/Location-Sharing.md](../../plans/Location-Sharing.md)). The server side is built: the services
+`org.moqui.maps.LocationServices` (`framework/service/org/moqui/maps/LocationServices.xml`, `LocationShares.js`), the
+entities `LocationShare`, `LocationShareAudience`, `LocationLatest` and `LocationTrailPoint` (`moqui.maps`,
+`framework/entity/MapLocationEntities.xml`) and the hourly clean. The Maps live layer and panels, the Android app's
+background sharing, chat's live location, XMPP and the guest page for a link are still to come, so a share is started
+and read through the services only.
+
+- **The owner's acts.** `create#Share` (the audience, the end, exact or approximate, a trail or not), `update#Share`
+  (extend or shorten, add to the audience, change the label or purpose), `stop#Share`, `revoke#Audience` (one person,
+  group, XMPP contact or the link), `report#Position` and `delete#Trail` are the owner's alone; another person's share,
+  an administrator's request included, answers `SHARE_NOT_FOUND`. Every signed-in user may call them for their own
+  shares (`LocationShareServices`, framework `data/MapsLocationData.xml`).
+- **Who a share is for.** A user the owner may message (the chat directory's rule, `ChatServices.get#RefusedUsers`: a
+  user it refuses, or one who blocked the owner, answers as one that does not exist), a group the owner is in now (never
+  `ALL_USERS` or a group of external users), a contact of the owner's XMPP roster (`username@xmpp-server@domain`, a person
+  of one of the owner's direct rooms; kept for the XMPP server to deliver to), or one guest link a share, whose token is
+  answered once by the call that makes it and kept only as its digest (as `ResourceShare`'s link). Each person added is
+  told who shares with them and until when (the `LocationShared` notification, in their own time zone).
+- **Who reads it.** `find#MyShares` (the owner's shares with their audiences), `find#SharedWithMe` and `get#Share` (the
+  latest position, and a kept trail in pages of up to 1000 points) answer the owner and the share's current audience
+  only: a user whose entry is not revoked, or a current member of a group whose entry is not revoked, checked again at
+  every read, so a person taken out of a group sees nothing of it from then on. No grant reads another person's
+  shares, and the generic entity tools, REST and agents do not read these entities, an administrator's included.
+- **Reports.** From the owner only, for an active share: the values checked (latitude and longitude in range, accuracy,
+  heading and speed, a time not in the future and later than the latest), at most one a `location@min-interval-seconds`
+  (a sooner one is dropped with 429), 410 for a share that has ended or was stopped, which stops a device. An
+  approximate share's position is rounded here to about 1 km (no heading or speed) before it is stored or sent. Each
+  report replaces the share's latest position, adds a trail point when the share keeps a trail, and goes out on the
+  topic `locationShare:<shareId>` to the audience's current users only, never saved as a notification or pushed to a
+  phone. The owner's other devices and the audience are told on the same topic when a share starts, changes, loses
+  someone or ends.
+- **Retention.** A share ends at its end (at most `location@max-share-hours` from its start or last extension) or when
+  stopped, and its latest position is deleted then. A trail is kept only when the owner chose it for that share, for its
+  days after the share ends (at most `location@trail-max-days`), and the owner deletes it at any time. The hourly job
+  `clean_LocationShares_hourly` (`clean#LocationShares`) ends the shares past their end, deletes the trails past their
+  days and removes the shares ended more than `location@trail-max-days` ago. Start, extension, stop and an audience
+  added or revoked are in the entity audit log (who, when, the audience), never a position. Positions never go to a log,
+  a telemetry attribute, an error message or a cache.
+- **Settings**, on the conf's `location` element (`moqui_conf__location__max_share_hours` and the rest):
+  `location@max-share-hours` (24), `location@trail-max-days` (30), `location@min-interval-seconds` (5) and
+  `location@link-max-views-per-minute` (30, the reads a minute of a guest link's page).
+
 ## Tests
 
 The regression spec is `tools/test/MapsScreens.spec.js` (Browse in qvue and tui, its terminal's overlays and postal search; LocalMap, a plain XML screen, once in
@@ -928,3 +973,9 @@ area, nothing saved; a refresh that moves one address and removes one, counted b
 untouched), with the parsing, keys and ranking in Rust (`moqui-maps` `address_tests.rs`, `address_service_tests.rs`), and
 the real release for central Florence and part of Boston's Back Bay with sample lookups, the acceptance test
 `OvertureAddressLookup`.
+Live location: `framework/test/LocationShares.spec.js` (by the real grants, with authorization on: a share read and pushed to
+its audience alone, another user and an administrator refused; a group member taken out losing it at the next read and
+the pushes; the rate and its 429; an approximate share rounded before it is stored or sent; an ended share hidden, 410 to
+a report and its latest position cleaned; a trail kept only when chosen, deleted by its owner and purged past its days;
+the audit rows with no position; a link's token answered once and only its digest kept), with the generic tools' refusal
+of the four entities in Rust (`moqui-entity` `sensitive.rs`).
