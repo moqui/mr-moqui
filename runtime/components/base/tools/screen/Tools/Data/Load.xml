@@ -88,7 +88,15 @@ along with this software (see the LICENSE.md file). If not, see
             } else {
                 if (onlyCreate) edl.onlyCreate(true)
                 const messages = []
-                const recordsLoaded = edl.load(messages)
+                // a text that fails loads nothing (it is one transaction) and its error names the record and the
+                // database's reason: a form error, with the text kept, not a failed request (TOOL-UI-005)
+                let recordsLoaded = 0
+                try {
+                    recordsLoaded = edl.load(messages)
+                } catch (e) {
+                    ec.message.addError(ec.resource.expand('Nothing was loaded from [${source}]: ${reason}', '', {source, reason: String(e && e.message || e)}))
+                    return
+                }
                 ec.message.addMessage(ec.resource.expand('Loaded ${recordsLoaded} records from [${source}]', '', {recordsLoaded, source}))
                 ec.web.sessionAttributes["DataLoad.messages"] = messages
             }
@@ -98,6 +106,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="runCheck" value="true"/>
         </conditional-response>
         <default-response url="."/>
+        <error-response url="." save-parameters="true"/>
     </transition>
 
     <!-- Each rowOps item is base64url JSON from the request, naming an entity, a primary key and a field and value or the

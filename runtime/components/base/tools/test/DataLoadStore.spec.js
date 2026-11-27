@@ -9,6 +9,7 @@
 const TARGET = "SPEC_DLS_TARGET"
 const LOADED = "SPEC_DLS_LOADED"
 const UPDATER = "SPEC_DLS_UPDATER"
+const ENUMS = ["SPEC_DLS_E1", "SPEC_DLS_E2"]
 const rowOp = (row) => StringUtilities.base64UrlEncode(JSON.stringify(row))
 const account = () => ec.entity.find("moqui.security.UserAccount").condition("userId", TARGET).disableAuthz().one()
 const count = (entityName, field, value) => ec.entity.find(entityName).condition(field, value).disableAuthz().count()
@@ -53,6 +54,7 @@ spec({
     cleanupSpec() {
         ec.artifactExecution.disableAuthz()
         for (const userId of [TARGET, LOADED]) ec.entity.find("moqui.security.UserAccount").condition("userId", userId).deleteAll()
+        for (const enumId of ENUMS) ec.entity.find("moqui.basic.Enumeration").condition("enumId", enumId).deleteAll()
         ec.artifactExecution.enableAuthz()
     },
 })
@@ -179,5 +181,30 @@ feature("Load's load refuses a record that sets an account's password or changes
         userFullName == "Spec Loaded"
         created.errors == ""
         loadedEmail == "loaded@spec.invalid"
+    },
+})
+
+// before, the screen's transaction cache held the text's writes, and the database refused the unknown type only at the
+// screen's commit: an HTTP 500 reading "commit failed", naming no record (TOOL-UI-005)
+feature("Load's load names the record the database refuses, stores none of that text, and loads the corrected one", {
+    when() {
+        const xmlText = (type) => `<entity-facade-xml>
+            <moqui.basic.Enumeration enumId="${ENUMS[0]}" enumTypeId="ComparisonOperator" description="Spec DLS one"/>
+            <moqui.basic.Enumeration enumId="${ENUMS[1]}" enumTypeId="${type}" description="Spec DLS two"/></entity-facade-xml>`
+        const stored = () => ENUMS.filter(enumId => count("moqui.basic.Enumeration", "enumId", enumId) > 0).length
+        const refused = post("john.doe", "Data/Load/load", { xmlText: xmlText("SPEC_DLS_NO_TYPE") })
+        const refusedStored = stored()
+        const corrected = post("john.doe", "Data/Load/load", { xmlText: xmlText("ComparisonOperator") })
+        return { refused, refusedStored, corrected, correctedStored: stored() }
+    },
+    then({ refused, refusedStored, corrected, correctedStored }) {
+        refused.errors.includes("Nothing was loaded from [XML Text Box]")
+        refused.errors.includes("Could not store moqui.basic.Enumeration [enumId=SPEC_DLS_E2]")
+        refused.errors.includes("SPEC_DLS_NO_TYPE")
+        !refused.errors.includes("commit failed")
+        refusedStored == 0
+        corrected.errors == ""
+        corrected.messages.includes("Loaded 2 records from [XML Text Box]")
+        correctedStored == 2
     },
 })

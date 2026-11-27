@@ -787,7 +787,7 @@ const orders = ec.entity.find("mantle.order.OrderHeader").condition(cf.makeCondi
 | `messageNoActionFiles(flag)` | With false, no message for a file that had nothing to load |
 | `restrictSensitiveEntities(flag)` | Refuse records of the entities a request may not name |
 | `protectUserAccounts(flag)` | With `restrictSensitiveEntities`, also refuse a `UserAccount` record that sets a password field (`currentPassword`, `passwordSalt` and the rest), or that changes an identity field (`username`, `emailAddress`, `disabled` and the rest) of an account that is there; a new account may set those. Tools' Data Load sets it, the seed and component loads do not |
-| `load(messages)` | Loads; the number of records. The messages are added to an array given |
+| `load(messages)` | Loads; the number of records. The messages are added to an array given. As Java, the load sets the caller's transaction aside and loads each text and file in a transaction of its own. A file that fails is named in the messages and the next one loads. A text that fails loads nothing and throws: the message names the text, the record (`Could not store moqui.basic.Enumeration [enumId=X]`) and the database's reason |
 | `check()`, `check(messages)` | Compares the data with the database and writes nothing: the messages of what did not match, or with an array the fields checked |
 | `checkInfo()`, `checkInfo(diffInfoList, messages)` | A row for each record not found and each field that did not match, or with arrays the fields checked |
 | `list()` | The values of the records the data has, with nothing written |

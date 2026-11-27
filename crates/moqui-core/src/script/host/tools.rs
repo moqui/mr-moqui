@@ -1882,6 +1882,8 @@ fn load_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
         csv_quote_char: text("csvQuoteChar").chars().next(),
         // Java's `messageNoActionFiles` is true unless the script sets it false.
         hide_no_action_files: text("messageNoActionFiles") == "false",
+        // set for the texts in `load_source`
+        wait_each_write: false,
         default_values: match options.get("defaultValues") {
             Some(Value::Map(entries)) => entries
                 .iter()
@@ -1927,7 +1929,14 @@ fn load_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
             (records, result.messages)
         })
     } else {
-        load_source(&facade, &factory, &text, &locations, &load_options)
+        // As Java's `internalRun` (`runRequireNew` with no transaction begun): the caller's transaction is set aside,
+        // and each text and file loads in a transaction of its own, so a record the database refuses fails the load
+        // at that record and not a screen's commit, where the transaction cache held it (TOOL-UI-005).
+        facade.default_transactions().and_then(|tx| {
+            tx.run(crate::transaction::TransactionAttribute::IgnoreSuspend, None, || {
+                load_source(&facade, &factory, &text, &locations, &load_options)
+            })
+        })
     };
     drop(switches);
     let (records, messages) = loaded.map_err(HostError::Lib)?;
@@ -1972,14 +1981,28 @@ fn load_source(
     // none of those, the conf data and the components' data of the data types or components.
     let mut records = 0;
     let mut messages = Vec::new();
+    // A text is request-sized: each write waits, so a record that fails is the one named. As Java, a text that fails
+    // fails the load, with the record and the database's reason in the message a script catches.
+    let text_options = crate::entity::load_feed::LoadOptions {
+        wait_each_write: true,
+        ..options.clone()
+    };
+    // the message a script catches is the whole of it: the error's display has its sources
+    let text_failed = |name: &str, err: moqui_lib::error::Error| {
+        moqui_lib::error::Error::new(format!("Error loading {name}: {err}")).with_source(err)
+    };
     let xml = text("xmlText");
     if !xml.is_empty() {
-        records += load_entity_xml_text(facade, "xmlText", &xml, options)?.records;
+        records += load_entity_xml_text(facade, "xmlText", &xml, &text_options)
+            .map_err(|err| text_failed("xmlText", err))?
+            .records;
     }
     for (name, json) in [("csvText", false), ("jsonText", true)] {
         let body = text(name);
         if !body.is_empty() {
-            records += load_entity_text(facade, name, &body, json, options)?.records;
+            records += load_entity_text(facade, name, &body, json, &text_options)
+                .map_err(|err| text_failed(name, err))?
+                .records;
         }
     }
     let given = !xml.is_empty() || !text("csvText").is_empty() || !text("jsonText").is_empty() || !locations.is_empty();

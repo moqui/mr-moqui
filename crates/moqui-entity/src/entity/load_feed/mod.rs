@@ -116,6 +116,10 @@ pub struct LoadOptions {
     pub csv_quote_char: Option<char>,
     /// Java `messageNoActionFiles(false)`: a check names only the files that gave messages.
     pub hide_no_action_files: bool,
+    /// Each write waits for its result instead of being pipelined, so a record the database refuses (a foreign key
+    /// it does not find) fails at that record, which the error names: for a request-sized text (Tools' Data Load),
+    /// not a large file (TOOL-UI-005).
+    pub wait_each_write: bool,
 }
 
 /// How many entity records were written. Data-file service calls are not included.

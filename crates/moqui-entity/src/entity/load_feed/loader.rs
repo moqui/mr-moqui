@@ -185,8 +185,8 @@ pub(super) fn in_file_transaction(
     let timeout = options.timeout.unwrap_or(FILE_TIMEOUT);
     let tx = facade.default_transactions()?;
     tx.run(TransactionAttribute::UseOrBegin, Some(timeout), || {
-        // The file's writes go without waiting for their results ...
-        let _pipeline = crate::entity::exec::PipelineWrites::enter();
+        // The file's writes go without waiting for their results, unless the load waits for each ...
+        let _pipeline = (!options.wait_each_write).then(crate::entity::exec::PipelineWrites::enter);
         let loaded = body()?;
         // ... which are all in before the file's transaction ends, or the caller's goes on: a failure fails the file.
         tx.finish_deferred()?;
@@ -588,24 +588,38 @@ fn write_tree(facade: &EntityFacade, options: &LoadOptions, record: Record, ance
     let exists = !partial && options.only_create && row_exists(facade, &shape, &fields)?;
     let mut total = 0_u64;
     if !partial && !exists {
-        if options.only_create {
-            value_from(facade, &entity, &fields)?.create(facade)?;
+        // The record a write that fails names: the data may hold many of the entity (TOOL-UI-005).
+        let label = record_label(&shape, &fields);
+        let written = if options.only_create {
+            value_from(facade, &entity, &fields).and_then(|value| value.create(facade))
         } else if facade.upsert_fits(&entity, &fields)? {
             // One statement whether or not the row is there, which a pipelined load does not wait for.
-            write_upsert(facade, &entity, fields)?;
+            write_upsert(facade, &entity, fields)
         } else if options.dummy_fks {
-            value_from(facade, &entity, &fields)?.create_or_update(facade)?;
+            value_from(facade, &entity, &fields).and_then(|value| value.create_or_update(facade))
         } else {
             // Java's plain-map loader (XML and JSON records) uses the entity-auto store path, including status checks.
             // CSV rows go through `store_value` instead.
-            (crate::hooks::get().store_entity)(facade, &entity, &crate::entity::string_map(&fields))?;
-        }
+            (crate::hooks::get().store_entity)(facade, &entity, &crate::entity::string_map(&fields)).map(drop)
+        };
+        // shown as "Could not store {label}: " and the error, whose display has its sources
+        written.map_err(|err| Error::new(format!("Could not store {label}")).with_source(err))?;
         total = 1;
     }
     for child in children {
         total = total.saturating_add(write_tree(facade, options, child, &shared)?);
     }
     Ok(total)
+}
+
+/// A record as a load's error names it, its entity and primary key: `moqui.basic.Enumeration [enumId=X]`.
+fn record_label(shape: &Shape, fields: &FieldMap) -> String {
+    let key: Vec<String> = shape
+        .pk_names
+        .iter()
+        .map(|name| format!("{name}={}", fields.get(name).map(to_plain_string).unwrap_or_default()))
+        .collect();
+    format!("{} [{}]", shape.full_name, key.join(", "))
 }
 
 /// A CSV row, as Java's `handleValue`: its primary key is complete ([`complete_csv_pk`]), and it is created when
