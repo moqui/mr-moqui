@@ -24,6 +24,9 @@
     Object.keys(moqui.qvtComponents || {}).forEach((name) => component(name, moqui.qvtComponents[name]));
 
     moqui.urlExtensions = { js: "qjs", vue: "qvue", qvt: "qvt" };
+    // What a screen forgets of the user in this browser at a sign-out (the account menu's Logout, logoutClick): functions,
+    // each called once (a promise waited on), added by the screen (Maps › Browse's live location shares this tab sends)
+    moqui.beforeLogoutHooks = moqui.beforeLogoutHooks || new Set();
 
     moqui.getQuasarColor = (bootstrapColor) => {
         // Quasar colors: primary, secondary, accent, dark, positive, negative, info, warning
@@ -8230,8 +8233,10 @@
     // by its definition (as m-diagram-zoom draws m-pan-zoom). The bundle failing is passed on as library-error, so m-map-view lists the places in its place; until the file
     // has loaded, and when it cannot, the places are listed here, so a record's actions stay usable. config is the map's
     // configuration (an object or its JSON; the shape is in js/WebrootMap.js), config-url a transition answering the effective
-    // one. Emits pick ({lon, lat}), select, view-change and edit-change; editCommand(name, value) is m-map-view's (the editing
-    // of an overlay, js/WebrootMap.js), answering null until the map has loaded.
+    // one. Emits pick ({lon, lat}), select, view-change and edit-change; a live-change listener (the live layer's shares,
+    // plans/Location-Sharing.md §3.3) is passed on to m-map-view with the other attributes it does not declare, and
+    // m-map-view emits it. editCommand(name, value) is m-map-view's (the editing of an overlay, js/WebrootMap.js),
+    // answering null until the map has loaded.
     let mapLoad = null;
     // The bundle is imported by js/WebrootMap.js's map.loadOpenLayers (its entries by the hashed names ol-map.json gives); a
     // library that did not load is not kept, so the next map tries again.
@@ -10564,14 +10569,18 @@
                     .catch(moqui.handleAjaxError);
             },
             // Logout ends this browser's Web Push subscription first, so the next user of the device gets none of this
-            // user's pushes; bounded by moqui.push.beforeLogout. It closes the page's crypto store too (WebrootCrypto.js).
+            // user's pushes; bounded by moqui.push.beforeLogout. It closes the page's crypto store too (WebrootCrypto.js), and
+            // runs each of moqui.beforeLogoutHooks (what a screen forgets of the user in this browser: Maps › Browse's live
+            // location shares this tab sends), a failing one passed over.
             logoutClick(event) {
-                if ((!moqui.push && !moqui.crypto) || event.defaultPrevented) return;
+                const hooks = Array.from(moqui.beforeLogoutHooks || []);
+                if ((!moqui.push && !moqui.crypto && !hooks.length) || event.defaultPrevented) return;
                 event.preventDefault();
                 const href = this.shell.logoutUrl;
                 const crypto = moqui.crypto ? moqui.crypto.close().catch(() => null) : Promise.resolve();
                 const push = moqui.push ? moqui.push.beforeLogout() : Promise.resolve();
-                Promise.all([crypto, push]).then(() => { root.location.href = href; });
+                const forgotten = hooks.map((hook) => Promise.resolve().then(hook).catch((err) => { console.warn("A before-logout hook failed", err); }));
+                Promise.all([crypto, push].concat(forgotten)).then(() => { root.location.href = href; });
             },
             appearanceAllowed(key) { return moqui.appearanceAllowed(key); },
             themeMenuAllowed() { return !!this.userId && moqui.themeChoiceAllowed(); },

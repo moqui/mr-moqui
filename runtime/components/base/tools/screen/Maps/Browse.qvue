@@ -37,7 +37,8 @@ along with this software (see the LICENSE.md file). If not, see
     again), Delete trail, a person or group taken out, and Add the group again, the one act that sends a group to
     update#Share again); the Share my location dialog (people, groups, XMPP contacts when the server has XMPP, a guest link
     whose token is shown once, until, exact or approximate, a trail); and a banner above the map for each active share of
-    the user's own, with Stop. While this page is open it sends the shares it started (kept in this browser's storage) by
+    the user's own and each share this page sends, with Stop. While this page is open it sends the shares it started (kept
+    in this tab's session storage under the account, forgotten at a sign-out) by
     watchPosition through reportPosition, at most one a share's reportIntervalSeconds, and handles its statuses (429 waits,
     410 and 404 stop sending, 409 STALE is passed over and CLOCK_AHEAD sends with the server's time); the page closed, the
     share stays active and its audience sees its position age. There is no tray item: the shell's tray has no hook for an
@@ -74,7 +75,7 @@ along with this software (see the LICENSE.md file). If not, see
     <div v-if="error" class="text-negative q-px-sm" role="alert">{{error}}</div>
     <!-- each active share of the user's own, always in sight here (plans/Location-Sharing.md §1, "Visible to everyone it
         concerns"), with Stop; while this page sends it, it says so -->
-    <div v-for="share in myShares" :key="'banner' + share.shareId" class="m-maps-sharing row items-center no-wrap q-px-sm q-py-xs m-tonal" role="status"
+    <div v-for="share in banners" :key="'banner' + share.shareId" class="m-maps-sharing row items-center no-wrap q-px-sm q-py-xs m-tonal" role="status"
             :data-maps-sharing="share.shareId">
         <q-icon :name="sending.includes(share.shareId) ? 'sym_o_share_location' : 'sym_o_location_off'" :color="sending.includes(share.shareId) ? 'positive' : 'warning'"
                 class="q-mr-sm"></q-icon>
@@ -83,11 +84,12 @@ along with this software (see the LICENSE.md file). If not, see
             <span class="text-caption m-muted"> · {{sending.includes(share.shareId) ? t('sent from this page while it is open') : t('not sent from this page') + ': ' + ageWords(share)}}</span>
             <span v-if="sendNotes[share.shareId]" class="text-caption text-warning"> · {{sendNotes[share.shareId]}}</span>
         </div>
-        <q-btn v-if="!sending.includes(share.shareId)" dense flat no-caps size="sm" :label="t('Send from here')" @click="startSending(share.shareId)"></q-btn>
+        <q-btn v-if="!sending.includes(share.shareId)" dense flat no-caps size="sm" :label="t('Send from here')" @click="sendFromHere(share)"></q-btn>
         <q-btn dense flat no-caps size="sm" color="negative" icon="sym_o_location_off" :label="t('Stop')" :aria-label="t('Stop sharing') + ': ' + audienceText(share)"
                 @click="stopShare(share)" :data-maps-stop="share.shareId"></q-btn>
     </div>
     <div v-if="geoError && sending.length" class="text-warning text-caption q-px-sm" role="alert">{{geoError}}</div>
+    <div v-if="sendError" class="text-warning text-caption q-px-sm" role="alert">{{sendError}}</div>
 
     <div class="row no-wrap">
         <component :is="phone ? 'q-card' : 'div'" v-if="panel" :flat="phone ? true : undefined" :bordered="phone ? true : undefined"
@@ -255,8 +257,9 @@ along with this software (see the LICENSE.md file). If not, see
                             <div class="row no-wrap">
                                 <q-btn dense flat round size="sm" icon="sym_o_my_location" :disable="!share.position" :aria-label="t('Show on map') + ': ' + share.label"
                                         @click="showShare(share)" data-maps-show="true"><q-tooltip>{{t('Show on map')}}</q-tooltip></q-btn>
-                                <q-btn dense flat round size="sm" icon="sym_o_directions" :disable="!share.position" :aria-label="t('Directions') + ': ' + share.label"
-                                        @click="directions(share)" data-maps-directions="true"><q-tooltip>{{t('Directions')}}</q-tooltip></q-btn>
+                                <q-btn v-if="directionsShown" dense flat round size="sm" :icon="phoneApp ? 'sym_o_directions' : 'sym_o_open_in_new'" :disable="!share.position"
+                                        :aria-label="(phoneApp ? t('Directions') : t('Open in OpenStreetMap')) + ': ' + share.label" @click="directions(share)" data-maps-directions="true">
+                                    <q-tooltip>{{phoneApp ? t('Directions in your maps app') : t('Open in OpenStreetMap: the place goes to openstreetmap.org')}}</q-tooltip></q-btn>
                             </div>
                         </q-item-section>
                     </q-item>
@@ -475,9 +478,20 @@ along with this software (see the LICENSE.md file). If not, see
 <script>
 const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
 const OVERLAY_ACCEPT = '.geojson,.json,.topojson,.esrijson,.gpx,.kml,.gml,.wkt,.wkb,.csv,.tsv,.zip';
-// the shares of the user's own that this browser sends while their page is open (a per-browser convenience: the share itself
-// is the server's)
-const SENDING_KEY = 'moqui.maps.sendingShares';
+// the shares of the user's own that this tab sends while their page is open (a per-tab convenience: the share itself is
+// the server's), in session storage under a key of the account (moqui.scopedKey: the desktop client's account too)
+const SENDING_PREFIX = 'moqui.maps.sendingShares.';
+const sendingKey = () => {
+    const userId = moqui.webrootVue && moqui.webrootVue.userId;
+    return userId ? moqui.scopedKey(SENDING_PREFIX + userId) : null;
+};
+// the shell's before-logout hook (moqui.beforeLogoutHooks): every account's list of this tab forgotten at a sign-out
+const forgetSending = () => {
+    try {
+        const prefix = moqui.scopedKey(SENDING_PREFIX);
+        Object.keys(window.sessionStorage).filter((key) => key.startsWith(prefix)).forEach((key) => window.sessionStorage.removeItem(key));
+    } catch (err) { /* no storage */ }
+};
 const PRECISION = { GPP_USER_CONFIRMED: 'User-confirmed point', GPP_ADDRESS_MATCH: 'Address match', GPP_STREET_RANGE: 'Street-range interpolation',
     GPP_POSTAL_AREA: 'Postal-area representative point', GPP_PLACE_ESTIMATE: 'Place estimate' };
 
@@ -495,10 +509,11 @@ module.exports = {
             picker: { drives: [], driveId: null, crumbs: [], rows: [], loading: false, text: '', searching: false },
             // live location (plans/Location-Sharing.md §3.3): m-map's shares as it holds them (live-change), the page's clock for
             // ages, the shares this page sends and the newest position the browser gave
-            live: null, liveGone: [], liveSelected: '', sharesLoadedAt: Date.now(), now: Date.now(), sending: [], sendNotes: {}, geoError: '',
+            live: null, liveGone: [], liveSelected: '', now: Date.now(), sending: [], sendInfo: {}, sendNotes: {}, geoError: '', sendError: '',
             shareShown: false, shareSaving: false, shareError: '', shareMade: null, shareUserOptions: [],
             shareForm: { users: [], groups: [], jids: [], link: false, hours: 1, precision: 'LspExact', keepTrail: false, label: '' },
-            shareTargets: { loaded: false, groups: [], xmpp: false, contacts: [], maxShareHours: 24, trailMaxDays: 30 } };
+            shareTargets: { loaded: false, groups: [], xmpp: false, contacts: [], maxShareHours: 24, trailMaxDays: 30,
+                minIntervalSeconds: 5, approximateIntervalSeconds: 60 } };
     },
     computed: {
         screenPath() { return this.mScreen ? this.mScreen.path : this.$root.basePath + '/' + this.$root.currentPathList.join('/'); },
@@ -533,11 +548,25 @@ module.exports = {
                 const latest = share.latest || null;
                 const position = held && held.latest ? { lat: held.latest.lat, lon: held.latest.lon }
                     : latest && latest.latitude !== null && latest.latitude !== undefined ? { lat: Number(latest.latitude), lon: Number(latest.longitude) } : null;
-                const seenAt = held ? held.seenAt : latest && latest.ageSeconds !== null && latest.ageSeconds !== undefined ? this.sharesLoadedAt - latest.ageSeconds * 1000 : null;
+                const seenAt = held ? held.seenAt : latest && typeof latest.seenAt === 'number' ? latest.seenAt : null;
                 return Object.assign({}, share, { position, seenAt, thruDate: held && held.thruDate ? held.thruDate : share.thruDate });
             }).filter((share) => share && (!share.thruDate || share.thruDate > this.now));
         },
         myShares() { return this.locationShares.filter((share) => share.role === 'owner'); },
+        // a banner for each active share of the user's own, and for each share this page sends whatever the last read said
+        // (one just started, before its read; one a failed read left out)
+        banners() {
+            const listed = this.myShares.map((share) => share.shareId);
+            return this.myShares.concat(this.sending.filter((id) => !listed.includes(id)).map((id) => Object.assign({ shareId: id, position: null, seenAt: null },
+                this.sendInfo[id] || {})));
+        },
+        // the Android app, whose openExternal hands a geo: link to the phone's maps app (as Chat's Open in maps tells it)
+        phoneApp() {
+            const desktop = window.moquiDesktop;
+            return !!(desktop && typeof desktop.dialAccount === 'function' && typeof desktop.openExternal === 'function');
+        },
+        // OpenStreetMap is offered only while this server lets a page reach outside hosts (maps@external-requests)
+        directionsShown() { return this.phoneApp || !(this.effective && this.effective.externalRequests === false); },
         sharedWithMe() { return this.locationShares.filter((share) => share.role !== 'owner'); },
         // the ends offered, within location@max-share-hours
         untilOptions() {
@@ -594,11 +623,11 @@ module.exports = {
         parameters: { deep: true, handler(value, before) { if (JSON.stringify(value) !== JSON.stringify(before)) { this.hidden = {}; this.load(); } } },
         // a share of the user's own that ended (stopped, past its end, or ended elsewhere) is no longer sent; the banners
         // above the map change its height
+        banners(value, before) { if (value.length !== (before || []).length) this.$nextTick(() => this.measure()); },
         myShares(value, before) {
             const ids = value.map((share) => share.shareId);
             const had = (before || []).map((share) => share.shareId);
             this.sending.filter((id) => had.includes(id) && !ids.includes(id)).forEach((id) => this.stopSending(id));
-            if (value.length !== (before || []).length) this.$nextTick(() => this.measure());
         }
     },
     methods: {
@@ -702,9 +731,11 @@ module.exports = {
         load(extraLayerId) {
             this.error = '';
             const asked = typeof extraLayerId === 'string' ? extraLayerId : '';
+            const readAt = Date.now();
             return this.request('getConfig', { params: this.configParameters(asked) }).then((config) => {
+                config.locationShares = this.stampShares(config.locationShares, Date.now());
                 this.effective = config;
-                this.sharesLoadedAt = Date.now();
+                if (!config.locationSharesFailed) this.pruneSending(config.locationShares, readAt);
                 this.restoreSending();
                 this.watchTiles();
                 const p = this.parameters;
@@ -1071,11 +1102,29 @@ module.exports = {
         },
         // the shares read again after a change of the user's own; m-map takes them without drawing the map again
         refreshShares() {
+            const readAt = Date.now();
             return this.request('locationShares').then((json) => {
                 if (!this.effective) return;
-                this.effective = Object.assign({}, this.effective, { locationShares: json.locationShares || [] });
-                this.sharesLoadedAt = Date.now();
+                const shares = this.stampShares(json.locationShares, Date.now());
+                this.effective = Object.assign({}, this.effective, { locationShares: shares });
+                if (!json.failed) this.pruneSending(shares, readAt);
             }, (err) => console.warn('Maps: the location shares were not read again', err));
+        },
+        // each latest position given this page's clock at the read (seenAt: when the server's ageSeconds says it was taken),
+        // once: a configuration drawn or normalized again later keeps it, so a share that stopped reporting goes stale
+        stampShares(list, receivedAt) {
+            return (Array.isArray(list) ? list : []).map((share) => {
+                const latest = share && share.latest;
+                if (!latest || typeof latest.seenAt === 'number') return share;
+                const age = Number(latest.ageSeconds);
+                return Object.assign({}, share, { latest: Object.assign({}, latest, { seenAt: receivedAt - (Number.isFinite(age) ? Math.max(0, age) : 0) * 1000 }) });
+            });
+        },
+        // after a read that did not fail: a share this page sends that the read does not list as the user's own (ended,
+        // stopped elsewhere) is no longer sent; one started after the read was asked waits for the next read
+        pruneSending(list, readAt) {
+            const mine = (Array.isArray(list) ? list : []).filter((share) => share && share.role === 'owner').map((share) => share.shareId);
+            this.sending.filter((id) => !mine.includes(id) && (this.sendInfo[id] || {}).startedAt < readAt).forEach((id) => this.stopSending(id));
         },
         untilText(millis) {
             if (!millis) return '';
@@ -1092,6 +1141,8 @@ module.exports = {
         },
         // whom an own share is with: "Sam, Pat and 2 others"
         audienceText(share) {
+            // a share just started, not read yet: the people the dialog named
+            if (!share.audience && share.whomText) return share.whomText;
             const names = (share.audience || []).map((entry) => entry.name).filter(Boolean);
             if (!names.length) return t('nobody now');
             return names.length <= 2 ? names.join(' ' + t('and') + ' ') : names.slice(0, 2).join(', ') + ' ' + t('and') + ' ' + (names.length - 2) + ' ' + t('others');
@@ -1114,13 +1165,14 @@ module.exports = {
             const lat = Number(share.position.lat).toFixed(6), lon = Number(share.position.lon).toFixed(6);
             return 'https://www.openstreetmap.org/?mlat=' + lat + '&mlon=' + lon + '#map=17/' + lat + '/' + lon;
         },
-        // Directions: in the Android app the phone's maps app (geo:, which its openExternal hands to the system); elsewhere the
-        // place on OpenStreetMap, in a new window: the position leaves this server only by this act
+        // Directions: in the Android app the phone's maps app (geo:, which its openExternal hands to the system); elsewhere
+        // Open in OpenStreetMap, the place in a new window at openstreetmap.org (offered only while outside requests are on):
+        // the position leaves this server only by this act
         directions(share) {
             if (!share.position) return;
             const desktop = window.moquiDesktop;
-            const phone = !!(desktop && typeof desktop.dialAccount === 'function' && typeof desktop.openExternal === 'function');
-            if (phone) { Promise.resolve(desktop.openExternal(this.geoUri(share))).catch(() => window.open(this.osmUrl(share), '_blank', 'noopener')); return; }
+            if (this.phoneApp) { Promise.resolve(desktop.openExternal(this.geoUri(share))).catch(() => window.open(this.osmUrl(share), '_blank', 'noopener')); return; }
+            if (!this.directionsShown) return;
             if (desktop && typeof desktop.openExternal === 'function') { Promise.resolve(desktop.openExternal(this.osmUrl(share))).catch(() => {}); return; }
             window.open(this.osmUrl(share), '_blank', 'noopener');
         },
@@ -1128,7 +1180,8 @@ module.exports = {
             if (this.shareTargets.loaded) return Promise.resolve();
             return this.request('shareTargets').then((json) => {
                 this.shareTargets = { loaded: true, groups: json.groups || [], xmpp: !!json.xmpp, contacts: json.contacts || [],
-                    maxShareHours: Number(json.maxShareHours) || 24, trailMaxDays: Number(json.trailMaxDays) || 30 };
+                    maxShareHours: Number(json.maxShareHours) || 24, trailMaxDays: Number(json.trailMaxDays) || 30,
+                    minIntervalSeconds: Number(json.minIntervalSeconds) || 5, approximateIntervalSeconds: Number(json.approximateIntervalSeconds) || 60 };
             }, (err) => console.warn('Maps: the share choices were not read', err));
         },
         openShare() {
@@ -1154,8 +1207,14 @@ module.exports = {
             return this.request('createShare', { method: 'POST', params }).then((json) => {
                 if (!json.applied) { this.shareError = json.reason || t('Your location was not shared'); return null; }
                 this.shareMade = { shareId: json.shareId, thruDate: json.thruDate, linkToken: json.linkToken || null };
-                // shared by this page from now on, while it is open
-                this.startSending(json.shareId);
+                // shared by this page from now on, while it is open, at the share's precision and interval
+                const approximate = params.precisionEnumId === 'LspApproximate';
+                const form = this.shareForm;
+                const whom = form.users.map((user) => user.label).concat(this.shareTargets.groups.filter((group) => form.groups.includes(group.userGroupId))
+                    .map((group) => group.label), this.shareTargets.contacts.filter((contact) => form.jids.includes(contact.jid)).map((contact) => contact.label),
+                    form.link ? [t('a guest link')] : []);
+                this.startSending(json.shareId, { approximate, thruDate: json.thruDate, whomText: whom.join(', '), fresh: true,
+                    intervalSeconds: approximate ? this.shareTargets.approximateIntervalSeconds : this.shareTargets.minIntervalSeconds });
                 if (!json.linkToken) this.shareShown = false;
                 moqui.notifyMessages([{ type: 'success', message: t('Your location is shared until') + ' ' + this.untilText(json.thruDate) }], null);
                 return this.refreshShares().then(() => json.shareId);
@@ -1195,23 +1254,50 @@ module.exports = {
         },
         // ---- sending from this page: watchPosition while a share of the user's own that this page started (or was asked to
         // send) is active and the page is open; the page closed, the share stays active and goes stale. The shares sent are
-        // kept in this browser's storage so a reload of the page goes on sending them. ----
+        // kept in this tab's session storage, by account (sendingKey), so a reload of the page goes on sending them; a
+        // sign-out forgets them (forgetSending, a before-logout hook of the shell). ----
         storedSending() {
-            try { const value = JSON.parse(window.localStorage.getItem(SENDING_KEY) || '[]'); return Array.isArray(value) ? value.map(String) : []; } catch (err) { return []; }
+            const key = sendingKey();
+            if (!key) return [];
+            try { const value = JSON.parse(window.sessionStorage.getItem(key) || '[]'); return Array.isArray(value) ? value.map(String) : []; } catch (err) { return []; }
         },
         storeSending() {
-            try { window.localStorage.setItem(SENDING_KEY, JSON.stringify(this.sending)); } catch (err) { /* sending goes on for this page alone */ }
+            const key = sendingKey();
+            if (!key) return;
+            try {
+                if (this.sending.length) window.sessionStorage.setItem(key, JSON.stringify(this.sending));
+                else window.sessionStorage.removeItem(key);
+            } catch (err) { /* sending goes on for this page alone */ }
         },
+        // the shares this tab sent before a reload, those still the user's own and active; the rest are dropped from storage
         restoreSending() {
-            const mine = this.myShares.map((share) => share.shareId);
-            this.storedSending().filter((id) => mine.includes(id) && !this.sending.includes(id)).forEach((id) => this.startSending(id, true));
+            const mine = this.myShares;
+            const stored = this.storedSending();
+            const kept = stored.filter((id) => mine.some((share) => share.shareId === id));
+            kept.filter((id) => !this.sending.includes(id)).forEach((id) => this.sendFromHere(mine.find((share) => share.shareId === id), true));
+            if (kept.length !== stored.length) this.storeSending();
         },
-        startSending(shareId, restored) {
+        // a listed share of the user's own sent from here, at its precision and interval
+        sendFromHere(share, restored) {
+            if (!share) return;
+            this.startSending(share.shareId, { approximate: !!share.approximate, intervalSeconds: share.reportIntervalSeconds, thruDate: share.thruDate,
+                restored: !!restored, fresh: !restored });
+        },
+        // info: approximate, intervalSeconds (the share's report interval), thruDate and whomText (for its banner before the
+        // share is read), fresh (a share just started: no fix taken before it is sent), restored (after a reload)
+        startSending(shareId, info) {
+            const given = info || {};
             if (!this.sending.includes(shareId)) this.sending = this.sending.concat([shareId]);
-            if (!restored) this.storeSending();
+            this.sendInfo = Object.assign({}, this.sendInfo, { [shareId]: { approximate: !!given.approximate, intervalSeconds: Number(given.intervalSeconds) || 0,
+                thruDate: given.thruDate || null, whomText: given.whomText || '', startedAt: Date.now() } });
+            this.storeSending();
+            this.sendError = '';
+            if (moqui.beforeLogoutHooks) moqui.beforeLogoutHooks.add(forgetSending);
             this.sendState = this.sendState || {};
-            this.sendState[shareId] = { nextAt: 0, sentAt: 0, inFlight: false, serverTime: false };
+            // a fix taken before the share began is refused (BEFORE_SHARE): a new share waits for one taken from now
+            this.sendState[shareId] = { nextAt: 0, sentAt: 0, inFlight: false, serverTime: false, notBefore: given.fresh ? Date.now() - 1000 : 0 };
             this.watchFixes();
+            if (given.fresh) this.freshFix();
         },
         stopSending(shareId) {
             if (!this.sending.includes(shareId)) return;
@@ -1222,24 +1308,53 @@ module.exports = {
             delete notes[shareId];
             this.sendNotes = notes;
             if (!this.sending.length) this.unwatchFixes();
+            else this.watchFixes();
         },
         note(shareId, text) { this.sendNotes = Object.assign({}, this.sendNotes, { [shareId]: text }); },
+        // a share's report interval in milliseconds: its own, else the listed share's, else location@min-interval-seconds' default
+        intervalOf(shareId) {
+            const share = this.myShares.find((one) => one.shareId === shareId);
+            const info = this.sendInfo[shareId] || {};
+            return Math.max(1, Number(info.intervalSeconds) || Number(share && share.reportIntervalSeconds) || (info.approximate ? 60 : 5)) * 1000;
+        },
+        // the accuracy asked of the browser: high while any share sent is exact
+        exactNeeded() {
+            return this.sending.some((id) => {
+                const share = this.myShares.find((one) => one.shareId === id);
+                const info = this.sendInfo[id];
+                return !(info ? info.approximate : share && share.approximate);
+            });
+        },
+        onFix(position) {
+            this.geoError = '';
+            const c = position.coords;
+            this.fix = { latitude: c.latitude, longitude: c.longitude, accuracy: c.accuracy, heading: c.heading, speed: c.speed, timestamp: position.timestamp || Date.now() };
+            this.fixAt = Date.now();
+            this.pumpReports();
+        },
+        onFixError(error) {
+            this.geoError = t('The browser did not give its location, so the people you share with see your last one') + (error && error.message ? ': ' + error.message : '');
+        },
+        // the watch, at the accuracy the shares sent need (started again when that changes), and the pump that sends
         watchFixes() {
             const geo = navigator.geolocation;
             if (!geo) { this.geoError = t('This browser cannot give its location, so nothing is sent from here'); return; }
+            const exact = this.exactNeeded();
+            if (this.watchId !== undefined && this.watchId !== null && this.watchExact !== exact) { geo.clearWatch(this.watchId); this.watchId = null; }
             if (this.watchId === undefined || this.watchId === null) {
-                // exact while any share sent is exact
-                const exact = this.myShares.some((share) => this.sending.includes(share.shareId) && !share.approximate);
-                this.watchId = geo.watchPosition((position) => {
-                    this.geoError = '';
-                    const c = position.coords;
-                    this.fix = { latitude: c.latitude, longitude: c.longitude, accuracy: c.accuracy, heading: c.heading, speed: c.speed, timestamp: position.timestamp || Date.now() };
-                    this.pumpReports();
-                }, (error) => {
-                    this.geoError = t('The browser did not give its location, so the people you share with see your last one') + (error && error.message ? ': ' + error.message : '');
-                }, { enableHighAccuracy: exact, maximumAge: 5000, timeout: 60000 });
+                this.watchExact = exact;
+                this.watchId = geo.watchPosition((position) => this.onFix(position), (error) => this.onFixError(error),
+                    { enableHighAccuracy: exact, maximumAge: 5000, timeout: 60000 });
             }
             if (!this.pumpTimer) this.pumpTimer = setInterval(() => this.pumpReports(), 1000);
+        },
+        // a fix taken now (a share just started; and as a keep-alive, since a watch gives nothing while the device is still)
+        freshFix() {
+            const geo = navigator.geolocation;
+            if (!geo || this.fixAsked) return;
+            this.fixAsked = Date.now();
+            geo.getCurrentPosition((position) => { this.fixAsked = 0; this.onFix(position); }, (error) => { this.fixAsked = 0; this.onFixError(error); },
+                { enableHighAccuracy: this.exactNeeded(), maximumAge: 0, timeout: 30000 });
         },
         unwatchFixes() {
             if (this.watchId !== undefined && this.watchId !== null && navigator.geolocation) navigator.geolocation.clearWatch(this.watchId);
@@ -1248,31 +1363,42 @@ module.exports = {
             this.pumpTimer = null;
             this.fix = null;
         },
-        // the newest fix to each share sent, at most one a share's interval (location@min-interval-seconds, or the approximate one)
+        // the newest fix to each share sent, at most one a share's interval, none taken before a new share began; with no fix
+        // for three of the shortest intervals (at least 15 s), one is asked for, at most one a 30 s
         pumpReports() {
+            const now = Date.now();
+            if (this.sending.length) {
+                const shortest = Math.min(...this.sending.map((id) => this.intervalOf(id)));
+                if (now - (this.fixAt || 0) > Math.max(15000, 3 * shortest) && now - (this.fixAsked || 0) > 30000) { this.fixAsked = 0; this.freshFix(); }
+            }
             const fix = this.fix;
             if (!fix) return;
-            const now = Date.now();
             this.sending.forEach((shareId) => {
                 const state = this.sendState && this.sendState[shareId];
-                if (!state || state.inFlight || now < state.nextAt || fix.timestamp <= state.sentAt) return;
+                if (!state || state.inFlight || now < state.nextAt || fix.timestamp <= state.sentAt || fix.timestamp < state.notBefore) return;
                 this.report(shareId, state, fix);
             });
         },
         // report#Position's outcome, statusCode in the answer: 200 taken (the latest as its audience reads it shown on this
         // map); 429 too soon, sent again after retryAfterSeconds; 410 ended or 404 not the user's, no longer sent; 409 STALE
-        // passed over, CLOCK_AHEAD sent from then on with the server's time; 400 a value refused, passed over
+        // passed over; 409 CLOCK_AHEAD and 400 BEFORE_SHARE (the device's clock is off) sent from then on with the server's
+        // time; another 400 a value refused, passed over. A sign-in lost (401, 403) or an answer that is not this
+        // transition's JSON (a login page) stops sending; a network failure tries again at the next interval.
         report(shareId, state, fix) {
-            const share = this.myShares.find((one) => one.shareId === shareId);
-            const interval = Math.max(1, Number(share && share.reportIntervalSeconds) || 5) * 1000;
+            const interval = this.intervalOf(shareId);
             const num = (value) => (value === null || value === undefined || !Number.isFinite(Number(value)) ? '' : String(value));
             const params = { shareId, latitude: num(fix.latitude), longitude: num(fix.longitude), accuracy: num(fix.accuracy), heading: num(fix.heading), speed: num(fix.speed),
                 observedDate: state.serverTime ? '' : String(fix.timestamp) };
             state.inFlight = true;
+            const signedOut = () => {
+                this.sending.slice().forEach((id) => this.stopSending(id));
+                this.sendError = t('Your location is no longer sent from this page: sign in again, then choose Send from here');
+            };
             this.request('reportPosition', { method: 'POST', params }).then((json) => {
                 const status = Number(json.statusCode);
                 const now = Date.now();
-                if (status === 200) {
+                if (!Number.isFinite(status)) signedOut();
+                else if (status === 200) {
                     state.sentAt = fix.timestamp;
                     state.nextAt = now + interval;
                     if (this.sendNotes[shareId] && !state.serverTime) this.note(shareId, '');
@@ -1281,23 +1407,25 @@ module.exports = {
                 else if (status === 410 || status === 404) {
                     this.stopSending(shareId);
                     this.refreshShares();
-                } else if (status === 409 && json.reasonCode === 'CLOCK_AHEAD') {
+                } else if ((status === 409 && json.reasonCode === 'CLOCK_AHEAD') || (status === 400 && json.reasonCode === 'BEFORE_SHARE')) {
                     state.serverTime = true;
                     state.nextAt = now;
-                    this.note(shareId, t('this device\'s clock is ahead of the server\'s, so its positions are timed by the server'));
+                    this.note(shareId, t('this device\'s clock is off from the server\'s, so its positions are timed by the server'));
                 } else if (status === 409 || status === 400) {
                     state.sentAt = fix.timestamp;
                     state.nextAt = now + interval;
                     if (status === 400) this.note(shareId, t('a position was refused'));
                 } else state.nextAt = now + interval;
-            }, () => { state.nextAt = Date.now() + interval; }).then(() => { state.inFlight = false; });
+            }, (err) => {
+                if (err && (err.status === 401 || err.status === 403)) signedOut();
+                else state.nextAt = Date.now() + interval;
+            }).then(() => { state.inFlight = false; });
         },
         // the user's own latest, as the audience reads it, put on this map without drawing it again
         showOwnLatest(shareId, latest) {
             if (!this.effective) return;
-            const shares = (this.effective.locationShares || []).map((share) => (share.shareId === shareId ? Object.assign({}, share, { latest: Object.assign({}, latest, { ageSeconds: 0 }) }) : share));
+            const shares = (this.effective.locationShares || []).map((share) => (share.shareId === shareId ? this.stampShares([Object.assign({}, share, { latest })], Date.now())[0] : share));
             this.effective = Object.assign({}, this.effective, { locationShares: shares });
-            this.sharesLoadedAt = Date.now();
         },
         toggleFullscreen() {
             if (document.fullscreenElement) document.exitFullscreen();
@@ -1327,6 +1455,8 @@ module.exports = {
         this.load();
         this.loadViews();
         this.loadPreferences();
+        // a sign-out forgets the shares this tab sends (forgetSending)
+        if (moqui.beforeLogoutHooks) moqui.beforeLogoutHooks.add(forgetSending);
         // the ages of the live shares move on with the clock
         this.nowTimer = setInterval(() => { this.now = Date.now(); }, 30000);
     },

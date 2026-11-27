@@ -1230,6 +1230,9 @@ the client shows it as a native notification instead and does not start Web Push
 - Storing an endpoint another user had moves it to the new user.
 - The logout link ends the subscription first (bounded at 1.5 seconds).
 - The server's logout deletes the subscriptions the visit stored.
+- The logout link also runs `moqui.beforeLogoutHooks` (a `Set` of functions, each called once and its promise waited on,
+  a failing one passed over): what a screen forgets of the user in this browser, such as Maps › Browse's list of the live
+  location shares the tab sends.
 
 A push service answering 404 or 410 disables the subscription; so do 5 failures in a row. The next page load of a user
 who turned notifications on subscribes again.

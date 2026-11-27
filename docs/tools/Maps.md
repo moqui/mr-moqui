@@ -968,17 +968,21 @@ app's background sharing, chat's live location, XMPP and the guest page for a li
 **In Maps** (Browse; LL2):
 
 - **The live layer.** Browse's configuration carries `locationShares` (`get#EffectiveConfig` with `locationShares`
-  true, which only Browse and its terminal twin ask for): the user's own active shares and those shared with them, read
+  true, which only Browse's `getConfig` asks for; the terminal twin reads the same through `MapConfig.js` `liveShares`):
+  the user's own active shares and those shared with them, read
   through `find#MyShares`, `find#SharedWithMe` and `get#Share` (a kept trail, its latest 500 points, of at most 10
   shares), so each is checked against the share's current audience. `m-map` draws each share with a position as a
   marker labelled with its label and the position's age, its accuracy as a ring and a kept trail as a line, the user's
   own in green and the others' in teal, grey and dashed once no report has come for five minutes (the page that sent it
   closed, or the device lost its fix); the same shares are listed under the map as text. It follows each share on its
   topic `locationShare:<shareId>` of the page's notification socket while it shows it: a position moves the marker, a
-  new end is taken, and `ended` (or `revoked`, to a viewer) takes the share off and lets go of its topic.
+  new end is taken, and `ended` (or `revoked`, to a viewer) takes the share off and lets go of its topic. A position's
+  age is kept from when it was first read or pushed (Browse stamps each read once), so a configuration drawn again never
+  makes an old position fresh.
 - **The Live location panel.** *Shared with me*: each person's label, the age of the position, the end, Show on map, and
-  Directions (in the Android app a `geo:` link its `openExternal` hands to the phone's maps app; elsewhere the place on
-  OpenStreetMap in a new window, which is the only way a position leaves the server from here, by the user's act). *Who
+  Directions (in the Android app a `geo:` link its `openExternal` hands to the phone's maps app; elsewhere Open in
+  OpenStreetMap, the place at openstreetmap.org in a new window, offered only while `maps@external-requests` is on, which
+  is the only way a position leaves the server from here, by the user's act). *Who
   sees my location*: each share of the user's own with its audience and end, Stop, Extend (a new end, the audience never
   sent again), Delete trail, a person or group taken out, and for a group Add the group again, the one act that sends a
   group to `update#Share` (a new snapshot: who joined since is let in and told, who left or blocked the owner is left
@@ -991,13 +995,17 @@ app's background sharing, chat's live location, XMPP and the guest page for a li
   `watchPosition`, at most one report a share's interval (`location@min-interval-seconds`, or
   `location@approximate-interval-seconds` for an approximate share) through the `reportPosition` transition, which
   answers `report#Position`'s outcome as its JSON's `statusCode`: 429 is sent again after `retryAfterSeconds`, 410 and
-  404 stop the page sending it, 409 `STALE` and 400 pass that fix over, and 409 `CLOCK_AHEAD` sends from then on without
-  the device's time (the server's). The shares a browser sends are kept in its storage, so a reload goes on sending them,
-  and Send from here takes over one started elsewhere. When the page closes the share stays active and goes stale; its
-  audience sees the age. A banner above the map names every active share of the user's own (with whom, until when,
-  whether this page sends it) with Stop.
+  404 stop the page sending it, 409 `STALE` and another 400 pass that fix over, and 409 `CLOCK_AHEAD` or 400
+  `BEFORE_SHARE` send from then on without the device's time (the server's); a lost sign-in (401, 403, an answer that is
+  not the transition's JSON) stops sending. The watch asks for high accuracy while an exact share is sent (started again
+  when that changes); a new share waits for a fix taken after it began (one is asked for at once), and with no fix for
+  three intervals (a still device) one is asked for again. The shares a tab sends are kept in its session storage under
+  the account (`moqui.scopedKey`), so a reload goes on sending them, pruned to the user's active shares and forgotten at
+  a sign-out (`moqui.beforeLogoutHooks`); Send from here takes over one started elsewhere. When the page closes the
+  share stays active and goes stale; its audience sees the age. A banner above the map names every active share of the
+  user's own and every share the page sends (with whom, until when, whether this page sends it) with Stop.
 - **The tray.** No tray item: the shell's tray tabs are the theme's screens, and no hook lets an app add an item to them,
-  so a share's always-visible place in the browser is Browse's banner (and the Android notification, LL3).
+  so in the browser a share is named only on Browse, by its banner (and by the Android notification, LL3).
 - **The terminal.** Browse's twin lists, under its map, the user's own shares (with whom, until, the last position's age
   and coordinates, Stop) and those shared with them (`Maps/LocationSharesTui.xml`).
 

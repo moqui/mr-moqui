@@ -85,7 +85,7 @@ along with this software (see the LICENSE.md file). If not, see
             ec.message.pushErrors()
             try {
                 const out = ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('liveShares', {})
-                ec.web.sendJsonResponse({locationShares: Array.from(out.locationShares || [])})
+                ec.web.sendJsonResponse({locationShares: Array.from(out.locationShares || []), failed: out.failed === true})
             } catch (err) {
                 ec.logger.warn('Maps Browse: the location shares were not read: ' + (err?.message ?? err))
                 ec.web.sendJsonResponse({errors: ec.l10n.localize('The location shares were not read')})
@@ -123,7 +123,9 @@ along with this software (see the LICENSE.md file). If not, see
                     ec.logger.warn('Maps Browse: the XMPP contacts were not listed: ' + (err?.message ?? err))
                 } finally { ec.message.clearErrors(); ec.message.popErrors() }
             }
-            ec.web.sendJsonResponse({groups, xmpp: !!domain, contacts, maxShareHours: setting('max-share-hours', 24), trailMaxDays: setting('trail-max-days', 30)})
+            const minimum = setting('min-interval-seconds', 5)
+            ec.web.sendJsonResponse({groups, xmpp: !!domain, contacts, maxShareHours: setting('max-share-hours', 24), trailMaxDays: setting('trail-max-days', 30),
+                minIntervalSeconds: minimum, approximateIntervalSeconds: Math.max(minimum, setting('approximate-interval-seconds', 60))})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -147,7 +149,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- Share my location: create#Share with the audience chosen (audience: a JSON list of {audienceTypeEnumId, userId,
         userGroupId, jid}), until thruDate (epoch millis), exact or approximate and a trail or not; a link's token is answered
         this once -->
-    <transition name="createShare">
+    <transition name="createShare" method="post">
         <actions><script><![CDATA[
             let audienceList = null
             try { audienceList = JSON.parse(String(context.audience || '[]')) } catch (err) { audienceList = null }
@@ -165,7 +167,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <!-- Extend: a new end for an active share of the user's own (update#Share with thruDate alone: the audience is never
         sent again, so no group's snapshot is taken again) -->
-    <transition name="extendShare">
+    <transition name="extendShare" method="post">
         <actions><script><![CDATA[
             const thru = Number(context.thruDate)
             const out = ec.service.sync().name('org.moqui.maps.LocationServices.update#Share').requireNewTransaction(true)
@@ -177,7 +179,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <!-- Add the group again: the one act that sends a group to update#Share, which takes a new snapshot of its members (those
         who joined since are let in, those it leaves out told); addedUserList names whom it lets in -->
-    <transition name="addGroupAgain">
+    <transition name="addGroupAgain" method="post">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.maps.LocationServices.update#Share').requireNewTransaction(true)
                 .parameters({shareId: String(shareId ?? ''), addAudienceList: [{audienceTypeEnumId: 'LsaUserGroup', userGroupId: String(userGroupId ?? '')}]})
@@ -187,7 +189,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <transition name="stopShare">
+    <transition name="stopShare" method="post">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.maps.LocationServices.stop#Share').requireNewTransaction(true)
                 .parameters({shareId: String(shareId ?? '')}).call() || {}
@@ -196,7 +198,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <transition name="revokeAudience">
+    <transition name="revokeAudience" method="post">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.maps.LocationServices.revoke#Audience').requireNewTransaction(true)
                 .parameters({shareId: String(shareId ?? ''), audienceSeqId: String(audienceSeqId ?? '')}).call() || {}
@@ -205,7 +207,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <transition name="deleteTrail">
+    <transition name="deleteTrail" method="post">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.maps.LocationServices.delete#Trail').requireNewTransaction(true)
                 .parameters({shareId: String(shareId ?? '')}).call() || {}
@@ -220,7 +222,7 @@ along with this software (see the LICENSE.md file). If not, see
         share's latest as the audience reads it, rounded for an approximate share), 429 too soon (retryAfterSeconds), 410
         ended or stopped (stop sending), 404 not the user's, 409 STALE (not later than the latest) or CLOCK_AHEAD (the
         device's clock is ahead: send without observedDate), 400 a value out of range. No value is in an error or a log. -->
-    <transition name="reportPosition">
+    <transition name="reportPosition" method="post">
         <actions><script><![CDATA[
             const value = (name) => (context[name] == null ? null : String(context[name]).trim() || null)
             const observed = Number(context.observedDate)

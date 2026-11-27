@@ -205,6 +205,10 @@ feature("Browse renders its terminal twin for a Maps user, and the app is refuse
         live.shares.output.includes("48.85000, 2.35000")
         live.shares.output.includes("just now")
         live.shares.output.includes("stopShare")
+        // Shared with me (after Who sees my location in the document) holds the other person's share and no Stop
+        live.shares.output.indexOf("SharedShareList") > live.shares.output.lastIndexOf("stopShare")
+        live.shares.output.slice(live.shares.output.indexOf("SharedShareList")).includes("Plain walk")
+        !live.shares.output.slice(live.shares.output.indexOf("SharedShareList")).includes("stopShare")
         live.shares.output.includes(live.own)
         live.ownActive == false
         live.theirsActive == true

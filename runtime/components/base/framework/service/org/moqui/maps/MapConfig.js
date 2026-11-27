@@ -1165,7 +1165,11 @@ function effectiveConfig(p) {
     config.fallbacks = fallbacks
     config.layerErrors = layerErrors
     config.externalRequests = !offline()
-    if (yes(p.locationShares)) config.locationShares = liveShares().locationShares
+    if (yes(p.locationShares)) {
+        const live = liveShares()
+        config.locationShares = live.locationShares
+        if (live.failed) config.locationSharesFailed = true
+    }
     return {config}
 }
 
@@ -1256,6 +1260,8 @@ function liveShares() {
             latest: livePosition(share.latest)
         })
     const theirs = probe(LIVE_SERVICES + "find#SharedWithMe", {})
+    // a read that failed is said, so a page does not take its empty list for the user's having no share
+    const failed = mine.failed || theirs.failed
     for (const share of theirs.failed ? [] : Array.from(theirs.out.shareList || []))
         shares.push({
             shareId: share.shareId,
@@ -1271,7 +1277,7 @@ function liveShares() {
         })
     for (const share of shares.filter(one => one.keepTrail).slice(0, LIVE_TRAIL_SHARES))
         share.trail = liveTrail(share.shareId, share.role === "owner" ? share.trailCount : null)
-    return {locationShares: shares}
+    return {locationShares: shares, failed}
 }
 
 // ===== get#Preferences and store#Preferences =====

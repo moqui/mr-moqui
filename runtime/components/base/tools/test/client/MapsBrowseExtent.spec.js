@@ -46,42 +46,51 @@ feature("Browse is the MapsBrowse component with its map, opened on an extent ac
         // Share my location with a guest link starts one, sent from this page (the browser's position stood in for, as
         // watchPosition gives it) through reportPosition, its banner shown and its latest drawn on m-map's live layer as the
         // audience reads it; Stop ends it and the page stops sending
-        const started = page.evaluate(`(async () => {
-            const vm = (${browse})()
-            Object.defineProperty(navigator, "geolocation", { configurable: true, value: {
-                watchPosition(ok) { setTimeout(() => ok({ coords: { latitude: 45.52, longitude: -122.68, accuracy: 12, heading: null, speed: null }, timestamp: Date.now() }), 0); return 7 },
-                clearWatch() {} } })
-            const configured = Array.isArray(vm.effective.locationShares)
-            vm.openShare()
-            vm.shareForm.link = true
-            vm.shareForm.label = "Spec walk"
-            const shareId = await vm.createShare()
-            return { configured, shareId, token: vm.shareMade ? String(vm.shareMade.linkToken || "").length : 0,
-                geo: vm.geoUri({ label: "Sam & Co", position: { lat: 45.5, lon: -122.6 } }) }
-        })()`)
-        // the m-map-view component of the page (WebrootMap.js), whose live layer holds the shares
-        const mapView = `(() => { const find = (vnode) => { if (!vnode) return null; const c = vnode.component
-            if (c && c.type && c.type.name === "mMapView") return c.proxy
-            if (c) return find(c.subTree)
-            return Array.isArray(vnode.children) ? vnode.children.map(find).find(Boolean) || null : null }
-            return find(moqui.webrootVue.$.subTree) })()`
-        const drawn = page.waitFor(`(() => { const view = ${mapView}
-            const share = view && view.liveShares.find((one) => one.shareId === ${JSON.stringify(started.shareId)})
-            const banner = document.querySelector('[data-maps-sharing="' + ${JSON.stringify(started.shareId)} + '"]')
-            return share && share.latest && banner ? { lat: share.latest.lat, role: share.role, label: share.label, banner: banner.textContent,
-                feature: !!(view.liveSource && view.liveSource.getFeatureById("live:" + share.shareId)) } : null })()`, {timeout: 10})
-        // the dialog shows the guest link's token this once, until Done
-        const shown = page.locator("#MapsShareLinkToken").text()
-        page.getByRole("button", {name: "Done"}).click()
-        page.locator(".q-dialog__backdrop").waitFor({state: "detached", timeout: 5})
-        // the Live location panel: Who sees my location lists it with its audience and its acts; nobody shares with this user
-        page.click("#MapsLiveButton")
-        const panel = page.waitFor(`(() => { const card = document.querySelector('[data-maps-mine="' + ${JSON.stringify(started.shareId)} + '"]')
-            return card ? { card: card.textContent, none: !!document.getElementById("MapsSharedNone") } : null })()`, {timeout: 5})
-        page.click(`[data-maps-stop="${started.shareId}"]`)
-        const stopped = page.waitFor(`(() => { const vm = (${browse})()
-            return !document.querySelector('[data-maps-sharing="' + ${JSON.stringify(started.shareId)} + '"]') && !vm.sending.length
-                ? { mine: vm.myShares.length, watching: vm.watchId === null } : null })()`, {timeout: 10})
+        let started, drawn, shown, panel, stopped
+        try {
+            started = page.evaluate(`(async () => {
+                const vm = (${browse})()
+                const fix = (ok) => setTimeout(() => ok({ coords: { latitude: 45.52, longitude: -122.68, accuracy: 12, heading: null, speed: null }, timestamp: Date.now() }), 0)
+                Object.defineProperty(navigator, "geolocation", { configurable: true, value: {
+                    watchPosition(ok) { fix(ok); return 7 }, getCurrentPosition(ok) { fix(ok) }, clearWatch() {} } })
+                const configured = Array.isArray(vm.effective.locationShares)
+                vm.openShare()
+                vm.shareForm.link = true
+                vm.shareForm.label = "Spec walk"
+                const shareId = await vm.createShare()
+                return { configured, shareId, token: vm.shareMade ? String(vm.shareMade.linkToken || "").length : 0,
+                    geo: vm.geoUri({ label: "Sam & Co", position: { lat: 45.5, lon: -122.6 } }) }
+            })()`)
+            // the m-map-view component of the page (WebrootMap.js), whose live layer holds the shares
+            const mapView = `(() => { const find = (vnode) => { if (!vnode) return null; const c = vnode.component
+                if (c && c.type && c.type.name === "mMapView") return c.proxy
+                if (c) return find(c.subTree)
+                return Array.isArray(vnode.children) ? vnode.children.map(find).find(Boolean) || null : null }
+                return find(moqui.webrootVue.$.subTree) })()`
+            drawn = page.waitFor(`(() => { const view = ${mapView}
+                const share = view && view.liveShares.find((one) => one.shareId === ${JSON.stringify(started.shareId)})
+                const banner = document.querySelector('[data-maps-sharing="' + ${JSON.stringify(started.shareId)} + '"]')
+                return share && share.latest && banner ? { lat: share.latest.lat, role: share.role, label: share.label, banner: banner.textContent,
+                    feature: !!(view.liveSource && view.liveSource.getFeatureById("live:" + share.shareId)) } : null })()`, {timeout: 10})
+            // the dialog shows the guest link's token this once, until Done
+            shown = page.locator("#MapsShareLinkToken").text()
+            page.getByRole("button", {name: "Done"}).click()
+            page.locator(".q-dialog__backdrop").waitFor({state: "detached", timeout: 5})
+            // the Live location panel: Who sees my location lists it with its audience and its acts; nobody shares with this user
+            page.click("#MapsLiveButton")
+            panel = page.waitFor(`(() => { const card = document.querySelector('[data-maps-mine="' + ${JSON.stringify(started.shareId)} + '"]')
+                return card ? { card: card.textContent, none: !!document.getElementById("MapsSharedNone") } : null })()`, {timeout: 5})
+            page.click(`[data-maps-stop="${started.shareId}"]`)
+            stopped = page.waitFor(`(() => { const vm = (${browse})()
+                return !document.querySelector('[data-maps-sharing="' + ${JSON.stringify(started.shareId)} + '"]') && !vm.sending.length
+                    ? { mine: vm.myShares.length, watching: vm.watchId === null } : null })()`, {timeout: 10})
+        } finally {
+            // a run that failed on the way leaves no active share: the one the page started is stopped (again, harmlessly)
+            page.evaluate(`(async () => { const vm = (${browse})()
+                const id = vm && vm.shareMade && vm.shareMade.shareId
+                if (id) await vm.request("stopShare", { method: "POST", params: { shareId: id } }).catch(() => null)
+                return true })()`)
+        }
         started.configured == true
         started.shareId != null
         started.token == 32
