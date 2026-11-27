@@ -147,6 +147,10 @@ WebView goes back in its history (a server page), and then back leaves the app a
 to chats" and a pane's "Back to the room". The page has 400 ms to answer, after which Tauri's back goes on. Asking the
 page loses Android's predictive back animation (the preview of the screen back leads to).
 
+The host clears the WebView's history when it loads the shell after a sign-in, a sign-out or an account switch, and
+when it opens the build's start screen (`start-path`). So Back never shows a page of another account or a blank page,
+and at the start screen Back leaves the app.
+
 ## Lifecycle
 
 - **Paused** (another app, the screen off): the mirror stops; the store, the sockets and the outbox's sender stay while

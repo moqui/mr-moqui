@@ -81,6 +81,8 @@ Status values:
 - **accepted**: read in code and found to hold, but no change is worth making (an Info finding whose risk is
   understood, or a behaviour kept on purpose); the entry gives the reason.
 - **kept by decision**, **deferred**: the owner's call, recorded in the entry.
+- **proposed**: the security cost of a design a plan proposes and has neither decided nor built; the entry names the
+  decision and what it weighs. It becomes an ordinary finding when the design is built, or goes with the proposal.
 - **moved**: carried to [Remaining-Work](Remaining-Work.md), [Testing-Needed](Testing-Needed.md) or
   [Future-Plans](Future-Plans.md), which link back to the entry (what needs a device, a toolchain or a design of its
   own).
@@ -98,7 +100,7 @@ that builds this document are in `plans/security-review-evidence/`, which is not
 
 No finding is rated Critical. These are the ones to look at first; each High one has its section below, each Medium one in
 [Security-Review-Medium](Security-Review-Medium.md). Every High one below is fixed (2026-11-15), and every Medium one
-(2026-11-16).
+(2026-11-16) but SEC-DAT-82 and SEC-CLI-81, fixed in part, and SEC-CLI-129, a proposed design's, decided with its plan.
 
 - **A disabled account comes back** (SEC-WEB-01, SEC-ADM-01; High; confirmed by the lead). An account disabled for
   good becomes a five-minute lock after four failed sign-in attempts, and a password change writes `disabled=N`. An
@@ -530,11 +532,11 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 | Forum and Smithy (`PFS`) | 0 | 2 | 4 | 23 | 12 | 0 | 41 |
 | BOSS access model; Admin, Commons, People, Accounting (`BOS`) | 0 | 2 | 22 | 37 | 14 | 0 | 75 |
 | BOSS business apps and the Mantle REST root (`BAP`) | 0 | 3 | 17 | 30 | 20 | 0 | 70 |
-| Clients (`CLI`) | 0 | 0 | 6 | 21 | 29 | 0 | 56 |
+| Clients (`CLI`) | 0 | 0 | 7 | 22 | 29 | 0 | 58 |
 | Script engine, templates and parsers (`SCR`) | 0 | 3 | 7 | 13 | 2 | 0 | 25 |
 | Outbound requests, processes and packaging (`OUT`) | 0 | 0 | 7 | 15 | 5 | 0 | 27 |
 | Development tools (`DEV`) | 0 | 0 | 3 | 7 | 5 | 0 | 15 |
-| **All** | 0 | 24 | 176 | 414 | 162 | 0 | 776 |
+| **All** | 0 | 24 | 177 | 415 | 162 | 0 | 778 |
 
 ## Findings by area
 
@@ -1372,6 +1374,8 @@ Map file: [Attack-Surface-Clients.md](../docs/security/Attack-Surface-Clients.md
 | SEC-CLI-125 | `UnifiedPushes.kt:99-121`; `crates/moqui-client/src/account.rs:215-232` | Each account's UnifiedPush instance is its account id, a host and an unsalted hash of the server and username, given to the distributor app | Info | fixed |
 | SEC-CLI-126 | `crates/moqui-desktop/Cargo.toml`; `scripts/moq/build.sh` `write_app_crate`; `Cargo.toml:435-440` | The desktop app's node, and a server built with an add-on component crate, built crates.io's yrs and stun-proto, not the repository's patched ones, so SEC-TLS-95's fix and the TURN nonce change were not in them | Medium | fixed |
 | SEC-CLI-127 | `crates/moqui-mobile/gen/android/app/proguard-rules.pro`; `crates/moqui-mobile/src/android.rs:209-245` | The phone's release build kept no R8 rule for `ScreenSecurity` and `CalendarIntent`, which Rust calls by name, so screen security could fail there | Low | fixed |
+| SEC-CLI-128 | `plans/App-Startup.md` D1, S3, S7 (not built) | A page would keep the user's last data on the device in `localStorage`, which every app on the origin and any XSS reads, after the session too; it relaxes SEC-CLI-02's rule | Low | proposed |
+| SEC-CLI-129 | `plans/App-Startup.md` D3, S4 (not built) | A device key per installed app, held where the page's script reads it, would turn one XSS into a persistent account takeover | Medium | proposed |
 
 ### Script engine, templates and parsers
 

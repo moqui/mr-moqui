@@ -30,6 +30,10 @@ results. The [shared review protocol](ui-review-shared-gallery.md#common-review-
 
 **Phase 13: LLM, A2A and Assist**
 - [LLM-A2A-Assist.md](LLM-A2A-Assist.md): the design and implementation plan for the agent runtime, the Assist drawer, chat and triggered agents, A2A, MCP and the OpenAI-compatible gateway, with the review of the Java prototype it replaces and the ideas taken from other assistants. Built: 13.1 to 13.14. The Constitution default JSON has English, Spanish, Simplified Chinese and 37 anchored references for review; its localized runtime, Assist rules view, on-demand references, trusted viewer and Admin integration (13.15, §7.10) are proposed. Open work is in Remaining-Work.
+- [agent-code/](agent-code/README.md): the features and UI of T3 Code (a coding-agent workbench) on the agent runtime
+  (design, Nov 22, 2026, not built): T3's threads, runs, turn items, projects, worktrees, checkpoints, providers and
+  scheduled tasks mapped onto `AgentConversation`, `AgentRun` and the other agent entities; provider adapters for
+  Claude Code, Codex and ACP agents that mirror every harness event; the `/qapps/code` screens; web, desktop, mobile and server surfaces; phases P0 to P10.
 
 **Reference** (long-lived, kept current)
 - [Parity-Mapping.md](Parity-Mapping.md): every Rust module mapped to the Java, Groovy, XML and FreeMarker it was ported from, and the reverse index; what is excluded on purpose; the cross-cutting threads a review carries.
@@ -40,6 +44,7 @@ results. The [shared review protocol](ui-review-shared-gallery.md#common-review-
 - [Performance-Implementation.md](Performance-Implementation.md): outcomes and recorded before/after numbers for schema inspection, macro compilation reuse, definition loading and build feedback.
 - [Profiling2.md](Profiling2.md): where performance stands, what remains and the ideas not yet built, each with its proof: the entity, service and data-load paths, the external Postgres driver, the transaction cache, the script engine (quickjs-oxide alone since 2026-11-08) and its heap; how to run the speed tests and profile them; what was measured and dropped. It consolidates Profiling, TX-Cache, Script-Engine-Oxide and Script-Engine-Zipp-Ideas, now archived.
 - [Profiling3.md](Profiling3.md): a second reading of those numbers with the code beside them, and the next plan: a transaction's time is its database round trips (two thirds of them never classified) and a service call's own repeated work, not the script interpreter; the instruments still missing (an operation profile, statement shapes, rows the size of real services, thread rows, a process memory census); the small certain work with its lines; and the larger work (round trips, context names as bindings the engine caches, action plans, form-list rows as templates). Analysis and plan; nothing built.
+- [App-Startup.md](App-Startup.md): the plan to open an app as fast as a native phone app (PWA and mobile app): targets, the causes of a 5 s cold start, and the steps with their checks, and a prototype that measures them ([proto/app-startup](proto/app-startup/README.md); content in 44 to 60 ms from the caches). Decisions D1 to D3 are proposed, D1 and D3 with their security cost in the review (SEC-CLI-128, SEC-CLI-129). Plan and prototype.
 - [MantleUSL-Performance-Audit.md](MantleUSL-Performance-Audit.md): static review of mr-mantle for avoidable work amplification.
 - [MantleUSL-Execution-Benchmark-Plan.md](MantleUSL-Execution-Benchmark-Plan.md): Stages A–E, the correctness gate, and the execution-method comparison. The audit and this plan cite `../experiments/mantle-execution/README.md`, which lives on a separate experiment branch, not in this repository.
 

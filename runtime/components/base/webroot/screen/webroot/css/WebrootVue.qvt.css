@@ -298,6 +298,7 @@ body.m-float-over-modal .q-menu, body.m-float-over-modal .q-dialog.m-assist-popu
 .m-appearance-scheme-label { font-size:13px; padding:0 2px; }
 .m-appearance-toggle { flex-wrap:wrap; }
 .m-appearance-color { width:44px; height:32px; padding:0 2px; border:1px solid var(--m-border); border-radius:4px; background:transparent; cursor:pointer; }
+.m-user-status .m-status-row { border:1px solid var(--m-border); border-radius:4px; overflow:hidden; }
 
 /* ====== buttons ====== */
 

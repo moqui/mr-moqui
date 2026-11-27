@@ -334,8 +334,9 @@
             openInShell: (path) => ask("open_in_shell", { path: String(path || "") }),
             openExternal: (url) => invoke("open_external", { url: String(url || "") }),
             backToShell });
-        // the way back to the shell: a small button over the server's page
+        // the way back to the shell: a small button over the server's page, but in a build with a start screen (its home)
         const addButton = () => {
+            if (page.home === false) return;
             if (!document.body || document.getElementById("moqui-back-to-shell")) return;
             const button = document.createElement("button");
             button.id = "moqui-back-to-shell";

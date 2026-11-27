@@ -71,6 +71,17 @@ win_path() {
     fi
 }
 
+# A path inside a TOML basic string. On Windows, cygpath -m (`D:/...`), never cygpath -w:
+# a backslash in `"D:\test\..."` is a TOML escape (`\t` is a tab). cargo.exe reads `/d/...`
+# as `D:\d\...` and does not find the crate.
+toml_path() {
+    if moq_on_windows && command -v cygpath >/dev/null 2>&1; then
+        cygpath -m "$1"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
 # An argument for moqui.exe. Git Bash converts a bare absolute path when it starts a program, and
 # leaves `location=/d/...` alone because the argument does not start with `/`.
 win_arg() {

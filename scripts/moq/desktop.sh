@@ -17,6 +17,38 @@ need_tauri_cli() {
         || die "the Tauri CLI is ${version##* }, the app needs $TAURI_CLI_VERSION: cargo install tauri-cli --version $TAURI_CLI_VERSION --locked"
 }
 
+# cef-dll-sys runs cmake with the Ninja generator. On Windows, download a pinned CMake once
+# (scripts/cmake.sh) when none is on PATH, and prepend its bin. A dry run prints the curl and does not download.
+# MOQUI_CMAKE, a directory or cmake.exe, is used as it is. Linux and macOS keep the cmake on PATH.
+ensure_cmake() {
+    local script=$ROOT/scripts/cmake.sh dir
+    [ -f "$script" ] || die "missing $(rel "$script")"
+    dir=$("$script" ensure | tr -d '\r') || die "could not get CMake"
+    [ -n "$dir" ] || return 0
+    export PATH="$dir:$PATH"
+}
+
+# The same build needs ninja. On Windows, download a pinned Ninja once (scripts/ninja.sh) when none is on PATH.
+# A dry run prints the curl and does not download. MOQUI_NINJA, a directory or ninja.exe, is used as it is.
+ensure_ninja() {
+    local script=$ROOT/scripts/ninja.sh dir
+    [ -f "$script" ] || die "missing $(rel "$script")"
+    dir=$("$script" ensure | tr -d '\r') || die "could not get Ninja"
+    [ -n "$dir" ] || return 0
+    export PATH="$dir:$PATH"
+}
+
+# macOS: the cmake and ninja on PATH, which this script never downloads. cef-dll-sys builds CEF's C++ wrapper with them
+# on Windows and macOS only; on Linux it links libcef.so and needs neither.
+need_cef_build_tools() {
+    local tool missing=
+    for tool in cmake ninja; do
+        command -v "$tool" >/dev/null 2>&1 || missing+="${missing:+ or }$tool"
+    done
+    [ -z "$missing" ] || die "the desktop build needs CMake and Ninja to build CEF's C++ wrapper, and the PATH has no $missing." \
+        "Install them: brew install cmake ninja."
+}
+
 task_desktop() {
     local command=dev release=
     local -a cargo_args
@@ -35,6 +67,12 @@ task_desktop() {
         shift
     done
     need_tauri_cli
+    # CMake and Ninja build CEF's C++ wrapper on Windows and macOS. On Windows they are downloaded when missing
+    # (scripts/cmake.sh, scripts/ninja.sh); on macOS they have to be on PATH; Linux needs neither. The C++ compiler is
+    # never fetched.
+    ensure_cmake
+    ensure_ninja
+    [ "$(uname -s)" != Darwin ] || need_cef_build_tools
     ensure_pg_archive
     write_desktop_app_crate
     local app=$ROOT/crates/moqui-desktop
@@ -630,6 +668,8 @@ version, from cargo:
     cargo install tauri-cli --version 3.0.0-alpha.6 --locked
 
 The first build downloads CEF (about 1 GB) into the tauri-cef cache (CEF_PATH to use another).
+On Windows it also downloads CMake and Ninja into %USERPROFILE%\.moqui when they are not on PATH
+(MOQUI_CMAKE and MOQUI_NINJA to use another). The C++ compiler is still Visual Studio Build Tools.
 dev runs on this repository's runtime (MOQUI_RUNTIME to use another); a bundled app keeps its
 runtime in the app data directory. See crates/moqui-desktop/README.md.
 
