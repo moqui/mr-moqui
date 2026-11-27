@@ -562,6 +562,8 @@ function create(p) {
     const audience = checkAudience(p.audienceList, now)
     if (audience.reasonCode) return audience
     if (!audience.entries.length) return refuse("AUDIENCE_EMPTY", "Choose who sees your location")
+    // the XMPP app's location goes to the share's XMPP contacts only: with none, there is no one to choose it for
+    if (yes(p.takeXmppLocation) && !audience.entries.some(entry => entry.type === "LsaXmpp")) return refuseNoContact()
     const maxShares = setting("max-active-shares", 20)
     // counted under the owner's lock row, so two creates at once cannot both pass the cap
     if (!lockOwner(me)) return refuse("SHARE_LOCK_FAILED", "Your location could not be shared now: try again")
@@ -604,6 +606,10 @@ function create(p) {
     push(share, [me], {event: "started", thruDate: until.until})
     return {shareId: share.shareId, thruDate: until.until, linkToken: added.linkToken, linkPath: added.linkPath}
 }
+
+/** The owner's XMPP app's location asked for a share with no XMPP contact, which it would go to. */
+const refuseNoContact = () =>
+    refuse("XMPP_NO_CONTACT", "Your XMPP app's location goes to your XMPP contacts only: add an XMPP contact to the share first")
 
 /** update#Share: an active share of the caller's own, extended, shortened, relabeled or given more audience. */
 function update(p) {
@@ -679,6 +685,9 @@ function update(p) {
         // or contact already there, given again, changes nothing
         if (fresh.length || restamped) share.audienceVersion = (Number(share.audienceVersion) || 0) + 1
     }
+    // the opt-in asked for a share with no XMPP contact, its adds counted: refused, nothing written
+    if (yes(p.takeXmppLocation) && !activeAudience(share.shareId).some(row => row.audienceTypeEnumId === "LsaXmpp"))
+        return refuseNoContact()
     share.update()
     const reached = currentUserIds(share)
     const fresh = reached.filter(id => !before.includes(id))
@@ -761,6 +770,24 @@ function revokeRows(share, rows, now) {
     // an XMPP contact taken out gets an empty geoloc item (one still in the share by another entry does not)
     const contactsAfter = new Set(xmppUserIds(share))
     pushXmpp(share, contactsBefore.filter(id => !contactsAfter.has(id)), {event: "revoked"})
+    // this revoke took out the last XMPP contact: the owner's XMPP app's location goes nowhere now, so the opt-in goes
+    // with it (a contact added later does not bring it back unasked), and the XMPP latest with it, its audit row saying
+    // why; the version is not raised by an end. A person, group or link taken out leaves it as the owner chose
+    if (share.takeXmppLocation === "Y" && contactsBefore.length && !contactsAfter.size) {
+        share.takeXmppLocation = "N"
+        // the audit row's reason for this write alone: a reason the caller had in the context is put back after
+        const REASON = "takeXmppLocation_changeReason"
+        const had = ec.context.containsKey(REASON)
+        const callers = had ? ec.context.get(REASON) : null
+        ec.context.put(REASON, "last XMPP contact revoked")
+        try {
+            share.update()
+        } finally {
+            if (had) ec.context.put(REASON, callers)
+            else ec.context.remove(REASON)
+        }
+        find(XMPP_LATEST).condition("shareId", share.shareId).deleteAll()
+    }
 }
 
 /**
@@ -1602,11 +1629,12 @@ function appShare(p) {
                 approximate,
                 intervalSeconds: approximate ? Math.max(minimum, setting("approximate-interval-seconds", 60)) : minimum,
                 // the owner's XMPP app's location goes to the share's XMPP contacts too (plans/Location-Sharing.md §3.6):
-                // the app's dialog says so, from these words, and the version raised by turning it on asks for that
+                // the app's dialog and notification say so, from these words, which they put mid-sentence ("to ... until
+                // 15:30"), so as a parenthetical; the version raised by turning it on asks for that confirmation
                 audienceText:
                     audienceWords(share) +
-                    (share.takeXmppLocation === "Y"
-                        ? ". " + ec.l10n.localize("Your XMPP app's location also goes to your XMPP contacts")
+                    (share.takeXmppLocation === "Y" && xmppUserIds(share).length
+                        ? " (" + ec.l10n.localize("your XMPP app's location also goes to your XMPP contacts") + ")"
                         : ""),
                 audienceVersion: Number(share.audienceVersion) || 0,
                 fromThisDevice: view.fromThisDevice

@@ -241,29 +241,12 @@ feature("Browse renders its terminal twin for a Maps user, and the app is refuse
 
 feature("My location shares opens for an owner with ALL_USERS alone, lists their share and stops it; another user stops nothing of it", {
     when() {
-        // where the app bar's "Sharing location" chip goes (plans/Location-Sharing.md §3.3; MAPS_SHARES), for a user with no Maps
-        const shareId = shareCall(PLAIN, "create#Share", {
-            audienceList: [{audienceTypeEnumId: "LsaUser", userId: WRITER}],
-            thruDate: new Date(Date.now() + 3600000),
-            label: "Plain errand"
-        }).shareId
-        const page = as(PLAIN, "apps/maps/MyShares", {}, null, "qvt")
-        as(WRITER, "apps/maps/MyShares/stopShare", {shareId}, "post")
-        const afterOther = Array.from(shareCall(PLAIN, "find#MyShares").shareList || []).some(row => row.shareId === shareId)
-        as(PLAIN, "apps/maps/MyShares/stopShare", {shareId}, "post")
-        const afterOwn = Array.from(shareCall(PLAIN, "find#MyShares").shareList || []).some(row => row.shareId === shareId)
-        // Open in Maps' check, the user's own grant of the Maps app (Maps.xml carries MAPS_APP), without another render
-        const mapsOpen = userId => {
-            ec.user.internalLoginUser(usernameOf(userId))
-            try {
-                return !!ec.artifactExecution.isPermittedOwn("component://tools/screen/Maps.xml", "AT_XML_SCREEN", "view")
-            } finally {
-                ec.user.logoutUser()
-            }
-        }
-        return {shareId, page, afterOther, afterOwn, writerMaps: mapsOpen(WRITER), plainMaps: mapsOpen(PLAIN)}
+        // the share has an XMPP contact too (WRITER, of PLAIN's roster: a direct room of the two), for the opt-in below
+        return withConf("xmpp-server@domain", "maps.example.test", () => myShares())
     },
-    then({shareId, page, afterOther, afterOwn, writerMaps, plainMaps}) {
+    then({shareId, page, afterOther, afterOwn, optInOther, optInOwn, writerMaps, plainMaps}) {
+        optInOther == false
+        optInOwn == true
         writerMaps == true
         plainMaps == false
         page.status == 200
@@ -273,6 +256,7 @@ feature("My location shares opens for an owner with ALL_USERS alone, lists their
         page.output.includes("Maps screens MAPS_SCR_WRITER")
         page.output.includes("stopShare")
         page.output.includes("extendShare")
+        page.output.includes("takeXmppShare")
         page.output.includes(shareId)
         // no Open in Maps for a user whose grants do not open Browse
         !page.output.includes("Open in Maps")
@@ -280,6 +264,65 @@ feature("My location shares opens for an owner with ALL_USERS alone, lists their
         afterOwn == false
     }
 })
+
+/** My location shares as its owner and another user see it, with the opt-in each asks for: for the feature above. */
+function myShares() {
+    ec.user.internalLoginUser(usernameOf(PLAIN))
+    ec.artifactExecution.disableAuthz()
+    try {
+        ec.service
+            .sync()
+            .name("org.moqui.chat.ChatServices.create#Room")
+            .parameters({roomTypeEnumId: "CrtDirect", memberUserIdList: [WRITER]})
+            .call()
+    } finally {
+        ec.artifactExecution.enableAuthz()
+        ec.message.clearErrors()
+        ec.user.logoutUser()
+    }
+    // where the app bar's "Sharing location" chip goes (plans/Location-Sharing.md §3.3; MAPS_SHARES), for a user with no
+    // Maps
+    const shareId = shareCall(PLAIN, "create#Share", {
+        audienceList: [
+            {audienceTypeEnumId: "LsaUser", userId: WRITER},
+            {audienceTypeEnumId: "LsaXmpp", jid: usernameOf(WRITER) + "@maps.example.test"}
+        ],
+        thruDate: new Date(Date.now() + 3600000),
+        label: "Plain errand"
+    }).shareId
+    const page = as(PLAIN, "apps/maps/MyShares", {}, null, "qvt")
+    // the XMPP app's opt-in (plans/Location-Sharing.md §3.6): the owner's alone to turn on
+    const optIn = () =>
+        (Array.from(shareCall(PLAIN, "find#MyShares").shareList || []).find(row => row.shareId === shareId) || {})
+            .takeXmppLocation
+    as(WRITER, "apps/maps/MyShares/takeXmppShare", {shareId, takeXmppLocation: "true"}, "post")
+    const optInOther = optIn()
+    as(PLAIN, "apps/maps/MyShares/takeXmppShare", {shareId, takeXmppLocation: "true"}, "post")
+    const optInOwn = optIn()
+    as(WRITER, "apps/maps/MyShares/stopShare", {shareId}, "post")
+    const afterOther = Array.from(shareCall(PLAIN, "find#MyShares").shareList || []).some(row => row.shareId === shareId)
+    as(PLAIN, "apps/maps/MyShares/stopShare", {shareId}, "post")
+    const afterOwn = Array.from(shareCall(PLAIN, "find#MyShares").shareList || []).some(row => row.shareId === shareId)
+    // Open in Maps' check, the user's own grant of the Maps app (Maps.xml carries MAPS_APP), without another render
+    const mapsOpen = userId => {
+        ec.user.internalLoginUser(usernameOf(userId))
+        try {
+            return !!ec.artifactExecution.isPermittedOwn("component://tools/screen/Maps.xml", "AT_XML_SCREEN", "view")
+        } finally {
+            ec.user.logoutUser()
+        }
+    }
+    return {
+        shareId,
+        page,
+        afterOther,
+        afterOwn,
+        optInOther,
+        optInOwn,
+        writerMaps: mapsOpen(WRITER),
+        plainMaps: mapsOpen(PLAIN)
+    }
+}
 
 feature("LocalMap shows the record's place, Choose location and Open in Maps to a Maps user the adapter lets write", {
     when() {
