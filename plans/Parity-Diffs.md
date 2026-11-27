@@ -7,7 +7,7 @@ Companion to [Parity-Mapping](Parity-Mapping.md). Where that file says which Jav
 What is not here:
 
 - **Whole features that are not ported** (JSON-RPC, Groovy runners, Hazelcast, Shiro, FreeMarker and the rest): [Parity-Mapping, Excluded on purpose](Parity-Mapping.md#excluded-on-purpose).
-- **The redesigns** (SearchFacade, server-static qvt, feed registration, JavaScript, html-print, database cluster coordination and sessions, keys as configuration, settings by conf path in place of `default-property`): the root [README, Significant Redesigns](../README.md#significant-redesigns-vs-moqui-java).
+- **The redesigns** (SearchFacade, server-static qvt, feed registration, JavaScript, html-print, database cluster coordination and sessions, keys as configuration, settings by conf path in place of `default-property`): the root [README, Significant Redesigns](../README.md#significant-redesigns).
 - **Divergences that are still open**: findings in [Remaining-Work](Remaining-Work.md), each linking to the review that found it.
 
 Rows keep the ID of the review that recorded them, so the archived review has the context (`P1-07` is finding 7 of phase 1 of [EntityService-Parity-Review](archive/EntityService-Parity-Review.md); its phase sections say what else was compared). A later review adds its accepted differences here under the matching heading, with its own IDs, and leaves a pointer in its own `## Accepted differences` section when it is archived.

@@ -12,13 +12,15 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The Dev AIDE with a group server (plans/design-dev-aide.md 21.10, P11), the instance its own group server over
+//! The Dev AIDE with a group server (plans/archive/design-dev-aide.md 21.10, P11), the instance its own group server over
 //! loopback: the site component's working tree has the instance's hosted `my-site` repository as its origin. Connect
 //! signs in as an installed app does (F17: `/sso/appLogin` with no identity provider, this server's own login, the
 //! confirmation, the code at `/sso/appToken` for a login key), then sets the addons repository, the task source and
 //! git's credential; the working tree's remote resolves to its hosted repository; a pushed branch opens a merge request
 //! through the framework's REST (F9); a user who may only view proposes through `refs/for/main`; a merge request is
-//! checked out as a branch; Publish to a publish branch opens one; Remove takes back what Connect set. A Smithy server's
+//! checked out as a branch; Publish to a publish branch opens one; a branch on a fork's remote opens one from the fork;
+//! Connect lists the server's identity providers and sets the app its offer names for tasks; the task panel has the
+//! hosted repository's issues (`Fixes #12`), Quick create and a branch for an issue; Remove takes back what Connect set. A Smithy server's
 //! side of the same is its REST contract only (the dev-aide crate's `hosting::tests`): mr-pass and mr-mantle do not
 //! load here.
 
@@ -47,10 +49,22 @@ const SITE_COMPONENT: &str = r#"<component name="my-site"/>"#;
 const SITE_SERVICES: &str = "<services>\n    <service verb=\"get\" noun=\"Thing\"/>\n</services>\n";
 const HS: &str = "org.moqui.devaide.HostingServices.";
 /// The group server's application, as Mantle would be for threads and Smithy for the agreement: a review-thread service
-/// over a table of its own, and an agreement check that knows one signed address (plans/design-dev-aide.md 21.10).
+/// over a table of its own, and an agreement check that knows one signed address (plans/archive/design-dev-aide.md 21.10); and
+/// as Mantle is for tasks, an offer-service with a task source (its tasks, a repository's issues with numbers, as
+/// Smithy's are, and an app tasks open in) over a REST of its own.
 const STUB_COMPONENT: &str = r#"<component name="review-stub"/>"#;
 const STUB_CONF: &str = r#"<moqui-conf><git-server review-thread-service="reviewstub.Stub.handle#Thread"
-    agreement-check-service="reviewstub.Stub.check#Signed"/></moqui-conf>"#;
+    agreement-check-service="reviewstub.Stub.check#Signed" offer-service="reviewstub.Stub.add#Offer"/></moqui-conf>"#;
+/// Its task routes take a key for tasks alone, as Mantle's do (question 18); `my/noticeCounts` takes none.
+const STUB_REST: &str = r#"<resource name="reviewstub">
+    <resource name="my"><resource name="tasks" key-scope="tasks"><method type="get"><service name="reviewstub.Stub.get#MyTasks"/></method></resource>
+        <resource name="noticeCounts"><method type="get"><service name="reviewstub.Stub.get#MyTasks"/></method></resource></resource>
+    <resource name="repositories"><id name="repositoryId"><resource name="issues" key-scope="tasks">
+        <method type="get"><service name="reviewstub.Stub.get#Issues"/></method>
+        <method type="post"><service name="reviewstub.Stub.create#Issue"/></method>
+        <id name="issueId"><method type="get"><service name="reviewstub.Stub.get#Issue"/></method></id>
+    </resource></id></resource>
+</resource>"#;
 const STUB_ENTITIES: &str = r#"<entities>
     <entity entity-name="ReviewNote" package="reviewstub">
         <field name="noteId" type="id" is-pk="true"/>
@@ -98,6 +112,57 @@ const STUB_SERVICES: &str = r#"<services>
                 if (notes().count() == 0) { ec.message.addError('No thread ' + threadId); return }
                 notes().updateAll({resolved: resolved ? 'Y' : 'N'})
             }
+        ]]></script></actions>
+    </service>
+    <service verb="add" noun="Offer">
+        <implements service="org.moqui.git.GitServices.add#GitHostingOffer"/>
+        <actions><script><![CDATA[
+            offer = Object.assign({}, offer, {tasks: {kind: 'moqui-rest', path: '/rest/s1/reviewstub/my/tasks',
+                issuesPath: '/rest/s1/reviewstub/repositories/{repositoryId}/issues',
+                issuePath: '/rest/s1/reviewstub/repositories/{repositoryId}/issues/{id}',
+                app: {name: 'stub', title: 'Stub Projects', taskPath: '/qapps/stub/Task?taskId={taskId}',
+                    projectPath: '/qapps/stub/Project?projectId={projectId}'}}})
+        ]]></script></actions>
+    </service>
+    <service verb="get" noun="MyTasks">
+        <out-parameters><parameter name="taskList" type="List"/></out-parameters>
+        <actions><script><![CDATA[
+            taskList = [{workEffortId: 'OTHER-1', workEffortName: 'Elsewhere', statusId: 'WeInProgress', rootWorkEffortId: 'OTHER'},
+                {workEffortId: 'SITEPROJ-2', workEffortName: 'On the site', statusId: 'WeInProgress', rootWorkEffortId: 'SITEPROJ'}]
+        ]]></script></actions>
+    </service>
+    <service verb="get" noun="Issues">
+        <in-parameters><parameter name="repositoryId" required="true"/><parameter name="pageSize"/></in-parameters>
+        <out-parameters><parameter name="issueList" type="List"/><parameter name="projectList" type="List"/>
+            <parameter name="numbered" type="Boolean"/></out-parameters>
+        <actions><script><![CDATA[
+            if (repositoryId !== 'my-site') { ec.message.addError('No repository ' + repositoryId); return }
+            issueList = [{workEffortId: 'SITEPROJ-5', issueNumber: 12, workEffortName: 'Totals are wrong', statusId: 'WeInPlanning',
+                rootWorkEffortId: 'SITEPROJ', projectName: 'Site'}]
+            projectList = [{workEffortId: 'SITEPROJ', workEffortName: 'Site'}]
+            numbered = true
+        ]]></script></actions>
+    </service>
+    <service verb="get" noun="Issue">
+        <in-parameters><parameter name="repositoryId" required="true"/><parameter name="issueId" required="true"/>
+            <parameter name="byNumber" type="Boolean" default="false"/></in-parameters>
+        <out-parameters><parameter name="issue" type="Map"/></out-parameters>
+        <actions><script><![CDATA[
+            // issue 12 by its number, or its task SITEPROJ-5
+            if (repositoryId !== 'my-site' || !(byNumber ? issueId === '12' : issueId === 'SITEPROJ-5')) { ec.message.addError('Issue not found'); return }
+            issue = {workEffortId: 'SITEPROJ-5', issueNumber: 12, workEffortName: 'Totals are wrong', statusId: 'WeInPlanning',
+                description: 'The total is off by one'}
+        ]]></script></actions>
+    </service>
+    <service verb="create" noun="Issue">
+        <in-parameters><parameter name="repositoryId" required="true"/><parameter name="workEffortName"/>
+            <parameter name="rootWorkEffortId"/></in-parameters>
+        <out-parameters><parameter name="workEffortId"/><parameter name="issueNumber" type="Integer"/></out-parameters>
+        <actions><script><![CDATA[
+            ec.entity.makeValue('reviewstub.ReviewNote').setAll({noteId: 'ISSUE-13', path: 'issue:' + repositoryId + ':' + (rootWorkEffortId || ''),
+                body: workEffortName}).create()
+            workEffortId = 'SITEPROJ-6'
+            issueNumber = 13
         ]]></script></actions>
     </service>
     <service verb="check" noun="Signed">
@@ -181,6 +246,14 @@ fn login_key(factory: &Arc<ExecutionContextFactory>, user: &str) -> String {
     let key = moqui_core::user::get_login_key(Some(2.0)).unwrap();
     moqui_core::user::logout().unwrap();
     key
+}
+
+/// A preference of `user`, as the dev-aide reads it.
+fn preference(factory: &Arc<ExecutionContextFactory>, user: &str, key: &str) -> Option<String> {
+    let context = factory.new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user(user).unwrap();
+    moqui_core::user::get_preference(key).unwrap()
 }
 
 fn header<'a>(headers: &'a [(String, String)], name: &str) -> &'a str {
@@ -402,6 +475,11 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     <moqui.security.ArtifactGroupMember artifactGroupId="GIT_MY_SITE" artifactName="my-site" artifactTypeEnumId="AT_GIT_REPOSITORY"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="GIT_MY_SITE_VIEW" userGroupId="MY_SITE_VIEWERS" artifactGroupId="GIT_MY_SITE"
         authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_VIEW"/>
+    <moqui.security.ArtifactGroup artifactGroupId="REVIEWSTUB_API" description="The stub application's REST"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="REVIEWSTUB_API" artifactTypeEnumId="AT_REST_PATH" artifactName="/reviewstub" inheritAuthz="Y"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="REVIEWSTUB_API_ALL" artifactGroupId="REVIEWSTUB_API" userGroupId="ALL_USERS"
+        authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    <moqui.security.sso.AuthFlow authFlowId="TEAM_IDP" authFlowTypeEnumId="AftOidc" description="Team IdP" sequenceNum="1"/>
 </entity-facade-xml>"#,
     );
     let dev_aide = std::fs::canonicalize(concat!(
@@ -420,6 +498,7 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
             "components/addon/review-stub/service/reviewstub/Stub.xml",
             STUB_SERVICES,
         ),
+        ("components/addon/review-stub/service/reviewstub.rest.xml", STUB_REST),
     ];
     let gate = start_with_files_and_links(
         "dev-aide-group",
@@ -507,6 +586,200 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
         )
     };
     assert_eq!(credential_name, "john.doe");
+    // question 18: Connect keeps a key for each service, never the account's: the token is git's alone, the tasks and
+    // gateway keys are their own, and the sign-in's account key is ended (no application here keeps it)
+    let (tasks_key, signed_in_gateway, app_kept) = {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let row = facade
+            .find("moqui.dev.DevAideServer")
+            .unwrap()
+            .eq("serverId", Value::string("GROUP"))
+            .one()
+            .unwrap()
+            .unwrap();
+        let key = |name: &str| row.get(name).map(to_plain_string).unwrap_or_default();
+        (key("tasksKey"), key("gatewayKey"), key("appKey"))
+    };
+    assert!(app_kept.is_empty(), "no application asks for the installed app's key");
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        assert!(
+            moqui_core::user::login_user_key(&app_key).is_err(),
+            "the token is no account key"
+        );
+        moqui_core::user::login_user_key_for(&app_key, "git").unwrap();
+        moqui_core::user::logout().unwrap();
+        moqui_core::user::login_user_key_for(&tasks_key, "tasks").unwrap();
+        moqui_core::user::logout().unwrap();
+        assert!(moqui_core::user::login_user_key_for(&tasks_key, "git").is_err());
+        moqui_core::user::login_user_key_for(&signed_in_gateway, "gateway").unwrap();
+        moqui_core::user::logout().unwrap();
+        // the sign-in's own key (the installed app's, the account's) is ended on the server
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let signed_in = facade
+            .find("moqui.security.UserLoginKey")
+            .unwrap()
+            .eq("userId", Value::string("EX_JOHN_DOE"))
+            .eq("deviceName", Value::string("Dev AIDE"))
+            .list()
+            .unwrap();
+        assert!(!signed_in.is_empty());
+        let now = moqui_core::user::now_millis();
+        assert!(
+            signed_in.iter().all(|row| row
+                .get("thruDate")
+                .and_then(moqui_core::user::value_millis)
+                .is_some_and(|thru| thru <= now)),
+            "the account's key is ended"
+        );
+    }
+    // over HTTP, each key where a REST resource declares its scope, and nowhere else
+    let status = |key: &str, path: &str| exchange(address, &http_request("GET", path, &[("api_key", key)], "")).0;
+    let (git_path, tasks_path) = (
+        "/rest/s1/moqui/git/my-site/mergeRequests",
+        "/rest/s1/reviewstub/my/tasks",
+    );
+    assert_eq!(status(&app_key, git_path), 200, "the git key on the git REST");
+    assert_eq!(status(&tasks_key, tasks_path), 200, "the tasks key on my/tasks");
+    assert_eq!(status(&app_key, tasks_path), 401, "the git key on my/tasks");
+    assert_eq!(status(&tasks_key, git_path), 401, "the tasks key on the git REST");
+    assert_eq!(
+        status(&tasks_key, "/rest/s1/reviewstub/my/noticeCounts"),
+        401,
+        "the tasks key elsewhere"
+    );
+    assert_eq!(
+        status(&signed_in_gateway, tasks_path),
+        401,
+        "the gateway key on my/tasks"
+    );
+    // a key for one service signs in its own request alone: its response sets no session or token, and a cookie the
+    // client held, or one its response set, opens nothing by itself after it (a tasks key, the git key and a git access
+    // token; the gateway key's keyRevoke the same)
+    let access_token = "dev-aide-group-access-token-0123456789".to_string();
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let mut row = facade.make_value("moqui.security.UserLoginKey").unwrap();
+        row.set(
+            "loginKey",
+            Value::string(moqui_core::user::hash_login_key(&access_token).unwrap()),
+        );
+        row.set("userId", Value::string("EX_JOHN_DOE"));
+        row.set("description", Value::string("CI"));
+        row.set("scope", Value::string("git"));
+        row.set("fromDate", moqui_core::user::now_value());
+        row.set(
+            "thruDate",
+            moqui_core::user::stamp_value(moqui_core::user::now_millis() + 86_400_000),
+        );
+        row.create(&facade).unwrap();
+    }
+    let (_, first, _) = exchange(address, &http_request("GET", "/Login", &[], ""));
+    let brought = merge_cookies("", &first);
+    assert!(!brought.is_empty(), "an anonymous session's cookie: {first:?}");
+    // the anonymous session as its cookie finds it: the cookies after a page, and a new token if one was sent
+    let session_of = |jar: &str| {
+        let (_, answer, _) = exchange(address, &http_request("GET", "/Login", &[("Cookie", jar)], ""));
+        (
+            merge_cookies(jar, &answer),
+            header(&answer, "moquiSessionToken").to_string(),
+        )
+    };
+    session_of(&brought);
+    let anonymous_before = session_of(&brought);
+    for (what, key, path) in [
+        ("the tasks key", tasks_key.as_str(), tasks_path),
+        ("the git key", app_key.as_str(), git_path),
+        ("a git access token", access_token.as_str(), git_path),
+    ] {
+        for held in ["", brought.as_str()] {
+            let mut headers = vec![("api_key", key)];
+            if !held.is_empty() {
+                headers.push(("Cookie", held));
+            }
+            let (got, answer, _) = exchange(address, &http_request("GET", path, &headers, ""));
+            assert_eq!(got, 200, "{what} on {path}");
+            assert!(header(&answer, "X-CSRF-Token").is_empty(), "{what}: no session token");
+            assert!(
+                header(&answer, "Set-Cookie").is_empty(),
+                "{what}: no session cookie: {answer:?}"
+            );
+            let jar = merge_cookies(held, &answer);
+            if jar.is_empty() {
+                continue;
+            }
+            let (later, _, _) = exchange(
+                address,
+                &http_request("GET", "/rest/s1/reviewstub/my/noticeCounts", &[("Cookie", &jar)], ""),
+            );
+            assert_eq!(later, 401, "{what}: the cookie after it is no session of the account");
+        }
+    }
+    // the anonymous session the client held is the same one after them, with its cookie and token
+    assert_eq!(
+        session_of(&brought),
+        anonymous_before,
+        "the held anonymous session as it was"
+    );
+    // no login of a key names a Visit that is not there
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let history = facade
+            .find("moqui.security.UserLoginHistory")
+            .unwrap()
+            .eq("userId", Value::string("EX_JOHN_DOE"))
+            .list()
+            .unwrap();
+        for row in history.iter() {
+            let visit = row.get("visitId").map(to_plain_string).unwrap_or_default();
+            if visit.is_empty() {
+                continue;
+            }
+            let found = facade
+                .find("moqui.server.Visit")
+                .unwrap()
+                .eq("visitId", Value::string(&visit))
+                .count()
+                .unwrap();
+            assert_eq!(found, 1, "the login history names Visit {visit}, which is gone");
+        }
+    }
+    // the server's identity providers, kept with its offer; Connect asks which one before it signs in (Phase 1)
+    assert_eq!(
+        server["offer"]["signIn"]["providers"][0]["authFlowId"], "TEAM_IDP",
+        "{server}"
+    );
+    assert_eq!(server["offer"]["signIn"]["providers"][0]["description"], "Team IdP");
+    let choose = call(
+        &factory,
+        "john.doe",
+        &format!("{HS}start#Connect"),
+        &[("baseUrl", &base)],
+    )
+    .unwrap();
+    assert_eq!(json(&choose, "providers")[0]["authFlowId"], "TEAM_IDP", "{choose:?}");
+    assert!(text(&choose, "authorizeUrl").is_empty(), "{choose:?}");
+    let unknown = call(
+        &factory,
+        "john.doe",
+        &format!("{HS}start#Connect"),
+        &[("baseUrl", &base), ("authFlowId", "NOT_OFFERED")],
+    );
+    assert!(
+        matches!(&unknown, Err(err) if err.contains("offers no sign-in with NOT_OFFERED")),
+        "{unknown:?}"
+    );
     assert!(
         server["offer"]["git"]["httpsUrlTemplate"]
             .as_str()
@@ -526,6 +799,14 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
         ),
     )
     .unwrap();
+    // the app john.doe chose before Connect, which Remove puts back
+    call(
+        &factory,
+        "john.doe",
+        "org.moqui.devaide.TaskServices.set#TaskSource",
+        &[("taskAppName", "marble")],
+    )
+    .unwrap();
     let applied = call(
         &factory,
         "john.doe",
@@ -541,6 +822,17 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     )
     .unwrap();
     assert_eq!(json(&applied, "done").as_array().unwrap().len(), 4, "{applied:?}");
+    // the task source's app, as the offer names it, is the user's now (Phase 1)
+    assert!(
+        json(&applied, "done").as_array().unwrap().iter().any(|done| done
+            .as_str()
+            .is_some_and(|done| done.contains("opening in Stub Projects (Team)"))),
+        "{applied:?}"
+    );
+    assert_eq!(
+        preference(&factory, "john.doe", "DEV_AIDE_TASK_APP").as_deref(),
+        Some("server-GROUP")
+    );
     let env_lines = moqui_lib::env::parse_dotenv(&std::fs::read_to_string(&env_file).unwrap());
     let env = |name: &str| {
         env_lines
@@ -555,6 +847,7 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
         gateway_key.len() == 40 && gateway_key != app_key,
         "item 4: {gateway_key}"
     );
+    assert_eq!(gateway_key, signed_in_gateway, "the gateway's key is the sign-in's");
     assert_eq!(
         env("moqui_conf__llm_facade__endpoint__DEFAULT__url"),
         format!("{base}/llm")
@@ -590,6 +883,9 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
             .any(|source| source["label"] == "Team"),
         "{sources:?}"
     );
+    // the task source reads the user's tasks with the key for tasks alone
+    let tasks = call(&factory, "john.doe", "org.moqui.devaide.TaskServices.get#Tasks", &[]).unwrap();
+    assert!(json(&tasks, "tasks").to_string().contains("On the site"), "{tasks:?}");
 
     // the working tree's hosted repository, with john.doe's rights
     let hosted = call(
@@ -1000,6 +1296,56 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
                 "a comment from a sim"
             );
         }
+        // each of the tool's writes is refused from a request logged in by a header (an API key), as the Workspace's
+        // are: a program's request never stands for the person who approves
+        let writes = [
+            card.args.clone(),
+            serde_json::json!({"action": "reply", "root": "my-site", "number": number.clone(), "threadId": "1",
+                "body": "From a key"}),
+            serde_json::json!({"action": "open_merge_request", "root": "my-site", "title": "From a key",
+                "source": "main", "target": "main"}),
+        ];
+        // what the group server holds, as a viewer reads it: the merge request's threads, and the merge requests
+        let on_server = || {
+            [
+                threads_path.clone(),
+                "/rest/s1/moqui/git/my-site/mergeRequests".to_string(),
+            ]
+            .map(|path| {
+                let (status, _, body) = exchange(address, &http_request("GET", &path, &[("api_key", &viewer_key)], ""));
+                assert_eq!(status, 200, "{path}: {body}");
+                body
+            })
+        };
+        let before = on_server();
+        for args in &writes {
+            let refused = moqui_core::screen::gate::with_request_frame(
+                moqui_core::screen::gate::RenderOrigin::Browser,
+                true,
+                true,
+                || dev_aide::agent::hosting::execute(args),
+            )
+            .expect_err("a hosting write from a header login");
+            assert!(
+                refused.instruction.contains("logged in by a header"),
+                "{args}: {}",
+                refused.instruction
+            );
+        }
+        // nothing reached the server: no thread, reply or merge request came of them
+        let after = on_server();
+        assert_eq!(after, before, "the group server changed");
+        assert!(
+            !after
+                .iter()
+                .any(|body| body.contains("From a key") || body.contains("Fixed in the next commit")),
+            "{after:?}"
+        );
+        assert!(
+            before[1].contains("A viewer's fix"),
+            "the merge requests read: {}",
+            before[1]
+        );
         dev_aide::agent::hosting::execute(&card.args).unwrap();
     }
     let (status, _, body) = exchange(
@@ -1272,6 +1618,191 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     assert!(!Path::new(&one_dir).exists() && !Path::new(&two_dir).exists());
     assert_eq!(git(&site, &["branch", "--list", "agent/conv1"]), "agent/conv1");
 
+    // 21.8: a conversation that ends ends its worktree once the write commits: archived, a clean one is removed (its
+    // branch stays); deleted, one with uncommitted changes is kept and its user told once
+    let one = call(
+        &factory,
+        "john.doe",
+        &format!("{WT}create#Worktree"),
+        &[("rootId", "my-site"), ("conversationId", "CONV1")],
+    )
+    .unwrap();
+    let two = call(
+        &factory,
+        "john.doe",
+        &format!("{WT}create#Worktree"),
+        &[("rootId", "my-site"), ("conversationId", "CONV2")],
+    )
+    .unwrap();
+    let (one_dir, two_id, two_dir) = (text(&one, "location"), text(&two, "rootId"), text(&two, "location"));
+    call(
+        &factory,
+        "john.doe",
+        "org.moqui.devaide.WorkspaceServices.save#File",
+        &[("rootId", &two_id), ("path", "NOTE.md"), ("text", "kept\n")],
+    )
+    .unwrap();
+    let end = |verb: &str, parameters: &[(&str, &str)]| {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let parameters: BTreeMap<String, Value> = parameters
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), Value::string(*value)))
+            .collect();
+        moqui_core::service::sync(&format!("{verb}#moqui.agent.AgentConversation"), &parameters).unwrap();
+        assert!(
+            context.message().errors().is_empty(),
+            "{:?}",
+            context.message().errors()
+        );
+    };
+    let waited = |done: &dyn Fn() -> bool| {
+        let started = std::time::Instant::now();
+        while !done() && started.elapsed() < std::time::Duration::from_secs(10) {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        done()
+    };
+    end("update", &[("conversationId", "CONV1"), ("statusId", "AgcArchived")]);
+    assert!(
+        waited(&|| !Path::new(&one_dir).exists()),
+        "the archived session's clean worktree is removed"
+    );
+    assert_eq!(git(&site, &["branch", "--list", "agent/conv1"]), "agent/conv1");
+    end("delete", &[("conversationId", "CONV2")]);
+    let told = || {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        factory
+            .entity()
+            .unwrap()
+            .find("moqui.security.user.NotificationMessage")
+            .unwrap()
+            .eq("topic", Value::string("DevAideWorktreeKept"))
+            .count()
+            .unwrap()
+    };
+    assert!(
+        waited(&|| told() == 1),
+        "the deleted session's user is told its worktree is kept"
+    );
+    assert!(
+        Path::new(&two_dir).join("NOTE.md").is_file(),
+        "the worktree with changes is kept"
+    );
+    // told once: the conversation's end heard again changes nothing
+    call(
+        &factory,
+        "john.doe",
+        &format!("{WT}end#ConversationWorktrees"),
+        &[("conversationId", "CONV2")],
+    )
+    .unwrap();
+    assert_eq!(told(), 1);
+    // the kept worktree goes as any other, its changes discarded
+    call(
+        &factory,
+        "john.doe",
+        &format!("{WT}remove#Worktree"),
+        &[("rootId", &two_id), ("discardChanges", "true")],
+    )
+    .unwrap();
+
+    // a session whose run is still at work keeps its worktree until the run ends; a session restored clears its notice,
+    // so a later end tells again
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let mut row = facade.make_value("moqui.agent.AgentConversation").unwrap();
+        row.set("conversationId", Value::string("CONV3"));
+        row.set("userId", Value::string("EX_JOHN_DOE"));
+        row.set("statusId", Value::string("AgcActive"));
+        row.create(&facade).unwrap();
+        let mut run = facade.make_value("moqui.agent.AgentRun").unwrap();
+        run.set("runId", Value::string("RUN3"));
+        run.set("conversationId", Value::string("CONV3"));
+        run.set("userId", Value::string("EX_JOHN_DOE"));
+        run.set("statusId", Value::string("AgrWorking"));
+        run.create(&facade).unwrap();
+    }
+    let three = call(
+        &factory,
+        "john.doe",
+        &format!("{WT}create#Worktree"),
+        &[("rootId", "my-site"), ("conversationId", "CONV3")],
+    )
+    .unwrap();
+    let (three_id, three_dir) = (text(&three, "rootId"), text(&three, "location"));
+    call(
+        &factory,
+        "john.doe",
+        "org.moqui.devaide.WorkspaceServices.save#File",
+        &[("rootId", &three_id), ("path", "NOTE.md"), ("text", "three\n")],
+    )
+    .unwrap();
+    end("update", &[("conversationId", "CONV3"), ("statusId", "AgcArchived")]);
+    let waiting = call(
+        &factory,
+        "john.doe",
+        &format!("{WT}end#ConversationWorktrees"),
+        &[("conversationId", "CONV3")],
+    )
+    .unwrap();
+    assert_eq!(waiting.get("waitingForRun"), Some(&Value::Bool(true)), "{waiting:?}");
+    assert!(
+        Path::new(&three_dir).join("NOTE.md").is_file() && told() == 1,
+        "kept while its run works"
+    );
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        facade
+            .find("moqui.agent.AgentRun")
+            .unwrap()
+            .eq("runId", Value::string("RUN3"))
+            .update_all([("statusId".to_string(), Value::string("AgrCompleted"))])
+            .unwrap();
+    }
+    // the sweep job ends it once its run has ended
+    let swept = call(&factory, "john.doe", &format!("{WT}sweep#ConversationWorktrees"), &[]).unwrap();
+    assert!(text(&swept, "conversationCount") != "0", "{swept:?}");
+    // the rule's end, if it was heard after the run ended, and the sweep tell its user once between them
+    assert!(
+        waited(&|| told() == 2),
+        "its run ended: kept with its changes, its user told"
+    );
+    let ended_date = || {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        factory
+            .entity()
+            .unwrap()
+            .find("moqui.dev.DevAideRoot")
+            .unwrap()
+            .eq("location", Value::string(&three_dir))
+            .one()
+            .unwrap()
+            .and_then(|row| row.get("worktreeEndedDate").cloned())
+            .is_some_and(|date| !moqui_lib::object::is_empty(&date))
+    };
+    assert!(waited(&ended_date), "marked told");
+    end("update", &[("conversationId", "CONV3"), ("statusId", "AgcActive")]);
+    assert!(waited(&|| !ended_date()), "restored, its notice is cleared");
+    call(
+        &factory,
+        "john.doe",
+        &format!("{WT}remove#Worktree"),
+        &[("rootId", &three_id), ("discardChanges", "true")],
+    )
+    .unwrap();
+
     // P13 Run locally: the jobs of the working tree's ci.xml, a matrix job with its combinations
     std::fs::write(
         site.join("ci.xml"),
@@ -1365,6 +1896,244 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     );
     std::fs::remove_file(site.join("ci.xml")).unwrap();
 
+    // Phase 1, the task panel (21.6): the hosted repository's open issues through the offer's issuesPath, by their
+    // numbers; the tasks of its linked project first; each opening in the app the offer named, at the server
+    const TASKS: &str = "org.moqui.devaide.TaskServices.";
+    let panel = call(
+        &factory,
+        "john.doe",
+        &format!("{TASKS}get#Tasks"),
+        &[("rootId", "my-site")],
+    )
+    .unwrap();
+    let issues = json(&panel, "issues");
+    assert_eq!(issues[0]["key"], "#12", "{panel:?}");
+    assert_eq!(issues[0]["taskId"], "SITEPROJ-5");
+    assert_eq!(issues[0]["url"], format!("{base}/qapps/stub/Task?taskId=SITEPROJ-5"));
+    assert_eq!(json(&panel, "numbered"), true);
+    assert_eq!(json(&panel, "issueProjects")[0]["projectId"], "SITEPROJ");
+    let tasks = json(&panel, "tasks");
+    assert_eq!(tasks[0]["taskId"], "SITEPROJ-2", "linked first: {tasks}");
+    assert_eq!(tasks[1]["taskId"], "OTHER-1");
+    assert_eq!(tasks[0]["url"], format!("{base}/qapps/stub/Task?taskId=SITEPROJ-2"));
+    assert_eq!(json(&panel, "apps")[0]["name"], "server-GROUP", "{panel:?}");
+    // a developer who is no admin reads them with their own connection, through the server's REST for any account
+    let viewer_panel = call(
+        &factory,
+        "dev.viewer",
+        &format!("{TASKS}get#Tasks"),
+        &[("rootId", "my-site")],
+    )
+    .unwrap();
+    assert_eq!(json(&viewer_panel, "issues")[0]["key"], "#12", "{viewer_panel:?}");
+    // one issue by its key, through the offer's issuePath: #12 by its number, else by its task's id
+    for key in ["#12", "SITEPROJ-5"] {
+        let one = call(
+            &factory,
+            "dev.viewer",
+            &format!("{HS}get#Issue"),
+            &[("rootId", "my-site"), ("issueId", key)],
+        )
+        .unwrap();
+        assert_eq!(json(&one, "issue")["title"], "Totals are wrong", "{key}: {one:?}");
+        assert_eq!(json(&one, "issue")["number"], 12, "{key}: {one:?}");
+    }
+    // a branch's task key is one short line too
+    let forged_branch = call(
+        &factory,
+        "john.doe",
+        &format!("{TASKS}create#TaskBranch"),
+        &[
+            ("rootId", "my-site"),
+            ("taskId", "SITEPROJ-5\nSigned-off-by: x"),
+            ("title", "x"),
+        ],
+    );
+    assert!(
+        matches!(&forged_branch, Err(err) if err.contains("one short line")),
+        "{forged_branch:?}"
+    );
+    // Branch names a branch for the issue by its id, and its commits close it by its number
+    git(&site, &["switch", "-q", "main"]);
+    let branched = call(
+        &factory,
+        "john.doe",
+        &format!("{TASKS}create#TaskBranch"),
+        &[
+            ("rootId", "my-site"),
+            ("taskId", "SITEPROJ-5"),
+            ("title", "Totals are wrong"),
+            ("trailer", "#12"),
+        ],
+    )
+    .unwrap();
+    assert_eq!(text(&branched, "branch"), "SITEPROJ-5-totals-are-wrong");
+    std::fs::write(site.join("TOTALS.md"), "Right\n").unwrap();
+    git(&site, &["add", "TOTALS.md"]);
+    call(
+        &factory,
+        "john.doe",
+        &format!("{VCS}commit#Changes"),
+        &[("rootId", "my-site"), ("summary", "Fix the totals")],
+    )
+    .unwrap();
+    let message = git(&site, &["log", "-1", "--format=%B"]);
+    assert!(message.ends_with("Fixes #12"), "{message}");
+    // a task key of more than one line would add trailers of its own (a forged sign-off): refused, nothing committed
+    let head = git(&site, &["rev-parse", "HEAD"]);
+    std::fs::write(site.join("TOTALS.md"), "Righter\n").unwrap();
+    git(&site, &["add", "TOTALS.md"]);
+    let forged = call(
+        &factory,
+        "john.doe",
+        &format!("{VCS}commit#Changes"),
+        &[
+            ("rootId", "my-site"),
+            ("summary", "Forged"),
+            ("task", "SITEPROJ-5\nSigned-off-by: Someone x@example.com"),
+        ],
+    );
+    assert!(
+        matches!(&forged, Err(err) if err.contains("one short line")),
+        "{forged:?}"
+    );
+    assert_eq!(git(&site, &["rev-parse", "HEAD"]), head);
+    git(&site, &["reset", "-q", "--hard", "HEAD"]);
+    // Quick create files the issue in the repository's tracker, as the user
+    let filed = call(
+        &factory,
+        "john.doe",
+        &format!("{HS}create#RootIssue"),
+        &[
+            ("rootId", "my-site"),
+            ("title", "Filed from the IDE"),
+            ("projectId", "SITEPROJ"),
+        ],
+    )
+    .unwrap();
+    assert_eq!(json(&filed, "issue")["key"], "#13", "{filed:?}");
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let note = facade
+            .find("reviewstub.ReviewNote")
+            .unwrap()
+            .eq("noteId", Value::string("ISSUE-13"))
+            .one()
+            .unwrap()
+            .expect("the issue reached the server");
+        assert_eq!(
+            note.get("body").map(to_plain_string).as_deref(),
+            Some("Filed from the IDE")
+        );
+        assert_eq!(
+            note.get("path").map(to_plain_string).as_deref(),
+            Some("issue:my-site:SITEPROJ")
+        );
+    }
+
+    // Phase 1, a merge request from a fork (21.4): a branch pushed to the fork's remote opens it from the fork, which
+    // the server resolves from the remote's URL; the fork is made as an application makes one (fork#GitRepository
+    // leaves who may fork to it), with authorization off
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        let _authz = context.disable_authz();
+        let parameters: BTreeMap<String, Value> = [("sourceRepositoryId", "my-site"), ("repositoryId", "my-site-john")]
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), Value::string(*value)))
+            .collect();
+        moqui_core::service::sync("org.moqui.git.GitServices.fork#GitRepository", &parameters).unwrap();
+        assert!(
+            context.message().errors().is_empty(),
+            "{:?}",
+            context.message().errors()
+        );
+    }
+    let fork_with_key = format!(
+        "http://john.doe:{john_key}@127.0.0.1:{}/git/my-site-john.git",
+        address.port()
+    );
+    git(
+        &site,
+        &["remote", "add", "fork", &format!("{base}/git/my-site-john.git")],
+    );
+    git(&site, &["switch", "-q", "-c", "fork-change", "main"]);
+    std::fs::write(site.join("FORK.md"), "From the fork\n").unwrap();
+    git(&site, &["add", "FORK.md"]);
+    git(&site, &["commit", "-q", "-m", "From the fork"]);
+    git(&site, &["push", "-q", &fork_with_key, "fork-change"]);
+    git(
+        &site,
+        &[
+            "fetch",
+            "-q",
+            &fork_with_key,
+            "fork-change:refs/remotes/fork/fork-change",
+        ],
+    );
+    git(
+        &site,
+        &["branch", "-q", "--set-upstream-to=fork/fork-change", "fork-change"],
+    );
+    let from_fork = call(
+        &factory,
+        "john.doe",
+        &format!("{HS}open#MergeRequest"),
+        &[
+            ("rootId", "my-site"),
+            ("sourceBranch", "fork-change"),
+            ("title", "From the fork"),
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        json(&from_fork, "mergeRequest")["sourceRepositoryId"],
+        "my-site-john",
+        "{from_fork:?}"
+    );
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let row = facade
+            .find("moqui.resource.GitMergeRequest")
+            .unwrap()
+            .eq("repositoryId", Value::string("my-site"))
+            .eq("title", Value::string("From the fork"))
+            .one()
+            .unwrap()
+            .expect("the merge request is the target's");
+        assert_eq!(
+            row.get("sourceRepositoryId").map(to_plain_string).as_deref(),
+            Some("my-site-john")
+        );
+    }
+    // a remote the server has no repository at is refused, not opened from the wrong place
+    git(
+        &site,
+        &["remote", "add", "elsewhere", "https://elsewhere.example.com/x.git"],
+    );
+    let elsewhere = call(
+        &factory,
+        "john.doe",
+        &format!("{HS}open#MergeRequest"),
+        &[
+            ("rootId", "my-site"),
+            ("sourceBranch", "fork-change"),
+            ("sourceRemote", "elsewhere"),
+            ("title", "Elsewhere"),
+        ],
+    );
+    assert!(
+        matches!(&elsewhere, Err(err) if err.contains("which is not on")),
+        "{elsewhere:?}"
+    );
+
     // Remove takes back what Connect set
     let removed = call(
         &factory,
@@ -1377,6 +2146,11 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     assert!(
         removed.as_array().unwrap().iter().any(|part| part == "the task source"),
         "{removed}"
+    );
+    // the server's app goes with its task source: the one chosen before Connect is back
+    assert_eq!(
+        preference(&factory, "john.doe", "DEV_AIDE_TASK_APP").as_deref(),
+        Some("marble")
     );
     let myaddons = std::fs::read_to_string(gate.runtime.join("myaddons.xml")).unwrap();
     assert!(!myaddons.contains("repository name=\"team\""), "{myaddons}");
@@ -1402,7 +2176,11 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     let _entered = context.enter();
     assert!(moqui_core::user::login_user_key_for(&gateway_key, "gateway").is_err());
     assert!(
-        moqui_core::user::login_user_key(&app_key).is_err(),
-        "the sign-in's key is ended"
+        moqui_core::user::login_user_key_for(&app_key, "git").is_err(),
+        "the sign-in's git key is ended"
+    );
+    assert!(
+        moqui_core::user::login_user_key_for(&tasks_key, "tasks").is_err(),
+        "the tasks key is ended"
     );
 }

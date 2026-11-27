@@ -175,6 +175,10 @@ window.phone = {
     },
     // the home at 390 x 844: the list from edge to edge and down to the bottom, Start chat over it, then the picker over all
     async home() {
+        // Quasar measures the shell after the first room rows mount.
+        await until(() => rect(home()).width === window.innerWidth, "the home to fill the phone");
+        const viewport = { width: window.innerWidth, height: window.innerHeight, layoutWidth: document.documentElement.clientWidth,
+            pageHeight: document.documentElement.scrollHeight };
         const list = rect(home());
         const fab = rect(document.querySelector(".m-chat-start"));
         const row = rect(roomRow("R1"));
@@ -184,8 +188,7 @@ window.phone = {
         const numbersAsked = await until(() => requested.includes("/apps/BasicComms/Chat/textNumbers"), "the numbers asked");
         const closed = moqui.back.pop();
         await gone(document.querySelector(".m-chat-new"), "the picker to close on Back");
-        return { viewport: { width: window.innerWidth, height: window.innerHeight, layoutWidth: document.documentElement.clientWidth,
-            pageHeight: document.documentElement.scrollHeight }, list, fab, row, search, picker, pickerBack: !!pickerBack, numbersAsked, closed };
+        return { viewport, list, fab, row, search, picker, pickerBack: !!pickerBack, numbersAsked, closed };
     },
     // one person: their direct room (the one there is)
     async direct() {

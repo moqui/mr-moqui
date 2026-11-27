@@ -1808,6 +1808,7 @@ fn session_limit() -> Duration {
 /// Why a session did not send: the server's answer, or a session that did not end in time or stopped.
 enum SessionError {
     Smtp(lettre::transport::smtp::Error),
+    Deadline,
     Stopped(Error),
 }
 
@@ -1815,8 +1816,27 @@ impl From<SessionError> for Error {
     fn from(err: SessionError) -> Self {
         match err {
             SessionError::Smtp(err) => Error::new(err.to_string()).with_source(err),
+            SessionError::Deadline => Error::new(format!(
+                "The SMTP session did not end within {} seconds; the message may have been sent",
+                session_limit().as_secs()
+            )),
             SessionError::Stopped(err) => err,
         }
+    }
+}
+
+/// Lettre may see EOF from the relay's deadline before the caller's own wait times out.
+/// A positive or negative SMTP reply already received still decides the outcome.
+fn send_via_relay(
+    transport: &lettre::SmtpTransport,
+    relay: &crate::relay::Relay,
+    payload: &Payload,
+) -> Result<(), SessionError> {
+    match payload.send(transport) {
+        Err(err) if relay.deadline_reached() && err.status().is_none() && !not_reached(&err) => {
+            Err(SessionError::Deadline)
+        }
+        sent => sent.map_err(SessionError::Smtp),
     }
 }
 
@@ -1834,18 +1854,15 @@ fn send_within(
     std::thread::Builder::new()
         .name("smtp-session".to_string())
         .spawn(move || {
-            let _ = done.send(payload.send(&transport));
+            let _ = done.send(send_via_relay(&transport, &relay, &payload));
             // the session's end shuts the relay, which ends its thread
             drop(relay);
         })
         .map_err(|err| SessionError::Stopped(Error::new(format!("could not start the SMTP session: {err}"))))?;
     let wait = deadline.saturating_duration_since(std::time::Instant::now());
     match result.recv_timeout(wait) {
-        Ok(sent) => sent.map_err(SessionError::Smtp),
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(SessionError::Stopped(Error::new(format!(
-            "The SMTP session did not end within {} seconds; the message may have been sent",
-            session_limit().as_secs()
-        )))),
+        Ok(sent) => sent,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(SessionError::Deadline),
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(SessionError::Stopped(Error::new(
             "The SMTP session stopped before its end; the message may have been sent",
         ))),
@@ -2623,12 +2640,25 @@ fn smtp_step(facade: &EntityFacade, server: &EntityValue) -> TestStep {
 /// one of a fixed list of kinds, so the test does not map the network or read another service's banner (SEC-MAIL-02).
 /// The whole text goes to the log.
 pub(super) fn test_failure(step: &str, place: &str, text: &str, own: &[String]) -> String {
+    shown_failure(step, place, text, own, test_failure_kind(text))
+}
+
+/// [`test_failure`] for a step whose sign-in the server refused (`SyncFailure::Auth`): that kind whatever words its
+/// text holds, so a refused password is never shown as a refused connection or a TLS failure (COM-UI-040).
+#[cfg_attr(not(feature = "imap"), allow(dead_code))]
+pub(super) fn sign_in_failure(step: &str, place: &str, text: &str, own: &[String]) -> String {
+    shown_failure(step, place, text, own, SIGN_IN_REFUSED)
+}
+
+/// The kind a refused sign-in is shown as. basic-comms' `test#MailAccount` matches this phrase for its advice.
+const SIGN_IN_REFUSED: &str = "the sign-in was refused";
+
+fn shown_failure(step: &str, place: &str, text: &str, own: &[String], kind: &str) -> String {
     tracing::info!(step, place, error = text, "email server test step failed");
     // a refusal of this server's own, such as a store with no TLS it will not sign in to, with how to allow it
     if let Some(own) = own.iter().find(|own| text.contains(own.as_str())) {
         return own.clone();
     }
-    let kind = test_failure_kind(text);
     // the server's response code, one of a fixed list, is a word the user can act on; its free text is not shown
     match response_code(text) {
         Some(code) => format!("{kind} ({code})"),
@@ -2667,14 +2697,21 @@ pub(super) fn response_code(text: &str) -> Option<&'static str> {
 }
 
 pub(super) fn test_failure_kind(text: &str) -> &'static str {
-    let lower = text.to_ascii_lowercase();
+    // the words are read without the host names, so a host named ssl.example.com is not a TLS failure (COM-UI-040)
+    let lower = without_host_names(&text.to_ascii_lowercase());
     let has = |words: &[&str]| words.iter().any(|word| lower.contains(word));
     let code = response_code(text);
     if matches!(code, Some("UNAVAILABLE" | "SERVERBUG")) {
         return "the mail server is not available now";
     }
     if matches!(code, Some("AUTHENTICATIONFAILED" | "AUTHORIZATIONFAILED" | "EXPIRED")) {
-        return "the sign-in was refused";
+        return SIGN_IN_REFUSED;
+    }
+    // a refused sign-in says "refused" too (the POP3 and IMAP texts of SyncFailure::Auth), and an SMTP reply code of a
+    // refused sign-in comes with other words: read them before the network words (COM-UI-040). Not 530, which is also
+    // "Must issue a STARTTLS command first", a TLS failure; a 530 that asks for a sign-in is one by its words below.
+    if has(&["refused the sign-in", "authentication failed", "(535)", "(534)"]) {
+        return SIGN_IN_REFUSED;
     }
     if has(&["allowed-hosts"]) {
         "the host is not in email-client allowed-hosts"
@@ -2699,10 +2736,26 @@ pub(super) fn test_failure_kind(text: &str) -> &'static str {
         "454",
         "invalid",
     ]) {
-        "the sign-in was refused"
+        SIGN_IN_REFUSED
     } else {
         "the server did not answer as a mail server"
     }
+}
+
+/// `lower` without the words that are host names (a dot and a letter, such as `ssl.example.com:995`), whose parts would
+/// otherwise read as what went wrong.
+fn without_host_names(lower: &str) -> String {
+    let words: Vec<&str> = lower.split_whitespace().filter(|word| !is_host_name(word)).collect();
+    words.join(" ")
+}
+
+fn is_host_name(word: &str) -> bool {
+    let name = word.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+    name.contains('.')
+        && name.chars().any(|c| c.is_ascii_alphabetic())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':'))
 }
 
 /// The certificates of the PEM file `email-client` `tls-ca-file` names, for a mail server with its own CA. Empty when

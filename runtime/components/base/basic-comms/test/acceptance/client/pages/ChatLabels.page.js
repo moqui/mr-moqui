@@ -69,8 +69,13 @@ const trusts = {
     V1: { verifiedOnly: false, users: [{ userId: "ann", devices: [] }, { userId: "bob", devices: [{ deviceId: "BOB1", displayName: "Bob's phone", verified: true }] }] },
     E1: { verifiedOnly: false, users: [{ userId: "ann", devices: [] }, { userId: "bob", devices: [{ deviceId: "BOB2", displayName: "Bob's laptop", verified: false }] }] }
 };
-moqui.crypto.roomTrust = (roomId) => Promise.resolve(clone(trusts[roomId]));
-moqui.crypto.state.status = "ready";
+moqui.crypto = {
+    state: { status: "ready", verifications: [] },
+    thisDeviceId: () => "ANN1",
+    ensureDevice: () => Promise.resolve({ deviceId: "ANN1" }),
+    setupStatus: () => Promise.resolve({ deviceId: "ANN1", backup: "1", restored: true, verified: true, otherDevices: [] }),
+    roomTrust: (roomId) => Promise.resolve(clone(trusts[roomId]))
+};
 
 // ---- the host ----
 const shellState = window.Vue.reactive({ accounts: [{ id: "a1", username: "ann", server: "https://s.example.com", deviceMode: "personal" }], current: "a1",

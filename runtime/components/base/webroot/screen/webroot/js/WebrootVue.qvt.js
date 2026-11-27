@@ -24,6 +24,69 @@
     Object.keys(moqui.qvtComponents || {}).forEach((name) => component(name, moqui.qvtComponents[name]));
 
     moqui.urlExtensions = { js: "qjs", vue: "qvue", qvt: "qvt" };
+    // What a screen forgets of the user in this browser at a sign-out (the account menu's Logout, logoutClick): functions,
+    // each called once (a promise waited on), added by the screen (Maps › Browse's live location shares this tab sends)
+    moqui.beforeLogoutHooks = moqui.beforeLogoutHooks || new Set();
+
+    // Shell indicators (docs/ui/Qvt-Client.md, Shell indicators): status chips in the app bar on every screen, kept by the
+    // shell, which outlives the screens (live location's "Sharing location", plans/archive/Location-Sharing.md §3.3). set(key, {label, icon,
+    // tone, title, action, sequence}) adds or replaces one (key: letters, digits, _ and -; tone: primary, positive, warning,
+    // negative or info; action: a path of this site the shell goes to, {url}, or a function, {onClick}); remove(key) takes
+    // it off; note(key, text) puts a screen's few words after its label, kept until note(key, null) or clear(); clear()
+    // takes every one off, which a sign-out does (beforeLogoutHooks). Reactive; the label, note and title are plain text, cut
+    // short and shown as text. The indicators the server's shell-indicator providers answer (the apps' and those a
+    // component's conf registers for every user) are the shell's own (loadShellIndicators).
+    const INDICATOR_TONES = ["primary", "positive", "warning", "negative", "info"];
+    const indicatorText = (value, max) => (value === null || value === undefined || typeof value === "object" ? "" : String(value))
+        .replace(/[\u0000-\u001f\u007f-\u009f‪-‮⁦-⁩]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+    const indicatorPath = (url) => (typeof url === "string" && /^\/(?![\/\\])/.test(url) && !/[\u0000-\u001f\s]/.test(url) ? url : null);
+    const indicatorState = root.Vue && root.Vue.reactive ? root.Vue.reactive({ items: {}, notes: {} }) : { items: {}, notes: {} };
+    // noteFrom's words by indicator key and source
+    const indicatorSources = {};
+    moqui.shellIndicators = {
+        state: indicatorState,
+        set(key, given) {
+            const id = /^[A-Za-z0-9_-]{1,60}$/.test(String(key || "")) ? String(key) : null;
+            const value = given && typeof given === "object" ? given : {};
+            const label = indicatorText(value.label, 60);
+            if (!id || !label) return false;
+            const action = value.action;
+            const onClick = typeof action === "function" ? action : action && typeof action.onClick === "function" ? action.onClick : null;
+            const url = onClick ? null : indicatorPath(typeof action === "string" ? action : action && action.url);
+            indicatorState.items[id] = { key: id, label, icon: /^[a-z0-9_]{1,60}$/.test(String(value.icon || "")) ? value.icon : "sym_o_info",
+                tone: INDICATOR_TONES.indexOf(value.tone) >= 0 ? value.tone : "primary", title: indicatorText(value.title, 200), url, onClick,
+                sequence: Number(value.sequence) || 0, source: indicatorText(value.source, 60) };
+            return true;
+        },
+        remove(key) { delete indicatorState.items[key]; },
+        note(key, text) {
+            const words = indicatorText(text, 40);
+            if (words) indicatorState.notes[key] = words; else delete indicatorState.notes[key];
+        },
+        // A note kept by source, for an indicator two screens speak to at once (live location's chip: Maps › Browse and
+        // Chat each send shares, plans/archive/Location-Sharing.md §3.5): each source's words, or null to take its own off; the
+        // note is their distinct words, the first given first, so one screen never clears another's.
+        noteFrom(key, source, text) {
+            const sources = (indicatorSources[key] = indicatorSources[key] || {});
+            const words = indicatorText(text, 40);
+            if (words) sources[String(source)] = words; else delete sources[String(source)];
+            const all = Array.from(new Set(Object.keys(sources).map((name) => sources[name])));
+            this.note(key, all.join(", "));
+        },
+        get(key) { return indicatorState.items[key] || null; },
+        // in sequence then key order, each with its text: its label and its note
+        list() {
+            return Object.keys(indicatorState.items).map((key) => indicatorState.items[key])
+                .sort((a, b) => a.sequence - b.sequence || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+                .map((item) => Object.assign({}, item, { text: item.label + (indicatorState.notes[item.key] ? " · " + indicatorState.notes[item.key] : "") }));
+        },
+        clear() {
+            Object.keys(indicatorState.items).forEach((key) => { delete indicatorState.items[key]; });
+            Object.keys(indicatorState.notes).forEach((key) => { delete indicatorState.notes[key]; });
+            Object.keys(indicatorSources).forEach((key) => { delete indicatorSources[key]; });
+        }
+    };
+    moqui.beforeLogoutHooks.add(() => moqui.shellIndicators.clear());
 
     moqui.getQuasarColor = (bootstrapColor) => {
         // Quasar colors: primary, secondary, accent, dark, positive, negative, info, warning
@@ -683,6 +746,12 @@
     // path the server resolved, which a site route maps from the public one. A script element loads it, as the
     // static-template handler does: a policy without unsafe-eval allows that, and nothing here evaluates text. The promise
     // is the component moqui.bundledComponent makes.
+    moqui.loadClientLibraries = async (ids) => {
+        for (const id of ids) {
+            if (!/^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+$/.test(id)) throw new Error("Invalid client library " + id);
+            await moqui.loadScript("/clientLibrary/" + id, null, () => !!(moqui.libraries && moqui.libraries[id]));
+        }
+    };
     moqui.qvueBundleUrl = (url) => url + (url.indexOf("?") >= 0 ? "&" : "?") + "_qvt=bundle";
     moqui.loadBundledQvue = (url, path) => new Promise((resolve, reject) => {
         const script = root.document.createElement("script");
@@ -690,9 +759,12 @@
         script.src = moqui.qvueBundleUrl(url);
         script.onload = () => {
             script.remove();
-            const comp = moqui.bundledComponent(path);
-            if (comp) resolve(comp);
-            else reject(new Error("The bundled .qvue of " + path + " did not register or did not make"));
+            const entry = moqui.qvtBundled && moqui.qvtBundled[String(path).replace(/\.(qvue|qjs|qvt)$/, "")];
+            moqui.loadClientLibraries(entry && entry.libraries || []).then(() => {
+                const comp = moqui.bundledComponent(path);
+                if (comp) resolve(comp);
+                else reject(new Error("The bundled .qvue of " + path + " did not register or did not make"));
+            }, reject);
         };
         script.onerror = () => { script.remove(); reject(new Error("Could not load the bundled .qvue of " + path)); };
         root.document.head.appendChild(script);
@@ -737,6 +809,14 @@
         // A server-static template is cached as the means to make a component, since each use fetches its own data.
         const give = (comp) => callback(comp && comp.mqStatic ? comp.mqStatic(use) : comp);
         // a screen the client has bundled is not fetched
+        const failed = err => {
+            console.error(err); moqui.notifyMessages(null, err.message); callback(null);
+        };
+        const entry = moqui.qvtBundled && moqui.qvtBundled[String(path).replace(/\.(qvue|qjs|qvt)$/, "")];
+        if (entry && entry.libraries && entry.libraries.length) {
+            moqui.loadClientLibraries(entry.libraries).then(() => give(moqui.bundledComponent(path)), failed);
+            return { abort() {} };
+        }
         const bundled = moqui.bundledComponent(path);
         if (bundled) {
             give(bundled);
@@ -767,10 +847,7 @@
         const runtimeBuild = moqui.config && moqui.config.qvt && moqui.config.qvt.build === "runtime";
         const handles = (runtimeBuild && moqui.config.qvt.handles) || [];
         const loadBundled = (qvueUrl) => {
-            moqui.loadBundledQvue(qvueUrl, path).then(give, (err) => {
-                console.error(err);
-                callback(null);
-            });
+            moqui.loadBundledQvue(qvueUrl, path).then(give, failed);
         };
         if (runtimeBuild && kind === vueExt && handles.indexOf("bundled-qvue") >= 0) {
             loadBundled(url);
@@ -795,13 +872,19 @@
             if (cacheable) moqui.componentCache.put(path, comp);
             give(comp);
         };
-        moqui.request(url, options).then((result) => {
+        moqui.request(url, options).then(async (result) => {
             if (result.status === 205) {
                 rootVm().setUrl(result.headers.get("X-Redirect-To"));
                 return;
             }
             const text = result.text;
             if (!text) { callback(moqui.NotFound); return; }
+            const libraries = result.headers.get("X-Moqui-Libraries");
+            if (libraries) {
+                try { await moqui.loadClientLibraries(libraries.split(",")); }
+                catch (err) { failed(err); return; }
+                if (controller.signal.aborted) return;
+            }
             const cacheControl = result.headers.get("Cache-Control") || "";
             const cacheable = cacheControl.indexOf("max-age") >= 0;
             // the mode the server chose for a .qvt request that named the client modes
@@ -1674,12 +1757,31 @@
         template: '<div class="q-pa-xs" :style="bodyStyle"><slot></slot></div>'
     });
 
+    // A page's dialog. While Assist is open beside it (moqui.assist.beside(), issue 206) the focus may go out to Assist and back,
+    // and docked the dialog and its backdrop leave the drawer's strip, so Assist's approvals and composer stay usable; floated,
+    // the float layer goes over the dialog (WebrootFloats.js overModal). The keyboard shortcuts dialog is Assist's to ignore.
     component("m-dialog", {
         name: "mDialog",
         props: { draggable: { type: Boolean, default: true }, modelValue: { type: Boolean, default: false }, id: String, color: String, width: String, title: String },
         emits: ["update:modelValue", "onShow", "onHide"],
+        data() { return { counted: false }; },
+        computed: {
+            assistBeside() { return this.id !== "m-keys-help" && moqui.assist && moqui.assist.beside ? moqui.assist.beside() : null; },
+            // on the q-dialog's root (QDialog spreads its attrs after its own aria-modal)
+            besideAttrs() {
+                if (!this.assistBeside) return {};
+                const attrs = { "aria-modal": "false" };
+                if (this.assistBeside === "drawer") {
+                    attrs.class = "m-dialog--beside-assist";
+                    attrs.style = { "--m-assist-beside": ((moqui.assist.state && moqui.assist.state.width) || 420) + "px" };
+                }
+                return attrs;
+            }
+        },
+        beforeUnmount() { this.count(false); },
         template:
-            '<q-dialog :model-value="modelValue" @update:model-value="$emit(\'update:modelValue\', $event)" :id="id" @show="onShow" @hide="onHide" :maximized="$q.screen.lt.sm">' +
+            '<q-dialog :model-value="modelValue" @update:model-value="$emit(\'update:modelValue\', $event)" :id="id" @show="onShow" @hide="onHide" :maximized="$q.screen.lt.sm"' +
+                ' :allow-focus-outside="!!assistBeside" v-bind="besideAttrs">' +
                 '<q-card ref="dialogCard" flat bordered :style="{width:((width||760)+\'px\'),\'max-width\':($q.screen.lt.sm?\'100vw\':\'90vw\')}">' +
                     '<q-card-section ref="dialogHeader" class="row items-center no-wrap q-py-xs q-pr-xs non-selectable" :style="{cursor:(draggable?\'move\':\'default\')}">' +
                         '<div class="text-subtitle1 text-weight-medium ellipsis">{{title}}</div><q-space></q-space>' +
@@ -1690,7 +1792,14 @@
             '</q-dialog>',
         methods: {
             t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
+            // one of the page's modal dialogs for Assist (moqui.assist.pageModal), once while shown
+            count(open) {
+                if (open === this.counted || this.id === "m-keys-help") return;
+                this.counted = open;
+                if (moqui.assist && moqui.assist.pageModal) moqui.assist.pageModal(open);
+            },
             onShow() {
+                this.count(true);
                 const header = this.dragHeader();
                 if (header) {
                     header.addEventListener("pointerdown", this.onGrab);
@@ -1700,6 +1809,7 @@
                 this.$emit("onShow");
             },
             onHide() {
+                this.count(false);
                 const header = this.dragHeader();
                 if (header) {
                     header.removeEventListener("pointerdown", this.onGrab);
@@ -1720,9 +1830,11 @@
                 const left = parseInt(styles.left, 10) || 0;
                 const top = parseInt(styles.top, 10) || 0;
                 const startX = event.clientX, startY = event.clientY;
+                // within the dialog's area: the window, less the Assist drawer's strip beside it
+                const area = target.parentElement && target.parentElement.clientWidth ? target.parentElement : null;
                 const place = (newLeft, newTop) => {
-                    const halfW = root.innerWidth / 2 - target.offsetWidth / 2 - 10;
-                    const halfH = root.innerHeight / 2 - target.offsetHeight / 2 - 10;
+                    const halfW = (area ? area.clientWidth : root.innerWidth) / 2 - target.offsetWidth / 2 - 10;
+                    const halfH = (area ? area.clientHeight : root.innerHeight) / 2 - target.offsetHeight / 2 - 10;
                     target.style.left = Math.max(-halfW, Math.min(halfW, newLeft)) + "px";
                     target.style.top = Math.max(-halfH, Math.min(halfH, newTop)) + "px";
                 };
@@ -2436,7 +2548,7 @@
     component("m-form-link", {
         name: "mFormLink",
         props: { disable: Boolean, fieldsInitial: Object, action: { type: String, required: true }, focusField: String, noValidate: Boolean, bodyParameterNames: Array },
-        data() { return { fields: Object.assign({}, this.fieldsInitial), fieldsOriginal: Object.assign({}, this.fieldsInitial) }; },
+        data() { return { fields: Object.assign({}, this.fieldsInitial), fieldsOriginal: Object.assign({}, this.fieldsInitial), buttonClicked: null }; },
         provide() { return { mForm: this }; },
         template:
             '<q-form ref="qForm" @submit.prevent="submitForm" @reset.prevent="resetForm" autocapitalize="off" autocomplete="off">' +
@@ -2451,7 +2563,8 @@
             submitGo() {
                 if (this.disable) return;
                 const formEl = this.$refs.qForm.$el;
-                const button = submitButton(formEl, null);
+                // a pressed QBtn moves the focus to its inner helper, so the button comes from the click, as in m-form
+                const button = submitButton(formEl, this.buttonClicked);
                 let btnName = null;
                 let btnValue = null;
                 if (button) {
@@ -2498,6 +2611,10 @@
                 const target = this.$refs.qForm.$el.querySelector('[name="' + this.focusField + '"]');
                 if (target) { target.classList.add("default-focus"); target.focus(); }
             }
+            this.$refs.qForm.$el.addEventListener("click", (event) => {
+                const button = event.target.closest && event.target.closest('button[type="submit"], input[type="submit"], input[type="image"]');
+                if (button) this.buttonClicked = button;
+            });
             moqui.registerScreenForm(this);
         },
         beforeUnmount() { moqui.unregisterScreenForm(this); }
@@ -4302,9 +4419,11 @@
     // makes the document a shared Yjs one: no content of its own, no model, no plain-text toggle, and a failure emits
     // failed (for m-coedit's host to show its own field) instead of the html editor.
     let richTextCount = 0;
-    // one load of the library for the page; a failure clears it so the next try starts again
+    // one load of the library for the page; a failure clears it so the next try starts again. Yjs (libs/yjs, the global Yjs)
+    // first: the Tiptap bundle reads Y and the awareness protocol from it, so a page has one copy of Yjs
     let tiptapLoad = null;
-    const loadTiptap = () => tiptapLoad || (tiptapLoad = moqui.loadScript("/libs/tiptap/tiptap.min.js", null, () => !!root.Tiptap)
+    const loadTiptap = () => tiptapLoad || (tiptapLoad = (root.Yjs ? Promise.resolve() : moqui.loadScript("/libs/yjs/yjs.min.js", null, () => !!root.Yjs))
+        .then(() => (root.Tiptap ? null : moqui.loadScript("/libs/tiptap/tiptap.min.js", null, () => !!root.Tiptap)))
         .catch((error) => { tiptapLoad = null; throw error; }));
     // editors whose load or start failed, so a later success (or Try the editor again) can start them
     const failedRichTexts = [];
@@ -4849,6 +4968,62 @@
             for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
             return bytes;
         },
+        // Another editor's awareness user as an editor may show it, a new object of these fields only (nothing of the
+        // peer's object is copied, not its prototype from a JSON __proto__ key): the name of its peer frame (the server's,
+        // not its own claim; "" until the peer is known), and its color and colorLight when they are its own #rrggbb or
+        // #rrggbbaa, else the color of its user id (and no colorLight).
+        cleanUser(user, peer, id) {
+            const own = (name) => (user && typeof user === "object" && Object.prototype.hasOwnProperty.call(user, name) ? user[name] : undefined);
+            const valid = (value) => typeof value === "string" && moqui.coedit.COLOR.test(value);
+            const out = { name: peer ? String(peer.name || peer.userId || "") : "",
+                color: valid(own("color")) ? own("color") : moqui.coedit.userColor(peer ? peer.userId || peer.name : id) };
+            if (valid(own("colorLight"))) out.colorLight = own("colorLight");
+            return out;
+        },
+        // An awareness update (y-protocols: a count, then per client its id, clock and state JSON, as lib0 varUints and
+        // varStrings) with only the entries of client `allowed`: a peer's frame changes its own state, never another's.
+        // null when it holds none of them, or does not read as an update.
+        ownAwareness(bytes, allowed) {
+            let at = 0;
+            const uint = () => {
+                let value = 0, shift = 0;
+                for (;;) {
+                    if (at >= bytes.length || shift > 49) throw new Error("not an awareness update");
+                    const byte = bytes[at++];
+                    value += (byte & 0x7f) * Math.pow(2, shift);
+                    shift += 7;
+                    if (byte < 0x80) return value;
+                }
+            };
+            const put = (out, value) => {
+                while (value >= 0x80) { out.push((value % 0x80) | 0x80); value = Math.floor(value / 0x80); }
+                out.push(value);
+            };
+            try {
+                const count = uint();
+                const kept = [];
+                for (let i = 0; i < count; i++) {
+                    const id = uint(), clock = uint(), length = uint();
+                    if (at + length > bytes.length) throw new Error("not an awareness update");
+                    const state = bytes.subarray(at, at + length);
+                    at += length;
+                    if (allowed !== null && allowed !== undefined && id === allowed) kept.push([id, clock, state]);
+                }
+                if (!kept.length) return null;
+                const out = [];
+                put(out, kept.length);
+                for (const [id, clock, state] of kept) {
+                    put(out, id);
+                    put(out, clock);
+                    put(out, state.length);
+                    for (const byte of state) out.push(byte);
+                }
+                return new Uint8Array(out);
+            } catch (err) {
+                return null;
+            }
+        },
+        COLOR: /^#[0-9a-f]{6}([0-9a-f]{2})?$/i,
         // a color for a user id (or a name), the same each time; #rrggbb, the only form the caret extension takes
         userColor(id) {
             let hash = 0;
@@ -4858,8 +5033,13 @@
     };
 
     // One editor's side of a shared document. options: client (a moqui.NotificationClient: send, registerListener, onState,
-    // isOpen), docKey, doc (a Y.Doc), awareness (an Awareness of it), lib (the Tiptap global: Y and the awareness functions),
-    // onStatus({state, peers, pending}), onAccess(canEdit), onSaved(message), onFallback({reason, code, message}), batchMs
+    // isOpen), docKey, doc (a Y.Doc), awareness (an Awareness of it), lib (the Yjs global, or Tiptap's, which re-exports it:
+    // Y and the awareness functions),
+    // onStatus({state, peers, pending}), onAccess(canEdit, message), onSaved(message), onFallback({reason, code, message,
+    // joined}), rejoin (false, for a document the server seeds again when its room closes, such as a Dev AIDE file: a
+    // join answered with another room seed than the first, `seed` of the joined frame, falls back (410) instead of
+    // merging this doc into it, for the owner to start a new doc; an error that keeps the room joins again as always),
+    // batchMs. joinedInfo is the last join's {seed, hash} (a file's room: the hash of the file it was seeded from).
     // (50: local updates in that time go as one message), joinTimeoutMs (20 s: a join no one answers on an open socket is a
     // fallback). A remote update is applied with the provider as its origin, so it is not sent back. Each open of the socket
     // joins again with the state vector, so what was edited offline merges; an update sent and not acknowledged before a
@@ -4893,6 +5073,14 @@
                 if (!this.batchTimer) this.batchTimer = setTimeout(() => this.flush(), this.batchMs);
                 this.tell();
             };
+            // the others' states as received, before an editor reads them: each one's name is the server's (its peer
+            // frame), its colors only #rrggbb or #rrggbbaa, so a caret's style takes nothing else (registered here, ahead
+            // of the editor's own listener)
+            this.onAwarenessChange = (changes, origin) => {
+                if (origin !== this || this.destroyed) return;
+                this.cleanStates([].concat(changes.added, changes.updated));
+            };
+            this.awareness.on("change", this.onAwarenessChange);
             // the local state changed (a caret, the user; the Awareness renews it every 15 s): sent once per batch
             this.onAwarenessUpdate = (changes, origin) => {
                 if (origin === this || this.destroyed) return;
@@ -4910,6 +5098,15 @@
             else this.tell();
         }
         send(message) { this.client.send(Object.assign({ doc: this.docKey, client: this.clientId }, message)); }
+        cleanStates(ids) {
+            const states = this.awareness.getStates();
+            for (const id of ids) {
+                if (id === this.awareness.clientID) continue;
+                const state = states.get(id);
+                if (!state || typeof state !== "object") continue;
+                state.user = moqui.coedit.cleanUser(state.user, this.peers.find((peer) => peer.awareness === id), id);
+            }
+        }
         join() {
             if (this.destroyed || this.failed) return;
             this.joined = false;
@@ -4979,18 +5176,33 @@
                 this.tell();
             } else if (message.type === "awareness") {
                 if (own || !message.update) return;
+                // only the sender's own entry: the awareness id its peer frame names (none before it is known)
+                const sender = this.peers.find((peer) => peer.client === message.client);
+                const update = moqui.coedit.ownAwareness(moqui.coedit.fromBase64(message.update), sender ? sender.awareness : null);
+                if (!update) return;
                 try {
-                    this.lib.applyAwarenessUpdate(this.awareness, moqui.coedit.fromBase64(message.update), this);
+                    this.lib.applyAwarenessUpdate(this.awareness, update, this);
                 } catch (err) {
                     console.error("m-coedit: an awareness update of " + this.docKey + " did not apply: " + err);
                 }
             } else if (message.type === "peer") { if (!own) this.onPeer(message); }
             else if (message.type === "saved") { if (this.options.onSaved) this.options.onSaved(message); }
-            else if (message.type === "error") { if (own) this.onError(message); }
+            else if (message.type === "error") { if (own) this.onError({...message, message: moqui.l10n?.localize(message.message) || message.message}); }
         }
         // the server's diff against our state vector, then ours against its, when it holds anything (an empty update is 2 bytes)
         onJoined(message) {
             clearTimeout(this.joinTimer);
+            // rejoin false: a room seeded again (another seed than the first join's) is never merged with this doc, which
+            // holds the old one's text; the owner starts a new doc
+            if (this.options.rejoin === false && message.seed) {
+                if (this.seed && message.seed !== this.seed) {
+                    this.joinedOnce = true;
+                    this.fail("server", 410, "the room was seeded again");
+                    return;
+                }
+                this.seed = message.seed;
+            }
+            this.joinedInfo = { seed: message.seed || null, hash: message.hash || null };
             this.joined = true;
             this.joinedOnce = true;
             this.canEdit = message.canEdit !== false;
@@ -5008,7 +5220,14 @@
         onPeer(message) {
             const peer = peerOf(message);
             this.peers = this.peers.filter((other) => other.client !== peer.client);
-            if (message.joined !== false) this.peers.push(peer);
+            if (message.joined !== false) {
+                this.peers.push(peer);
+                // a state that came before its peer frame takes the peer's name now, and the editors draw it again
+                if (peer.awareness !== null && this.awareness.getStates().has(peer.awareness)) {
+                    this.cleanStates([peer.awareness]);
+                    this.awareness.emit("change", [{ added: [], updated: [peer.awareness], removed: [] }, this]);
+                }
+            }
             else if (peer.awareness !== null) this.lib.removeAwarenessStates(this.awareness, [peer.awareness], this);
             this.tell();
         }
@@ -5021,7 +5240,7 @@
                 this.canEdit = false;
                 this.unacked.clear();
                 this.dropQueue();
-                if (this.options.onAccess) this.options.onAccess(false);
+                if (this.options.onAccess) this.options.onAccess(false, message.message);
                 this.tell();
                 return;
             }
@@ -5037,7 +5256,7 @@
             this.dropQueue();
             if (this.client.isOpen()) this.send({ collab: "leave" });
             this.tell();
-            if (this.options.onFallback) this.options.onFallback({ reason, code: code || null, message: text || "" });
+            if (this.options.onFallback) this.options.onFallback({ reason, code: code || null, message: text || "", joined: this.joinedOnce });
         }
         status() {
             let state;
@@ -5067,10 +5286,12 @@
             if (this.stateOff) this.stateOff();
             this.doc.off("update", this.onDocUpdate);
             this.awareness.off("update", this.onAwarenessUpdate);
+            this.awareness.off("change", this.onAwarenessChange);
         }
     }
     const peerOf = (message) => ({ client: message.client, userId: message.userId || "", name: message.name || message.userId || "",
-        awareness: message.awareness === undefined || message.awareness === null ? null : Number(message.awareness) });
+        awareness: message.awareness === undefined || message.awareness === null ? null : Number(message.awareness),
+        legId: message.legId || null });
     moqui.coedit.Provider = CoeditProvider;
 
     if (root.Vue && root.Vue.defineAsyncComponent) {
@@ -8066,6 +8287,74 @@
         }
     });
 
+    // m-map (plans/archive/Maps.md §3.2), the map-view element: js/WebrootMap.js, the vendored OpenLayers bundle (an ES module with
+    // shared chunks, imported and set as the global MoquiOl; its raster and projection part is imported by m-map-view only
+    // for a map that needs it) and its style sheet, loaded once when the first map mounts, then m-map-view of that file drawn
+    // by its definition (as m-diagram-zoom draws m-pan-zoom). The bundle failing is passed on as library-error, so m-map-view lists the places in its place; until the file
+    // has loaded, and when it cannot, the places are listed here, so a record's actions stay usable. config is the map's
+    // configuration (an object or its JSON; the shape is in js/WebrootMap.js), config-url a transition answering the effective
+    // one (or, in the apps' shell, an offline package's manifest: package mode, js/WebrootMap.js). Emits pick ({lon, lat}),
+    // select, view-change and edit-change; a live-change listener (the live layer's shares, plans/archive/Location-Sharing.md §3.3)
+    // is passed on to m-map-view with the other attributes it does not declare, and m-map-view emits it.
+    // editCommand(name, value) is m-map-view's (the editing of an overlay, js/WebrootMap.js), answering null until the map
+    // has loaded, and showPlace(place) marks a place found.
+    let mapLoad = null;
+    // The bundle is imported by js/WebrootMap.js's map.loadOpenLayers (its entries by the hashed names ol-map.json gives); a
+    // library that did not load is not kept, so the next map tries again.
+    const loadMap = () => mapLoad || (mapLoad = (moqui.loadStylesheet("/libs/openlayers/ol.css"),
+        moqui.loadScript("/js/WebrootMap.js", null, () => !!(moqui.map && moqui.map.components)))
+        .then(() => moqui.map.loadOpenLayers().then(() => "", (err) => String(err && err.message || err || "OpenLayers did not load")))
+        .then((libraryError) => { if (libraryError) mapLoad = null; return libraryError; }, (err) => { mapLoad = null; throw err; }));
+    component("m-map", {
+        name: "mMap",
+        props: { id: String, config: [Object, String], configUrl: String, height: String, pick: Boolean },
+        emits: ["pick", "select", "view-change", "edit-change"],
+        data() { return { view: null, libraryError: "", failed: "" }; },
+        methods: {
+            editCommand(name, value) { return this.$refs.view && this.$refs.view.editCommand ? this.$refs.view.editCommand(name, value) : null; },
+            // a place a page found (the offline Maps screen's search, plans/archive/Maps-Offline.md §2.5) marked and shown
+            showPlace(place) { if (this.$refs.view && this.$refs.view.showPlace) this.$refs.view.showPlace(place); }
+        },
+        computed: {
+            // the places given, for the list shown while the map loads or when it cannot
+            places() {
+                let config = this.config;
+                if (typeof config === "string") { try { config = JSON.parse(config); } catch (err) { config = null; } }
+                const points = config && Array.isArray(config.points) ? config.points : [];
+                // a number, or NaN for nothing (Number(null) would be 0, a real coordinate)
+                const num = (value) => (value === null || value === undefined || String(value).trim() === "" ? NaN : Number(value));
+                const first = (point, a, b) => (point[a] !== undefined && point[a] !== null ? point[a] : point[b]);
+                return points.filter((point) => point && typeof point === "object").map((point, index) => ({ key: index, label: String(point.label || ""),
+                    lat: num(first(point, "lat", "latitude")), lon: num(first(point, "lon", "longitude")),
+                    details: [first(point, "precision", "precisionEnumId"), first(point, "source", "sourceText")].filter((part) => part).join(" \u00b7 ") }))
+                    .filter((point) => point.lat >= -90 && point.lat <= 90 && point.lon >= -180 && point.lon <= 180);
+            },
+            frameHeight() { return this.height || "360px"; }
+        },
+        template:
+            '<component :is="view" v-if="view" ref="view" :id="id" :config="config" :config-url="configUrl" :height="height" :pick="pick" :library-error="libraryError"' +
+                ' @pick="$emit(\'pick\', $event)" @select="$emit(\'select\', $event)" @view-change="$emit(\'view-change\', $event)" @edit-change="$emit(\'edit-change\', $event)">' +
+                '<template v-if="$slots.notice" v-slot:notice><slot name="notice"></slot></template>' +
+            '</component>' +
+            '<div v-else class="m-map m-map-waiting" :id="id">' +
+                '<div v-if="failed" class="m-map-fallback" role="status">{{failed}}</div>' +
+                '<div v-else class="m-map-frame flex flex-center" :style="{height: frameHeight}"><q-spinner size="2em"></q-spinner></div>' +
+                '<ul v-if="places.length" class="m-map-places"><li v-for="place in places" :key="place.key" class="m-map-place">' +
+                    '<span class="m-map-place-label">{{place.label}}</span> <span class="m-map-place-coordinates">{{place.lat.toFixed(5)}}, {{place.lon.toFixed(5)}}</span>' +
+                    '<span v-if="place.details" class="m-map-place-details">{{place.details}}</span>' +
+                '</li></ul>' +
+            '</div>',
+        mounted() {
+            loadMap().then((libraryError) => {
+                this.libraryError = libraryError;
+                this.view = markRaw(moqui.map.components["m-map-view"]);
+            }, (err) => {
+                console.error("m-map: js/WebrootMap.js did not load", err);
+                this.failed = (moqui.l10n ? moqui.l10n.localize("The map could not be drawn here") : "The map could not be drawn here") + ": " + (err && err.message || err);
+            });
+        }
+    });
+
     /* ========== dashboards ========== */
 
     // The delta of a number-card: its sign (a leading + or -, else the number's; 0 or no number is none) and, against
@@ -9229,9 +9518,9 @@
     // move, Enter opens the selected row (the first by default) and Ctrl+Enter or Cmd+Enter opens it in a new tab.
     component("m-shell-palette", {
         name: "mShellPalette",
-        data() { return { text: "", remote: [], searching: false, selected: 0, seq: 0, timer: null, remoteKey: "" }; },
+        data() { return { text: "", remote: [], searching: false, selected: 0, seq: 0, timer: null, pendingEnter: null }; },
         template:
-            '<q-dialog :model-value="$root.paletteOpen" @update:model-value="$root.paletteOpen = $event" position="top" @show="onShow" @hide="onHide">' +
+            '<q-dialog :model-value="$root.paletteOpen" @update:model-value="$root.paletteOpen = $event" position="top" @show="onShow">' +
                 '<q-card id="m-palette" flat bordered class="m-palette column no-wrap">' +
                     '<div class="q-pa-sm"><m-text-line v-model="text" id="m-palette-input" name="paletteText" :placeholder="$root.labels.paletteHint" @keydown="onKey">' +
                         '<template v-slot:append><q-spinner v-if="searching" size="xs" color="grey-6"></q-spinner><q-icon v-else name="sym_o_search" size="xs"></q-icon></template>' +
@@ -9276,47 +9565,36 @@
             }
         },
         watch: {
-            query(next) { this.selected = 0; this.schedule(next); },
+            query: { flush: "sync", handler(next) { this.schedule(next); } },
             rows(list) { if (this.selected >= list.length) this.selected = 0; },
-            // each opening starts empty, also when the last one's hide was cut short (a row that changed the screen at once)
-            "$root.paletteOpen"(open) { if (open) this.onHide(); }
+            // Invalidate the search on dismissal, before the dialog finishes its transition.
+            "$root.paletteOpen": { flush: "sync", handler() { this.resetSearch(); this.text = ""; this.offlineSaid = false; } }
         },
+        beforeUnmount() { this.resetSearch(); },
         methods: {
             onShow() {
                 const input = root.document.getElementById("m-palette-input");
                 if (input && input.focus) input.focus();
             },
-            onHide() {
+            resetSearch() {
                 clearTimeout(this.timer);
+                this.timer = null;
                 this.seq += 1;
                 this.pendingEnter = null;
-                this.offlineSaid = false;
-                this.text = "";
                 this.remote = [];
-                this.remoteKey = "";
                 this.searching = false;
                 this.selected = 0;
             },
             // the provider groups of the text, 250 ms after it stops changing; an answer to an older text is dropped
             schedule(query) {
-                clearTimeout(this.timer);
-                this.timer = null;
-                this.pendingEnter = null;
+                this.resetSearch();
                 const wanted = query.text && (query.mode === "all" || query.mode === "sources") && (this.$root.paletteSources || []).length;
-                if (!wanted) {
-                    this.seq += 1;
-                    this.remote = [];
-                    this.remoteKey = "";
-                    this.searching = false;
-                    return;
-                }
-                const key = query.mode + "|" + query.groups.join(",") + "|" + query.text;
-                if (key === this.remoteKey) return;
+                if (!wanted || !this.$root.paletteOpen) return;
                 this.searching = true;
-                this.timer = setTimeout(() => { this.timer = null; this.search(query, key); }, 250);
+                this.timer = setTimeout(() => this.search(query), 250);
             },
-            search(query, key) {
-                this.seq += 1;
+            search(query) {
+                this.timer = null;
                 const seq = this.seq;
                 const params = { text: query.text, limit: String(palette.LIMIT) };
                 if (query.groups.length) params.groups = query.groups.join(",");
@@ -9324,12 +9602,13 @@
                     // an Enter that waited for this answer opens the first row now
                     const enter = this.pendingEnter;
                     this.pendingEnter = null;
-                    if (enter) this.$nextTick(() => this.open(this.rows[0], enter));
+                    if (enter) this.$nextTick(() => {
+                        if (seq === this.seq && this.$root.paletteOpen) this.open(this.rows[0], enter);
+                    });
                 };
                 moqui.request(this.$root.appRootPath + "/shellSearch", { params }).then((result) => {
                     if (seq !== this.seq) return;
                     this.searching = false;
-                    this.remoteKey = key;
                     this.remote = result.json && Array.isArray(result.json.groups) ? result.json.groups : [];
                     settled();
                 }, (err) => {
@@ -9348,6 +9627,12 @@
                 });
             },
             onKey(event) {
+                if (event.isComposing) {
+                    // Quasar dismisses dialogs on Escape keyup following a window keydown.
+                    if (event.key === "Escape") event.stopPropagation();
+                    return;
+                }
+                if (event.defaultPrevented) return;
                 const key = event.key;
                 if (key === "ArrowDown" || key === "ArrowUp") {
                     event.preventDefault();
@@ -9370,9 +9655,7 @@
                         this.pendingEnter = { ctrlKey: !!event.ctrlKey, metaKey: !!event.metaKey };
                         if (this.timer) {
                             clearTimeout(this.timer);
-                            this.timer = null;
-                            const query = this.query;
-                            this.search(query, query.mode + "|" + query.groups.join(",") + "|" + query.text);
+                            this.search(this.query);
                         }
                         return;
                     }
@@ -9689,7 +9972,7 @@
         // app root's subscreens (the top-level screens): the menu the app-root breadcrumb had before the trail started below it.
         // The routed menu items leave keyboard activation to Quasar's keyup handler, as the drawer does.
         // (below 600 px the launcher stands for it: the title is hidden, style-guide §2.2 and §7)
-        "        <q-btn v-if=\"appScreenMenu\" flat dense no-caps id=\"m-app-screens\" class=\"m-app-screens text-subtitle1 text-weight-medium\" :class=\"handheld ? '' : 'gt-xs'\">\n" +
+        "        <q-btn v-if=\"appScreenMenu\" flat dense no-caps id=\"m-app-screens\" class=\"m-app-screens text-weight-medium\" :class=\"handheld ? '' : 'gt-xs'\">\n" +
         "            {{headerTitle}}<q-icon name=\"arrow_drop_down\" size=\"xs\"></q-icon>\n" +
         "            <q-menu anchor=\"bottom left\" self=\"top left\"><q-list dense style=\"min-width:200px;\">\n" +
         "                <q-item v-for=\"subscreen in appScreenMenu.subscreens\" :key=\"subscreen.name\" clickable v-close-popup :active=\"subscreen.active\" active-class=\"text-primary text-weight-medium\" :to=\"subscreen.pathWithParams\" @keydown.enter.prevent>\n" +
@@ -9728,6 +10011,12 @@
         "\n" +
         "        <q-space></q-space>\n" +
         "\n" +
+        // the shell indicators (moqui.shellIndicators): a chip each, its label from 600 px and its icon alone below, its text as text
+        "        <q-chip v-for=\"indicator in shellIndicatorList\" :key=\"indicator.key\" :id=\"'m-indicator-' + indicator.key\" dense square clickable\n" +
+        "                class=\"m-shell-indicator q-mx-xs\" :color=\"indicator.tone\" text-color=\"white\" :icon=\"indicator.icon\" :aria-label=\"indicator.text\" @click=\"indicatorClick(indicator)\">\n" +
+        "            <span class=\"m-shell-indicator-label gt-xs\">{{indicator.text}}</span>\n" +
+        "            <q-tooltip>{{indicator.title ? indicator.text + ': ' + indicator.title : indicator.text}}</q-tooltip>\n" +
+        "        </q-chip>\n" +
         // Search opens the palette (Ctrl+K or Cmd+K anywhere); a label and the key from 1024 px, the icon alone below
         "        <template v-if=\"!handheld\">\n" +
         "        <q-btn flat dense no-caps id=\"m-search\" icon=\"sym_o_search\" :aria-label=\"labels.search\" :round=\"!$q.screen.gt.sm\" :label=\"$q.screen.gt.sm ? labels.search : undefined\" @click=\"openPalette()\">\n" +
@@ -10091,7 +10380,11 @@
             addContainer(contId, comp) { this.activeContainers[contId] = comp; },
             // an unmounted container takes its registration back, unless another has the id since
             removeContainer(contId, comp) { if (this.activeContainers[contId] === comp) delete this.activeContainers[contId]; },
-            reloadContainer(contId) { const comp = this.activeContainers[contId]; if (comp) comp.reload(); else console.error("Container with ID " + contId + " not found, not reloading"); },
+            // _screen is the screen the page shows: a dialog's form reloads the page behind it in place (the local-map dialog's Save location)
+            reloadContainer(contId) {
+                if (contId === "_screen") { this.reloadSubscreens(); return; }
+                const comp = this.activeContainers[contId]; if (comp) comp.reload(); else console.error("Container with ID " + contId + " not found, not reloading");
+            },
             loadContainer(contId, url, method) { const comp = this.activeContainers[contId]; if (comp) comp.load(url, method); else console.error("Container with ID " + contId + " not found, not loading url " + url); },
             hideContainer(contId) { const comp = this.activeContainers[contId]; if (comp && comp.hide) comp.hide(); else console.error("Container with ID " + contId + " not found, not hiding"); },
 
@@ -10119,7 +10412,74 @@
                     this.shellCounts = moqui.isPlainObject(data.counts) ? data.counts : {};
                     this.registerProviderKeys();
                     this.restoreTray();
+                    this.loadShellIndicators();
                 }, moqui.handleAjaxError);
+            },
+            // The indicators of the server (/shellIndicators: the shell-indicator providers), set as the shell's own: asked
+            // when the shell data is, when the notification socket opens again, after the soonest refreshInSeconds they name
+            // (relative, so the server's clock and this one need not agree), and on a push whose topic starts with a refreshOn
+            // topicPrefix of a provider and whose event is one of its events; one no longer answered is taken off. Only the
+            // answer to the last ask is taken.
+            loadShellIndicators() {
+                if (!this.userId) return null;
+                clearTimeout(this.indicatorTimer);
+                const ask = this.indicatorAsk = (this.indicatorAsk || 0) + 1;
+                return moqui.request(this.appRootPath + "/shellIndicators").then((result) => {
+                    if (ask !== this.indicatorAsk) return;
+                    clearTimeout(this.indicatorTimer);
+                    this.indicatorFailures = 0;
+                    const json = result.json && moqui.isPlainObject(result.json) ? result.json : {};
+                    const keys = [];
+                    let next = null;
+                    (Array.isArray(json.indicators) ? json.indicators : []).forEach((given) => {
+                        if (!moqui.isPlainObject(given) || !moqui.shellIndicators.set(given.key, Object.assign({}, given, { action: { url: given.url }, source: "server" }))) return;
+                        keys.push(String(given.key));
+                        const seconds = Number(given.refreshInSeconds);
+                        if (Number.isFinite(seconds) && seconds >= 0 && (next === null || seconds < next)) next = seconds;
+                    });
+                    moqui.shellIndicators.list().filter((item) => item.source === "server" && keys.indexOf(item.key) < 0).forEach((item) => moqui.shellIndicators.remove(item.key));
+                    this.indicatorRules = (Array.isArray(json.refreshOn) ? json.refreshOn : []).filter((rule) => moqui.isPlainObject(rule) && moqui.isString(rule.topicPrefix) && rule.topicPrefix)
+                        .map((rule) => ({ topicPrefix: rule.topicPrefix, events: Array.isArray(rule.events) ? rule.events.map(String) : null }));
+                    if (next !== null) this.indicatorTimer = setTimeout(() => this.loadShellIndicators(), Math.min(Math.max(next * 1000 + 1000, 5000), 86400000));
+                    this.noteHostSending();
+                }, (err) => {
+                    console.info("shell indicators not loaded", err && err.status);
+                    // the last ask failed: asked again after a minute, doubling to half an hour, so a chip does not stay as
+                    // it was; not when the user is signed out or refused (401, 403), which the next sign-in reads again
+                    const status = err && err.status;
+                    if (ask === this.indicatorAsk && status !== 401 && status !== 403) {
+                        this.indicatorFailures = (this.indicatorFailures || 0) + 1;
+                        clearTimeout(this.indicatorTimer);
+                        this.indicatorTimer = setTimeout(() => this.loadShellIndicators(), Math.min(60000 * Math.pow(2, this.indicatorFailures - 1), 1800000));
+                    }
+                });
+            },
+            // The Android app's location service sends live location shares from the phone after Maps closes
+            // (plans/archive/Location-Sharing.md §3.4, moquiDesktop.location): Maps' "Sharing location" chip says "sending from this
+            // phone" while it does, read from the app at each load of the indicators (a share's start, change and end are
+            // among their pushes), so the note goes when the service stops with Maps closed.
+            noteHostSending() {
+                const native = window.moquiDesktop && window.moquiDesktop.location;
+                if (!native || typeof native.status !== "function") return;
+                const text = locText("sending from this phone");
+                Promise.resolve(native.status()).then((list) => {
+                    // its own words by source, beside Maps' and Chat's (noteFrom), so none clears another's
+                    moqui.shellIndicators.noteFrom("locationSharing", "host", Array.isArray(list) && list.length ? text : null);
+                }, () => {});
+            },
+            indicatorClick(indicator) {
+                const item = moqui.shellIndicators.get(indicator.key);
+                if (!item) return;
+                if (item.onClick) { try { item.onClick(item); } catch (err) { console.warn("A shell indicator's action failed", err); } return; }
+                if (item.url) this.setUrl(item.url);
+            },
+            // whether a push names a topic and an event an indicator provider asked to be read again on
+            indicatorRefreshFor(topic, jsonObj) {
+                if (!this.indicatorRules || !this.indicatorRules.length) return false;
+                let message = jsonObj.message;
+                if (moqui.isString(message)) { try { message = JSON.parse(message); } catch (err) { message = null; } }
+                const event = moqui.isPlainObject(message) && message.event !== undefined ? String(message.event) : "";
+                return this.indicatorRules.some((rule) => topic.indexOf(rule.topicPrefix) === 0 && (!rule.events || rule.events.indexOf(event) >= 0));
             },
             // the counts alone, for the poll while the notification socket is down; nothing without a counts service
             loadShellCounts() {
@@ -10145,6 +10505,10 @@
             onShellNotification(jsonObj) {
                 const topic = jsonObj && jsonObj.topic ? String(jsonObj.topic) : "";
                 if (!topic) return;
+                if (this.indicatorRefreshFor(topic, jsonObj)) {
+                    clearTimeout(this.indicatorDebounce);
+                    this.indicatorDebounce = setTimeout(() => this.loadShellIndicators(), 500);
+                }
                 if (topic === "shellCounts") {
                     let counts = jsonObj.message;
                     if (moqui.isString(counts)) { try { counts = JSON.parse(counts); } catch (err) { counts = null; } }
@@ -10345,14 +10709,20 @@
                     .catch(moqui.handleAjaxError);
             },
             // Logout ends this browser's Web Push subscription first, so the next user of the device gets none of this
-            // user's pushes; bounded by moqui.push.beforeLogout. It closes the page's crypto store too (WebrootCrypto.js).
+            // user's pushes; bounded by moqui.push.beforeLogout. It closes the page's crypto store too (WebrootCrypto.js), and
+            // runs each of moqui.beforeLogoutHooks (what a screen forgets of the user in this browser: Maps › Browse's live
+            // location shares this tab sends), a failing one passed over.
             logoutClick(event) {
-                if ((!moqui.push && !moqui.crypto) || event.defaultPrevented) return;
+                const hooks = Array.from(moqui.beforeLogoutHooks || []);
+                if ((!moqui.push && !moqui.crypto && !hooks.length) || event.defaultPrevented) return;
                 event.preventDefault();
                 const href = this.shell.logoutUrl;
                 const crypto = moqui.crypto ? moqui.crypto.close().catch(() => null) : Promise.resolve();
                 const push = moqui.push ? moqui.push.beforeLogout() : Promise.resolve();
-                Promise.all([crypto, push]).then(() => { root.location.href = href; });
+                // each bounded at 2 seconds, as moqui.push.beforeLogout is: a hook that hangs never keeps the user signed in
+                const forgotten = hooks.map((hook) => Promise.race([Promise.resolve().then(hook).catch((err) => { console.warn("A before-logout hook failed", err); }),
+                    new Promise((resolve) => setTimeout(resolve, 2000))]));
+                Promise.all([crypto, push].concat(forgotten)).then(() => { root.location.href = href; });
             },
             appearanceAllowed(key) { return moqui.appearanceAllowed(key); },
             themeMenuAllowed() { return !!this.userId && moqui.themeChoiceAllowed(); },
@@ -10655,6 +11025,7 @@
             // 600 px Mail and Messages are one button to the mail screen with the two counts summed, and the tray tabs one tray button
             // (key tray, any: it opens the tray on its last tab, whose tabs switch) with their counts summed, so a phone header does not
             // overflow. The updates count has no button: the Notifications tab shows it.
+            shellIndicatorList() { return moqui.shellIndicators.list(); },
             headerCounters() {
                 const tray = (key) => this.trayTabs.find((tab) => tab.key === key);
                 const values = this.shellValues;
@@ -10783,6 +11154,13 @@
             if (this.notificationClient) {
                 this.notificationClient.registerListener("ALL");
                 this.notificationClient.registerListener("ALL", this.onShellNotification);
+                // the socket back after a drop: what was pushed meanwhile is not heard, so the indicators are read again
+                let opened = false;
+                this.notificationClient.onState((state) => {
+                    if (state !== "open") return;
+                    if (opened) this.loadShellIndicators();
+                    opened = true;
+                });
             }
             // the chat store: presence, status, heartbeat, the chat pushes (WebrootChat.js)
             if (moqui.chat) moqui.chat.start(this);
@@ -10819,6 +11197,8 @@
             (this.providerKeysOff || []).forEach((off) => off());
             root.document.removeEventListener("keydown", this.onShellKeydown);
             clearInterval(this.shellPollTimer);
+            clearTimeout(this.indicatorTimer);
+            clearTimeout(this.indicatorDebounce);
         }
     });
 
@@ -10952,7 +11332,7 @@
         app.config.globalProperties.window = root;
         app.config.globalProperties.$router = qvt.makeRouter();
         Object.defineProperty(app.config.globalProperties, "$route", { get: () => (moqui.webrootVue ? moqui.webrootVue.getRoute() : { matched: [], params: {} }) });
-        // $bridge: a .qvue screen's reads and submits, the same calls as a Vue SFC canvas's (plans/design-dev-aide.md F12),
+        // $bridge: a .qvue screen's reads and submits, the same calls as a Vue SFC canvas's (plans/archive/design-dev-aide.md F12),
         // so the code an agent previewed in the sandbox is the screen's: get reads a transition that answers JSON, a
         // name alone being the current screen's; submit posts to a transition of the current screen
         app.config.globalProperties.$bridge = moqui.bridge = moqui.bridge || {

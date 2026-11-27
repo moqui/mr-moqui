@@ -820,11 +820,16 @@ along with this software (see the LICENSE.md file). If not, see
                     const info = ec.service.sync().name('org.moqui.resource.WikiServices.get#WikiPageInfo')
                             .parameters({wikiSpaceId, pagePath}).call()
                     const files = Array.from(info.attachmentList || [])
-                    const count = files.filter(file => file.filename !== '_board.svg' && !/^_board-.*\.svg$/.test(file.filename)).length
-                    // all of the board's files together, the one this replaces left out
-                    const total = files.filter(file => file.filename !== filename)
+                    // the board's previews (_board.svg and one per version) are not its images: they count against neither limit
+                    const preview = name => name === '_board.svg' || /^_board-.*\.svg$/.test(name)
+                    const images = files.filter(file => !preview(String(file.filename)))
+                    const count = images.length
+                    // the board's images together, the one this replaces left out
+                    const total = images.filter(file => file.filename !== filename)
                             .reduce((sum, file) => sum + Number(file.resourceReference.getSize() || 0), Number(attachmentFile.getSize()))
-                    if (filename !== '_board.svg' && !attachmentReference.exists && count >= Number(ec.factory.getConfValue('board@max-images'))) {
+                    if (preview(filename)) {
+                        // a preview the editor sends is held to max-image-bytes above only
+                    } else if (!attachmentReference.exists && count >= Number(ec.factory.getConfValue('board@max-images'))) {
                         ec.message.addError(ec.l10n.localize('Board has reached its image limit'))
                     } else if (total > Number(ec.factory.getConfValue('board@max-total-image-bytes'))) {
                         ec.message.addError(ec.l10n.localize('Board files exceed the board total size limit'))
@@ -2189,9 +2194,12 @@ along with this software (see the LICENSE.md file). If not, see
                 if (room) {
                     const rights = userId && ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess')
                         .parameters({chatRoomId:room.chatRoomId,userId}).call()
-                    canView = !!rights?.isMember && !rights.member?.leftDate
+                    // a room's boards are seen by whoever may read the room (a public or record room's readers too) and
+                    // changed by its members who may post
+                    const member = !!rights?.isMember && !rights.member?.leftDate
+                    canView = member || !!rights?.canRead
                     readOnly = !!room.archivedDate
-                    canUpdate = canView && !!rights.canPost && !readOnly
+                    canUpdate = member && !!rights.canPost && !readOnly
                     canAdmin = canUpdate && !!rights.canModerate
                     return
                 }

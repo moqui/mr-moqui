@@ -15,6 +15,8 @@
 //! `moqui test` over the fixture component (`crates/moqui-host/tests/fixtures/test-component`) on a runtime made for
 //! the test: the passing suite, `--spec` with `dependsOn`, JUnit, and a spec that fails on purpose.
 
+#![cfg(unix)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

@@ -907,8 +907,10 @@ along with this software (see the LICENSE.md file). If not, see
                     emailFolderId: emailFolderId, emailLabelId: emailLabelId, contactListId: contactListId, searchText: searchText, unreadOnly: unreadOnly,
                     cursor: cursor, pageSize: 200}).call()
                 if (ec.message.hasError()) return
-                for (const row of Array.from(out.threadList || [])) targets.push({store: row.store, threadId: row.threadId,
-                    lastEmailMessageId: row.lastEmailMessageId ?? null, lastCommEventId: row.lastCommEventId ?? null})
+                for (const row of Array.from(out.threadList || [])) {
+                    if (out.conversationView === 'messages' && row.store === 'email') targets.push({store: 'email', emailMessageId: row.emailMessageId})
+                    else targets.push({store: row.store, threadId: row.threadId, lastEmailMessageId: row.lastEmailMessageId ?? null, lastCommEventId: row.lastCommEventId ?? null})
+                }
                 cursor = out.nextCursor
                 if (!out.hasMore || !cursor || targets.length >= 5000) break
             }

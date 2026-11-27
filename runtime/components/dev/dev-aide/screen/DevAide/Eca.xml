@@ -12,11 +12,11 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- ECA Rules (plans/design-dev-aide.md 10): the active SECA, EECA, EmECA and gitECA rules as the framework holds them,
+<!-- ECA Rules (plans/archive/design-dev-aide.md 10): the active SECA, EECA, EmECA and gitECA rules as the framework holds them,
     in the order they run, each with its file and line, priority, condition and actions; a rule a later one of its id
     replaced is under it, marked so. A rule opens in the Workspace's ECA view. A list, so the terminal reaches it. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
-        default-menu-title="ECA Rules" default-menu-index="8">
+        default-menu-title="ECA Rules" default-menu-index="8" menu-image="sym_o_rule" menu-image-type="icon">
     <parameter name="kind"/>
     <parameter name="component"/>
     <parameter name="target"/>

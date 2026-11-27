@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The reconcile job (plans/Vault-Instances.md §4.1): for each instance that has a container, what its host says of
+//! The reconcile job (plans/archive/Vault-Instances.md §4.1): for each instance that has a container, what its host says of
 //! it (its state, health and image) is written to the row beside the desired state. It changes nothing on a host and
 //! no desired state: a difference is for an operator, and for Monitor's alerts (M4). A host reached with a client key,
 //! whose key is a vault item, is observed only while an action runs under a lease, until the manager link (M2) reports

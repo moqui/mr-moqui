@@ -477,6 +477,15 @@ fn each_level_packs_its_components_less_tests_plans_and_the_archive_excludes() {
 fn a_production_archive_reads_writes_and_compares_its_components() {
     let scratch = Scratch::new("production");
     let (source, crate_dir) = small_runtime(&scratch.0);
+    let shop = source.join("components/addon/shop");
+    let library_files = [
+        "script/libs/math.js",
+        "screen/shop/libs/math.js",
+        "screen/shop/libs/MANIFEST.json",
+    ];
+    for file in library_files {
+        put(&shop.join(file), file);
+    }
     let archive = packed_at(&source, &crate_dir, Level::Production);
     assert_eq!(archive.components(), vec!["addon/shop", "base/basic-comms"]);
     assert_eq!(
@@ -488,6 +497,12 @@ fn a_production_archive_reads_writes_and_compares_its_components() {
         Some(b"<x/>".to_vec())
     );
 
+    for file in library_files {
+        assert_eq!(
+            archive.file(Set::Components, &format!("addon/shop/{file}")).unwrap(),
+            Some(file.as_bytes().to_vec())
+        );
+    }
     let runtime = scratch.0.join("deployed");
     let framework = runtime.join("components/base/framework");
     let written = archive.write_runtime(&runtime, &framework).unwrap();

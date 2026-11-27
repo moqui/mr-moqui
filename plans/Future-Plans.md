@@ -1,7 +1,7 @@
 # Future plans
 
 The plans for after v0.1.0, and a digest of the unbuilt proposals in [proposals/](proposals/). Work for the first
-release is in [Remaining-Work](Remaining-Work.md). Each entry links to its detail; read it before starting.
+release is in [Remaining-Work](Remaining-Work.md), and live and platform checks are in [Testing-Needed](Testing-Needed.md). Each entry links to its detail; read it before starting.
 
 ## Comms
 
@@ -49,15 +49,21 @@ is left, by stream; the designs are in the archived plan and the interface guide
   messages; reactions in the archive; offline delivery outside MAM; XEP-0184 receipts; stanzas between XMPP sessions on
   different nodes; revoking an XMPP user's TURN credential.
 
-**Not checked live.** The tests use fakes, loopback and headless Chromium; these need a deployment, a provider's
-consent or real devices, and are listed in [§7.4](archive/Comms-Framework.md#74-built) "Left for later":
-- Telnyx (calls, SMS, OPTIONS pings, forwards, simultaneous ring, `Privacy: id`), carrier delivery and 10DLC; an emergency
-  call; desk phones and soft phone apps.
-- TURN over TLS and on 443, hairpin NAT, a browser behind a UDP-blocking firewall; cascading media nodes between two hosts.
-- Element against the key endpoints, XMPP apps (Conversations, Monal, Dino, Gajim), the XEP-0479 compliance tester, a push
-  reaching an app server; Firefox and Safari for encrypted chat and calls.
-- What headless Chromium cannot drive: screen share and the active speaker, captions and a recorded greeting (its
-  microphone is a steady tone), QR verification (a camera); the Recordings player with real media.
+**Whiteboards and screen share** (from [Comms-Whiteboard](archive/Comms-Whiteboard.md), archived 2026-11-25; its §9):
+- **Process editing on a board** (its §7): a bound board over a structured model (a HEMP story, a BOSS flow map, a
+  routing, a status flow), starting with the comparison of a bound Excalidraw board against Vue Flow, maxGraph and
+  diagram-js on two models; it needs a plan of its own (a proposal first). Dev-HEMP's stories on a board wait for it.
+- End-to-end encrypted boards: Yjs updates sealed with a room key, the server keeping only ciphertext and no preview.
+- Board templates (a retrospective, a flow, a week's plan) in a templates space; Assist writing Mermaid for a board as a
+  kept-source frame; a presenter's timer and voting; export to PDF with the page's print layout; share and annotation
+  on iOS.
+- Several shares on the stage at once (one at a time with take over is built).
+- A board drawn in place in IronStone Knowledge (it opens Comms' board editor now).
+- The Android screen share keeps its crypto device for the share: a page that registers its device again mid-call
+  must stop and share again.
+
+**Not checked live.** The checks that need a deployment, a provider's consent or real devices are in
+[Testing-Needed, Comms](Testing-Needed.md#comms).
 
 ## Edge node
 
@@ -85,6 +91,63 @@ day partitions, gRPC, business operations, regressions and incidents, recovery) 
   the build and runtime context are kept, with no tenant to record.
 - **Public and anonymous dashboard links**, if they are wanted: deferred because ERP data on a self-hosted server
   should not get a bearer URL by default ([Sharing](archive/Monitoring.md#scheduled-reports-and-sharing)).
+
+## Vaults and managed instances
+
+From [Vault-Instances](archive/Vault-Instances.md), archived 2026-11-25. V0–V5 and M1–M6 are built; guides
+[Vaults](../docs/security/Vaults.md) and [Run-Deploy, Managed instances](../docs/Run-Deploy.md#managed-instances).
+After v0.1.0 ([§4.1](archive/Vault-Instances.md#41-the-model), [§4.6](archive/Vault-Instances.md#46-deploys),
+[§10](archive/Vault-Instances.md#10-not-in-scope)):
+- **More host types** for managed instances: SSH with systemd for an archive or a `.deb`
+  ([Debian-Packaging](Debian-Packaging.md)), Quadlet (`podman/quadlet/`), Kubernetes, and other providers' APIs
+  ([Dogfood §15](Dogfood.md#15-later), D19).
+- **Major version upgrades** of Postgres, MySQL and OpenSearch, each its kind's own procedure (a minor version is a
+  container replacement, built).
+- **Autofill**: a browser extension, and system autofill in the desktop and mobile apps.
+- **Attachments in a vault**: files encrypted with their item.
+- **Dynamic credentials** made for one lease and dropped after it, as Vault's database engine makes them.
+
+## Maps
+
+From [Maps](archive/Maps.md), archived 2026-11-26 (with [Maps-Overture](archive/Maps-Overture.md)); guide [Maps](../docs/tools/Maps.md).
+Offline packages and shared live location are built ([Maps-Offline](archive/Maps-Offline.md),
+[Location-Sharing](archive/Location-Sharing.md), archived 2026-11-27). After v0.1.0 ([§4.1](archive/Maps.md#41-initial-source-choices),
+[§6.2](archive/Maps.md#62-sources-researched), [§6.4](archive/Maps.md#64-geo-data-importer), [§7](archive/Maps.md#7-useful-rust-server-work),
+[§9](archive/Maps.md#9-delivery-and-acceptance)):
+- **WFS-T**: editing an OGC layer's features on its server.
+- **More data**: boundaries into `Geo.wellKnownText` (Natural Earth, geoBoundaries with each boundary's license),
+  GeoNames alternate names for localized Geo names, national postal files (Ordnance Survey Code-Point Open, with OSTN15
+  for a centimetre transformation), Overture Divisions, and GeoPackage (it needs an SQLite reader on the server).
+- **Spatial queries**: an index of `GeoPoint` latitude and longitude, PostGIS or dynamic record-layer tiles through
+  the tile endpoint, when a dataset needs them; reprojection of large overlays beyond EPSG:3857.
+- **Routing**, Google and other external maps, and device integrations ("find my" devices, home automation).
+- **PASS public maps**: a published-data adapter with its own rate and resource limits.
+- **iOS** for offline packages and live location sharing (the apps' MD7).
+- **Live location, later**: Check In ("tell them when I arrive", built on a live share); live location in encrypted
+  rooms, each report sealed to the room's device keys (today it is offered only in unencrypted rooms); XMPP positions
+  to and from federated servers (local users only today) ([Location-Sharing §3.5, §3.6](archive/Location-Sharing.md#35-in-chat)).
+
+## Dev AIDE
+
+From [design-dev-aide](archive/design-dev-aide.md), archived 2026-11-26. P1a to P13, the component template and the finishing work of Nov 25
+and 26 are built; guide [Dev-AIDE](../docs/tools/Dev-AIDE.md). After v0.1.0 ([§18](archive/design-dev-aide.md#18-phases),
+[§20](archive/design-dev-aide.md#20-risks-and-open-questions)):
+- **Co-editing across a cluster**: a file's room is one server's, and a join is refused while the server has cluster
+  peers; across servers a room's seed and updates would need one owner, and a two-server test with it.
+- **TypeScript for scripts in the framework** (question 10): if the framework takes TypeScript for scripts generally,
+  the checker becomes the server's, in the binary, in place of the browser worker; and **the checker's completion**
+  from the same declarations ([§5.4](archive/design-dev-aide.md#54-javascript)).
+- **Projects adopting the widgets**: IronStone Projects' Code taking `m-file-tree`, `m-code-editor` and `m-diff-view`
+  (question 13), its own plan's call; and **code search in Projects**, read only, a safe feature by D7's rule
+  ([§4.10](archive/design-dev-aide.md#410-projects-code-reviewed)).
+- **A Try of a screen's actions** from the screen view's Actions panel: the actions run inside a render, so a Try is a
+  render in the sim with a trace, not a service call.
+- **Smithy and scoped keys**: whether Smithy takes the `git`, `tasks` and `gateway` keys, so Connect keeps no account
+  key (`appKey`) for a Smithy server: the user's decision, under PASS's device-key rule (mr-pass `plan/design-smithy.md`
+  §5.5; question 18).
+
+## Component JavaScript libraries
+Built ([JS-Build](archive/JS-Build.md#component-javascript-libraries-in-dev-aide-built-2026-11-23); guide [Build-Test](../docs/Build-Test.md#add-a-component-library)). Next: removing a library (`add-js` adds and `update-js --component` changes a pin, but taking one out of `js-build.json`, its pin and lock, its outputs and its `.gitignore` lines is by hand), and client libraries in the desktop shell's bundled screens (`precompiled_qvue` registers no library list, so a bundled `.qvue` that declares one does not load it).
 
 ## Messaging — runtime-reflective FlatBuffers ([Messaging.md](proposals/Messaging.md), 1286 lines)
 Binary request/response and WebSocket document subscriptions using FlatBuffers `.bfbs` schemas generated at runtime from service, screen-transition and Data Document definitions, with a Rust reflective reader, a browser reader/writer on Emscripten WASM, shared message buffers and large-scale fan-out. JSON and other contracts stay. Status: roadmap shows 0 of 6 phases done. Today `moqui-browser` speaks JSON ([`crates/moqui-browser/src/api.rs`](../crates/moqui-browser/src/api.rs)) and cites this plan for the binary forms. Prerequisites in place: Wasm browser build, cached QuickJS service functions, committed-update path. Go/no-go gates are in §19; capacity model in §12–13.

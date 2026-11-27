@@ -110,6 +110,7 @@ along with this software (see the LICENSE.md file). If not, see
         <component v-if="calc.room && calcSheet" :is="calcSheet" :room="calc.room" :cells-url="url('calcCells')" :edit-url="url('calcEdit')" :content-url="url('calcContent')"
                 :state-url="url('calcState')" :revert-url="url('calcRevert')" @gone="calcReopen" @changed="calcChanged"></component>
         <div v-else-if="calc.busy" class="text-body2 q-pa-md" :class="mutedClass">Opening…</div>
+        <div v-else-if="calc.unavailable" class="text-body2 q-pa-md text-warning m-calc-unavailable">{{calc.unavailable}}</div>
         <div v-else class="text-body2 q-pa-md" :class="mutedClass">Choose an entity, open a file, or open a saved document from Documents.</div>
     </div>
     <q-dialog v-model="calc.saveOpen">
@@ -163,7 +164,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <div class="col-3"><q-input dense outlined type="number" v-model.number="file.headerRow" label="Header row" min="0" @change="readFile"></q-input></div>
                     <div class="col-4"><q-select dense outlined v-model="file.format" :options="['auto', 'csv', 'xlsx']" label="Format" @update:model-value="readFile"></q-select></div>
                 </div>
-                <div v-if="file.rowCount != null" class="text-caption" :class="mutedClass">{{Number(file.rowCount).toLocaleString()}} rows; columns {{file.columns.join(', ')}}</div>
+                <div v-if="file.rowCount != null" class="text-caption" :class="mutedClass">{{rowsText(file.rowCount)}}; columns {{file.columns.join(', ')}}</div>
             </q-card-section>
             <q-card-actions align="right"><q-btn flat no-caps label="Cancel" v-close-popup></q-btn>
                 <q-btn v-if="isWorkbookFile" flat no-caps label="Open as a workbook" @click="openWorkbook"><q-tooltip>Every sheet, with its formulas, in Calc</q-tooltip></q-btn>
@@ -223,7 +224,7 @@ module.exports = {
             chosenEntity: null, entityOptions: [], userId: '', gridViews: [], viewOpen: false, viewDescription: '', viewShared: false, viewId: null,
             exportOpen: false, exportLocation: '', exportFormat: 'csv', pendingLayout: null,
             // Calc: the mode, the sheet component once loaded, and the open document's room with what opened it
-            mode: 'records', calcSheet: null, calc: { room: null, opened: null, busy: false, documents: [], userId: '', saveOpen: false, title: '' },
+            mode: 'records', calcSheet: null, calc: { room: null, opened: null, busy: false, documents: [], userId: '', saveOpen: false, title: '', unavailable: '' },
             fileOpen: false, uploading: false, file: { location: '', sheet: null, headerRow: 1, format: 'auto', sheetNames: [], columns: [], rowCount: null },
             loadOpen: false, load: { targetTypeEnumId: 'EtltEntity', targetName: '', loadModeEnumId: 'EtllCreate', targetOptions: [], targetFields: [], columns: [],
                 sample: {}, rowErrors: [], sampleRows: null, sampleErrorRows: 0, busy: '' }
@@ -241,6 +242,12 @@ module.exports = {
     },
     methods: {
         url(name) { return this.screenPath + '/' + name; },
+        // a count of rows in words: "1 row", "About 1,200 rows"
+        rowsText(count, estimated) {
+            const localize = (text) => (window.moqui && moqui.l10n && moqui.l10n.localize(text)) || text;
+            const number = Number(count || 0);
+            return (estimated ? localize('About') + ' ' : '') + number.toLocaleString() + ' ' + localize(number === 1 ? 'row' : 'rows');
+        },
         siblingUrl(path, search) { return this.$root.linkBasePath + '/' + this.$root.currentPathList.slice(0, -1).concat([path]).join('/') + (search ? '?' + search : ''); },
         // a transition's answer; a SQL source goes in a POST body, never a URL
         call(name, params, method) {
@@ -288,10 +295,19 @@ module.exports = {
             if (!name) return null;
             const conditions = {};
             for (const [key, value] of Object.entries(p)) {
-                if (['entityName', 'selectedEntity', 'viewId', 'sqlKey', 'moquiSessionToken', 'lastStandalone', 'pageIndex', 'open'].includes(key)) continue;
+                if (['entityName', 'selectedEntity', 'viewId', 'sqlKey', 'gridFilters', 'moquiSessionToken', 'lastStandalone', 'pageIndex', 'open'].includes(key)) continue;
                 if (value != null && value !== '') conditions[key] = value;
             }
             return Object.keys(conditions).length ? { type: 'entity', entityName: String(name), conditions } : { type: 'entity', entityName: String(name) };
+        },
+        // the header filters handed back by Data › Record's Back to Find (gridFilters, as openRecord sent them), as a layout
+        initialLayout() {
+            let filters = null;
+            try { filters = JSON.parse(this.parameters.gridFilters || 'null'); } catch (_) { /* not JSON */ }
+            if (!Array.isArray(filters)) return null;
+            filters = filters.filter((item) => item && typeof item.field === 'string' && item.value != null && String(item.value) !== '')
+                .map((item) => ({ field: item.field, value: String(item.value) }));
+            return filters.length ? { filters } : null;
         },
         open(source, layout) {
             // a workbook of another source is closed; in Calc the new source opens as one once its columns are known
@@ -335,7 +351,7 @@ module.exports = {
             return this.call('calcOpen', params, 'POST').then((out) => {
                 this.calc.busy = false;
                 if (!out || !out.roomId) return null;
-                this.calc.room = out;
+                this.calc.room = out; this.calc.unavailable = '';
                 this.calc.opened = out.definitionId ? { definitionId: out.definitionId } : params;
                 return out;
             });
@@ -347,7 +363,16 @@ module.exports = {
             return this.calcOpenWith(this.sourceParams({ columnsJson: JSON.stringify(visible), sortJson: JSON.stringify(this.currentSort()),
                 filterJson: JSON.stringify(this.currentFilters()), title: this.sourceLabel }));
         },
-        calcReopen() { if (this.calc.opened) this.calcOpenWith(this.calc.opened); },
+        // the server no longer has the room: it is opened again, and when that is refused (the document deleted, or no
+        // longer shared with the viewer) its cells are no longer shown, nor edited (DASH-UI-008)
+        calcReopen() {
+            if (!this.calc.opened) return;
+            this.calcOpenWith(this.calc.opened).then((out) => {
+                if (out) return;
+                this.calc.room = null; this.calc.opened = null;
+                this.calc.unavailable = 'This document is no longer available to you: it was deleted, or it is no longer shared with you.';
+            });
+        },
         // an edit's answer: the room's new state, taken into the same object so the sheet keeps its place
         calcChanged(state) { if (this.calc.room) Object.assign(this.calc.room, state); },
         calcClose() {
@@ -419,7 +444,7 @@ module.exports = {
             const vm = this;
             const def = { title: column.title || column.name, field: column.name, headerSort: !column.encrypted, headerFilter: column.encrypted || column.type === 'binary' ? false : 'input',
                 headerMenu: () => vm.headerMenu(column), resizable: true };
-            if (def.headerFilter) def.headerFilterParams = { elementAttributes: { 'aria-label': 'Filter by ' + def.title } };
+            if (def.headerFilter) def.headerFilterParams = { elementAttributes: { 'aria-label': (moqui.l10n?.localize('Filter by {field}') || 'Filter by {field}').replace('{field}', () => def.title) } };
             if (column.type === 'number') { def.hozAlign = 'right'; def.cssClass = 'm-grid-numeric'; }
             def.formatter = (cell) => vm.formatCell(cell, column);
             if (this.saveEntity && column.editable && !column.encrypted && column.editor) {
@@ -548,7 +573,7 @@ module.exports = {
                     return changed;
                 },
                 ajaxURL: this.url('gridRows'), progressiveLoad: 'scroll', paginationSize: 100, sortMode: 'remote', filterMode: 'remote',
-                initialSort: layout && layout.sort ? layout.sort.map((item) => ({ column: item.column || item.field, dir: item.dir })) : undefined, initialHeaderFilter: layout && layout.filters ? layout.filters : undefined,
+                initialSort: layout && layout.sort ? layout.sort.map((item) => ({ column: item.column || item.field, dir: item.dir })) : undefined, initialHeaderFilter: layout && layout.filters ? layout.filters.filter((item) => columns.some((column) => column.field === item.field && column.headerFilter)) : undefined,
                 ajaxRequestFunc: (url, config, params) => {
                     // a first page replaces every row: what was followed of the old rows goes with them
                     if (Number(params.page || 1) <= 1) vm.forgetChanges();
@@ -557,7 +582,7 @@ module.exports = {
                     .then((out) => {
                         if (!out) return { last_page: 1, data: [] };
                         for (const row of out.data || []) row._rid = 'r' + (++rowId);
-                        if (out.last_row != null) vm.countText = (out.estimated ? 'About ' : '') + Number(out.last_row).toLocaleString() + ' rows';
+                        if (out.last_row != null) vm.countText = vm.rowsText(out.last_row, out.estimated);
                         return { last_page: out.last_page || 1, data: out.data || [] };
                     });
                 },
@@ -793,18 +818,22 @@ module.exports = {
         },
         serverFilters(list) { return (list || []).map((item) => this.serverFilter(item)).filter((item) => item); },
         currentFilters() { return this.grid ? this.serverFilters(this.grid.getHeaderFilters()) : []; },
-        // one record's form (Data › Record), for a row of an entity that has its whole primary key
+        // one record's form (Data › Record), for a row of an entity that has its whole primary key; the header filters go
+        // with it (gridFilters), so its Back to Find opens the grid filtered as it was (initialLayout)
         openRecord(data) {
             const keys = this.keyFields || [];
             if (!this.saveEntity || !keys.length || keys.some((name) => data[name] == null)) return;
-            const search = 'selectedEntity=' + encodeURIComponent(this.saveEntity) + keys.map((name) => '&' + encodeURIComponent((this.saveFields || {})[name] || name) + '=' + encodeURIComponent(data[name])).join('');
+            const filters = this.grid ? this.grid.getHeaderFilters().filter((item) => item.value != null && String(item.value) !== '')
+                .map((item) => ({ field: item.field, value: item.value })) : [];
+            const search = 'selectedEntity=' + encodeURIComponent(this.saveEntity) + keys.map((name) => '&' + encodeURIComponent((this.saveFields || {})[name] || name) + '=' + encodeURIComponent(data[name])).join('')
+                + (filters.length ? '&gridFilters=' + encodeURIComponent(JSON.stringify(filters)) : '');
             this.$root.setUrl(this.siblingUrl('Record', search));
         },
         currentSort() { return this.grid ? this.grid.getSorters().map((item) => ({ field: item.field, dir: item.dir })) : []; },
         countRows() {
             this.counting = true;
             this.call('gridCount', this.sourceParams({ filterJson: JSON.stringify(this.currentFilters()) })).then((out) => {
-                if (out) this.countText = Number(out.count || 0).toLocaleString() + ' rows';
+                if (out) this.countText = this.rowsText(out.count);
             }).finally(() => { this.counting = false; });
         },
         exportRows(format, location) {
@@ -813,7 +842,7 @@ module.exports = {
             this.call('gridExport', this.sourceParams({ columnsJson: JSON.stringify(visible), sortJson: JSON.stringify(this.currentSort()),
                 filterJson: JSON.stringify(this.currentFilters()), format, location: location || '' }), 'POST').then((out) => {
                 if (!out) return;
-                const note = (out.rowCount || 0) + ' rows' + (out.truncated ? ' (cut short at the export limit)' : '');
+                const note = this.rowsText(out.rowCount) + (out.truncated ? ' (cut short at the export limit)' : '');
                 if (location) { moqui.notifyMessages('Exported ' + note + ' to ' + out.location); return; }
                 const link = document.createElement('a');
                 link.href = this.url('gridDownload') + '?location=' + encodeURIComponent(out.location) + '&fileName=' + encodeURIComponent(out.fileName || '')
@@ -985,12 +1014,12 @@ module.exports = {
                     this.gridViews = (out && out.gridViews) || [];
                     const view = this.gridViews.find((item) => String(item.viewId) === String(viewId));
                     if (view) this.openView(view);
-                    else { const source = this.initialSource(); if (source) this.open(source); }
+                    else { const source = this.initialSource(); if (source) this.open(source, this.initialLayout()); }
                 });
                 return;
             }
             const source = this.initialSource();
-            if (source) this.open(source);
+            if (source) this.open(source, this.initialLayout());
             // the Tools home's links: open=file is the file dialog, open=views the saved views
             else if (this.parameters.open === 'file') this.fileOpen = true;
             else if (this.parameters.open === 'views' && this.$refs.viewsMenu) this.$refs.viewsMenu.show();

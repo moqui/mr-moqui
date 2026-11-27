@@ -1144,13 +1144,15 @@ function storeTrunk(p) {
   }
   // where and as whom the stored password is sent, before this change
   const endpointWas = trunk ? [String(trunk.host || '').trim().toLowerCase(), trunk.port == null ? '' : String(Number(trunk.port)),
-    trunk.transportEnumId || 'VtrTls', auth.username || '', auth.authUsername || '', auth.realm || ''].join('|') : null
+    trunk.transportEnumId || 'VtrTls', trunk.providerProfileEnumId || 'VppGeneric', auth.username || '', auth.authUsername || '',
+    auth.realm || ''].join('|') : null
   for (const key of ['username', 'authUsername', 'realm']) if (p[key] !== undefined && p[key] !== null) auth[key] = String(p[key]).trim() || null
   // the endpoint-change rule (as a mail relay's, Admin's Connections): a trunk moved to another host, port or transport,
   // or to sign in as another user, keeps no stored password not given again in the same change, so a voice admin cannot
   // send the provider's SIP password to a host of theirs (found while fixing plans/Security-Review-Medium.md SEC-ADM-82)
-  const endpointNow = [host.toLowerCase(), port == null ? '' : String(port), transportEnumId, auth.username || '', auth.authUsername || '',
-    auth.realm || ''].join('|')
+  // the provider profile too, which says how the trunk signs in (SEC-OUT-86)
+  const endpointNow = [host.toLowerCase(), port == null ? '' : String(port), transportEnumId, providerProfileEnumId, auth.username || '',
+    auth.authUsername || '', auth.realm || ''].join('|')
   let passwordCleared = false
   if (endpointWas != null && endpointWas !== endpointNow && blank(p.password) && !blank(auth.password)) {
     delete auth.password

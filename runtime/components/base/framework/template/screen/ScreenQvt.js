@@ -1390,8 +1390,8 @@
                 method: isForm && url.getTransitionMethod() === "get" ? "GET" : null, "read-only": isForm && url.isReadOnly() ? true : null,
                 "focus-field": at(n, "focus-field") || null, ":body-parameter-names": bodyParameters ? arr(bodyParameters) : null,
                 "submit-message": isForm && at(n, "background-message") ? at(n, "background-message") : null,
-                "submit-reload-id": isForm ? at(n, "background-reload-id") || null : null,
-                "submit-hide-id": isForm ? at(n, "background-hide-id") || null : null,
+                "submit-reload-id": isForm ? xn(at(n, "background-reload-id")) || null : null,
+                "submit-hide-id": isForm ? xn(at(n, "background-hide-id")) || null : null,
                 "exclude-empty-fields": at(n, "exclude-empty-fields") === "true" ? true : null,
                 ":parent-checkbox-set": st.selectedForm ? "formProps" : null,
                 "v-slot:default": "formProps", ":fields-initial": initial(singleValues(n, formAttrs)),
@@ -2501,7 +2501,7 @@
     const valueDescs = (fields, kind) => `[${fields.map((field) => valueDesc(field, kind)).filter((text) => text).join(",\n")}]`;
 
     // The code of one field of a form-single.
-    // A field's source stamp (dev instances, plans/design-dev-aide.md F10): the form macros write a field's box or
+    // A field's source stamp (dev instances, plans/archive/design-dev-aide.md F10): the form macros write a field's box or
     // cell themselves, so the field names its source to the render just before it.
     const stampCode = (node) => (node.src ? `$v.stamp(${lit(node.src)});\n` : "");
 
@@ -2936,6 +2936,18 @@
         return attr(node, "condition") ? `if (${attr(node, "condition")}) {\n${body}}\n` : body;
     });
 
+    // map-view (plans/archive/Maps.md §3.2): an m-map with its configuration (ScreenSupport's mapViewExpr, checked: WGS84, longitude first)
+    // as the value of a bound attribute, JSON, never template text, so nothing in a label is compiled; the effective
+    // configuration's transition as config-url, the height and the class. Nothing for a false condition.
+    const mapViewWidget = stmt((node) => {
+        const transition = attr(node, "config-transition");
+        const url = transition ? `((u) => (u.getDisableLink() ? null : u.path))(sri.makeUrlByType(${lit(transition)}, "transition", ${bareLit(node)}, "true"))` : "null";
+        const style = attr(node, "style");
+        const body = `{ const $map = ${S.mapViewExpr(node, false)};\nsri.write("<m-map" + $v.A({id: ${nodeIdCode(node)}, ":config": $v.js($map.config), ` +
+            `"config-url": ${url}, height: $map.height, class: ${style ? noL10n(style) : "null"}}) + "></m-map>\\n");\n}\n`;
+        return attr(node, "condition") ? `if (${attr(node, "condition")}) {\n${body}}\n` : body;
+    });
+
     const dashboardMacro = stmt((node) => {
         const minWidth = parseInt(attr(node, "min-width") || "", 10);
         const gridStyle = minWidth > 0 ? `--m-dashboard-min:${minWidth}px` : "";
@@ -3100,6 +3112,7 @@
         "context": widget("screenContext", false),
         "report-panel": reportWidget,
         "report-dashboard": reportWidget,
+        "map-view": mapViewWidget,
         "report-embed": reportWidget,
         "dashboard": dashboardMacro,
         "number-card": widget("numberCard", false),

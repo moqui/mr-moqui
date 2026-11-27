@@ -40,6 +40,10 @@ use crate::context::{Error, ExecutionContextFactory};
 /// The default check interval for a screen file outside production.
 const DEFAULT_CHECK_INTERVAL_MS: i64 = 2000;
 const MAX_URL_ENTRIES: usize = 20_000;
+/// The `//` searches kept ([`ScreenFacade::put_sparse`]): a request path names its own, so a client sending many
+/// distinct misses would otherwise grow the map without end (SEC-RTE-88). At the cap the misses go first; a search found
+/// past it is not kept.
+const MAX_SPARSE_ENTRIES: usize = 4_096;
 /// Theme icons are data, so an edit shows within this time without a restart.
 const ICON_EXPIRE_MS: i64 = 300_000;
 
@@ -614,6 +618,12 @@ impl ScreenFacade {
             cache.paths.clear();
             cache.generation = generation;
         }
+        if cache.paths.len() >= MAX_SPARSE_ENTRIES && !cache.paths.contains_key(&key) {
+            cache.paths.retain(|_, found| found.is_some());
+            if cache.paths.len() >= MAX_SPARSE_ENTRIES || names.is_none() {
+                return;
+            }
+        }
         cache.paths.insert(key, names);
     }
 
@@ -663,7 +673,7 @@ impl ScreenFacade {
 
     /// Drop at once every cached definition read from one of `files` (a screen file, a `screen-extend` file, a form or
     /// widget template it includes), or from a directory holding one (a `screen-extend` directory a new file appears
-    /// in), with the resolved paths and `//` searches that hold them (plans/design-dev-aide.md 6.1, F6). The 2 s check
+    /// in), with the resolved paths and `//` searches that hold them (plans/archive/design-dev-aide.md 6.1, F6). The 2 s check
     /// would see the change later; this is for a save and the dev file watcher. Answers the screen locations dropped.
     pub fn forget(&self, factory: &ExecutionContextFactory, files: &[std::path::PathBuf]) -> Vec<String> {
         let files: Vec<std::path::PathBuf> = files.iter().map(|file| canonical(file)).collect();
@@ -826,6 +836,30 @@ mod tests {
         assert!(facade.cached_sparse(factory, "root\u{1}//Plain").is_some());
         facade.clear();
         assert_eq!(facade.cached_sparse(factory, "root\u{1}//Plain"), None);
+    }
+
+    /// SEC-RTE-88: the `//` searches a client names do not grow the map past its cap; at the cap the misses go and the
+    /// found paths stay.
+    #[test]
+    fn the_search_cache_keeps_at_most_its_cap() {
+        let ctx = crate::context::ExecutionContextFactory::test_context();
+        let factory = ctx.factory();
+        let facade = ScreenFacade::of(factory);
+        facade.put_sparse(factory, "root\u{1}//Plain".into(), Some(vec!["Plain".into()]));
+        for at in 0..MAX_SPARSE_ENTRIES + 50 {
+            facade.put_sparse(factory, format!("root\u{1}//miss{at}"), None);
+        }
+        assert!(lock(&facade.sparse).paths.len() <= MAX_SPARSE_ENTRIES);
+        assert!(
+            facade.cached_sparse(factory, "root\u{1}//Plain").is_some(),
+            "a found path stays"
+        );
+        facade.put_sparse(factory, "root\u{1}//Found".into(), Some(vec!["Found".into()]));
+        assert!(
+            facade.cached_sparse(factory, "root\u{1}//Found").is_some(),
+            "a found path is kept over misses"
+        );
+        assert!(lock(&facade.sparse).paths.len() <= MAX_SPARSE_ENTRIES);
     }
 
     /// Two screens whose transitions include each other, in a new directory: their locations.

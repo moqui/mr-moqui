@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! What the app has seen of each vault (plans/Vault-Instances.md §3.12, decision (d) of §9), kept per account in
+//! What the app has seen of each vault (plans/archive/Vault-Instances.md §3.12, decision (d) of §9), kept per account in
 //! `vault/<account>.seen.json`: the highest key version and member-list revision it accepted and the hash of that
 //! member list (the module's `remembered`), and the highest revision of each item. The server can hand back older rows;
 //! a browser forgets, the app does not.

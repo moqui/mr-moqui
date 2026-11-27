@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.dev.InstanceLinkServices` (plans/Vault-Instances.md §4.4): on a manager, an instance's link as System ›
+//! `org.moqui.dev.InstanceLinkServices` (plans/archive/Vault-Instances.md §4.4): on a manager, an instance's link as System ›
 //! Instances shows it, its pairing code, a command over the link or SSH as its environment's transport says, a signed
 //! approver set and a revoke, each checked against the instance's environment and the caller (INSTANCE_ADMIN, and the
 //! environment's approver group when it names one); on a managed instance, pairing with a manager by its code and the

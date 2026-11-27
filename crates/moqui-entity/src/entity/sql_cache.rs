@@ -94,7 +94,7 @@ pub(crate) fn read_shape(facade: &EntityFacade, entity: &EntityDefinition, diale
 
 impl ReadShape {
     /// Whether this shape reads `entity`'s fields as they are: a find still on the model a relink replaced may put its
-    /// shape back after the relink dropped them (plans/design-dev-aide.md F5), and the next find builds it again.
+    /// shape back after the relink dropped them (plans/archive/design-dev-aide.md F5), and the next find builds it again.
     fn is_of(&self, entity: &EntityDefinition) -> bool {
         self.columns.len() == entity.fields.len()
             && self
@@ -105,7 +105,7 @@ impl ReadShape {
     }
 }
 
-/// Drop the shapes and the SQL rendered for them: the model was swapped (plans/design-dev-aide.md F5).
+/// Drop the shapes and the SQL rendered for them: the model was swapped (plans/archive/design-dev-aide.md F5).
 pub(crate) fn forget_model(facade: &EntityFacade) {
     facade.drop_slot::<ReadShapes>();
     facade.drop_slot::<SqlText>();

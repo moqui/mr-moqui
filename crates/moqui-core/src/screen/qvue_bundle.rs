@@ -59,7 +59,7 @@ pub(crate) struct Slot(Mutex<Option<(u64, Made)>>);
 
 impl Slot {
     /// The kept answer for `text`, or the one compiled now. Concurrent first requests wait for one compile.
-    fn made(&self, factory: &ExecutionContextFactory, text: &str) -> Made {
+    fn made(&self, factory: &ExecutionContextFactory, text: &str, client_libraries: bool) -> Made {
         let hash = fnv1a(text.as_bytes());
         let mut kept = moqui_lib::sync::lock(&self.0);
         if let Some((held, made)) = kept.as_ref() {
@@ -68,7 +68,7 @@ impl Slot {
             }
         }
         let made: Made = super::statics::compiler_source(factory)
-            .and_then(|compiler| vue_check::qvue_make(&compiler, text))
+            .and_then(|compiler| vue_check::make_qvue(&compiler, text, client_libraries))
             .map(Arc::from)
             .map_err(|err| err.message().to_string());
         *kept = Some((hash, made.clone()));
@@ -97,7 +97,17 @@ pub(crate) fn answer_render(state: &RenderState, request: &WebRequest) {
     let (_, headers, body, _) = web::take_output();
     web::clear_output();
     let text = String::from_utf8_lossy(&body);
-    let made = def.generated.qvue_bundle().made(&state.factory, &text);
+    let libraries = def.client_libraries("qvt");
+    let made = def
+        .generated
+        .qvue_bundle()
+        .made(&state.factory, &text, !libraries.is_empty());
+    let made = if libraries.is_empty() {
+        made
+    } else {
+        let libraries = serde_json::json!(libraries);
+        made.map(|body| Arc::from(format!("Object.assign({body}, {{libraries:{libraries}}})")))
+    };
     respond(request, headers, made, &def.location);
 }
 
@@ -125,7 +135,7 @@ pub(crate) fn answer_file(
             slot
         }
     };
-    let made = slot.made(factory, &text);
+    let made = slot.made(factory, &text, false);
     let mut headers = Vec::new();
     web::apply_conf_headers(Some(factory), "screen-resource-text", &mut headers, false);
     if versioned {

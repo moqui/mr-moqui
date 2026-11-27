@@ -103,14 +103,14 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="boardFile" method="post" require-session-token="false"><actions><script><![CDATA[
         const result = ec.service.sync().name('org.moqui.call.MeetingBoardServices.access#MeetingBoardImage')
             .parameters({wikiPageId,token,credential,filename}).call()
-        if (result.denied) ec.web.sendJsonError(404,'Board file not available')
+        if (result.denied) ec.web.sendJsonError(404, ec.l10n.localize('Board file not available'))
         else if (ec.message.hasError()) ec.web.sendJsonResponse({errors:ec.message.errorsString})
         else ec.web.sendJsonResponse(result)
     ]]></script></actions><default-response type="none"/></transition>
     <transition name="uploadBoardFile" method="post" require-session-token="false"><actions><script><![CDATA[
         const result = ec.service.sync().name('org.moqui.call.MeetingBoardServices.access#MeetingBoardImage')
             .parameters({wikiPageId,token,credential,attachmentFile}).call()
-        if (result.denied) ec.web.sendJsonError(404,'Board file not available')
+        if (result.denied) ec.web.sendJsonError(404, ec.l10n.localize('Board file not available'))
         else if (ec.message.hasError()) ec.web.sendJsonResponse({errors:ec.message.errorsString})
         else ec.web.sendJsonResponse(result)
     ]]></script></actions><default-response type="none"/></transition>

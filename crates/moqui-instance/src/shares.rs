@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A managed instance's recovery shares on the manager (plans/Vault-Instances.md §4.5, M6). The manager sees no share:
+//! A managed instance's recovery shares on the manager (plans/archive/Vault-Instances.md §4.5, M6). The manager sees no share:
 //!
 //! - **Holders** ([`holders`]): the members of the environment's recovery group with an active personal key, each with
 //!   the key checks of that key. The instance takes a holder's key only with a check signed by an approver it pinned at

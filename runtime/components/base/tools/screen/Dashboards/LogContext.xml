@@ -22,8 +22,14 @@
             const after = ec.service.sync().name('org.moqui.report.ReportServices.query#Documents').parameters(Object.assign({},base,{
                 sort:[field,'__cursor'],cursor:{datasetId,sort:[field,'__cursor'],values},pageSize:25
             })).call()
+            // the time field comes as epoch milliseconds (a number) or date text: shown in the user's zone, as Explore shows it
+            const stamp = value => {
+                if (value == null || value === '') return ''
+                const date = new Date(/^\d+$/.test(String(value)) ? Number(value) : value)
+                return Number.isNaN(date.getTime()) ? String(value) : ec.l10n.format(date, 'yyyy-MM-dd HH:mm:ss.SSS')
+            }
             contextLines = [...(before.hits || []).reverse(),anchor,...(after.hits || [])].map(hit=>({
-                timestamp:hit.body[field],level:hit.body.severity_text || '',message:String(hit.body.body || hit.body.name || ''),
+                timestamp:stamp(hit.body[field]),level:hit.body.severity_text || '',message:String(hit.body.body || hit.body.name || ''),
                 traceId:hit.body.trace_id || '',selected:hit.id===anchor.id && hit.documentId===anchor.documentId ? '→' : '',
                 documentJson:JSON.stringify(hit.body,null,2)
             }))
@@ -32,6 +38,7 @@
     <widgets>
         <label text="Entries surrounding ${documentId}" type="h4"/>
         <label condition="contextNotice" text="${contextNotice}" type="p"/>
+        <label condition="contextLines.length" text="Times shown in ${ec.user.timeZone}." type="p" style="m-muted"/>
         <form-list name="LogContext" list="contextLines" skip-form="true" paginate="false">
             <field name="selected"><default-field title=""><display/></default-field></field>
             <field name="timestamp"><default-field title="Time"><display/></default-field></field>

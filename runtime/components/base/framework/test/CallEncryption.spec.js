@@ -208,6 +208,33 @@ feature("a leg binds its media only once it names its device; a reconnect is a n
     }
 })
 
+feature("an encrypted call takes the app's screen leg only sealed with SFrame: the page's device, a key index of its own", {
+    when() {
+        const started = as(A, "start#Call", {calleeUserIdList: [B, C], requireE2ee: true, ...browser(A)})
+        const id = started.callSessionId
+        as(B, "answer#Call", {callSessionId: id, ...browser(B)})
+        as(A, "bind#Connection", {callSessionId: id, callLegId: started.callLegId, signalingNodeId: NODE})
+        const unsealed = as(A, "add#ScreenLeg", {callSessionId: id})
+        const screen = as(A, "add#ScreenLeg", {callSessionId: id, sframe: true})
+        const bound = as(A, "bind#Connection", {callSessionId: id, callLegId: screen.callLegId, signalingNodeId: NODE})
+        const seen = as(B, "get#Call", {callSessionId: id}).call
+        as(A, "end#Call", {callSessionId: id})
+        return {started, unsealed, screen, bound, seen, row: leg(screen.callLegId), page: leg(started.callLegId)}
+    },
+    then({started, unsealed, screen, bound, seen, row, page}) {
+        started.call.e2ee == true
+        unsealed.reasonCode == "e2eeScreen"
+        screen.screenOfLegId == started.callLegId
+        row.cryptoDeviceId == DEVICES[A]
+        row.keyIndex != null && Number(row.keyIndex) != Number(page.keyIndex)
+        bound.generation == 1
+        bound.screenOfLegId == started.callLegId
+        // the others' roster has it, under the page's device, so they take its key from that device alone
+        seen.participants.find(p => p.userId == A).legs.some(l => l.callLegId == screen.callLegId && l.type == "screen" &&
+            l.deviceId == DEVICES[A] && Number(l.keyIndex) == Number(row.keyIndex))
+    }
+})
+
 feature("an encrypted call refuses recording, captions, a number, desk phones, forwarded numbers and a merge, which a plain call passes with the same parameters", {
     when() {
         setConf("calls/recording@enabled", "true")

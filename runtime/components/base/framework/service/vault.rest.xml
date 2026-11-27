@@ -88,7 +88,7 @@ along with this software (see the LICENSE.md file). If not, see
         <method type="post"><service name="org.moqui.security.VaultServices.send#VaultDelivery"/></method>
         <id name="deliveryId">
             <resource name="file"><method type="post"><service name="org.moqui.security.VaultServices.file#VaultDelivery"/></method></resource>
-            <!-- a managed instance's recovery share (plans/Vault-Instances.md §4.5): the holder's signed confirmation -->
+            <!-- a managed instance's recovery share (plans/archive/Vault-Instances.md §4.5): the holder's signed confirmation -->
             <resource name="confirmShare"><method type="post"><service name="org.moqui.dev.InstanceLinkServices.confirm#InstanceRecoveryShare"/></method></resource>
         </id>
     </resource>

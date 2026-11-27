@@ -6,6 +6,15 @@ it calls other services, and what its errors, transaction and authorization do. 
 use a module is in [Practices-App-Dev](Practices-App-Dev.md#4-services-and-scripts). The XML action elements are in
 [JS-XML-Actions](JS-XML-Actions.md), and the members of `ec` in [JS-Core-API](JS-Core-API.md).
 
+## Component libraries
+
+A service and a server-rendered screen action can load the same component library. Assign the result of
+`ec.resource.script("component://my-component/script/libs/dates.js")` to a local variable and call its named
+exports (or `.default` for a default export). Select **server** or **both** when adding the package in Dev AIDE.
+The module runs in the caller's execution context, once for the outermost run: a second `ec.resource.script` of it in
+the same request, job or service call gives the same value, as for an inert module, so the bundle is not run again at
+each call. The builder's first line (`/* moqui component library ... */`) is what marks it. See [Adding a component library](../Build-Test.md#add-a-component-library).
+
 ## Implementation types
 
 The `type` attribute of `<service>` chooses the runner (`service/define.rs` `load_service` and `kind_of`,

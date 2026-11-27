@@ -12,11 +12,12 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! New components from a template (plans/design-dev-aide.md 12): the component template in
-//! `runtime/components/dev/template` and the dev-aide's Site template. The rules for the component template, its
-//! placeholders and its parts, are in `runtime/components/dev/README.md`; `./moq component-create` follows the same ones.
+//! New components from a template (plans/archive/design-dev-aide.md 12): the component template in
+//! `runtime/components/dev/template` (the App kind, and the other kinds in its `kinds/`) and the dev-aide's Site
+//! template. The rules for the component template, its placeholders, kinds and parts, are in
+//! `runtime/components/dev/README.md`; `./moq component-create` follows the same ones.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use moqui_lib::error::Error as LibError;
 
@@ -74,7 +75,105 @@ pub(crate) fn valid_name(name: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
 }
 
-/// What a new component from the component template has: all of it, its screens only, or its REST API only.
+/// The component directories under `components` (`runtime/components`): each set's directories with a `component.xml`,
+/// the component template left out.
+fn component_dirs(components: &Path) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let Ok(sets) = std::fs::read_dir(components) else {
+        return dirs;
+    };
+    for set in sets.flatten() {
+        let Ok(entries) = std::fs::read_dir(set.path()) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            if entry.file_name() != "template" && dir.join("component.xml").is_file() {
+                dirs.push(dir);
+            }
+        }
+    }
+    dirs.sort();
+    dirs
+}
+
+/// The first segments of the service and entity packages of the components under `components`, lower case: each
+/// `service/<segment>/` directory and each `package="<segment>...` of a top-level `entity/*.xml`. A new component
+/// whose `@package@` is one of them would put its services or entities in another's package (`org`, `moqui`,
+/// `mantle`), and its artifact group would grant theirs.
+pub(crate) fn taken_packages(components: &Path) -> std::collections::BTreeSet<String> {
+    static PACKAGE: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
+    let package = PACKAGE.get_or_init(|| regex::Regex::new(r#"package="([^".]*)"#).ok());
+    let mut taken = std::collections::BTreeSet::new();
+    for dir in component_dirs(components) {
+        for entry in std::fs::read_dir(dir.join("service")).into_iter().flatten().flatten() {
+            if entry.path().is_dir() {
+                taken.insert(entry.file_name().to_string_lossy().to_ascii_lowercase());
+            }
+        }
+        for entry in std::fs::read_dir(dir.join("entity")).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "xml") {
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                for found in package.iter().flat_map(|package| package.captures_iter(&text)) {
+                    taken.insert(found[1].to_ascii_lowercase());
+                }
+            }
+        }
+    }
+    taken.remove("");
+    taken
+}
+
+/// The first names of the webroot's paths, lower case: the files and directories of `webroot/screen/webroot/` (a
+/// file's name up to its first `.`), and each `subscreens-item` name of `webroot.xml` and of a component's
+/// `MoquiConf.xml` that mounts under it. A theme is served at `/<its name>/`, so it may not take one.
+pub(crate) fn webroot_names(components: &Path) -> std::collections::BTreeSet<String> {
+    static ITEM: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
+    let item = ITEM.get_or_init(|| regex::Regex::new(r#"subscreens-item name="([^"]*)""#).ok());
+    let mut names = std::collections::BTreeSet::new();
+    let screen = components.join("base/webroot/screen");
+    for entry in std::fs::read_dir(screen.join("webroot"))
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        names.insert(name.split('.').next().unwrap_or_default().to_ascii_lowercase());
+    }
+    let mut texts = vec![std::fs::read_to_string(screen.join("webroot.xml")).unwrap_or_default()];
+    for dir in component_dirs(components) {
+        let text = std::fs::read_to_string(dir.join("MoquiConf.xml")).unwrap_or_default();
+        if text.contains("component://webroot/screen/webroot.xml\"") {
+            texts.push(text);
+        }
+    }
+    for text in &texts {
+        for found in item.iter().flat_map(|item| item.captures_iter(text)) {
+            names.insert(found[1].to_ascii_lowercase());
+        }
+    }
+    names.remove("");
+    names
+}
+
+/// Why `name` may not be a new component of `kind` beside the components under `components`, if it may not: its
+/// package is another's ([`taken_packages`]), or a theme's name is a webroot path ([`webroot_names`]).
+/// `./moq component-create` refuses the same (`template_name_refusal`).
+pub(crate) fn name_refusal(components: &Path, name: &str, kind: Kind) -> Option<String> {
+    let package = Names::of(name).package;
+    if taken_packages(components).contains(&package) {
+        return Some(format!(
+            "{name} would put its services and entities in the package {package}, which another component's are in"
+        ));
+    }
+    if kind == Kind::Theme && webroot_names(components).contains(&name.to_ascii_lowercase()) {
+        return Some(format!("a theme is served at /{name}/, a path the webroot has already"));
+    }
+    None
+}
+
+/// What an App component from the component template has: all of it, its screens only, or its REST API only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Part {
     All,
@@ -121,13 +220,94 @@ impl Part {
     }
 }
 
-/// A component named `name` in `target` from the component template in `template`: its files with the placeholders
-/// filled in, less what `part` leaves out, and without the template's `disabled="true"`.
-pub(crate) fn create(template: &Path, target: &Path, name: &str, part: Part) -> Result<(), LibError> {
+/// The directory of the component template that holds the kinds other than App, each a template of its own
+/// (`kinds/<kind>`), which an App component leaves out.
+pub(crate) const KINDS_DIR: &str = "kinds";
+
+/// The kind of a new component (plans/archive/design-dev-aide.md 12): an App (the template itself, with its part), data only,
+/// native (a Rust crate `./moq build` links), a theme of the `/qapps` shell, a skill pack, or a dev tool (in
+/// `runtime/components/dev`, `purpose="dev"`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Kind {
+    App(Part),
+    Data,
+    Native,
+    Theme,
+    Skills,
+    DevTool,
+}
+
+impl Kind {
+    /// Every kind other than App, as `kinds/<name>` of the template holds them.
+    #[cfg(test)]
+    pub(crate) const OTHERS: [Kind; 5] = [Kind::Data, Kind::Native, Kind::Theme, Kind::Skills, Kind::DevTool];
+
+    /// By name: `app` (or empty) with its `part`; a part's name alone (`all`, `screens`, `rest`) for an App; or `data`,
+    /// `native`, `theme`, `skills` or `dev-tool`, which take no part.
+    pub(crate) fn of(kind: &str, part: &str) -> Option<Kind> {
+        let partless = |kind: Kind| (part.is_empty() || part == "all").then_some(kind);
+        match kind {
+            "" | "app" => Part::of(part).map(Kind::App),
+            "data" => partless(Kind::Data),
+            "native" => partless(Kind::Native),
+            "theme" => partless(Kind::Theme),
+            "skills" => partless(Kind::Skills),
+            "dev-tool" => partless(Kind::DevTool),
+            other => Part::of(other)
+                .filter(|_| part.is_empty() || part == other)
+                .map(Kind::App),
+        }
+    }
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Kind::App(_) => "app",
+            Kind::Data => "data",
+            Kind::Native => "native",
+            Kind::Theme => "theme",
+            Kind::Skills => "skills",
+            Kind::DevTool => "dev-tool",
+        }
+    }
+
+    /// Whether a component of this kind goes in `runtime/components/dev` wherever it is asked for.
+    pub(crate) fn dev_only(self) -> bool {
+        self == Kind::DevTool
+    }
+
+    /// The template directory a component of this kind is copied from: the template itself for an App, else its
+    /// `kinds/<name>`.
+    pub(crate) fn source(self, template: &Path) -> PathBuf {
+        match self {
+            Kind::App(_) => template.to_path_buf(),
+            other => template.join(KINDS_DIR).join(other.name()),
+        }
+    }
+
+    /// The paths of [`Self::source`] a component of this kind leaves out: an App's part, and the other kinds.
+    fn left_out(self) -> Vec<&'static str> {
+        match self {
+            Kind::App(part) => part.left_out().iter().copied().chain([KINDS_DIR]).collect(),
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// A component named `name` in `target` from the component template in `template`: the files of the kind's template
+/// with the placeholders filled in, less what the kind leaves out, and without the template's `disabled="true"`.
+pub(crate) fn create(template: &Path, target: &Path, name: &str, kind: Kind) -> Result<(), LibError> {
     let names = Names::of(name);
     let fill = |text: &str| names.fill(text);
-    copy_template(template, target, &fill, &fill)?;
-    for path in part.left_out() {
+    let source = kind.source(template);
+    if !source.join("component.xml").is_file() {
+        return Err(LibError::new(format!(
+            "the component template has no {} kind: {} is not there",
+            kind.name(),
+            source.display()
+        )));
+    }
+    copy_template(&source, target, &fill, &fill)?;
+    for path in kind.left_out() {
         let path = target.join(names.fill(path));
         let removed = if path.is_dir() {
             std::fs::remove_dir_all(&path)

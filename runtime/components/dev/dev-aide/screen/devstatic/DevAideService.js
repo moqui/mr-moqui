@@ -1,17 +1,22 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The service writer and the ECA view of the Dev AIDE (plans/design-dev-aide.md 9, 10). m-dev-service-view is the
+ * The service writer and the ECA view of the Dev AIDE (plans/archive/design-dev-aide.md 9, 10). m-dev-service-view is the
  * visual view of a service file's tab: one service at a time, its header and settings from the schema digest, its
- * parameters (nested, those auto-parameters imply marked), its implementation (inline actions in the logic composer, a
- * script service's file, an entity-auto's entity), its SECA rules with Add (into the site's secas file, D17), what uses
- * it and the last spec run's calls, and the Try panel (9.4): a form of the in-parameters, Run in sim or for real, the
+ * parameters (nested, from the buffer, those auto-parameters imply marked; Add, Add child in a Map or a List, Edit and
+ * Remove on each declared one by its path of names, with the terminal twin's builders), its implementation (inline
+ * actions in the logic composer, a script service's file, an entity-auto's entity), its SECA rules with Add (into the
+ * site's secas file, D17), what uses it and the last spec run's calls, and the Try panel (9.4): a form of the in-parameters, Run in sim or for real, the
  * rows the sim would write, Save as spec and Run spec, and a snippet runner. m-dev-composer is the logic composer
  * (9.2): the actions as blocks on the block tree, each a sentence with its main attributes as chips that edit one
  * attribute, the palette by the XSD's groups with snippets, the names known before each block marking an unknown one in
  * an expression, a service-call's in-parameters to add, a script's popup editor, and the generated JavaScript.
  * m-dev-eca-view is the view of an ECA file: its rules, a rule's attributes, its condition and its actions in the
- * composer, and Add, Remove and Move. Every edit is an operation of the lossless XML layer on a buffer.
+ * composer, Add, Remove and Move, Try the condition against a context (for a gitECA rule, a push of the push log),
+ * the contexts saved as named fixtures, and Save as spec and Run spec on a rule. A Try in sim runs over the Workspace's
+ * unsaved service and script buffers (F14) and traces the actions, and the composer marks its blocks as run (with the
+ * count and the values set on hover), not run, or failed. Every edit is an operation of the lossless XML layer on a
+ * buffer.
  *
  * The pure parts are moqui.devAide.serviceOps, which test/client/pages/DevAideService.page.js runs.
  */
@@ -186,14 +191,127 @@
     ops.parameterXml = (parameter) => xml("parameter", [["name", parameter.name], ["type", parameter.type && parameter.type !== "String" ? parameter.type : ""],
         ["required", parameter.required ? "true" : ""], ["default-value", parameter.defaultValue]],
     parameter.description ? "<description>" + escape(parameter.description) + "</description>" : "");
-    // A parameter into in-parameters or out-parameters, the element made when the service has none.
-    ops.addParameter = (service, which, parameter) => {
+    // An attribute set, or removed when empty.
+    const setAttributeOps = (node, name, value) => {
+        if (!node) return [];
+        if (value === "" || value === null || value === undefined || value === false) return attrOf(node, name) === undefined ? [] : [{ op: "remove-attribute", at: node.path, name }];
+        return [{ op: "set-attribute", at: node.path, name, value: value === true ? "true" : String(value) }];
+    };
+    // A parameter of in-parameters or out-parameters by its name, or by its path of names (["order", "items"] or
+    // "order.items"), each a parameter of the one before. The same builders as the terminal's twin (GuidedOps.js), so
+    // the browser and the terminal make the same edits.
+    ops.parameterNode = (service, which, name) => {
+        const names = (Array.isArray(name) ? name : String(name == null ? "" : name).split(".")).filter((part) => part !== "");
+        let node = names.length ? children(service, [which])[0] || null : null;
+        for (const part of names) node = node ? children(node, ["parameter"]).find((child) => attrOf(child, "name") === part) || null : null;
+        return node;
+    };
+    // A parameter added last in in-parameters or out-parameters (made when missing), or with `parent` (a name path, as
+    // parameterNode takes it) last inside that parameter, a Map's or a List's: after its parameters, before its
+    // validations, as the schema orders them. None when the parent is not there.
+    ops.addParameter = (service, which, parameter, parent) => {
         const holder = children(service, [which])[0];
         const text = ops.parameterXml(parameter);
+        if (parent && (!Array.isArray(parent) || parent.length)) {
+            const node = ops.parameterNode(service, which, parent);
+            if (!node) return [];
+            const nested = children(node, ["parameter", "auto-parameters"]);
+            if (nested.length) return [{ op: "insert", at: nested[nested.length - 1].path, position: "after", xml: text }];
+            const validation = children(node).find((child) => child.name !== "description");
+            return validation ? [{ op: "insert", at: validation.path, position: "before", xml: text }] : [{ op: "insert", at: node.path, position: "last", xml: text }];
+        }
         if (holder) return [{ op: "insert", at: holder.path, position: "last", xml: text }];
         const before = children(service, which === "in-parameters" ? ["out-parameters", "actions"] : ["actions"])[0];
         const made = xml(which, [], text);
         return before ? [{ op: "insert", at: before.path, position: "before", xml: made }] : [{ op: "insert", at: service.path, position: "last", xml: made }];
+    };
+    ops.removeParameter = (service, which, name) => {
+        const node = ops.parameterNode(service, which, name);
+        return node ? [{ op: "remove", at: node.path }] : [];
+    };
+    // Edit a parameter: its type, required and default as attributes, its description as its child.
+    ops.editParameter = (service, which, name, parameter) => {
+        const node = ops.parameterNode(service, which, name);
+        if (!node) return [];
+        const list = setAttributeOps(node, "type", parameter.type && parameter.type !== "String" ? parameter.type : "")
+            .concat(setAttributeOps(node, "required", parameter.required ? "true" : ""))
+            .concat(setAttributeOps(node, "default-value", parameter.defaultValue));
+        const description = children(node, ["description"])[0];
+        if (description) list.push(parameter.description ? { op: "set-text", at: description.path, text: parameter.description } : { op: "remove", at: description.path });
+        // first, before a Map's or List's parameters, as the schema orders them
+        else if (parameter.description) list.push({ op: "insert", at: node.path, position: children(node).length ? "first" : "last", xml: "<description>" + escape(parameter.description) + "</description>" });
+        return list;
+    };
+    // The parameter types that hold parameters of their own.
+    ops.HOLDER_TYPES = ["Map", "List", "Set", "Collection", "Node"];
+    // Why an Add or an Edit of a parameter is refused, or null: an Add of a name its parent (or the top) has already, an
+    // Edit that makes a parameter holding others a type that holds none (remove them first). The terminal twin's too.
+    ops.parameterRefusal = (service, which, change) => {
+        const path = [change.parent, change.name].filter((part) => part).join(".");
+        if (change.mode === "add") {
+            return ops.parameterNode(service, which, path) ? "There is a parameter " + change.name + (change.parent ? " in " + change.parent : "") + " already" : null;
+        }
+        const node = ops.parameterNode(service, which, change.path || path);
+        const holds = ops.HOLDER_TYPES.indexOf(String(change.type || "String").split(".").pop()) >= 0;
+        return node && !holds && children(node, ["parameter", "auto-parameters"]).length
+            ? (change.path || path) + " holds parameters: remove them first, or keep a type that holds them" : null;
+    };
+    // A service's parameters as the view's rows: the buffer's own (its service element's, children flattened with their
+    // depth), each with the definition's checks by its path, then those the definition implies (auto-parameters, an
+    // interface) after them; the definition's alone when the buffer has no such service. Each row has its parent's path
+    // of names (parentPath, dotted, empty at the top), its own (path), and whether it may be edited (not implied) and
+    // hold parameters (holder).
+    ops.parameterRows = (service, which, defined) => {
+        const rows = [];
+        const byPath = new Map();
+        const index = (list, parents) => {
+            for (const parameter of list || []) {
+                const path = parents.concat([parameter.name]);
+                byPath.set(path.join("."), parameter);
+                index(parameter.children, path);
+            }
+        };
+        index(defined, []);
+        const push = (parameter, parents, implied) => {
+            const path = parents.concat([parameter.name]).join(".");
+            const type = parameter.type || "String";
+            const known = byPath.get(path);
+            rows.push({ which, name: parameter.name, parentPath: parents.join("."), path, depth: parents.length, type,
+                required: parameter.required === "true" || parameter.required === true, defaultValue: parameter.defaultValue || parameter.default || "",
+                description: parameter.description || "", checks: known && known.checks ? known.checks.length : 0, implied,
+                editable: !implied, holder: !implied && ops.HOLDER_TYPES.indexOf(type.split(".").pop()) >= 0 });
+        };
+        const holder = service ? children(service, [which])[0] : null;
+        if (service) {
+            const walk = (parent, parents) => {
+                for (const child of children(parent, ["parameter"])) {
+                    const name = attrOf(child, "name");
+                    const description = children(child, ["description"])[0];
+                    push({ name, type: attrOf(child, "type"), required: attrOf(child, "required"), defaultValue: attrOf(child, "default-value"),
+                        description: description ? description.text : "" }, parents, false);
+                    const inside = parents.concat([name]);
+                    walk(child, inside);
+                    // what the definition adds inside it (its auto-parameters): shown there, not to be edited
+                    const declared = new Set(children(child, ["parameter"]).map((nested) => attrOf(nested, "name")));
+                    const known = byPath.get(inside.join("."));
+                    for (const nested of (known && known.children) || []) if (!declared.has(nested.name)) implied(nested, inside);
+                }
+            };
+            const implied = (parameter, parents) => {
+                push(parameter, parents, true);
+                for (const child of parameter.children || []) implied(child, parents.concat([parameter.name]));
+            };
+            if (holder) walk(holder, []);
+            const own = new Set(rows.filter((row) => !row.parentPath).map((row) => row.name));
+            for (const parameter of defined || []) if (parameter.implied && !own.has(parameter.name)) implied(parameter, []);
+            return rows;
+        }
+        const walk = (parameter, parents, implied) => {
+            push(parameter, parents, implied);
+            for (const child of parameter.children || []) walk(child, parents.concat([parameter.name]), implied);
+        };
+        for (const parameter of defined || []) walk(parameter, [], !!parameter.implied);
+        return rows;
     };
     // A SECA rule on a service, into a secas file.
     ops.secaXml = (service, when) => xml("seca", [["service", service], ["when", when || "post-service"]], "<actions></actions>");
@@ -211,15 +329,94 @@
     };
     ops.SECAS_TEXT = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<secas xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" " +
         "xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/mr-service-eca.xsd\">\n</secas>\n";
+    // What get#PushContexts takes of a gitECA rule: its patterns and event.
+    ops.pushQuery = (rule) => ({ repositoryPattern: attrOf(rule, "repository-pattern") || "", refPattern: attrOf(rule, "ref-pattern") || "",
+        refType: attrOf(rule, "ref-type") || "", defaultBranchOnly: attrOf(rule, "default-branch-only") === "true", source: attrOf(rule, "source") || "",
+        event: attrOf(rule, "event") || "post-receive" });
+    // A change of the push log (find#GitUpdates' row) in a line: when, who, its refs and how its rules ran.
+    ops.updateLabel = (update) => {
+        const refs = (update.refList || []).map((ref) => ref.shortName + (ref.result && ref.result !== "ok" ? " (" + ref.result + ")" : ""));
+        const date = update.updateDate;
+        const when = typeof date === "number" ? new Date(date).toLocaleString() : String(date || "").replace("T", " ").slice(0, 16);
+        return [when, update.username || update.userId || update.source, refs.join(", ") || "no refs", update.ecaStatus].filter((part) => part).join(" · ");
+    };
+
+    // ---- pure: a Try over the unsaved buffers, and its trace on the composer's blocks (9.2, 9.4, F14) ----
+
+    // The unsaved buffers a Try in sim runs over: the service files and the scripts, at most 20.
+    ops.tryFiles = (buffers) => (buffers || []).filter((buffer) => {
+        const path = String(buffer.path || "").replace(/\\/g, "/");
+        return /\.js$/.test(path) || (/(^|\/)service\/.+\.xml$/.test(path) && !/\.(secas|emecas|gitecas|rest)\.xml$/.test(path));
+    }).slice(0, 20).map((buffer) => ({ rootId: buffer.rootId, path: buffer.path, text: buffer.text }));
+    // The block of a Try's trace that is the actions element at `line` of the file `path` of root `rootId`.
+    ops.traceBlock = (trace, rootId, path, line) => ((trace && trace.blocks) || []).find((block) =>
+        block.rootId === rootId && block.path === path && Number(block.line) === Number(line)) || null;
+    // The elements a trace does not count, read by the statement they are in; and the branches of an if.
+    const UNTRACED = new Set(["econdition", "econditions", "econdition-object", "date-filter", "having-econditions", "field-map", "order-by",
+        "select-field", "search-form-inputs", "default-parameters", "limit-range", "limit-view", "use-iterator", "condition", "compare",
+        "expression", "and", "or", "not", "description"]);
+    const BRANCHES = new Set(["then", "else", "else-if"]);
+    // Each element's mark under `actions` by its path below it ("1.0"): run with its count and the values it set,
+    // failed with why, or not run. An element the trace does not count goes as the statement it is in; a branch is run
+    // when something in it ran.
+    ops.traceMarks = (actions, block) => {
+        const marks = new Map();
+        if (!actions || !block) return marks;
+        const base = actions.path.length;
+        const elements = block.elements || {};
+        const visit = (node, around) => {
+            const key = node.path.slice(base).join(".");
+            const entry = elements[key];
+            let mark = entry ? { state: entry.failed ? "failed" : "run", count: entry.count, values: entry.values || {}, failed: entry.failed || "" }
+                : UNTRACED.has(node.name) ? { state: around === "not-run" ? "not-run" : "run" } : null;
+            let inside = false;
+            for (const kid of children(node)) {
+                const state = visit(kid, mark ? mark.state : "not-run");
+                if (state !== "not-run" && !UNTRACED.has(kid.name)) inside = true;
+            }
+            if (!mark) mark = { state: BRANCHES.has(node.name) && inside ? "run" : "not-run" };
+            marks.set(key, mark);
+            return mark.state;
+        };
+        for (const kid of children(actions)) visit(kid, "run");
+        return marks;
+    };
+    // What a mark says on hover.
+    ops.traceTitle = (mark) => {
+        if (!mark) return "";
+        if (mark.state === "not-run") return "Not run in the last Try";
+        const lines = [mark.count ? "Ran " + mark.count + (mark.count === 1 ? " time" : " times") : "Ran"];
+        for (const [name, value] of Object.entries(mark.values || {})) lines.push(name + " = " + value);
+        if (mark.failed) lines.push("Failed: " + mark.failed);
+        return lines.join("\n");
+    };
+    // A block's label with its mark: the run state as its class, the count or "failed" as its badge, the rest on hover.
+    ops.markLabel = (label, mark) => {
+        if (!mark) return label;
+        label.headClass = "m-dev-trace-" + mark.state;
+        label.title = ops.traceTitle(mark);
+        if (mark.state === "failed") { label.badge = "failed"; label.badgeClass = "m-dev-trace-failed"; }
+        else if (mark.count) { label.badge = "×" + mark.count; label.badgeClass = "m-dev-trace-run"; }
+        return label;
+    };
+    // What Save as spec on a rule (10) sends of it: its kind, its service or entity, an EECA rule's operation (its first
+    // event), and the condition the Try took.
+    ops.ruleSpecQuery = (rule, condition) => ({
+        kind: rule.name, target: attrOf(rule, "service") || attrOf(rule, "entity") || "",
+        operation: ["create", "update", "delete"].find((event) => attrOf(rule, "on-" + event) === "true") || "",
+        condition: condition || ""
+    });
 
     // ---- the composer ----
 
     const composer = {
         name: "mDevComposer",
-        props: { ctx: Object, actions: Object, readOnly: Boolean, inParameters: Array, apply: Function, text: String },
+        props: { ctx: Object, actions: Object, readOnly: Boolean, inParameters: Array, apply: Function, text: String, trace: Object },
         data() { return { selected: null, chipEdit: null, scriptEdit: null, generated: null, called: {}, paletteFor: null }; },
         computed: {
             known() { return ops.knownBefore(this.actions, this.inParameters); },
+            // the last Try's trace of these actions on their blocks
+            marks() { return this.trace ? ops.traceMarks(this.actions, this.trace) : null; },
             nodes() { return this.actions ? ops.blockChildren(this.actions) : []; },
             selectedNode() { return this.selected ? this.nodeAt(this.selected) : null; },
             calledService() {
@@ -239,7 +436,8 @@
         methods: {
             labelFn(node) {
                 const known = this.known.get(node.path.join(".")) || new Set();
-                return ops.sentence(node, known);
+                const label = ops.sentence(node, known);
+                return this.marks ? ops.markLabel(label, this.marks.get(node.path.slice(this.actions.path.length).join("."))) : label;
             },
             containerFn(node) { return ops.CONTAINERS.indexOf(node.name) >= 0; },
             childrenFn(node) { return ops.blockChildren(node); },
@@ -354,8 +552,17 @@
             actionsNode() { return this.serviceNode ? children(this.serviceNode, ["actions"])[0] || null : null; },
             service() { return this.view ? this.view.service : null; },
             inParameters() { return (this.service && this.service.inParameters) || []; },
+            // the rows of the Parameters tab, from the buffer (so an unsaved edit shows) with the definition's implied ones
+            paramRows() { return { "in-parameters": this.parameterRows("in-parameters"), "out-parameters": this.parameterRows("out-parameters") }; },
             canEdit() { return this.ctx.canWrite; },
-            storageKey() { return "moqui.devAide.try." + this.name; }
+            storageKey() { return "moqui.devAide.try." + this.name; },
+            // the last Try's trace of this service's actions, for the composer's marks
+            composerTrace() {
+                const result = this.result;
+                if (!result || !result.trace || !this.actionsNode) return null;
+                return ops.traceBlock(result.trace, this.ctx.rootId, this.tab.path, this.actionsNode.line);
+            },
+            failedAt() { return this.result && this.result.trace ? this.result.trace.failed : null; }
         },
         mounted() {
             this.pick();
@@ -376,11 +583,14 @@
                 const name = asked || (first ? this.prefixOf() + "." + first.name : "");
                 if (name && name !== this.name) this.load(name);
             },
+            // the unsaved service and script buffers, which a Try in sim runs over and the view reads (F14)
+            overFiles() { return ops.tryFiles(this.ctx.dirtyBuffers ? this.ctx.dirtyBuffers() : []); },
             load(name) {
                 this.name = name;
                 this.values = devAide.store.get(this.storageKey) || {};
-                return this.ctx.get("serviceView", { serviceName: name }).then((answer) => { this.view = answer.view; this.error = ""; },
-                    (error) => { this.error = pure.errorText(error); });
+                const files = this.overFiles();
+                const asked = files.length ? this.ctx.post("serviceView", { serviceName: name, files: JSON.stringify(files) }) : this.ctx.get("serviceView", { serviceName: name });
+                return asked.then((answer) => { this.view = answer.view; this.error = ""; }, (error) => { this.error = pure.errorText(error); });
             },
             pickService(entry) { this.load(this.prefixOf() + "." + entry); },
             apply(list) { return this.ctx.apply(list).catch((error) => this.ctx.fail(error)); },
@@ -390,16 +600,41 @@
                 this.apply(value === "" ? (attrOf(node, name) === undefined ? [] : [{ op: "remove-attribute", at: node.path, name }])
                     : [{ op: "set-attribute", at: node.path, name, value }]);
             },
-            startParameter(which) { this.adding = { which, name: "", type: "String", required: false, defaultValue: "", description: "" }; },
+            // Add (at the top, or with `parent` a Map's or List's path inside it) and Edit, in one dialog
+            startParameter(which, parent) {
+                this.adding = { mode: "add", which, parent: parent || "", name: "", type: "String", required: false, defaultValue: "", description: "" };
+            },
+            startEdit(row) {
+                this.adding = { mode: "edit", which: row.which, parent: row.parentPath, path: row.path, name: row.name, type: row.type,
+                    required: row.required, defaultValue: row.defaultValue, description: row.description };
+            },
             addParameter() {
                 const add = this.adding;
+                if (!this.serviceNode) { this.adding = null; return; }
+                const refusal = ops.parameterRefusal(this.serviceNode, add.which, add);
+                if (refusal) { this.ctx.note(refusal, "warning"); return; }
+                if (add.mode === "edit") {
+                    this.adding = null;
+                    this.apply(ops.editParameter(this.serviceNode, add.which, add.path, add));
+                    return;
+                }
+                if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(add.name || "")) { this.ctx.note(this.t("A parameter name is letters, digits and _"), "warning"); return; }
                 this.adding = null;
-                if (add.name && this.serviceNode) this.apply(ops.addParameter(this.serviceNode, add.which, add));
+                const list = ops.addParameter(this.serviceNode, add.which, add, add.parent);
+                if (!list.length) { this.ctx.note("No parameter " + add.parent + " to add it in", "warning"); return; }
+                this.apply(list);
             },
-            removeParameter(which, name) {
-                const holder = this.serviceNode ? children(this.serviceNode, [which])[0] : null;
-                const node = holder ? children(holder, ["parameter"]).find((child) => attrOf(child, "name") === name) : null;
-                if (node) this.apply([{ op: "remove", at: node.path }]);
+            removeParameter(row) {
+                const list = ops.removeParameter(this.serviceNode, row.which, row.path);
+                if (!list.length) return;
+                const nested = this.parameterRows(row.which).some((other) => other.parentPath === row.path);
+                if (!nested) { this.apply(list); return; }
+                this.$q.dialog({ title: "Remove " + row.path + "?", message: this.t("The parameters in it are removed too."), cancel: true,
+                    ok: { label: "Remove", color: "negative" } }).onOk(() => this.apply(list));
+            },
+            parameterRows(which) {
+                const defined = which === "in-parameters" ? this.inParameters : (this.service && this.service.outParameters) || [];
+                return ops.parameterRows(this.serviceNode, which, defined);
             },
             // ---- SECA rules: Add writes into the site's secas file (D17) ----
             addSeca() {
@@ -422,7 +657,10 @@
                 this.remember();
                 this.trying = true;
                 const parameters = ops.tryParameters(this.values, this.inParameters);
-                this.ctx.post("tryService", { serviceName: this.name, parameters: JSON.stringify(parameters), real, confirm: real }).then((answer) => {
+                const asked = { serviceName: this.name, parameters: JSON.stringify(parameters), real, confirm: real };
+                // over the unsaved buffers, and traced: the extend tier's, as a snippet is
+                if (!real && this.ctx.tier !== "view") Object.assign(asked, { files: JSON.stringify(this.overFiles()), trace: true });
+                this.ctx.post("tryService", asked).then((answer) => {
                     this.trying = false;
                     this.result = Object.assign({ parameters }, answer.result || {});
                     // the last Try, which a rule's condition is tried against (10)
@@ -460,6 +698,7 @@
         template: `
 <div class="m-dev-service-view q-pa-sm" id="DevServiceView">
   <div class="row items-center q-gutter-x-sm q-mb-xs">
+    <m-dev-libraries :key="ctx.rootId + tab.path" :ctx="ctx" :root-id="ctx.rootId" :path="tab.path"></m-dev-libraries>
     <q-select v-if="services.length > 1" dense outlined options-dense style="min-width: 16rem" :model-value="shortName"
         :options="services.map(s => s.name)" @update:model-value="pickService" id="DevServicePick"></q-select>
   </div>
@@ -492,7 +731,7 @@
     <q-separator class="q-mb-sm"></q-separator>
     <div v-show="section === 'implementation'">
       <template v-if="service.kind === 'inline'">
-        <m-dev-composer :ctx="ctx" :actions="actionsNode" :read-only="!canEdit" :in-parameters="inParameters.map(p => p.name)" :apply="apply" :text="tab.text"></m-dev-composer>
+        <m-dev-composer :ctx="ctx" :actions="actionsNode" :read-only="!canEdit" :in-parameters="inParameters.map(p => p.name)" :apply="apply" :text="tab.text" :trace="composerTrace"></m-dev-composer>
       </template>
       <div v-else-if="service.kind === 'script'"><q-btn dense flat no-caps icon="sym_o_javascript" :label="'Open ' + service.location" @click="openScript"></q-btn></div>
       <div v-else-if="service.kind === 'entity-auto'" class="text-caption">Entity-auto: {{service.verb}} of {{service.noun}}.</div>
@@ -502,14 +741,16 @@
       <div v-for="which in ['in', 'out']" :key="which" class="q-mb-md">
         <div class="row items-center"><span class="text-subtitle2">{{which === 'in' ? 'In' : 'Out'}}</span><q-space></q-space>
           <q-btn dense flat no-caps size="sm" icon="add" label="Add" :disable="!canEdit" @click="startParameter(which + '-parameters')"></q-btn></div>
-        <div class="m-dev-grid-wrap"><table class="m-dev-grid"><thead><tr><th>Name</th><th>Type</th><th>Required</th><th>Default</th><th>Checks</th><th>Description</th><th></th></tr></thead>
-          <tbody><template v-for="parameter in (which === 'in' ? inParameters : service.outParameters)" :key="parameter.name">
-            <tr :class="{ 'm-muted': parameter.implied }"><td class="m-dev-mono">{{parameter.name}}<span v-if="parameter.implied" class="q-ml-xs text-caption">(auto)</span></td>
-              <td>{{parameter.type}}</td><td>{{parameter.required === 'true' ? 'yes' : ''}}</td><td>{{parameter.default || ''}}</td>
-              <td class="text-caption">{{parameter.checks.length || ''}}</td><td class="ellipsis" style="max-width: 18rem">{{parameter.description || ''}}</td>
-              <td><q-btn v-if="!parameter.implied" dense flat round size="xs" icon="delete" :aria-label="'Remove ' + parameter.name" :disable="!canEdit" @click="removeParameter(which + '-parameters', parameter.name)"><q-tooltip>Remove parameter</q-tooltip></q-btn></td></tr>
-            <tr v-for="child in parameter.children" :key="parameter.name + '.' + child.name"><td class="m-dev-mono q-pl-lg">{{child.name}}</td><td>{{child.type}}</td><td>{{child.required === 'true' ? 'yes' : ''}}</td><td></td><td></td><td>{{child.description || ''}}</td><td></td></tr>
-          </template></tbody></table></div>
+        <div class="m-dev-grid-wrap"><table class="m-dev-grid" :id="'DevParameters_' + which"><thead><tr><th>Name</th><th>Type</th><th>Required</th><th>Default</th><th>Checks</th><th>Description</th><th></th></tr></thead>
+          <tbody><tr v-for="row in paramRows[which + '-parameters']" :key="row.path" :class="{ 'm-muted': row.implied }" :data-path="row.path">
+            <td class="m-dev-mono" :style="{ paddingLeft: (6 + row.depth * 16) + 'px' }">{{row.depth ? '└ ' : ''}}{{row.name}}<span v-if="row.implied" class="q-ml-xs text-caption">(auto)</span></td>
+            <td>{{row.type}}</td><td>{{row.required ? 'yes' : ''}}</td><td>{{row.defaultValue}}</td>
+            <td class="text-caption">{{row.checks || ''}}</td><td class="ellipsis" style="max-width: 18rem">{{row.description}}</td>
+            <td class="text-no-wrap"><template v-if="row.editable">
+              <q-btn v-if="row.holder" dense flat round size="xs" icon="sym_o_add_circle" :aria-label="'Add a parameter in ' + row.path" :disable="!canEdit" @click="startParameter(row.which, row.path)" class="m-dev-add-child"><q-tooltip>Add child</q-tooltip></q-btn>
+              <q-btn dense flat round size="xs" icon="edit" :aria-label="'Edit ' + row.path" :disable="!canEdit" @click="startEdit(row)" class="m-dev-edit-parameter"><q-tooltip>Edit parameter</q-tooltip></q-btn>
+              <q-btn dense flat round size="xs" icon="delete" :aria-label="'Remove ' + row.path" :disable="!canEdit" @click="removeParameter(row)" class="m-dev-remove-parameter"><q-tooltip>Remove parameter</q-tooltip></q-btn>
+            </template></td></tr></tbody></table></div>
       </div>
     </div>
     <div v-show="section === 'try'" id="DevTryPanel">
@@ -528,7 +769,11 @@
       </div>
       <div v-if="result" class="q-mt-sm" id="DevTryResult">
         <div class="text-caption">{{result.sim ? 'In sim, nothing kept' : 'For real'}} · {{result.millis}} ms</div>
+        <div v-if="result.overlay" class="text-caption m-muted" id="DevTryOverlay">{{ t('Ran as the unsaved text defines it:') }} {{(result.overlay.services || []).concat(result.overlay.scripts || []).join(', ')}}</div>
         <div v-if="result.failed" class="text-negative">{{result.failed}}</div>
+        <div v-if="failedAt" class="text-caption text-negative" id="DevTryFailedAt">{{ t('Failed at') }} {{failedAt.path || failedAt.file || ''}}{{failedAt.line ? ':' + failedAt.line : ''}}
+          ({{ t('block') }} {{failedAt.element}} {{ t('of its actions') }}): {{failedAt.message}}
+          <q-btn dense flat no-caps size="sm" :label="t('Show in the composer')" @click="section = 'implementation'"></q-btn></div>
         <div v-for="(text, i) in (result.messages || [])" :key="'m' + i" class="text-caption">{{text}}</div>
         <div v-for="(text, i) in (result.errors || [])" :key="'e' + i" class="text-caption text-negative">{{text}}</div>
         <pre v-if="result.out" class="m-dev-mono q-ma-none">{{json(result.out)}}</pre>
@@ -569,12 +814,13 @@
     </div>
   </template>
   <q-dialog :model-value="!!adding" @update:model-value="v => { if (!v) adding = null; }">
-    <q-card v-if="adding" style="width: 28rem"><q-card-section class="text-subtitle1">Add a parameter</q-card-section>
-      <q-card-section class="q-pt-none q-gutter-y-sm"><q-input dense outlined v-model="adding.name" label="Name" autofocus></q-input>
+    <q-card v-if="adding" style="width: 28rem" id="DevParameterDialog"><q-card-section class="text-subtitle1">{{adding.mode === 'edit' ? 'Edit ' + adding.path
+        : adding.parent ? 'Add a parameter in ' + adding.parent : 'Add a parameter'}}</q-card-section>
+      <q-card-section class="q-pt-none q-gutter-y-sm"><q-input v-if="adding.mode !== 'edit'" dense outlined v-model="adding.name" label="Name" autofocus></q-input>
         <q-select dense outlined v-model="adding.type" :options="['String', 'Integer', 'Long', 'BigDecimal', 'Boolean', 'Timestamp', 'Date', 'Map', 'List', 'Object']" label="Type"></q-select>
         <q-checkbox dense v-model="adding.required" label="Required"></q-checkbox><q-input dense outlined v-model="adding.defaultValue" label="Default value"></q-input>
         <q-input dense outlined v-model="adding.description" label="Description"></q-input></q-card-section>
-      <q-card-actions align="right"><q-btn flat no-caps label="Cancel" @click="adding = null"></q-btn><q-btn unelevated no-caps color="primary" label="Add" @click="addParameter"></q-btn></q-card-actions></q-card>
+      <q-card-actions align="right"><q-btn flat no-caps label="Cancel" @click="adding = null"></q-btn><q-btn unelevated no-caps color="primary" :label="adding.mode === 'edit' ? 'Set' : 'Add'" @click="addParameter" id="DevParameterSave"></q-btn></q-card-actions></q-card>
   </q-dialog>
 </div>`
     };
@@ -586,20 +832,38 @@
     const ecaView = {
         name: "mDevEcaView",
         props: { ctx: { type: Object, required: true }, tab: { type: Object, required: true }, outline: Object },
-        data() { return { selected: null, schema: null, tryContext: "", conditionResult: null }; },
+        data() {
+            return { selected: null, schema: null, tryContext: "", conditionResult: null, fixtures: [], fixtureName: "", ruleSpec: null, ruleSpecRun: null,
+                ruleRun: null,
+                push: { repositories: [], repositoryId: "", updates: [], updateId: "", contexts: [], loading: false, loaded: false } };
+        },
         computed: {
             rules() { return children(this.outline, RULES); },
+            gitRule() { return !!this.rule && this.rule.name === "giteca"; },
             rule() { return this.selected ? pure.outlineAt(this.outline, this.selected) : this.rules[0] || null; },
             actions() { return this.rule ? children(this.rule, ["actions"])[0] || null : null; },
             conditionNode() { const condition = this.rule ? children(this.rule, ["condition"])[0] : null; return condition ? children(condition)[0] || null : null; },
             spec() { return this.rule && this.schema ? (this.schema.elements || []).find((element) => element.name === this.rule.name) || null : null; },
-            canEdit() { return this.ctx.canWrite; }
+            canEdit() { return this.ctx.canWrite; },
+            // the last run of the rule's trigger, traced, on its actions' blocks
+            ruleTrace() {
+                const run = this.ruleRun && this.ruleRun.result;
+                return run && run.trace && this.actions ? ops.traceBlock(run.trace, this.ctx.rootId, this.tab.path, this.actions.line) : null;
+            }
+        },
+        watch: {
+            // another rule: its own pushes, by its patterns and event
+            selected() {
+                this.push = { repositories: [], repositoryId: "", updates: [], updateId: "", contexts: [], loading: false, loaded: false };
+                this.ruleSpec = null; this.ruleSpecRun = null; this.ruleRun = null;
+            }
         },
         mounted() {
             this.ctx.schema(this.outline ? this.outline.name : "secas").then((digest) => { this.schema = digest; });
             const line = Number(this.tab.line) || 0;
             const at = line ? this.rules.find((node) => node.line === line) : null;
             if (at) this.selected = at.path;
+            this.loadFixtures();
         },
         methods: {
             labelOf(rule) {
@@ -626,26 +890,91 @@
             addRule() {
                 const kind = this.outline.name === "eecas" ? "<eeca entity=\"\" on-create=\"true\"><actions></actions></eeca>"
                     : this.outline.name === "emecas" ? "<emeca><actions></actions></emeca>"
-                        : this.outline.name === "gitecas" ? "<giteca event=\"push\"><actions></actions></giteca>" : ops.secaXml("", "post-service");
+                        : this.outline.name === "gitecas" ? "<giteca event=\"post-receive\"><actions></actions></giteca>" : ops.secaXml("", "post-service");
                 this.apply(ops.addRule(this.outline, kind));
             },
-            // the condition against a context: a SECA's service's last Try (its parameters and out), or any JSON object (a
-            // record of an EECA's entity)
+            // the condition against a context: a SECA's service's last Try (its parameters and out), for a gitECA rule a
+            // push of the push log (loadPushes), or any JSON object (a record of an EECA's entity)
             defaultContext() {
                 const service = this.rule ? attrOf(this.rule, "service") : "";
                 const last = devAide.store.get("moqui.devAide.tryResult." + service);
                 return JSON.stringify(last ? Object.assign({}, last.parameters || {}, last.out || {}) : {}, null, 1);
             },
-            tryCondition() {
+            conditionText() {
                 const node = this.conditionNode;
                 const text = this.tab.text || "";
-                const condition = !node ? "" : node.name === "expression" ? node.text || "" : text.slice(node.from16, node.to16);
+                return !node ? "" : node.name === "expression" ? node.text || "" : text.slice(node.from16, node.to16);
+            },
+            // ---- the contexts as named fixtures, and Save as spec on a rule (10) ----
+            loadFixtures() {
+                return this.ctx.get("ruleFixtures", { rootId: this.ctx.rootId, path: this.tab.path }).then((answer) => { this.fixtures = answer.fixtures || []; },
+                    () => { this.fixtures = []; });
+            },
+            useFixture(name) {
+                const fixture = this.fixtures.find((item) => item.name === name);
+                if (!fixture || !fixture.context) return;
+                this.fixtureName = fixture.name;
+                this.tryContext = JSON.stringify(fixture.context, null, 1);
+            },
+            saveFixture() {
+                this.ctx.post("ruleFixture", { rootId: this.ctx.rootId, path: this.tab.path, name: this.fixtureName, context: this.tryContext || "{}" }).then((answer) => {
+                    this.ctx.note("Saved the fixture " + ((answer.fixture && answer.fixture.path) || this.fixtureName));
+                    this.loadFixtures();
+                }, (error) => this.ctx.fail(error));
+            },
+            saveRuleSpec() {
+                if (pure.isDirty(this.tab)) { this.ctx.note(this.t("Save the rules file first: Save as spec runs the rules the server has"), "warning"); return; }
+                const asked = Object.assign(ops.ruleSpecQuery(this.rule, this.conditionText()),
+                    { rootId: this.ctx.rootId, path: this.tab.path, fixture: this.fixtureName, context: this.tryContext || "{}" });
+                this.ruleSpecRun = null;
+                this.ctx.post("ruleSpec", asked).then((answer) => {
+                    this.ruleSpec = { rootId: answer.rootId, path: answer.path, name: answer.spec, note: answer.note || "" };
+                    this.ctx.note("Saved as a feature of " + answer.path);
+                    this.loadFixtures();
+                }, (error) => this.ctx.fail(error));
+            },
+            // the rule's trigger in the sim with the context, traced: its messages and rows, and its actions marked
+            runTrigger() {
+                if (pure.isDirty(this.tab)) { this.ctx.note(this.t("Save the rules file first: the trigger runs the rules the server has"), "warning"); return; }
+                this.ruleRun = { running: true };
+                this.ctx.post("tryRule", Object.assign(ops.ruleSpecQuery(this.rule, this.conditionText()), { context: this.tryContext || "{}" }))
+                    .then((answer) => { this.ruleRun = { result: answer.result || {}, note: answer.note || "" }; },
+                        (error) => { this.ruleRun = null; this.ctx.fail(error); });
+            },
+            runRuleSpec() {
+                const spec = this.ruleSpec;
+                this.ruleSpecRun = { running: true };
+                this.ctx.post("runSpec", { rootId: spec.rootId, path: spec.path }).then((answer) => { this.ruleSpecRun = answer; },
+                    (error) => { this.ruleSpecRun = null; this.ctx.fail(error); });
+            },
+            tryCondition() {
+                const condition = this.conditionText();
                 if (!this.tryContext) this.tryContext = this.defaultContext();
                 this.conditionResult = { running: true };
                 this.ctx.post("evalCondition", { condition, against: this.tryContext }).then((answer) => {
                     this.conditionResult = { holds: answer.holds, result: answer.result || {} };
                 }, (error) => { this.conditionResult = null; this.ctx.fail(error); });
             },
+            t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
+            updateLabel(update) { return ops.updateLabel(update); },
+            // a gitECA rule against a push of the push log (10): the repositories its pattern takes, a change, then the
+            // contexts the rule's event had from it, one of which becomes the Try's context
+            loadPushes(repositoryId, updateId) {
+                const push = this.push;
+                push.loading = true;
+                const query = Object.assign(ops.pushQuery(this.rule), { repositoryId: repositoryId || "", updateId: updateId || "" });
+                return this.ctx.get("pushContexts", query).then((answer) => {
+                    push.loading = false; push.loaded = true;
+                    push.repositories = answer.repositories || [];
+                    push.repositoryId = answer.repositoryId || "";
+                    push.updates = answer.updates || [];
+                    push.updateId = updateId || "";
+                    push.contexts = answer.contexts || [];
+                    push.truncated = !!answer.truncated;
+                    if (push.contexts.length) this.useContext(push.contexts.find((context) => context.matches) || push.contexts[0]);
+                }, (error) => { push.loading = false; this.ctx.fail(error); });
+            },
+            useContext(context) { if (context) this.tryContext = JSON.stringify(context.context || {}, null, 1); },
             removeRule() { if (this.rule) { const path = this.rule.path; this.selected = null; this.apply([{ op: "remove", at: path }]); } },
             moveRule(delta) {
                 const rule = this.rule;
@@ -680,12 +1009,54 @@
     <q-input dense outlined class="m-dev-mono q-mb-sm" label="Condition (an expression; empty is always)" :readonly="!canEdit"
         :model-value="conditionNode && conditionNode.name === 'expression' ? (conditionNode.text || '') : ''" debounce="800" @update:model-value="setCondition" for="DevEcaCondition"></q-input>
     <q-expansion-item dense dense-toggle label="Try the condition" header-class="text-caption" class="q-mb-sm" @show="tryContext = tryContext || defaultContext()" id="DevTryCondition">
-      <q-input dense outlined type="textarea" autogrow v-model="tryContext" label="Against (JSON: the service's last Try, or a record)" class="m-dev-mono"></q-input>
+      <div v-if="gitRule" class="q-mb-xs" id="DevTryPush">
+        <div class="row items-center q-gutter-x-sm no-wrap">
+          <q-btn v-if="!push.loaded" dense flat no-caps icon="sym_o_history" :label="t('Against a push')" :loading="push.loading" @click="loadPushes()" id="DevTryPushLoad"></q-btn>
+          <template v-else>
+            <q-select dense outlined options-dense style="min-width: 12rem" :model-value="push.repositoryId" :options="push.repositories" label="Repository"
+                @update:model-value="id => loadPushes(id)" id="DevTryPushRepository"></q-select>
+            <q-select dense outlined options-dense class="col" :model-value="push.updateId || null" :options="push.updates.map(u => ({ label: updateLabel(u), value: u.updateId }))"
+                emit-value map-options label="A change of the push log" @update:model-value="id => loadPushes(push.repositoryId, id)" id="DevTryPushUpdate"></q-select>
+            <q-spinner v-if="push.loading" size="1em"></q-spinner>
+          </template>
+        </div>
+        <div v-if="push.loaded && !push.repositories.length" class="text-caption m-muted">{{ t('No hosted repository you may see matches the rule.') }}</div>
+        <div v-if="push.contexts.length" class="row q-gutter-xs q-mt-xs" id="DevTryPushContexts">
+          <q-chip v-for="(context, i) in push.contexts" :key="i" dense square clickable @click="useContext(context)" :outline="!context.matches"
+              :title="context.matches ? '' : t('The rule does not run on this one (its source, ref-pattern, ref-type or default branch)')">{{context.label}}</q-chip>
+        </div>
+        <div v-if="push.truncated" class="text-caption m-muted" id="DevTryPushTruncated">{{ t('Some were left out: past the limits, or commits you do not read') }}</div>
+        <div v-else-if="push.updateId && !push.loading && !push.contexts.length" class="text-caption m-muted">{{ t('That change has no context for this rule\\'s event.') }}</div>
+      </div>
+      <q-input dense outlined type="textarea" autogrow v-model="tryContext" :label="gitRule ? t('Against (JSON: a push, or any context)') : t('Against (JSON: the service\\'s last Try, or a record)')" class="m-dev-mono"></q-input>
       <q-btn dense flat no-caps icon="sym_o_science" label="Try in sim" @click="tryCondition" id="DevTryConditionRun"></q-btn>
       <span v-if="conditionResult && !conditionResult.running" :class="conditionResult.holds ? 'text-positive' : 'text-warning'" id="DevConditionResult">
         {{conditionResult.holds ? 'It holds: the rule runs' : 'It does not hold: the rule does not run'}}{{conditionResult.result.failed ? ' (' + conditionResult.result.failed + ')' : ''}}</span>
+      <div class="row items-center q-gutter-x-sm q-mt-xs" id="DevRuleFixtures">
+        <q-select dense outlined options-dense style="min-width: 10rem" :model-value="null" :options="fixtures.filter(f => f.context).map(f => f.name)"
+            :label="t('A saved fixture')" @update:model-value="useFixture" id="DevRuleFixturePick"></q-select>
+        <q-input dense outlined v-model="fixtureName" :label="t('Fixture name')" style="width: 11rem" for="DevRuleFixtureName"></q-input>
+        <q-btn dense flat no-caps icon="sym_o_save" :label="t('Save as fixture')" :disable="!canEdit || !fixtureName" @click="saveFixture" id="DevRuleFixtureSave"></q-btn>
+        <q-btn dense flat no-caps icon="sym_o_play_circle" :label="t('Run the trigger in sim')" :disable="!canEdit || rule.name === 'emeca'" :loading="ruleRun && ruleRun.running"
+            @click="runTrigger" id="DevRuleRunTrigger"><q-tooltip>{{ t('Runs the rule\\'s trigger with the context in the sim and marks its actions') }}</q-tooltip></q-btn>
+        <q-btn dense flat no-caps icon="sym_o_note_add" :label="t('Save as spec')" :disable="!canEdit || !fixtureName || rule.name === 'emeca'" @click="saveRuleSpec" id="DevRuleSaveSpec">
+          <q-tooltip>{{ t('Runs the rule\\'s trigger with the fixture in the sim, and writes a feature that runs it again and checks what it did') }}</q-tooltip></q-btn>
+        <q-btn v-if="ruleSpec" dense flat no-caps icon="sym_o_play_arrow" :label="'Run spec ' + ruleSpec.name" :loading="ruleSpecRun && ruleSpecRun.running" @click="runRuleSpec" id="DevRuleRunSpec"></q-btn>
+      </div>
+      <div v-if="ruleRun && ruleRun.result" class="text-caption q-mt-xs" id="DevRuleRun">
+        <span v-if="ruleRun.result.failed" class="text-negative">{{ruleRun.result.failed}}</span>
+        <span v-else>{{ t('In sim, nothing kept') }} · {{(ruleRun.result.messages || []).length}} {{ t('messages') }} · {{(ruleRun.result.rows || []).length}} {{ t('rows') }}</span>
+        <div v-for="(text, i) in (ruleRun.result.messages || [])" :key="i">{{text}}</div>
+        <div v-if="ruleRun.note" class="m-muted">{{ruleRun.note}}</div>
+      </div>
+      <div v-if="ruleSpec && ruleSpec.note" class="text-caption m-muted" id="DevRuleSpecNote">{{ruleSpec.note}}</div>
+      <div v-if="ruleSpecRun && !ruleSpecRun.running" class="q-mt-xs" id="DevRuleSpecRun">
+        <div :class="ruleSpecRun.passed ? 'text-positive' : 'text-negative'">{{ruleSpecRun.passed ? 'The spec passed (run in sim)' : 'The spec failed'}}</div>
+        <div v-if="ruleSpecRun.setupFailure" class="text-caption text-negative">{{ruleSpecRun.setupFailure}}</div>
+        <div v-for="item in ruleSpecRun.cases" :key="item.name" class="text-caption">{{item.outcome}} · {{item.name}}<span v-if="item.message" class="text-negative"> · {{item.message}}</span></div>
+      </div>
     </q-expansion-item>
-    <m-dev-composer :ctx="ctx" :actions="actions" :read-only="!canEdit" :in-parameters="[]" :apply="apply" :text="tab.text"></m-dev-composer>
+    <m-dev-composer :ctx="ctx" :actions="actions" :read-only="!canEdit" :in-parameters="[]" :apply="apply" :text="tab.text" :trace="ruleTrace"></m-dev-composer>
   </div>
 </div>`
     };

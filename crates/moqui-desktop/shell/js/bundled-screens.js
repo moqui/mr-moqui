@@ -112,14 +112,30 @@ module.exports = {
             if (action === 'pin' || action === 'mute' || action === 'archive') {
                 const key = action === 'pin' ? 'isPinned' : action === 'mute' ? 'isMuted' : 'archived';
                 const value = action === 'archive' ? !this.isArchived(room) : !room[key];
-                const before = { isPinned: room.isPinned, isMuted: room.isMuted, archivedEventSeq: room.archivedEventSeq };
-                if (action === 'archive') room.archivedEventSeq = value ? Number(room.lastEventSeq || (room.lastMessage && room.lastMessage.eventSeq) || 0) : null;
-                else room[key] = value;
-                this.post('setNotification', { chatRoomId: room.chatRoomId, [key]: value ? 'true' : 'false' }).then((json) => {
-                    if (json && json.archivedEventSeq !== undefined) room.archivedEventSeq = json.archivedEventSeq;
-                }, () => Object.assign(room, before));
-                if (action === 'archive') moqui.notifyMessages([{ type: 'info', message: value ? t('Conversation archived') : t('Conversation back in the list') }]);
-                return;
+                const field = action === 'archive' ? 'archivedEventSeq' : key;
+                const next = action === 'archive' ? (value ? Number(room.lastEventSeq || (room.lastMessage && room.lastMessage.eventSeq) || 0) : null) : value;
+                const roomId = room.chatRoomId;
+                const writes = this.settingWrites || (this.settingWrites = new Map());
+                const id = roomId + ':' + field;
+                const pending = writes.get(id) || { roomId, field, confirmed: room[field], done: Promise.resolve() };
+                writes.set(id, pending);
+                room[field] = pending.value = next;
+                // Commit changes to this setting in the order chosen. While a newer choice waits, keep showing it.
+                const finish = (json) => {
+                    const confirmed = json && json[field] !== undefined;
+                    if (confirmed) pending.confirmed = json[field];
+                    if (confirmed || pending.done === saving) this.settingRevision = (this.settingRevision || 0) + 1;
+                    if (pending.done !== saving) return;
+                    writes.delete(id);
+                    const current = this.rooms.find((item) => item.chatRoomId === roomId);
+                    if (current) current[field] = pending.confirmed;
+                    if (confirmed && action === 'archive') moqui.notifyMessages([{ type: 'info',
+                        message: pending.confirmed != null ? t('Conversation archived') : t('Conversation back in the list') }]);
+                };
+                const saving = pending.done.then(() => this.post('setNotification', { chatRoomId: roomId, [key]: String(value) }))
+                    .then(finish, () => finish(null));
+                pending.done = saving;
+                return saving;
             }
             if (action === 'read') {
                 this.post('markRead', { chatRoomId: room.chatRoomId }).then(() => this.onRoomRead(room.chatRoomId), () => {});
@@ -138,11 +154,34 @@ module.exports = {
         snippetOf(room) { return moqui.chat.roomSnippet(room, this.me.userId); },
         // the rooms, few and light: the panel is a glance (Open in Comms has them all)
         refresh() {
+            const request = this.roomsRequest = (this.roomsRequest || 0) + 1;
+            const settings = this.settingRevision;
             return moqui.request(this.url('chatData'), { params: { limit: this.home ? 200 : 40 } }).then((result) => {
+                if (this.roomsRequest !== request) return;
+                // A list read before a settings reply can still hold the previous watermark.
+                if (settings !== this.settingRevision) return this.refresh();
                 const json = result.json || {};
                 this.me = memo.me = json.me || {};
                 this.prefs = memo.prefs = json.prefs || {};
+                const previous = new Map(this.rooms.map((room) => [room.chatRoomId, room]));
                 this.rooms = memo.rooms = json.roomList || [];
+                for (const room of this.rooms) {
+                    const current = previous.get(room.chatRoomId);
+                    if (!current || Number(current.lastEventSeq || 0) <= Number(room.lastEventSeq || 0)) continue;
+                    // A socket event already moved this room past the list snapshot.
+                    room.lastEventSeq = current.lastEventSeq;
+                    if (Number(current.lastMessage?.eventSeq || 0) > Number(room.lastMessage?.eventSeq || 0)) {
+                        room.lastMessage = current.lastMessage;
+                        room.lastEventDate = current.lastEventDate;
+                    }
+                }
+                if (this.settingWrites) for (const pending of this.settingWrites.values()) {
+                    const room = this.rooms.find((item) => item.chatRoomId === pending.roomId);
+                    if (room) {
+                        if (room[pending.field] !== undefined) pending.confirmed = room[pending.field];
+                        room[pending.field] = pending.value;
+                    }
+                }
                 // a phone room's numbers by their names (plans/Comms-Messaging.md §9)
                 if (moqui.chat && moqui.chat.nameRooms) moqui.chat.nameRooms(this.rooms);
                 // a person's own name across their rooms (Comms-Messaging §11.1): read once for the page, applied with the names
@@ -1165,7 +1204,13 @@ const SHELL_ROUTES = { 'Chat': 'chat', 'Inbox': 'mail', 'Inbox/Mail': 'mail', 'I
     'Settings/Devices': 'devices' };
 const VIEW_PATHS = { chat: ['Chat'], mail: ['Inbox', 'Mail'], compose: ['Inbox', 'Compose'], call: ['Calls', 'Call'], dialer: ['Calls', 'Dialer'],
     devices: ['Settings', 'Devices'] };
-const VIEW_TITLES = { chat: 'Chat', mail: 'Mail', compose: 'New message', call: 'Call', dialer: 'Dialer', devices: 'My devices' };
+const VIEW_TITLES = { chat: 'Chat', mail: 'Mail', compose: 'New message', call: 'Call', dialer: 'Dialer', devices: 'My devices', maps: 'Offline maps' };
+// The offline Maps screen (plans/archive/Maps-Offline.md §2.5): bundled as the shell's own, shown at Maps' Offline path; Maps'
+// other screens are the server's, in an app window
+const MAPS_OFFLINE = 'Shell/MapsOffline';
+const MAPS_OFFLINE_PATH = 'maps/Offline';
+const MAPS_BROWSE = '/qapps/maps/Browse';
+const isMapsApp = (app) => /^\/(?:qapps|apps)\/maps(?:\/|$)/.test(String((app && app.path) || ''));
 // what waits unsent, as the sign-out lists it (moquiDesktop.outbox.unsent: the outbox's operations and the drafts)
 const unsentItems = (found) => {
     const ops = (found && Array.isArray(found.operations)) ? found.operations : [];
@@ -1177,6 +1222,7 @@ const unsentItems = (found) => {
         if (op.kind === 'mail-send') return { key: op.id, icon: 'sym_o_mail', label: fields.subject || t('(no subject)'), caption: t('Mail') };
         if (op.kind === 'chat-read') return { key: op.id, icon: 'sym_o_done_all', label: t('A room marked read'), caption: '' };
         if (op.kind === 'mail-state') return { key: op.id, icon: 'sym_o_inbox', label: t('A change to mail threads'), caption: String(payload.action || '') };
+        if (op.kind === 'map-place') return { key: op.id, icon: 'sym_o_add_location_alt', label: payload.label || t('A saved place'), caption: t('Maps') };
         return { key: op.id, icon: 'sym_o_outbox', label: String(op.kind || ''), caption: '' };
     });
     const drafts = (found && Array.isArray(found.drafts)) ? found.drafts.length : 0;
@@ -1275,6 +1321,18 @@ module.exports = {
             // the phone's contacts name numbers and are found in a new chat (§9.2), read on the phone only
             if (state.contacts !== undefined) rows.push({ key: 'contacts', ok: state.contacts === true, label: t("Names from the phone's contacts"),
                 caption: state.contacts === true ? '' : t('Allow contacts to see names on texts and find people as you type'), fix: 'contacts' });
+            // live location from this phone (plans/archive/Location-Sharing.md §3.4): the location permission, which Maps' Share asks
+            // for with the app's reason, and the shares the app sends now, each under its notification with Stop
+            if (moqui.isPlainObject(state.location)) {
+                const location = state.location;
+                const sharing = Number(location.sharing) || 0;
+                rows.push({ key: 'location', ok: location.permission !== 'none' || !location.asked, label: t('Location for live sharing'),
+                    caption: location.permission === 'fine' ? '' : location.permission === 'coarse' ? t('Approximate only: shares from this phone are about where you are')
+                        : location.asked ? t('Not allowed: a share from Maps is sent only while its page is open') : t('Asked when you first share your location in Maps'),
+                    fix: location.permission === 'fine' || !location.asked ? null : 'location', fixLabel: t('App settings') });
+                if (sharing) rows.push({ key: 'locationSharing', ok: true, label: t('Sharing your location from this phone'),
+                    caption: (sharing === 1 ? t('One share') : sharing + ' ' + t('shares')) + ', ' + t('also with the app in the background, while its notification shows') });
+            }
             // a force-stopped app gets no push until it is opened again
             if (state.forceStoppedDate) rows.push({ key: 'forceStopped', ok: Date.now() - Number(state.forceStoppedDate) > 86400000,
                 label: t('The app was stopped'), caption: this.when(state.forceStoppedDate) + ': ' + t('notifications may not have come until it was opened again') });
@@ -1303,6 +1361,11 @@ module.exports = {
         viewTitle() { return this.view ? t(VIEW_TITLES[this.view]) : ''; },
         // the server holds calls (its clientConfig's calls) and the call store is here, as m-qapps-root has them
         callsOn() { return !!(moqui.call && this.userId && this.config && this.config.calls); },
+        // the offline map packages of this app (moquiDesktop.packages, plans/archive/Maps-Offline.md §2.5), for an account with the
+        // server's Maps app (its shellData's apps, which the store keeps for offline use): one without it sees no Maps
+        // entry, and the offline screen saves no place for it
+        mapsOn() { return !!(host() && host().packages && this.componentOf('maps') && this.mapsApp); },
+        mapsApp() { return this.apps.find(isMapsApp) || null; },
         // the comms screens this shell shows itself, in the drawer
         commsItems() {
             return [{ key: 'chat', view: 'chat', icon: 'sym_o_chat', label: t('Chat'), link: this.commsLink + '/Chat' },
@@ -1409,13 +1472,19 @@ module.exports = {
         failed(err) { this.$q.notify({ type: 'negative', message: String((err && err.message) || err) }); },
         // ---- the screens shown here, and the rest in app windows ----
         // the bundled comms screen of a view, under the paths shell.js named it
-        componentOf(view) { return VIEW_PATHS[view] ? moqui.bundledComponent(this.basePath + '/' + this.commsRel + '/' + VIEW_PATHS[view].join('/')) : null; },
+        componentOf(view) {
+            if (view === 'maps') return moqui.bundledComponent(MAPS_OFFLINE);
+            return VIEW_PATHS[view] ? moqui.bundledComponent(this.basePath + '/' + this.commsRel + '/' + VIEW_PATHS[view].join('/')) : null;
+        },
         // where a link goes: {view, pathList, parameters} for a comms screen this shell shows, else null (an app window)
         route(url) {
             const text = String(url || '');
             const quest = text.indexOf('?');
             const path = (quest >= 0 ? text.slice(0, quest) : text).replace(/\.(qvt|qvue|qjs)$/, '').replace(/\/+$/, '');
             const match = /^\/(?:qapps|apps)\/(.+)$/.exec(path);
+            // Maps' Offline screen: the bundled offline Maps screen (the device's packages), online or not
+            if (match && match[1] === MAPS_OFFLINE_PATH && this.componentOf('maps'))
+                return { view: 'maps', pathList: MAPS_OFFLINE_PATH.split('/'), parameters: moqui.searchToObj(quest >= 0 ? text.slice(quest + 1) : '') };
             const comms = this.commsRel;
             if (!match || match[1].indexOf(comms + '/') !== 0) return null;
             const view = SHELL_ROUTES[match[1].slice(comms.length + 1)];
@@ -1441,6 +1510,18 @@ module.exports = {
                 params: this.bodyParameters || {}, fullPath: this.currentLinkUrl, meta: {}, hash: '', matched: [{ path: this.currentPath }] });
         },
         openPalette() { this.paletteOpen = true; },
+        // Maps (plans/archive/Maps-Offline.md §2.5): Browse, the server's page, when the server answers; the offline screen with the
+        // device's packages when it does not (moqui.connection: the host's unreachable answer, or none)
+        openMaps() {
+            if (!this.mapsApp) return;
+            if (this.isOffline) { this.setUrl('/qapps/maps/Offline'); return; }
+            host().openRemote(MAPS_BROWSE).catch((err) => this.failed(err));
+        },
+        // an app of the drawer: its page in an app window; Maps offline is the offline screen
+        openApp(app) {
+            if (isMapsApp(app) && this.isOffline && this.mapsOn) { this.setUrl('/qapps/maps/Offline'); return; }
+            this.setUrl(app.path);
+        },
         // the palette's Ctrl+Enter (a new tab on the web): the server's page in an app window
         openNewTab(url) { host().openRemote(this.getLinkPath(String(url || ''))).catch((err) => this.failed(err)); },
         // the link of a dm or record room in place of the link itself (Chat.qvue replaceRoom)
@@ -2221,6 +2302,69 @@ module.exports = {
                                     _createVNode(_component_q_separator, { spaced: "" })
                                   ], 64))
                                 : _createCommentVNode("", true),
+                              (_ctx.mapsOn)
+                                ? (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
+                                    _createVNode(_component_q_item_label, { header: "" }, {
+                                      default: _withCtx(() => [
+                                        _createTextVNode(_toDisplayString(_ctx.t('Maps')), 1)
+                                      ]),
+                                      _: 1
+                                    }),
+                                    _createVNode(_component_q_item, {
+                                      clickable: "",
+                                      class: "m-shell-maps",
+                                      onClick: _ctx.openMaps
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_item_section, { avatar: "" }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_icon, { name: "sym_o_map" })
+                                          ]),
+                                          _: 1
+                                        }),
+                                        _createVNode(_component_q_item_section, null, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(_ctx.t('Maps')), 1)
+                                          ]),
+                                          _: 1
+                                        }),
+                                        _createVNode(_component_q_item_section, { side: "" }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_icon, {
+                                              name: _ctx.isOffline ? 'sym_o_cloud_off' : 'sym_o_open_in_new',
+                                              size: "xs"
+                                            }, null, 8, ["name"])
+                                          ]),
+                                          _: 1
+                                        })
+                                      ]),
+                                      _: 1
+                                    }, 8, ["onClick"]),
+                                    _createVNode(_component_q_item, {
+                                      clickable: "",
+                                      active: _ctx.view === 'maps',
+                                      class: "m-shell-maps-offline",
+                                      onClick: $event => (_ctx.setUrl('/qapps/maps/Offline'))
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_item_section, { avatar: "" }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_icon, { name: "sym_o_offline_pin" })
+                                          ]),
+                                          _: 1
+                                        }),
+                                        _createVNode(_component_q_item_section, null, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(_ctx.t('Offline maps')), 1)
+                                          ]),
+                                          _: 1
+                                        })
+                                      ]),
+                                      _: 1
+                                    }, 8, ["active", "onClick"]),
+                                    _createVNode(_component_q_separator, { spaced: "" })
+                                  ], 64))
+                                : _createCommentVNode("", true),
                               _createVNode(_component_q_item_label, { header: "" }, {
                                 default: _withCtx(() => [
                                   _createTextVNode(_toDisplayString(_ctx.t('Applications')), 1)
@@ -2231,7 +2375,7 @@ module.exports = {
                                 return (_openBlock(), _createBlock(_component_q_item, {
                                   key: app.name,
                                   clickable: "",
-                                  onClick: $event => (_ctx.setUrl(app.path))
+                                  onClick: $event => (_ctx.openApp(app))
                                 }, {
                                   default: _withCtx(() => [
                                     _createVNode(_component_q_item_section, { avatar: "" }, {
@@ -2268,7 +2412,7 @@ module.exports = {
                                 }, 1032, ["onClick"]))
                               }), 128)),
                               (!_ctx.apps.length)
-                                ? (_openBlock(), _createBlock(_component_q_item, { key: 1 }, {
+                                ? (_openBlock(), _createBlock(_component_q_item, { key: 2 }, {
                                     default: _withCtx(() => [
                                       _createVNode(_component_q_item_section, null, {
                                         default: _withCtx(() => [
@@ -3213,6 +3357,843 @@ module.exports = {
         }
         return { component: component, style: null, scoped: false };
     } };
+    moqui.qvtBundled["Shell/MapsOffline"] = { make: function (Vue) {
+        const module = { exports: {} };
+        const define = moqui.define;
+        // the file's script as it is (not indented: a template string in it keeps its text)
+        const returned = (function (exports) {
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+const host = () => window.moquiDesktop;
+const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
+const message = (err) => String((err && (err.message || err.error)) || err || t('That did not work'));
+// a package's files on the shell's origin (moqui_client::packages::serve), the id a plain name
+const baseOf = (packageId) => (/^[A-Za-z0-9_.:-]{1,64}$/.test(String(packageId || '')) && !/^\.+$/.test(String(packageId)) ? '/__moqui-app/maps/' + packageId + '/' : '');
+// the host answers a file past 16 MiB only by range: a member is read in slices of that, joined
+const SLICE = 16 * 1024 * 1024;
+const readMember = async (url) => {
+    const parts = [];
+    let at = 0, total = null;
+    do {
+        const response = await fetch(url, { cache: 'no-store', headers: { Range: 'bytes=' + at + '-' + (at + SLICE - 1) } });
+        if (response.status === 200) return response.text();
+        if (response.status !== 206) throw new Error(t('Not read from this device') + ': HTTP ' + response.status);
+        // a slice that does not say the whole file's length cannot be joined: an error, never a file cut short
+        const range = /^bytes \d+-\d+\/(\d+)$/.exec(String(response.headers.get('Content-Range') || '').trim());
+        if (!range) throw new Error(t('Not read from this device') + ': ' + t('a slice without its Content-Range'));
+        total = Number(range[1]);
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        if (!bytes.length) break;
+        parts.push(bytes);
+        at += bytes.length;
+    } while (at < total);
+    const joined = new Uint8Array(at);
+    let offset = 0;
+    parts.forEach((part) => { joined.set(part, offset); offset += part.length; });
+    return new TextDecoder().decode(joined);
+};
+// text folded for search: case and the marks of letters
+const fold = (value) => String(value == null ? '' : value).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const matches = (words, ...fields) => { const all = fold(fields.filter((field) => field).join(' ')); return words.every((word) => all.includes(word)); };
+// a point within a package's region [west, south, east, north] (west past east crosses the antimeridian)
+const inBox = (bbox, lon, lat) => {
+    if (!Array.isArray(bbox) || bbox.length !== 4 || !Number.isFinite(lon) || !Number.isFinite(lat)) return Number.isFinite(lon) && Number.isFinite(lat);
+    const [west, south, east, north] = bbox.map(Number);
+    if (lat < south || lat > north) return false;
+    return west <= east ? lon >= west && lon <= east : lon >= west || lon <= east;
+};
+// the results of each source at most, so one source (200,000 Overture places) does not crowd out the others
+const PER_SOURCE = 10;
+const bytesText = (size) => {
+    const n = Number(size) || 0;
+    if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB';
+    if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+    return Math.max(1, Math.round(n / 1024)) + ' KB';
+};
+const dateText = (value) => {
+    if (value === null || value === undefined || value === '') return '';
+    const date = new Date(typeof value === 'number' || /^\d+$/.test(String(value)) ? Number(value) : String(value));
+    if (isNaN(date.getTime())) return '';
+    return moqui.chat && moqui.chat.dateTime ? moqui.chat.dateTime(date.getTime()) : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+};
+
+module.exports = {
+    name: 'ShellMapsOffline',
+    data() {
+        return {
+            serverList: null, serverError: '', device: [], loaded: false, error: '', wifiOnly: false,
+            // the package opened: its row, its manifest and what was read of its files (account, id and revision)
+            opened: null, manifest: null, mapConfig: null, kept: null,
+            query: '', results: [], searched: false, searching: false, addressNote: '',
+            center: null, picked: null, placeName: '', outboxOps: [], placeKinds: false
+        };
+    },
+    computed: {
+        supported() { return !!(host() && host().packages && typeof host().packages.status === 'function'); },
+        // the phone (its notifications are its pushes, pushDelivers): a download may wait for Wi-Fi
+        phone() { return !!(host() && host().pushDelivers === true); },
+        offline() { return !!((moqui.connection && moqui.connection.offline) || (this.$root && this.$root.isOffline)); },
+        // the server's packages and the device's, one row each: what it holds, what the server has, a download's state
+        rows() {
+            const byId = new Map();
+            (Array.isArray(this.serverList) ? this.serverList : []).forEach((entry) => byId.set(String(entry.packageId), { server: entry, device: null }));
+            this.device.forEach((entry) => {
+                const id = String(entry.packageId);
+                const row = byId.get(id) || { server: null, device: null };
+                row.device = entry;
+                byId.set(id, row);
+            });
+            return Array.from(byId.entries()).map(([packageId, { server, device }]) => {
+                const download = device && device.download ? device.download : null;
+                const state = download ? download.state : '';
+                const busy = ['queued', 'downloading', 'checking'].includes(state);
+                const installed = !!(device && device.installed);
+                const serverRevision = server && server.downloadUrl ? Number(server.revision) : null;
+                const newer = serverRevision !== null && (!installed || serverRevision > Number(device.revision));
+                const built = installed ? dateText(device.builtDate) : (server ? server.builtText || dateText(server.builtDate) : '');
+                const size = installed ? bytesText(device.size) : (server && server.sizeText) || '';
+                const zooms = installed && device.minZoom != null ? device.minZoom + '–' + device.maxZoom : (server && server.zoomsText) || '';
+                const caption = [built ? t('Built') + ' ' + built : '', size, zooms ? t('Zooms') + ' ' + zooms : '',
+                    installed && newer ? t('A newer version is on the server') : ''].filter((part) => part).join(' · ');
+                let stateText = '';
+                let progress = null;
+                if (state === 'queued') stateText = this.phone && this.wifiOnly ? t('Waiting to download on Wi-Fi') : t('Waiting to download');
+                else if (state === 'downloading') {
+                    progress = download.total ? Math.min(1, download.done / download.total) : 0;
+                    stateText = fill(t('Downloading: {done} of {total}'), { done: bytesText(download.done), total: bytesText(download.total) });
+                } else if (state === 'checking') stateText = t('Checking the download');
+                else if (state === 'failed') stateText = t('Not downloaded') + ': ' + (download.reason || download.code || '') + (download.retry ? ' (' + t('try again') + ')' : '');
+                else if (state === 'stale') stateText = t('It was built again on the server: download the new version');
+                else if (!installed && server && !server.downloadUrl) stateText = server.statusText || t('Not ready on the server yet');
+                return { packageId, name: (device && device.name) || (server && server.name) || '', installed, busy, failed: state === 'failed',
+                    revision: installed ? Number(device.revision) : null, serverRevision, canDownload: newer && !busy, caption, stateText, progress,
+                    builtDate: installed ? device.builtDate : server && server.builtDate };
+            }).sort((a, b) => (a.name || a.packageId).localeCompare(b.name || b.packageId));
+        },
+        downloading() { return this.rows.some((row) => row.busy); },
+        builtText() {
+            const pkg = (this.manifest && this.manifest.package) || {};
+            const built = dateText(pkg.builtDate);
+            return [this.offline ? t('Offline: this map is read from this device') : t('Read from this device'),
+                built ? t('built') + ' ' + built : '', pkg.minZoom != null ? t('zooms') + ' ' + pkg.minZoom + '–' + pkg.maxZoom : ''].filter((part) => part).join(', ');
+        },
+        // the package's sources as text: an archive's own notice is often HTML, never shown as markup (map.packageSources)
+        sources() {
+            const list = moqui.map && moqui.map.packageSources ? moqui.map.packageSources(this.manifest) : [];
+            const kinds = { basemap: t('Basemap'), postal: t('Postal codes'), overture: t('Overture') };
+            return list.map((source) => ({ text: [kinds[source.kind] || source.kind, source.attribution, source.sourceAttribution].filter((part) => part).join(': '),
+                licenses: source.licenses.join(', ') }));
+        },
+        notice() { return moqui.map && moqui.map.plainText ? moqui.map.plainText(this.manifest && this.manifest.notice, 500) : ''; },
+        // whether this account may save a place: it has the Maps app (Shell/Root's mapsApp, from its kept shellData); a
+        // screen mounted on its own (a test's) may
+        mapsAccess() { const root = this.$root; return !(root && root !== this && 'mapsApp' in root && !root.mapsApp); },
+        // the point a saved place takes: the last place found or chosen on the map, else the map's center
+        pointToSave() { return this.picked || this.center; },
+        // the places saved here that wait in the outbox (map-place), with their state
+        queuedPlaces() {
+            return this.outboxOps.filter((op) => op.kind === 'map-place' && op.state !== 'acked').map((op) => {
+                const payload = op.payload || {};
+                const failed = op.state === 'failed' || op.state === 'conflict';
+                // held: the server asked for a sign-in (a 401, or a 403 it gave no reason for); it may be discarded
+                const held = op.state === 'held';
+                return { id: op.id, label: payload.label || t('A place'), failed, held,
+                    stateText: failed ? t('Not saved') + (op.error ? ': ' + op.error : '') : held ? t('Waiting for a sign-in to this server')
+                        : op.state === 'sending' ? t('Saving') : t('Waits for the server, then is saved to your places') };
+            });
+        }
+    },
+    watch: {
+        // a new revision installed while a package is open: opened again once (not at every poll, nor again after a
+        // failed open), what was read of the old one dropped
+        rows(rows) {
+            if (!this.opened || !this.kept) return;
+            const row = rows.find((one) => one.packageId === this.kept.packageId);
+            if (!row || !row.installed || row.revision === this.kept.revision || this.reopened === row.packageId + ':' + row.revision) return;
+            this.reopened = row.packageId + ':' + row.revision;
+            this.open(row);
+        }
+    },
+    methods: {
+        t,
+        readList() {
+            const packages = host().packages;
+            return Promise.resolve(packages.list()).then((answer) => {
+                this.serverList = answer && Array.isArray(answer.server) ? answer.server : null;
+                this.serverError = answer && answer.server == null ? String(answer.error || '') : '';
+                this.device = answer && Array.isArray(answer.device) ? answer.device : [];
+                this.loaded = true;
+            }, (err) => { this.loaded = true; this.error = message(err); });
+        },
+        readStatus() {
+            return Promise.resolve(host().packages.status()).then((device) => { this.device = Array.isArray(device) ? device : []; }, () => null);
+        },
+        // the states while a download runs, else now and then: the host's download is a task or Android's worker
+        poll() {
+            clearTimeout(this.pollTimer);
+            this.pollTimer = setTimeout(() => {
+                const before = this.downloading;
+                this.readStatus().then(() => {
+                    if (before && !this.downloading) this.readList();
+                    this.poll();
+                });
+            }, this.downloading ? 1500 : 10000);
+        },
+        act(work) {
+            this.error = '';
+            return Promise.resolve().then(work).then(() => this.readStatus(), (err) => { this.error = message(err); });
+        },
+        download(row) { return this.act(() => host().packages.download(row.packageId, row.serverRevision, this.phone && this.wifiOnly)).then(() => this.poll()); },
+        cancel(row) { return this.act(() => host().packages.cancel(row.packageId)); },
+        remove(row) {
+            this.$q.dialog({ title: t('Delete from this device'), message: fill(t('Delete the offline map {name} from this device? It stays on the server.'), { name: row.name || row.packageId }),
+                cancel: { label: t('Keep it'), flat: true, noCaps: true }, ok: { label: t('Delete'), color: 'negative', noCaps: true } })
+                .onOk(() => this.act(() => host().packages.remove(row.packageId)));
+        },
+        // Maps' Browse, the server's page (an app window; on the phone the same webview)
+        openBrowse() { host().openRemote('/qapps/maps/Browse').catch((err) => { this.error = message(err); }); },
+        // ---- a package opened ----
+        open(row) {
+            const base = baseOf(row.packageId);
+            if (!base) return;
+            this.error = '';
+            const account = moqui.storageScope || '';
+            // the map's code (moqui.map's helpers, the sources' text) loads as m-map loads it
+            const mapCode = moqui.loadScript('/js/WebrootMap.js', null, () => !!(moqui.map && moqui.map.components)).catch(() => null);
+            Promise.all([readMember(base + 'manifest.json').then((text) => JSON.parse(text)), mapCode]).then(([manifest]) => {
+                this.opened = row;
+                this.manifest = manifest;
+                // what is read of its files is this account's and this revision's only
+                this.kept = { account, packageId: row.packageId, revision: row.revision, base, members: {} };
+                this.mapConfig = { packageBase: base, manifest };
+                this.results = [];
+                this.searched = false;
+                this.picked = null;
+                this.center = null;
+                this.addressNote = '';
+                this.readOutbox();
+            }, (err) => { this.error = t('This offline map could not be opened') + ': ' + message(err); });
+        },
+        close() { this.opened = null; this.manifest = null; this.mapConfig = null; this.kept = null; this.readList(); },
+        // a JSON member of the opened package, read once for its account and revision; null when it has none
+        member(path) {
+            const kept = this.kept;
+            const listed = this.manifest && Array.isArray(this.manifest.members) && this.manifest.members.some((member) => member && member.path === path);
+            const installed = this.device.find((row) => String(row.packageId) === String(kept && kept.packageId) && row.installed);
+            if (!kept || !listed || kept.account !== (moqui.storageScope || '') || (installed && Number(installed.revision) !== Number(kept.revision)))
+                return Promise.resolve(null);
+            if (!kept.members[path]) kept.members[path] = readMember(kept.base + path).then((text) => JSON.parse(text), (err) => {
+                delete kept.members[path];
+                throw err;
+            });
+            return kept.members[path];
+        },
+        search() {
+            const words = fold(this.query).split(/\s+/).filter((word) => word);
+            if (!words.length || !this.opened) { this.results = []; this.searched = false; return; }
+            const bbox = this.manifest && this.manifest.package && this.manifest.package.bbox;
+            this.searching = true;
+            this.error = '';
+            const found = { address: [], place: [], postal: [], overture: [] };
+            const add = (item) => {
+                const list = found[item.key.split(':')[0]];
+                if (list && list.length < PER_SOURCE && inBox(bbox, item.lon, item.lat)) list.push(item);
+            };
+            const places = this.member('places.geojson').then((json) => {
+                (json && Array.isArray(json.features) ? json.features : []).forEach((feature, index) => {
+                    const props = feature && feature.properties || {};
+                    const label = moqui.map.plainText(props.label || props.name, 200);
+                    const point = feature && feature.geometry && feature.geometry.type === 'Point' ? feature.geometry.coordinates : null;
+                    if (point && matches(words, label)) add({ key: 'place:' + index, icon: 'sym_o_bookmark', label, caption: t('Your saved place'), lon: Number(point[0]), lat: Number(point[1]) });
+                });
+            });
+            const postal = this.member('postal.json').then((json) => {
+                (json && Array.isArray(json.rows) ? json.rows : []).forEach((row, index) => {
+                    const names = (Array.isArray(row.places) ? row.places : []).map((place) => [place.name, place.adminName1].filter((part) => part).join(', '));
+                    if (matches(words, row.code, row.displayCode, names.join(' '))) add({ key: 'postal:' + index, icon: 'sym_o_markunread_mailbox',
+                        label: String(row.displayCode || row.code), caption: [names[0], row.country].filter((part) => part).join(' · '), lon: Number(row.lon), lat: Number(row.lat) });
+                });
+            });
+            const overture = this.member('overture-places.json').then((json) => {
+                (json && Array.isArray(json.rows) ? json.rows : []).forEach((row, index) => {
+                    if (matches(words, row.placeName, row.brandName, row.basicCategory, row.locality)) add({ key: 'overture:' + index, icon: 'sym_o_storefront',
+                        label: String(row.placeName || row.brandName || ''), caption: [row.basicCategory, row.addressText || row.locality].filter((part) => part).join(' · '),
+                        lon: Number(row.longitude), lat: Number(row.latitude) });
+                });
+            });
+            // the package's Overture addresses: the server's address matching, in the host (packages.addresses)
+            const hasAddresses = this.manifest && Array.isArray(this.manifest.members) && this.manifest.members.some((member) => member && member.path === 'overture-addresses.json');
+            const addresses = !hasAddresses ? Promise.resolve() : typeof host().packages.addresses !== 'function'
+                ? Promise.resolve().then(() => { this.addressNote = t('Addresses are not searched by this version of the app.'); })
+                : Promise.resolve(host().packages.addresses(this.opened.packageId, this.query, { near: this.center ? [this.center.lon, this.center.lat] : null, limit: 10 }))
+                    .then((answer) => {
+                        this.addressNote = '';
+                        ((answer && answer.candidates) || []).forEach((candidate, index) => add({ key: 'address:' + index, icon: 'sym_o_home_pin', label: String(candidate.label || ''),
+                            caption: (candidate.precisionEnumId === 'GPP_ADDRESS_MATCH' ? t('Address') : t('Estimate')) + (candidate.sourceLicenses ? ' · ' + candidate.sourceLicenses : ''),
+                            lon: Number(candidate.lon), lat: Number(candidate.lat) }));
+                    });
+            const each = [addresses, places, postal, overture].map((work) => work.catch((err) => { console.warn('MapsOffline: a search did not finish', err); this.error = message(err); }));
+            return Promise.all(each).then(() => {
+                this.results = found.address.concat(found.place, found.postal, found.overture);
+                this.searched = true;
+                this.searching = false;
+            });
+        },
+        show(result) {
+            this.picked = { lon: result.lon, lat: result.lat, label: result.label };
+            if (!this.placeName) this.placeName = result.label;
+            if (this.$refs.map && this.$refs.map.showPlace) this.$refs.map.showPlace(result);
+        },
+        viewChanged(event) { if (event && Array.isArray(event.center)) this.center = { lon: event.center[0], lat: event.center[1] }; },
+        selected(event) { if (event && Number.isFinite(event.lon)) this.picked = { lon: event.lon, lat: event.lat, label: event.label || '' }; },
+        // ---- saving a place: an outbox item the host sends when the server answers ----
+        readOutbox() {
+            const outbox = host() && host().outbox;
+            if (!outbox || typeof outbox.list !== 'function') return Promise.resolve();
+            const kinds = typeof outbox.kinds === 'function' ? Promise.resolve(outbox.kinds()).catch(() => null) : Promise.resolve(null);
+            return Promise.all([Promise.resolve(outbox.list()).catch(() => []), kinds]).then(([ops, taken]) => {
+                this.outboxOps = (Array.isArray(ops) ? ops : []).map((op) => {
+                    let payload = op.payload;
+                    if (typeof payload === 'string') { try { payload = JSON.parse(payload); } catch (err) { payload = {}; } }
+                    return Object.assign({}, op, { payload: payload || {} });
+                });
+                this.placeKinds = !!(taken && Array.isArray(taken.kinds) && taken.kinds.includes('map-place'));
+            });
+        },
+        savePlace() {
+            const point = this.pointToSave;
+            const label = this.placeName.trim();
+            const outbox = host() && host().outbox;
+            // only an account with the Maps app saves a place, queued or not
+            if (!point || !label || !this.mapsAccess) return;
+            this.error = '';
+            const saved = () => { this.placeName = ''; this.$q.notify({ type: 'positive', message: fill(t('{name} is saved to your places when the server answers'), { name: label }) }); };
+            if (outbox && this.placeKinds) {
+                const clientRef = 'pl' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+                return Promise.resolve(outbox.add('map-place', { clientRef, label, longitude: point.lon, latitude: point.lat }))
+                    .then(() => { saved(); return this.readOutbox(); }, (err) => { this.error = message(err); });
+            }
+            // a server that takes no place by its clientRef: saved now, or not at all offline
+            if (this.offline) { this.error = t('Saving a place needs a connection to this server'); return; }
+            return moqui.request('/apps/maps/Browse/savePlace', { method: 'POST', params: { label, longitude: point.lon, latitude: point.lat } }).then((result) => {
+                const json = result.json || {};
+                if (json.applied) { this.placeName = ''; this.$q.notify({ type: 'positive', message: fill(t('{name} is saved to your places'), { name: label }) }); }
+                else this.error = String(json.reason || json.errors || t('The place was not saved'));
+            }, (err) => { this.error = message(err && err.json && err.json.errors ? err.json.errors : err); });
+        },
+        retryPlace(op) { return Promise.resolve(host().outbox.retry(op.id)).then(() => this.readOutbox(), (err) => { this.error = message(err); }); },
+        discardPlace(op) { return Promise.resolve(host().outbox.discard(op.id)).then(() => this.readOutbox(), (err) => { this.error = message(err); }); }
+    },
+    mounted() {
+        if (!this.supported) return;
+        this.readList().then(() => this.poll());
+        const outbox = host().outbox;
+        if (outbox && typeof outbox.on === 'function') this.outboxOff = outbox.on(() => { if (this.opened) this.readOutbox(); });
+    },
+    unmounted() {
+        clearTimeout(this.pollTimer);
+        if (this.outboxOff) this.outboxOff();
+    }
+};
+        })(module.exports);
+        const component = Object.assign({}, returned !== undefined ? returned : module.exports);
+        {
+            const target = component;
+            target.render = (function () {
+                const { toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, createVNode: _createVNode, normalizeClass: _normalizeClass } = Vue
+
+                return function render(_ctx, _cache) {
+                  const _component_q_chip = _resolveComponent("q-chip")
+                  const _component_q_btn = _resolveComponent("q-btn")
+                  const _component_q_checkbox = _resolveComponent("q-checkbox")
+                  const _component_q_icon = _resolveComponent("q-icon")
+                  const _component_q_item_section = _resolveComponent("q-item-section")
+                  const _component_q_item_label = _resolveComponent("q-item-label")
+                  const _component_q_linear_progress = _resolveComponent("q-linear-progress")
+                  const _component_q_item = _resolveComponent("q-item")
+                  const _component_q_list = _resolveComponent("q-list")
+                  const _component_q_input = _resolveComponent("q-input")
+                  const _component_q_form = _resolveComponent("q-form")
+                  const _component_m_map = _resolveComponent("m-map")
+
+                  return (_openBlock(), _createElementBlock("div", { class: "m-maps-offline" }, [
+                    (!_ctx.supported)
+                      ? (_openBlock(), _createElementBlock("div", {
+                          key: 0,
+                          class: "q-pa-md m-muted"
+                        }, _toDisplayString(_ctx.t('This app cannot keep offline maps.')), 1))
+                      : (!_ctx.opened)
+                        ? (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
+                            _createElementVNode("div", { class: "q-pa-md column q-gutter-y-sm" }, [
+                              _createElementVNode("div", { class: "row items-center q-gutter-sm" }, [
+                                _createElementVNode("div", { class: "text-h6 col" }, _toDisplayString(_ctx.t('Offline maps')), 1),
+                                (_ctx.offline)
+                                  ? (_openBlock(), _createBlock(_component_q_chip, {
+                                      key: 0,
+                                      dense: "",
+                                      square: "",
+                                      color: "warning",
+                                      "text-color": "black",
+                                      icon: "sym_o_cloud_off",
+                                      class: "m-maps-offline-chip"
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createTextVNode(_toDisplayString(_ctx.t('Offline: the maps on this device')), 1)
+                                      ]),
+                                      _: 1
+                                    }))
+                                  : (_openBlock(), _createBlock(_component_q_btn, {
+                                      key: 1,
+                                      flat: "",
+                                      dense: "",
+                                      "no-caps": "",
+                                      color: "primary",
+                                      icon: "sym_o_map",
+                                      label: _ctx.t('Open Maps'),
+                                      class: "m-maps-offline-browse",
+                                      onClick: _ctx.openBrowse
+                                    }, null, 8, ["label", "onClick"]))
+                              ]),
+                              _createElementVNode("div", { class: "text-body2 m-muted" }, _toDisplayString(_ctx.t('A package holds what you could read when it was built, and stays readable on this device until you delete it here. Record layers are not included.')), 1),
+                              (_ctx.serverError && !_ctx.offline)
+                                ? (_openBlock(), _createElementBlock("div", {
+                                    key: 0,
+                                    role: "status",
+                                    class: "text-body2 text-warning m-maps-offline-server"
+                                  }, _toDisplayString(_ctx.t('The server\'s list did not load: only the maps on this device are listed.')), 1))
+                                : _createCommentVNode("", true),
+                              (_ctx.phone)
+                                ? (_openBlock(), _createBlock(_component_q_checkbox, {
+                                    key: 1,
+                                    modelValue: _ctx.wifiOnly,
+                                    "onUpdate:modelValue": $event => ((_ctx.wifiOnly) = $event),
+                                    dense: "",
+                                    class: "m-maps-offline-wifi",
+                                    label: _ctx.t('Download only on Wi-Fi')
+                                  }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]))
+                                : _createCommentVNode("", true),
+                              (_ctx.error)
+                                ? (_openBlock(), _createElementBlock("div", {
+                                    key: 2,
+                                    role: "alert",
+                                    class: "text-negative"
+                                  }, _toDisplayString(_ctx.error), 1))
+                                : _createCommentVNode("", true)
+                            ]),
+                            _createVNode(_component_q_list, {
+                              separator: "",
+                              class: "m-maps-offline-list"
+                            }, {
+                              default: _withCtx(() => [
+                                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.rows, (row) => {
+                                  return (_openBlock(), _createBlock(_component_q_item, {
+                                    key: row.packageId,
+                                    class: "m-maps-offline-row",
+                                    "data-package": row.packageId
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_item_section, { avatar: "" }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_icon, {
+                                            name: row.installed ? 'sym_o_offline_pin' : 'sym_o_cloud_download',
+                                            color: row.installed ? 'positive' : 'grey-7'
+                                          }, null, 8, ["name", "color"])
+                                        ]),
+                                        _: 2
+                                      }, 1024),
+                                      _createVNode(_component_q_item_section, null, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item_label, null, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(row.name || row.packageId), 1)
+                                            ]),
+                                            _: 2
+                                          }, 1024),
+                                          _createVNode(_component_q_item_label, { caption: "" }, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(row.caption), 1)
+                                            ]),
+                                            _: 2
+                                          }, 1024),
+                                          (row.stateText)
+                                            ? (_openBlock(), _createBlock(_component_q_item_label, {
+                                                key: 0,
+                                                caption: "",
+                                                class: _normalizeClass(["m-maps-offline-state", row.failed ? 'text-negative' : ''])
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(row.stateText), 1)
+                                                ]),
+                                                _: 2
+                                              }, 1032, ["class"]))
+                                            : _createCommentVNode("", true),
+                                          (row.progress !== null)
+                                            ? (_openBlock(), _createBlock(_component_q_linear_progress, {
+                                                key: 1,
+                                                value: row.progress,
+                                                class: "q-mt-xs"
+                                              }, null, 8, ["value"]))
+                                            : _createCommentVNode("", true)
+                                        ]),
+                                        _: 2
+                                      }, 1024),
+                                      _createVNode(_component_q_item_section, {
+                                        side: "",
+                                        class: "row no-wrap items-center q-gutter-x-xs"
+                                      }, {
+                                        default: _withCtx(() => [
+                                          (row.installed)
+                                            ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                key: 0,
+                                                flat: "",
+                                                dense: "",
+                                                "no-caps": "",
+                                                color: "primary",
+                                                label: _ctx.t('Open'),
+                                                class: "m-maps-offline-open",
+                                                onClick: $event => (_ctx.open(row))
+                                              }, null, 8, ["label", "onClick"]))
+                                            : _createCommentVNode("", true),
+                                          (row.canDownload)
+                                            ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                key: 1,
+                                                flat: "",
+                                                dense: "",
+                                                "no-caps": "",
+                                                color: "primary",
+                                                label: row.installed ? _ctx.t('Update') : _ctx.t('Download'),
+                                                class: "m-maps-offline-download",
+                                                disable: _ctx.offline,
+                                                onClick: $event => (_ctx.download(row))
+                                              }, null, 8, ["label", "disable", "onClick"]))
+                                            : _createCommentVNode("", true),
+                                          (row.busy)
+                                            ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                key: 2,
+                                                flat: "",
+                                                dense: "",
+                                                "no-caps": "",
+                                                label: _ctx.t('Cancel'),
+                                                class: "m-maps-offline-cancel",
+                                                onClick: $event => (_ctx.cancel(row))
+                                              }, null, 8, ["label", "onClick"]))
+                                            : _createCommentVNode("", true),
+                                          (row.installed && !row.busy)
+                                            ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                key: 3,
+                                                flat: "",
+                                                dense: "",
+                                                round: "",
+                                                icon: "sym_o_delete",
+                                                color: "negative",
+                                                "aria-label": _ctx.t('Delete from this device'),
+                                                class: "m-maps-offline-delete",
+                                                onClick: $event => (_ctx.remove(row))
+                                              }, null, 8, ["aria-label", "onClick"]))
+                                            : _createCommentVNode("", true)
+                                        ]),
+                                        _: 2
+                                      }, 1024)
+                                    ]),
+                                    _: 2
+                                  }, 1032, ["data-package"]))
+                                }), 128)),
+                                (_ctx.loaded && !_ctx.rows.length)
+                                  ? (_openBlock(), _createBlock(_component_q_item, { key: 0 }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_item_section, { class: "m-muted" }, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(_ctx.offline
+                                ? _ctx.t('No offline maps on this device. Download one when the server can be reached.')
+                                : _ctx.t('No offline maps yet. Make one in Maps, Offline maps, then download it here.')), 1)
+                                          ]),
+                                          _: 1
+                                        })
+                                      ]),
+                                      _: 1
+                                    }))
+                                  : _createCommentVNode("", true)
+                              ]),
+                              _: 1
+                            })
+                          ], 64))
+                        : (_openBlock(), _createElementBlock(_Fragment, { key: 2 }, [
+                            _createElementVNode("div", { class: "q-pa-sm row items-center q-gutter-sm m-maps-offline-head" }, [
+                              _createVNode(_component_q_btn, {
+                                flat: "",
+                                dense: "",
+                                "no-caps": "",
+                                icon: "sym_o_arrow_back",
+                                label: _ctx.t('All offline maps'),
+                                onClick: _ctx.close
+                              }, null, 8, ["label", "onClick"]),
+                              _createElementVNode("div", { class: "text-subtitle1 col ellipsis" }, _toDisplayString(_ctx.opened.name || _ctx.opened.packageId), 1),
+                              _createVNode(_component_q_chip, {
+                                dense: "",
+                                square: "",
+                                color: _ctx.offline ? 'warning' : 'grey-3',
+                                "text-color": "black",
+                                icon: _ctx.offline ? 'sym_o_cloud_off' : 'sym_o_offline_pin',
+                                class: "m-maps-offline-mode"
+                              }, {
+                                default: _withCtx(() => [
+                                  _createTextVNode(_toDisplayString(_ctx.offline ? _ctx.t('Offline') : _ctx.t('On this device')), 1)
+                                ]),
+                                _: 1
+                              }, 8, ["color", "icon"])
+                            ]),
+                            _createElementVNode("div", { class: "q-px-md text-caption m-muted m-maps-offline-built" }, _toDisplayString(_ctx.builtText), 1),
+                            (_ctx.error)
+                              ? (_openBlock(), _createElementBlock("div", {
+                                  key: 0,
+                                  role: "alert",
+                                  class: "q-px-md text-negative"
+                                }, _toDisplayString(_ctx.error), 1))
+                              : _createCommentVNode("", true),
+                            _createVNode(_component_q_form, {
+                              class: "q-px-md q-pt-sm row items-center q-gutter-sm m-maps-offline-search",
+                              onSubmit: _ctx.search
+                            }, {
+                              default: _withCtx(() => [
+                                _createVNode(_component_q_input, {
+                                  modelValue: _ctx.query,
+                                  "onUpdate:modelValue": $event => ((_ctx.query) = $event),
+                                  dense: "",
+                                  outlined: "",
+                                  clearable: "",
+                                  class: "col",
+                                  label: _ctx.t('Search this map'),
+                                  autocomplete: "off"
+                                }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
+                                _createVNode(_component_q_btn, {
+                                  type: "submit",
+                                  flat: "",
+                                  dense: "",
+                                  "no-caps": "",
+                                  color: "primary",
+                                  icon: "sym_o_search",
+                                  label: _ctx.t('Search'),
+                                  loading: _ctx.searching
+                                }, null, 8, ["label", "loading"])
+                              ]),
+                              _: 1
+                            }, 8, ["onSubmit"]),
+                            (_ctx.addressNote)
+                              ? (_openBlock(), _createElementBlock("div", {
+                                  key: 1,
+                                  class: "q-px-md text-caption m-muted m-maps-offline-address-note"
+                                }, _toDisplayString(_ctx.addressNote), 1))
+                              : _createCommentVNode("", true),
+                            (_ctx.results.length || _ctx.searched)
+                              ? (_openBlock(), _createBlock(_component_q_list, {
+                                  key: 2,
+                                  dense: "",
+                                  separator: "",
+                                  class: "q-mx-md q-mt-xs m-maps-offline-results"
+                                }, {
+                                  default: _withCtx(() => [
+                                    (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.results, (result) => {
+                                      return (_openBlock(), _createBlock(_component_q_item, {
+                                        key: result.key,
+                                        clickable: "",
+                                        class: "m-maps-offline-result",
+                                        onClick: $event => (_ctx.show(result))
+                                      }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item_section, { avatar: "" }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_icon, {
+                                                name: result.icon,
+                                                size: "20px"
+                                              }, null, 8, ["name"])
+                                            ]),
+                                            _: 2
+                                          }, 1024),
+                                          _createVNode(_component_q_item_section, null, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_item_label, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(result.label), 1)
+                                                ]),
+                                                _: 2
+                                              }, 1024),
+                                              _createVNode(_component_q_item_label, { caption: "" }, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(result.caption), 1)
+                                                ]),
+                                                _: 2
+                                              }, 1024)
+                                            ]),
+                                            _: 2
+                                          }, 1024)
+                                        ]),
+                                        _: 2
+                                      }, 1032, ["onClick"]))
+                                    }), 128)),
+                                    (_ctx.searched && !_ctx.results.length)
+                                      ? (_openBlock(), _createBlock(_component_q_item, { key: 0 }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_item_section, { class: "m-muted" }, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(_ctx.t('Nothing in this map matches')), 1)
+                                              ]),
+                                              _: 1
+                                            })
+                                          ]),
+                                          _: 1
+                                        }))
+                                      : _createCommentVNode("", true)
+                                  ]),
+                                  _: 1
+                                }))
+                              : _createCommentVNode("", true),
+                            _createElementVNode("div", { class: "q-pa-md" }, [
+                              (_ctx.mapConfig)
+                                ? (_openBlock(), _createBlock(_component_m_map, {
+                                    key: 0,
+                                    ref: "map",
+                                    id: "MapsOfflineMap",
+                                    config: _ctx.mapConfig,
+                                    height: "60vh",
+                                    onViewChange: _ctx.viewChanged,
+                                    onSelect: _ctx.selected
+                                  }, null, 8, ["config", "onViewChange", "onSelect"]))
+                                : _createCommentVNode("", true)
+                            ]),
+                            (_ctx.mapsAccess)
+                              ? (_openBlock(), _createBlock(_component_q_form, {
+                                  key: 3,
+                                  class: "q-px-md row items-center q-gutter-sm m-maps-offline-save",
+                                  onSubmit: _ctx.savePlace
+                                }, {
+                                  default: _withCtx(() => [
+                                    _createVNode(_component_q_input, {
+                                      modelValue: _ctx.placeName,
+                                      "onUpdate:modelValue": $event => ((_ctx.placeName) = $event),
+                                      dense: "",
+                                      outlined: "",
+                                      class: "col",
+                                      label: _ctx.t('Save a place: its name'),
+                                      maxlength: "200",
+                                      autocomplete: "off"
+                                    }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
+                                    _createVNode(_component_q_btn, {
+                                      type: "submit",
+                                      flat: "",
+                                      dense: "",
+                                      "no-caps": "",
+                                      color: "primary",
+                                      icon: "sym_o_add_location_alt",
+                                      label: _ctx.pointToSave && _ctx.pointToSave.label ? _ctx.t('Save this place') : _ctx.t('Save the map\'s center'),
+                                      disable: !_ctx.placeName.trim() || !_ctx.pointToSave
+                                    }, null, 8, ["label", "disable"])
+                                  ]),
+                                  _: 1
+                                }, 8, ["onSubmit"]))
+                              : _createCommentVNode("", true),
+                            (_ctx.queuedPlaces.length)
+                              ? (_openBlock(), _createBlock(_component_q_list, {
+                                  key: 4,
+                                  dense: "",
+                                  class: "q-mx-md m-maps-offline-queued"
+                                }, {
+                                  default: _withCtx(() => [
+                                    (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.queuedPlaces, (op) => {
+                                      return (_openBlock(), _createBlock(_component_q_item, {
+                                        key: op.id
+                                      }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item_section, { avatar: "" }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_icon, {
+                                                name: "sym_o_schedule_send",
+                                                size: "20px"
+                                              })
+                                            ]),
+                                            _: 1
+                                          }),
+                                          _createVNode(_component_q_item_section, null, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_item_label, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(op.label), 1)
+                                                ]),
+                                                _: 2
+                                              }, 1024),
+                                              _createVNode(_component_q_item_label, {
+                                                caption: "",
+                                                class: _normalizeClass(op.failed ? 'text-negative' : '')
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(op.stateText), 1)
+                                                ]),
+                                                _: 2
+                                              }, 1032, ["class"])
+                                            ]),
+                                            _: 2
+                                          }, 1024),
+                                          (op.failed || op.held)
+                                            ? (_openBlock(), _createBlock(_component_q_item_section, {
+                                                key: 0,
+                                                side: "",
+                                                class: "row no-wrap"
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  (op.failed)
+                                                    ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                        key: 0,
+                                                        flat: "",
+                                                        dense: "",
+                                                        "no-caps": "",
+                                                        label: _ctx.t('Retry'),
+                                                        onClick: $event => (_ctx.retryPlace(op))
+                                                      }, null, 8, ["label", "onClick"]))
+                                                    : _createCommentVNode("", true),
+                                                  _createVNode(_component_q_btn, {
+                                                    flat: "",
+                                                    dense: "",
+                                                    "no-caps": "",
+                                                    label: _ctx.t('Discard'),
+                                                    class: "m-maps-offline-discard",
+                                                    onClick: $event => (_ctx.discardPlace(op))
+                                                  }, null, 8, ["label", "onClick"])
+                                                ]),
+                                                _: 2
+                                              }, 1024))
+                                            : _createCommentVNode("", true)
+                                        ]),
+                                        _: 2
+                                      }, 1024))
+                                    }), 128))
+                                  ]),
+                                  _: 1
+                                }))
+                              : _createCommentVNode("", true),
+                            _createElementVNode("div", { class: "q-pa-md text-caption m-maps-offline-sources" }, [
+                              _createElementVNode("div", { class: "text-weight-medium" }, _toDisplayString(_ctx.t('Sources')), 1),
+                              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.sources, (source, index) => {
+                                return (_openBlock(), _createElementBlock("div", {
+                                  key: index,
+                                  class: "m-maps-offline-source"
+                                }, [
+                                  _createElementVNode("span", null, _toDisplayString(source.text), 1),
+                                  (source.licenses)
+                                    ? (_openBlock(), _createElementBlock("span", {
+                                        key: 0,
+                                        class: "m-muted"
+                                      }, " · " + _toDisplayString(source.licenses), 1))
+                                    : _createCommentVNode("", true)
+                                ]))
+                              }), 128)),
+                              _createElementVNode("div", { class: "m-muted q-mt-xs" }, _toDisplayString(_ctx.notice), 1)
+                            ])
+                          ], 64))
+                  ]))
+                }
+            })();
+            delete target.template;
+        }
+        return { component: component, style: null, scoped: false };
+    } };
     moqui.qvtBundled["BasicComms/Chat"] = { make: function (Vue) {
         const module = { exports: {} };
         const define = moqui.define;
@@ -3249,6 +4230,17 @@ const timeText = (millis) => moqui.chat.timeText(millis);
 const fullTime = (millis) => moqui.chat.fullTime(millis);
 const dayLabel = (millis) => moqui.chat.dayLabel(millis);
 const shortWhen = (millis) => moqui.chat.shortWhen(millis);
+// For rows with a fixed ordering, keep the scrolled tail when the last row of the fresh page joins it.
+// Reactions and Threads can reorder older rows on a removal, so those lists always take the fresh cursor.
+function mergeFirstPage(current, page, keyOf) {
+    if (page.next == null || !page.list.length) return page;
+    const last = page.list[page.list.length - 1];
+    const lastKey = keyOf(last);
+    const anchor = current.list.findIndex((item) => keyOf(item) === lastKey);
+    if (anchor < 0 || anchor === current.list.length - 1) return page;
+    const fresh = new Set(page.list.map(keyOf));
+    return { list: page.list.concat(current.list.slice(anchor + 1).filter((item) => !fresh.has(keyOf(item)))), next: current.next };
+}
 const sizeText = (bytes) => {
     const n = Number(bytes || 0);
     if (n < 1024) return n + ' B';
@@ -3436,9 +4428,9 @@ const messageTemplate = `
                     <span style="overflow-wrap:anywhere">{{item.poll.question}}</span></div>
                 <!-- a tap votes; a long press, its own context menu (Android's long press, the menu key) or Shift+Enter shows who
                      voted (a hover on the count, with a pointer) -->
-                <q-item v-for="option in item.poll.options" :key="option.id" dense clickable class="rounded-borders q-px-xs" :disable="!room.canVote(item)"
-                        :data-option="option.id" :aria-keyshortcuts="option.voterIds && option.voterIds.length ? 'Shift+Enter' : undefined"
-                        @click.stop="room.pressed() || room.vote(item, option)"
+                <q-item v-for="option in item.poll.options" :key="option.id" dense clickable class="rounded-borders q-px-xs"
+                        :data-option="option.id" :aria-keyshortcuts="!item.poll.anonymous && option.voterIds && option.voterIds.length ? 'Shift+Enter' : undefined"
+                        @click.stop="room.pressed() || (room.canVote(item) ? room.vote(item, option) : room.showPeople({ kind: 'voters', item, option }))"
                         @touchstart.passive="room.pressStart({ kind: 'voters', item, option }, $event)" @touchmove.passive="room.pressCancel()"
                         @touchend="room.pressEnd($event)" @touchcancel="room.pressEnd($event)"
                         @contextmenu.prevent.stop="room.pressMenu({ kind: 'voters', item, option })" @keydown.enter.shift.prevent.stop="room.pressMenu({ kind: 'voters', item, option })">
@@ -3447,7 +4439,7 @@ const messageTemplate = `
                         <q-item-label style="overflow-wrap:anywhere">{{option.text}}</q-item-label>
                         <q-linear-progress :value="room.optionShare(item, option)" rounded size="6px" :color="option.mine ? 'primary' : 'grey-5'" class="q-mt-xs"></q-linear-progress>
                     </q-item-section>
-                    <q-item-section side class="text-caption">{{option.voteCount}}<q-tooltip v-if="!room.mobile && option.voterIds && option.voterIds.length">{{room.votersText(option)}}</q-tooltip></q-item-section>
+                    <q-item-section side class="text-caption">{{option.voteCount}}<q-tooltip v-if="!room.mobile && !item.poll.anonymous && option.voterIds && option.voterIds.length">{{room.votersText(option)}}</q-tooltip></q-item-section>
                 </q-item>
                 <div class="row items-center no-wrap text-caption m-muted q-mt-xs">
                     <span class="ellipsis">{{room.pollFooter(item.poll)}}</span><q-space></q-space>
@@ -3498,7 +4490,7 @@ const messageTemplate = `
                 <q-chip v-for="reaction in item.reactions" :key="reaction.key" dense clickable :outline="!reaction.mine" :color="reaction.mine ? 'primary' : undefined"
                         :text-color="reaction.mine ? 'white' : undefined" class="q-ml-none q-mr-xs m-chat-reaction" :data-reaction="reaction.key"
                         :aria-label="room.reactionLabel(reaction)" aria-keyshortcuts="Shift+Enter"
-                        :disable="!room.canPost || !room.bridgeCaps.reaction" @click.stop="room.pressed() || room.react(item, reaction.key)"
+                        @click.stop="room.pressed() || (room.canPost && room.bridgeCaps.reaction ? room.react(item, reaction.key) : room.showPeople({ kind: 'reactors', reaction }))"
                         @touchstart.passive="room.pressStart({ kind: 'reactors', item, reaction }, $event)" @touchmove.passive="room.pressCancel()"
                         @touchend="room.pressEnd($event)" @touchcancel="room.pressEnd($event)"
                         @contextmenu.prevent.stop="room.pressMenu({ kind: 'reactors', item, reaction })" @keydown.enter.shift.prevent.stop="room.pressMenu({ kind: 'reactors', item, reaction })">
@@ -3926,9 +4918,46 @@ const chatSticker = {
 };
 
 // A location message: a pin, its label, address and coordinates, Open in maps (geo: in the Android app, OpenStreetMap
-// elsewhere) and Copy. No map.
+// elsewhere) and Copy. No map. A live location (plans/archive/Location-Sharing.md §3.5; its message carries its share's id, never
+// a position): the position and its age while the share is on, read through liveLocation (get#Share checks the audience)
+// and moved by the share's pushes (locationShare:<shareId>, which only its audience gets); "Live location ended" after;
+// for one the share does not reach (who joined the room after it started, or was taken out), that it is not shared with
+// them. Its owner sees whom it was shared with, where it is sent from, Send from here, Stop and Who sees my location.
 const locationCardTemplate = `
-<q-card flat bordered class="q-mt-xs q-pa-sm m-chat-location" :style="room.mobile ? 'max-width:85vw' : 'max-width:360px'">
+<q-card v-if="live" flat bordered class="q-mt-xs q-pa-sm m-chat-location m-chat-live" :data-live-state="state" :style="room.mobile ? 'max-width:85vw' : 'max-width:360px'">
+    <div class="row no-wrap items-start">
+        <q-icon :name="state === 'live' ? 'sym_o_share_location' : 'sym_o_location_off'" size="28px" :color="state === 'live' ? (stale ? 'warning' : 'positive') : 'grey'" class="q-mr-sm"></q-icon>
+        <div class="col" style="min-width:0">
+            <div class="row items-center no-wrap">
+                <span class="text-weight-medium ellipsis m-chat-location-label">{{liveLabel}}</span>
+                <q-badge v-if="state === 'live'" :color="stale ? 'warning' : 'positive'" class="q-ml-xs m-chat-live-badge">{{room.t('Live')}}</q-badge>
+            </div>
+            <template v-if="state === 'live'">
+                <div v-if="coordinates" class="text-caption m-muted m-chat-location-coordinates">{{coordinates}}<span v-if="view.share && view.share.approximate"> · {{room.t('approximate')}}</span></div>
+                <div class="text-caption m-chat-live-age" :class="stale ? 'text-warning' : 'm-muted'">{{ageLine}}</div>
+                <template v-if="view.owner">
+                    <div class="text-caption m-muted m-chat-live-audience">{{room.t('Shared with the members of the room when you started it')}}</div>
+                    <div v-if="leftNames" class="text-caption text-warning m-chat-live-left">{{room.t('No longer in the room, still sees it')}}: {{leftNames}}</div>
+                    <div class="text-caption m-chat-live-sent" :class="sentFrom ? 'text-positive' : 'text-warning'">{{sentText}}</div>
+                </template>
+            </template>
+            <div v-else-if="state === 'ended'" class="text-body2 m-muted m-chat-live-ended">{{room.t('Live location ended')}}</div>
+            <div v-else-if="state === 'notShared'" class="text-body2 m-muted m-chat-live-not-shared">{{room.t('This live location is not shared with you')}}</div>
+            <div v-else-if="state === 'failed'" class="text-body2 text-warning m-chat-live-failed">{{room.t('The live location could not be read')}}</div>
+            <div v-else class="text-caption m-muted">{{room.t('Loading')}}</div>
+        </div>
+    </div>
+    <div v-if="state === 'live'" class="row q-mt-xs" style="gap:4px">
+        <q-btn v-if="position" unelevated dense no-caps size="sm" color="primary" icon="sym_o_map" class="m-chat-location-open" :label="room.t('Open in maps')" @click.stop="room.openPlace(position)"></q-btn>
+        <q-btn v-if="position" flat dense no-caps size="sm" color="primary" icon="sym_o_content_copy" class="m-chat-location-copy" :label="room.t('Copy')" @click.stop="room.copyPlace(position)"></q-btn>
+        <template v-if="view.owner">
+            <q-btn v-if="!sentFrom" flat dense no-caps size="sm" color="primary" class="m-chat-live-here" :label="nativeApp ? room.t('Send from this device') : room.t('Send from here')" @click.stop="sendHere"></q-btn>
+            <q-btn flat dense no-caps size="sm" color="negative" icon="sym_o_location_off" class="m-chat-live-stop" :label="room.t('Stop')" @click.stop="stop"></q-btn>
+            <q-btn flat dense no-caps size="sm" color="primary" class="m-chat-live-who" :label="room.t('Who sees my location')" @click.stop="room.go('/qapps/maps/MyShares')"></q-btn>
+        </template>
+    </div>
+</q-card>
+<q-card v-else flat bordered class="q-mt-xs q-pa-sm m-chat-location" :style="room.mobile ? 'max-width:85vw' : 'max-width:360px'">
     <div class="row no-wrap items-start">
         <q-icon name="sym_o_location_on" size="28px" color="primary" class="q-mr-sm"></q-icon>
         <div class="col" style="min-width:0">
@@ -3945,9 +4974,106 @@ const locationCardTemplate = `
 const chatLocationCard = {
     name: 'ChatLocationCard',
     props: { item: Object, room: Object },
+    data: () => ({ view: { state: 'loading', owner: false, share: null, latest: null, seenAt: null }, sentFrom: '' }),
     computed: {
         place() { return this.item.event.location || {}; },
-        coordinates() { return moqui.chat.place.coordinatesText(this.place); }
+        live() { return !!this.place.liveShareId; },
+        shareId() { return this.place.liveShareId ? String(this.place.liveShareId) : ''; },
+        // the view's state, ended once its end has passed (the hourly clean's ended push may come later)
+        state() {
+            const thru = Number((this.view.share && this.view.share.thruDate) || this.place.thruDate) || 0;
+            return this.view.state === 'live' && thru && thru <= (this.room.tick || Date.now()) ? 'ended' : this.view.state;
+        },
+        // the live position as a place: Open in maps and Copy take it as a static one's
+        position() {
+            const latest = this.view.latest;
+            return latest ? { latitude: latest.latitude, longitude: latest.longitude, accuracy: latest.accuracy, label: this.liveLabel } : null;
+        },
+        coordinates() { return moqui.chat.place.coordinatesText(this.live ? this.position : this.place); },
+        liveLabel() { return (this.view.share && this.view.share.label) || this.place.label || this.room.t('Live location'); },
+        // the room's clock (a tick a second) moves the age on
+        age() { return moqui.chat.live.ageSeconds(this.view, this.room.tick || Date.now()); },
+        stale() { return moqui.chat.live.stale(this.view, this.room.tick || Date.now()); },
+        ageLine() {
+            const thru = (this.view.share && this.view.share.thruDate) || this.place.thruDate;
+            const age = this.view.latest ? this.room.t('Updated') + ' ' + moqui.chat.live.ageText(this.age) : moqui.chat.live.ageText(null);
+            return age + (thru ? ' · ' + this.room.t('until') + ' ' + moqui.chat.live.untilText(thru) : '');
+        },
+        nativeApp() { return !!moqui.chat.live.native(); },
+        // the people it still reaches who left the room by themselves (the owner takes them out in Who sees my location)
+        leftNames() { return Array.isArray(this.view.share && this.view.share.leftRoomNames) ? this.view.share.leftRoomNames.join(', ') : ''; },
+        // where the owner's share is sent from: this page, this phone, another device, or nothing now
+        sentText() {
+            if (this.sentFrom === 'page') return this.room.t('Sent from this page while it is open');
+            if (this.sentFrom === 'phone') return this.room.t('Sent from this phone, also while the app is in the background');
+            const share = this.view.share || {};
+            if (share.sentFromDevice && !share.fromThisDevice) return this.room.t('Sent from') + ' ' + (share.deviceName || this.room.t('another device'));
+            return this.room.t('Not sent from here now: the room sees your last position grow old');
+        }
+    },
+    methods: {
+        load() {
+            if (!this.live || !this.room.roomId) return;
+            this.room.liveView(this.item.eventSeq).then((json) => {
+                this.view = moqui.chat.live.view(json, Date.now());
+                this.follow();
+                this.readSentFrom();
+            }, () => { this.view = moqui.chat.live.view(null); });
+        },
+        // the share's topic while it is live (its audience's pushes: positions, a new end, its end); let go after
+        follow() {
+            const wanted = this.view.state === 'live' && this.shareId ? 'locationShare:' + this.shareId : null;
+            if (this.topic === wanted) return;
+            if (this.unfollow) { this.unfollow(); this.unfollow = null; }
+            this.topic = null;
+            const shell = this.$root && this.$root.notificationClient ? this.$root : moqui.webrootVue;
+            const client = shell && shell.notificationClient;
+            if (!wanted || !client || typeof client.registerListener !== 'function') return;
+            this.topic = wanted;
+            const listener = (jsonObj) => this.onPush(jsonObj);
+            const off = client.registerListener(wanted, listener);
+            this.unfollow = typeof off === 'function' ? off : () => client.unregisterListener(wanted, listener);
+        },
+        onPush(jsonObj) {
+            const next = moqui.chat.live.apply(this.view, moqui.chat.live.message(jsonObj), Date.now());
+            if (!next) return;
+            this.view = next;
+            if (next.state !== 'live') {
+                moqui.chat.live.sender.stop(this.shareId, 'ended');
+                this.follow();
+            }
+        },
+        // the sender of this page (its reports' latest, for the owner, who gets no position push) and the app's service
+        onSender(change) {
+            if (!change || (change.shareId && String(change.shareId) !== this.shareId)) { this.readSentFrom(); return; }
+            if (change.kind === 'reported' && this.view.owner && this.view.state === 'live') {
+                const latest = moqui.chat.live.point(change.latest);
+                if (latest) this.view = Object.assign({}, this.view, { latest, seenAt: Date.now() });
+            }
+            if (change.kind === 'stopped' && change.reason === 'ended' && this.view.owner) this.load();
+            this.readSentFrom();
+        },
+        readSentFrom() {
+            if (!this.view.owner) { this.sentFrom = ''; return; }
+            if (moqui.chat.live.sender.sending(this.shareId)) { this.sentFrom = 'page'; return; }
+            const native = moqui.chat.live.native();
+            this.sentFrom = '';
+            if (!native || typeof native.status !== 'function') return;
+            Promise.resolve(native.status()).then((list) => {
+                if (Array.isArray(list) && list.map(String).includes(this.shareId)) this.sentFrom = 'phone';
+            }, () => {});
+        },
+        sendHere() { this.room.sendLiveFromHere(this.view.share || { shareId: this.shareId }, this.item.eventSeq).then(() => this.load(), () => {}); },
+        stop() { this.room.stopLive(this.shareId).then(() => this.load(), () => {}); }
+    },
+    mounted() {
+        if (!this.live) return;
+        this.offSender = moqui.chat.live.sender.on((change) => this.onSender(change));
+        this.load();
+    },
+    beforeUnmount() {
+        if (this.unfollow) this.unfollow();
+        if (this.offSender) this.offSender();
     },
     template: locationCardTemplate
 };
@@ -3968,9 +5094,25 @@ const locationBoxTemplate = `
             <div v-if="coordinates" class="text-caption m-muted">{{coordinates}}</div>
             <q-btn flat dense no-caps size="sm" color="primary" icon="sym_o_map" :label="t('Check it in maps')" @click="room.openPlace(place)"></q-btn>
         </div>
+        <!-- live location (plans/archive/Location-Sharing.md §3.5): the room's members now see where you are as you move, until the
+            end chosen; not in an encrypted room, where the server would see each position -->
+        <div class="q-pt-sm m-chat-live-box">
+            <div class="text-subtitle2">{{t('Live location')}}</div>
+            <div v-if="room.sealed" class="text-caption m-muted m-chat-live-sealed">{{t('Live location is not offered in an encrypted room: the server would see where you are. Send a location instead.')}}</div>
+            <template v-else-if="canLive">
+                <div class="text-caption m-muted">{{liveNote}}</div>
+                <div class="row items-center q-gutter-x-sm q-mt-xs">
+                    <q-btn-toggle v-model="liveHours" :options="liveOptions" dense no-caps unelevated toggle-color="primary" class="m-chat-live-hours"></q-btn-toggle>
+                    <q-checkbox v-model="liveApproximate" dense :label="t('Approximate (about 1 km)')" class="m-chat-live-approximate"></q-checkbox>
+                </div>
+            </template>
+            <div v-else class="text-caption m-muted m-chat-live-off">{{t('This browser cannot give its location, so it cannot share it live')}}</div>
+        </div>
     </div>
     <div class="row q-gutter-sm q-mt-md">
-        <q-btn unelevated no-caps color="primary" icon="sym_o_send" class="m-chat-location-send" :label="t('Send')" :disable="!place || busy" :loading="busy" @click="send"></q-btn>
+        <q-btn unelevated no-caps color="primary" icon="sym_o_send" class="m-chat-location-send" :label="t('Send')" :disable="!place || busy || liveBusy" :loading="busy" @click="send"></q-btn>
+        <q-btn v-if="!room.sealed && canLive" unelevated no-caps class="m-btn-tonal m-chat-live-share" icon="sym_o_share_location" :label="t('Share live location')"
+                :disable="busy || liveBusy" :loading="liveBusy" @click="shareLive"></q-btn>
         <q-btn flat no-caps :label="t('Cancel')" @click="$emit('close')"></q-btn>
     </div>
 </m-dialog>`;
@@ -3978,9 +5120,17 @@ const chatLocationBox = {
     name: 'ChatLocationBox',
     props: { room: Object, threadRoot: Number },
     emits: ['close'],
-    data: () => ({ uid: Math.random().toString(36).slice(2, 8), here: null, typed: '', label: '', locating: false, problem: '', busy: false }),
+    data: () => ({ uid: Math.random().toString(36).slice(2, 8), here: null, typed: '', label: '', locating: false, problem: '', busy: false,
+        liveHours: 1, liveApproximate: false, liveBusy: false }),
     computed: {
         canLocate() { return typeof navigator !== 'undefined' && !!navigator.geolocation && (typeof window === 'undefined' || window.isSecureContext !== false); },
+        // a live share is sent by the Android app's location service, else by this page while it is open
+        canLive() { return !!moqui.chat.live.native() || this.canLocate; },
+        liveOptions() { return [{ label: '15 ' + t('min'), value: 0.25 }, { label: '1 ' + t('h'), value: 1 }, { label: '8 ' + t('h'), value: 8 }]; },
+        liveNote() {
+            return t('The room\'s members see where you are as you move, until the end you choose; people who join later do not.') + ' '
+                + (moqui.chat.live.native() ? t('This phone sends it, also while the app is in the background.') : t('This page sends it while it is open.'));
+        },
         typedPlace() { return this.typed ? moqui.chat.place.parse(this.typed) : null; },
         place() {
             const base = this.here && !this.typed ? this.here : this.typedPlace;
@@ -4011,6 +5161,15 @@ const chatLocationBox = {
             this.busy = true;
             const place = Object.assign({ source: this.here && !this.typed ? 'here' : 'typed' }, this.place);
             this.room.sendPlace(place, this.threadRoot).then(() => { this.busy = false; this.$emit('close'); }, () => { this.busy = false; });
+        },
+        // one clientRef for this dialog, so Share live location again after a lost answer is the same send (the server
+        // answers the first message and its share, and starts no second one)
+        shareLive() {
+            if (this.liveBusy || needsConnection()) return;
+            this.liveBusy = true;
+            if (!this.liveRef) this.liveRef = moqui.chat.newClientRef ? moqui.chat.newClientRef() : '';
+            this.room.sendLivePlace({ hours: this.liveHours, approximate: this.liveApproximate, clientRef: this.liveRef }, this.threadRoot)
+                .then((json) => { this.liveBusy = false; if (json) this.$emit('close'); }, () => { this.liveBusy = false; });
         }
     },
     template: locationBoxTemplate
@@ -4683,8 +5842,8 @@ const roomTemplate = `
             <q-btn v-if="access.canJoin" dense unelevated no-caps color="primary" :label="t('Join')" class="q-mx-xs" @click="join"></q-btn>
             <!-- a voice call and a video call (Comms-Messaging §8.3 item 1); in the tray's narrow Chat tab they are in the room's menu -->
             <template v-if="canCall && !compact">
-                <q-btn flat round dense icon="sym_o_call" class="m-chat-voice-call" :aria-label="t('Voice call')" @click="startCall(false)"><q-tooltip>{{callTip(false)}}</q-tooltip></q-btn>
-                <q-btn flat round dense icon="sym_o_videocam" class="m-chat-video-call" :aria-label="t('Video call')" @click="startCall(true)"><q-tooltip>{{callTip(true)}}</q-tooltip></q-btn>
+                <q-btn flat round dense icon="sym_o_call" class="m-chat-voice-call" :aria-label="t('Voice call')" :aria-description="callAudience" @click="startCall(false)"><q-tooltip>{{t('Voice call')}} · {{callAudience}}</q-tooltip></q-btn>
+                <q-btn flat round dense icon="sym_o_videocam" class="m-chat-video-call" :aria-label="t('Video call')" :aria-description="callAudience" @click="startCall(true)"><q-tooltip>{{t('Video call')}} · {{callAudience}}</q-tooltip></q-btn>
             </template>
             <q-btn v-if="!narrow" flat round dense icon="sym_o_search" :aria-label="t('Search in the room')" @click="openSide('search')"><q-tooltip>{{t('Search in the room')}}</q-tooltip></q-btn>
             <q-btn v-if="!narrow" flat round dense icon="sym_o_keep" :aria-label="t('Pinned messages')" @click="openSide('pinned')"><q-tooltip>{{t('Pinned messages')}}</q-tooltip></q-btn>
@@ -4718,10 +5877,10 @@ const roomTemplate = `
                         <q-separator></q-separator>
                     </template>
                     <template v-if="canCall && compact">
-                        <q-item clickable v-close-popup @click="startCall(false)">
-                            <q-item-section avatar><q-icon name="sym_o_call"></q-icon></q-item-section><q-item-section>{{t('Voice call')}}</q-item-section></q-item>
-                        <q-item clickable v-close-popup @click="startCall(true)">
-                            <q-item-section avatar><q-icon name="sym_o_videocam"></q-icon></q-item-section><q-item-section>{{t('Video call')}}</q-item-section></q-item>
+                        <q-item clickable v-close-popup class="m-chat-voice-call" @click="startCall(false)">
+                            <q-item-section avatar><q-icon name="sym_o_call"></q-icon></q-item-section><q-item-section><q-item-label>{{t('Voice call')}}</q-item-label><q-item-label caption>{{callAudience}}</q-item-label></q-item-section></q-item>
+                        <q-item clickable v-close-popup class="m-chat-video-call" @click="startCall(true)">
+                            <q-item-section avatar><q-icon name="sym_o_videocam"></q-icon></q-item-section><q-item-section><q-item-label>{{t('Video call')}}</q-item-label><q-item-label caption>{{callAudience}}</q-item-label></q-item-section></q-item>
                     </template>
                     <q-item v-if="!isDirect" clickable v-close-popup @click="openSide('members')">
                         <q-item-section avatar><q-icon name="sym_o_group"></q-icon></q-item-section><q-item-section>{{t('Members')}}</q-item-section></q-item>
@@ -4765,6 +5924,20 @@ const roomTemplate = `
         </template>
     </div>
     <q-separator></q-separator>
+    <!-- each live location this page sends, in any room (plans/archive/Location-Sharing.md §1 "Visible to everyone it concerns",
+        §3.5): until when, that this page sends it while it is open, and Stop -->
+    <div v-for="send in liveSends" :key="'live' + send.shareId" class="row items-center no-wrap q-px-sm q-py-xs m-tonal m-chat-live-banner" role="status"
+            :data-live-share="send.shareId">
+        <q-icon name="sym_o_share_location" color="positive" size="18px" class="q-mr-sm"></q-icon>
+        <div class="col text-caption">
+            <span>{{t('Sharing your live location until')}} {{liveUntil(send.thruDate)}}</span>
+            <span class="m-muted"> · {{t('sent from this page while it is open')}}</span>
+            <span v-if="send.note" class="text-warning"> · {{send.note}}</span>
+            <span v-if="liveError" class="text-warning"> · {{liveError}}</span>
+        </div>
+        <q-btn dense flat no-caps size="sm" color="negative" icon="sym_o_location_off" :label="t('Stop')" :aria-label="t('Stop sharing your live location')"
+                class="m-chat-live-banner-stop" @click="stopLive(send.shareId)"></q-btn>
+    </div>
     <!-- a new device (Comms-Messaging §6.5): Set up this device in the banner's place until it reads what came before it -->
     <div v-if="setupBar" class="row no-wrap items-center q-px-sm q-py-xs text-caption m-tonal text-warning m-chat-setup-bar" role="status">
         <q-icon name="sym_o_phonelink_lock" size="16px"></q-icon>
@@ -5028,7 +6201,7 @@ const roomTemplate = `
                 <div class="row q-px-sm q-py-xs">
                     <q-chip v-for="chip in reactionChips" :key="String(chip.value)" dense clickable :outline="tabs.reactions.onlyToMe !== chip.value" :color="tabs.reactions.onlyToMe === chip.value ? 'primary' : undefined"
                             :text-color="tabs.reactions.onlyToMe === chip.value ? 'white' : undefined" class="q-ml-none q-mr-xs" :data-reactions="chip.value ? 'mine' : 'all'"
-                            @click="tabs.reactions.onlyToMe = chip.value; loadTab('reactions', false)">{{chip.label}}</q-chip>
+                            @click="setReactionFilter(chip.value)">{{chip.label}}</q-chip>
                 </div>
                 <div class="col scroll m-chat-tab" style="min-height:0" @scroll="onTabScroll">
                     <q-linear-progress v-if="tabs.reactions.loading" indeterminate color="primary"></q-linear-progress>
@@ -5039,7 +6212,12 @@ const roomTemplate = `
                                 <q-item-label class="text-weight-medium">{{nameOf(message.senderUserId, message.senderName)}}<span class="text-caption m-muted"> · {{shortWhen(message.sentDate)}}</span></q-item-label>
                                 <q-item-label caption class="ellipsis-2-lines">{{message.undecryptable ? t('Encrypted message') : (message.snippet || filesText(message))}}</q-item-label>
                                 <div class="row q-gutter-xs q-mt-xs">
-                                    <q-chip v-for="reaction in message.reactions" :key="reaction.key" dense square :outline="!reaction.mine" class="q-ma-none" :data-key="reaction.key">
+                                    <q-chip v-for="reaction in message.reactions" :key="reaction.key" dense square clickable :outline="!reaction.mine" class="q-ma-none" :data-key="reaction.key"
+                                            :aria-label="reactionLabel(reaction)" aria-keyshortcuts="Shift+Enter"
+                                            @click.stop="pressed() || showPeople({ kind: 'reactors', reaction })"
+                                            @touchstart.passive="pressStart({ kind: 'reactors', reaction }, $event)" @touchmove.passive="pressCancel()"
+                                            @touchend="pressEnd($event)" @touchcancel="pressEnd($event)"
+                                            @contextmenu.prevent.stop="pressMenu({ kind: 'reactors', reaction })" @keydown.enter.shift.prevent.stop="pressMenu({ kind: 'reactors', reaction })">
                                         {{reaction.key}} {{reaction.count}}<q-tooltip v-if="!mobile">{{reactorsText(reaction)}}</q-tooltip></q-chip>
                                 </div>
                             </q-item-section>
@@ -5552,7 +6730,7 @@ const chatRoom = {
             pollBox: { open: false, threadRoot: null, question: '', options: ['', ''], multiple: 'N', anonymous: 'N', closes: '', busy: false },
             cardBox: { open: false, threadRoot: null },
             calBox: { open: false, threadRoot: null, item: null }, calZone: null, calZones: [], calProvider: false, calFieldsLoaded: false,
-            locationBox: { open: false, threadRoot: null }, stickerPacks: [], stickerPacksFailed: false, stickerPacksLoaded: false,
+            locationBox: { open: false, threadRoot: null }, liveSends: [], liveError: '', stickerPacks: [], stickerPacksFailed: false, stickerPacksLoaded: false,
             copyWantedSeq: null, screenHeld: null,
             searchPane: { text: '', results: [], loading: false, searched: false }, addPeople: { userIds: [], busy: false },
             settings: { open: false, roomName: '', topic: '', visibility: '', busy: false },
@@ -5592,7 +6770,8 @@ const chatRoom = {
         archivedByMe() {
             const seq = this.member && this.member.archivedEventSeq;
             if (seq == null) return false;
-            const last = this.events.reduce((max, event) => (event.type === 'message' ? Math.max(max, Number(event.eventSeq) || 0) : max), 0);
+            const last = this.events.reduce((max, event) => event.type === 'message' && event.threadRootEventSeq == null
+                ? Math.max(max, Number(event.eventSeq) || 0) : max, Number(this.room && this.room.lastMessageSeq || 0));
             return last <= Number(seq);
         },
         isDirect() { return !!this.room && this.room.roomTypeEnumId === 'CrtDirect'; },
@@ -5620,6 +6799,11 @@ const chatRoom = {
         // a call from the room, where the server holds calls and the user may post, with someone on this server to ring (a
         // bridged or texting room's other side is on another network: no empty call)
         canCall() { return !!(moqui.call && moqui.config && moqui.config.calls && this.access && this.access.canPost && this.room && !this.room.archivedDate) && this.callees.length > 0; },
+        callAudience() {
+            if (this.isDirect) return fill(t('Calls {name}'), { name: this.displayName });
+            return this.room && this.room.bridged ? t('Invites eligible room members on this server only. Their call settings determine which devices ring.')
+                : t('Invites eligible members of this room. Their call settings determine which devices ring.');
+        },
         callees() { return this.members.filter((person) => person.userId && !person.isAgent && person.userId !== (this.me && this.me.userId)); },
         isMember() { return !!this.access.isMember; },
         canPost() { return !!this.access.canPost; },
@@ -6100,14 +7284,9 @@ const chatRoom = {
         // the room's call, voice or video: a direct room calls the person, a group room starts a group call its members join
         // from the chat (one going on is opened to join); an encrypted room's call is end-to-end encrypted (§6.1 rule 4)
         startCall(video) {
-            if (needsConnection()) return;
+            if (!this.canCall || needsConnection()) return;
             // asked so, a browser that cannot is refused before anyone rings
             if (moqui.call) moqui.call.startCall(Object.assign({ chatRoomId: this.roomId, video: video !== false }, this.sealed ? { requireE2ee: true } : {}));
-        },
-        callTip(video) {
-            if (this.isDirect) return fill(video ? t('Video call {name}') : t('Voice call {name}'), { name: this.displayName });
-            if (this.room && this.room.bridged) return video ? t('Video call: the people on this server in the room ring, not those on the bridged network') : t('Voice call: the people on this server in the room ring, not those on the bridged network');
-            return video ? t('Video call: everyone in the room rings, and members can join') : t('Voice call: everyone in the room rings, and members can join');
         },
         go(target) { if (target) this.$root.setUrl(target); },
         domId(seq, inThread) { return 'chat-' + this.uid + (inThread ? '-t-' : '-m-') + seq; },
@@ -6196,10 +7375,12 @@ const chatRoom = {
         // ---- loading and paging ----
         load() {
             this.state = 'loading';
+            const roomId = this.roomId, settings = this.settingVersions;
             const aroundSeq = this.seq ? Number(this.seq) : null;
-            this.get('roomView', { chatRoomId: this.roomId, aroundSeq: aroundSeq || '', limit: 50 }).then((json) => {
+            return this.get('roomView', { chatRoomId: roomId, aroundSeq: aroundSeq || '', limit: 50 }).then((json) => {
+                if (this.roomId !== roomId || (json.room && json.room.chatRoomId !== roomId)) return;
                 if (!json.room) { this.state = 'missing'; return; }
-                this.applyMeta(json);
+                this.applyMeta(json, settings);
                 const page = json.timeline || {};
                 this.mergeNames(page.userNames);
                 this.events = page.eventList || [];
@@ -6222,11 +7403,18 @@ const chatRoom = {
                     if (this.thread) this.openThread(Number(this.thread), true);
                     else if (!this.compact) this.focusComposer();
                 });
-            }, (err) => { this.state = moqui.unreachable && moqui.unreachable(err) ? 'unreachable' : 'missing'; });
+            }, (err) => { if (this.roomId === roomId) this.state = moqui.unreachable && moqui.unreachable(err) ? 'unreachable' : 'missing'; });
         },
-        applyMeta(json) {
+        applyMeta(json, settings) {
+            const member = json.member ? { ...json.member } : null;
+            // Keep only settings confirmed since this read began. The other membership and room data are fresh to the view.
+            if (member && this.member && this.room && this.room.chatRoomId === json.room.chatRoomId && settings !== this.settingVersions) {
+                for (const [field, version] of Object.entries(this.settingVersions || {})) {
+                    if (version !== (settings || {})[field]) member[field] = this.member[field];
+                }
+            }
             this.room = json.room;
-            this.member = json.member || null;
+            this.member = member;
             this.access = json.access || {};
             this.members = json.memberList || [];
             this.members.forEach((person) => { if (person.name) this.names[person.userId] = person.name; });
@@ -6280,7 +7468,10 @@ const chatRoom = {
                 t('Block'), true).then(() => this.post('blockUser', { userId: person.userId }).then(() => { this.reloadMeta(); this.$emit('changed', this.roomId); }, () => {}));
         },
         reloadMeta() {
-            return this.get('room', { chatRoomId: this.roomId }).then((json) => { if (json.room) this.applyMeta(json); }, () => {});
+            const roomId = this.roomId, settings = this.settingVersions;
+            return this.get('room', { chatRoomId: roomId }).then((json) => {
+                if (this.roomId === roomId && json.room && json.room.chatRoomId === roomId) this.applyMeta(json, settings);
+            }, () => {});
         },
         loadOlder() {
             if (!this.hasMoreBefore || this.loadingOlder || !this.events.length) return;
@@ -6945,7 +8136,7 @@ const chatRoom = {
                 people: order.map((id) => ({ userId: id, name: id === this.me.userId ? t('You') : this.nameOf(id), detail: byUser[id].join(' ') })) };
         },
         showPeople(what) {
-            const ids = what.kind === 'voters' ? (what.option.voterIds || []) : (what.reaction.userIds || []);
+            const ids = what.kind === 'voters' ? (what.item.poll.anonymous ? [] : what.option.voterIds || []) : (what.reaction.userIds || []);
             const people = ids.map((id) => ({ userId: id, name: id === this.me.userId ? t('You') : this.nameOf(id) }));
             const title = what.kind === 'voters' ? fill(t('Voted for {option}'), { option: what.option.text || '' })
                 : fill(t('Reacted with {emoji}'), { emoji: what.reaction.key });
@@ -7060,7 +8251,7 @@ const chatRoom = {
             });
         },
         react(item, key) {
-            if (!this.canPost || (!this.queues('chat-react') && needsConnection())) return;
+            if (!this.canPost || !this.bridgeCaps.reaction || (!this.queues('chat-react') && needsConnection())) return;
             this.tapKey = null;
             const me = this.me.userId;
             const reactions = item.event.reactions = item.event.reactions || [];
@@ -7197,13 +8388,27 @@ const chatRoom = {
         },
         redact(item) {
             if (!this.queues('chat-redact') && needsConnection()) return;
-            this.confirm(t('Delete the message?'), t('It is removed for everyone; the room shows that a message was removed.')
-                + (this.textMemberCount ? ' ' + t('Text members already got it as a text.') : ''), t('Delete'), true).then(() => {
-                // through the app's outbox it shows as waiting under the message until it is answered
-                this.change('chat-redact', 'redact', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then((json) => {
-                    if (!(json && json.queued)) this.applyRedaction(item.eventSeq);
-                }, () => {});
-            });
+            const message = t('It is removed for everyone; the room shows that a message was removed.') + (this.textMemberCount ? ' ' + t('Text members already got it as a text.') : '');
+            // through the app's outbox it shows as waiting under the message until it is answered
+            const remove = () => this.change('chat-redact', 'redact', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then((json) => {
+                if (!(json && json.queued)) this.applyRedaction(item.eventSeq);
+            }, () => {});
+            // the user's own live location (plans/archive/Location-Sharing.md §3.5): deleting its message does not stop the share,
+            // which the dialog says, with Stop sharing too chosen
+            const place = item.event && item.event.location;
+            const liveShareId = place && place.liveShareId && item.event.senderUserId === this.me.userId ? String(place.liveShareId) : null;
+            if (liveShareId) {
+                this.$q.dialog({ title: t('Delete the message?'), class: 'm-chat-live-delete',
+                    message: message + ' ' + t('Deleting it does not stop sharing your live location: the people it was shared with see it until it ends.'),
+                    options: { type: 'checkbox', model: ['stop'], items: [{ label: t('Also stop sharing my live location'), value: 'stop' }] },
+                    ok: { label: t('Delete'), color: 'negative', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
+                    .onOk((chosen) => {
+                        if (Array.isArray(chosen) && chosen.includes('stop')) this.stopLive(liveShareId).catch(() => {});
+                        remove();
+                    });
+                return;
+            }
+            this.confirm(t('Delete the message?'), message, t('Delete'), true).then(remove);
         },
         copyText(item) {
             const text = item.event.bodyText || plainOf(item.event.body);
@@ -7443,54 +8648,45 @@ const chatRoom = {
         // ---- the details' tabs (Comms-Messaging §5.1): each a page at a time by the server's cursor, more as it scrolls ----
         // A tab's latest request wins (a token per tab): a filter changed, or the tab read again, while a page loads drops
         // that page's answer. A page of more never lists an item twice (a reaction taken back between pages).
-        loadTab(name, more) {
+        loadTab(name, more, refresh) {
             const tab = this.tabs[name];
             if (!tab || (more && (tab.loading || tab.next == null))) return;
             const roomId = this.roomId;
             const token = this.tabToken(name);
             tab.loading = true;
-            this.fetchTab(name, more ? tab.next : '').then((page) => {
+            return this.fetchTab(name, more ? tab.next : '').then((page) => {
                 if (roomId !== this.roomId || this.tabTokens[name] !== token) return;
                 const current = this.tabs[name];
-                const known = new Set(more ? current.list.map((item) => this.tabKey(name, item)) : []);
-                const list = (more ? current.list : []).concat(page.list.filter((item) => !known.has(this.tabKey(name, item))));
-                this.tabs[name] = Object.assign({}, current, { list, next: page.next, loading: false, loaded: true });
+                const keyOf = (item) => this.tabKey(name, item);
+                if (more) {
+                    const known = new Set(current.list.map(keyOf));
+                    page.list = current.list.concat(page.list.filter((item) => !known.has(keyOf(item))));
+                } else if (refresh && name !== 'reactions') {
+                    page = mergeFirstPage(current, page, keyOf);
+                }
+                this.tabs[name] = Object.assign({}, current, page, { loading: false, loaded: true });
                 this.$nextTick(() => this.fillTab(name));
             }, () => {
                 if (roomId === this.roomId && this.tabTokens[name] === token) this.tabs[name] = Object.assign({}, this.tabs[name], { loading: false });
             });
         },
-        // a pushed change: the tab's first page read again and merged at the top, so a tab scrolled far keeps its place;
-        // what the first page no longer has, of the stretch it covers, is gone (a removed message, a reaction taken back)
-        refreshTab(name) {
-            const tab = this.tabs[name];
-            if (!tab) return;
-            if (!tab.loaded) { this.loadTab(name, false); return; }
-            const roomId = this.roomId;
-            const token = this.tabToken(name);
-            this.fetchTab(name, '').then((page) => {
-                if (roomId !== this.roomId || this.tabTokens[name] !== token) return;
-                const current = this.tabs[name];
-                const fresh = new Set(page.list.map((item) => this.tabKey(name, item)));
-                // the first page is all there is, or what is older than its last item stays
-                const last = page.list.length ? this.tabOrder(name, page.list[page.list.length - 1]) : null;
-                const older = page.next == null ? [] : current.list.filter((item) => !fresh.has(this.tabKey(name, item))
-                    && (last == null || this.tabOrder(name, item) < last));
-                this.tabs[name] = Object.assign({}, current, { list: page.list.concat(older), next: page.next == null ? null : current.next, loading: false, loaded: true });
-            }, () => null);
+        // A push rereads the first page using the same request token as load-more.
+        refreshTab(name) { return this.loadTab(name, false, true); },
+        setReactionFilter(onlyToMe) {
+            if (this.tabs.reactions.onlyToMe !== onlyToMe) this.tabs.reactions = Object.assign(emptyTab(), { onlyToMe });
+            return this.loadTab('reactions', false);
         },
         tabToken(name) {
             this.tabTokens = this.tabTokens || {};
             this.tabTokens[name] = (this.tabTokens[name] || 0) + 1;
             return this.tabTokens[name];
         },
-        // an item of a tab: its key, and where it sorts (newest first)
+        // an item of a tab: its key across pages
         tabKey(name, item) {
             if (name === 'reactions') return String(item.eventSeq);
             if (name === 'links') return item.eventSeq + ' ' + item.url;
             return String(item.chatAttachmentId);
         },
-        tabOrder(name, item) { return Number(name === 'reactions' ? item.latestReactionSeq || 0 : item.eventSeq || 0); },
         // one page of a tab, {list, next}
         fetchTab(name, cursor) {
             const roomId = this.roomId;
@@ -7864,6 +9060,89 @@ const chatRoom = {
                 return json;
             });
         },
+        // ---- live location (plans/archive/Location-Sharing.md §3.5, LL4): a share with the room's members, sent by the Android
+        // app's location service once the person confirms it in the app's own dialog (moquiDesktop.location, LL3), else by
+        // this page while it is open (moqui.chat.live.sender, with its banner); never in an encrypted room ----
+        sendLivePlace(choice, threadRoot) {
+            if (this.sealed || needsConnection()) return Promise.resolve(null);
+            const native = moqui.chat.live.native();
+            const approximate = !!(choice && choice.approximate);
+            const hours = Number(choice && choice.hours) || 1;
+            // in the Android app the location permission first, after the app's dialog that says why: no share is started
+            // that this phone could not send
+            const allowed = native && typeof native.allow === 'function' ? Promise.resolve(native.allow(!approximate)) : Promise.resolve(true);
+            return allowed.then((ok) => {
+                if (!ok) { moqui.notifyMessages(null, [t('Allow the app to use this phone\'s location to share it, then try again')]); return null; }
+                const replyTo = threadRoot ? null : this.replyTo;
+                if (!threadRoot) this.replyTo = null;
+                return this.post('sendLiveLocation', { chatRoomId: this.roomId, thruDate: String(Date.now() + hours * 3600000),
+                    precisionEnumId: approximate ? 'LspApproximate' : 'LspExact', threadRootEventSeq: threadRoot || '', replyToEventSeq: replyTo ? replyTo.eventSeq : '',
+                    clientRef: (choice && choice.clientRef) || (moqui.chat.newClientRef ? moqui.chat.newClientRef() : '') }).then((json) => {
+                    if (!json || !json.shareId) return null;
+                    this.onSent({ chatRoomId: this.roomId, threadRootEventSeq: threadRoot, json });
+                    const place = json.event && json.event.location;
+                    if (place) this.applyFields(json.eventSeq, { location: place });
+                    // the same send again (an answer lost): the first one's share, sent from here unless it already is
+                    if (json.duplicate && moqui.chat.live.sender.sending(json.shareId)) return json;
+                    return this.startLive(json.shareId, { intervalSeconds: json.intervalSeconds, approximate: place ? place.approximate === true : approximate,
+                        thruDate: json.thruDate, label: place ? place.label : '', audienceVersion: 1, fresh: true, created: true,
+                        reread: this.liveVersion(json.eventSeq) }).then(() => json);
+                });
+            }, () => null);
+        },
+        // a share of the user's own sent from here: by the app's service once the person says Send in the app's own dialog,
+        // else by this page; the person's Not now there stops a share just started
+        startLive(shareId, info) {
+            const native = moqui.chat.live.native();
+            const shared = () => { if (info.thruDate) moqui.notifyMessages([{ type: 'success', message: t('Your live location is shared until') + ' ' + moqui.chat.live.untilText(info.thruDate) }], null); };
+            const onPage = () => { moqui.chat.live.sender.start(shareId, Object.assign({ url: this.url('reportLiveLocation') }, info)); shared(); return 'page'; };
+            if (!native) return Promise.resolve(onPage());
+            return Promise.resolve(native.start({ shareId })).then((answer) => {
+                if (answer === 'started') { shared(); return 'phone'; }
+                if (answer === 'declined') {
+                    if (info.created) {
+                        this.stopLive(shareId).catch(() => {});
+                        moqui.notifyMessages(null, [t('Your location was not shared')]);
+                    } else moqui.notifyMessages(null, [t('Nothing sends this share now: its audience sees your last position until you send it again or stop it')]);
+                    return 'declined';
+                }
+                return onPage();
+            }, onPage);
+        },
+        // the live location card's read: its share as this user may see it (get#Share checks the audience)
+        liveView(eventSeq) {
+            return moqui.request(this.url('liveLocation'), { params: { chatRoomId: this.roomId, eventSeq } }).then((result) => result.json || {});
+        },
+        // the sender's read of a share's audience version again, after a report refused as AUDIENCE_CHANGED
+        liveVersion(eventSeq) {
+            return () => this.liveView(eventSeq).then((json) => (json && json.owner && json.share ? json.share.audienceVersion : null));
+        },
+        // Send from here (Send from this device in the app): the share taken over from the device that sent it, then sent here
+        sendLiveFromHere(share, eventSeq) {
+            const native = moqui.chat.live.native();
+            const allowed = native && typeof native.allow === 'function' ? Promise.resolve(native.allow(!share.approximate)) : Promise.resolve(true);
+            return allowed.then((ok) => {
+                if (!ok) { moqui.notifyMessages(null, [t('Allow the app to use this phone\'s location to share it, then try again')]); return null; }
+                return this.post('sendLiveFromHere', { shareId: share.shareId }).then((json) => {
+                    if (!json.applied) { moqui.notifyMessages(null, [json.reason || t('That did not change the share')]); return null; }
+                    return this.startLive(share.shareId, { approximate: !!share.approximate, thruDate: json.thruDate || share.thruDate, label: share.label || '',
+                        intervalSeconds: share.intervalSeconds, audienceVersion: share.audienceVersion, fresh: true, reread: eventSeq ? this.liveVersion(eventSeq) : null });
+                });
+            });
+        },
+        stopLive(shareId) {
+            moqui.chat.live.sender.stop(shareId, 'stopped');
+            const native = moqui.chat.live.native();
+            if (native && typeof native.stop === 'function') Promise.resolve(native.stop(shareId)).catch(() => {});
+            return this.post('stopLiveLocation', { shareId }).then((json) => {
+                if (!json.applied) moqui.notifyMessages(null, [json.reason || t('That did not change the share')]);
+                else moqui.notifyMessages([{ type: 'success', message: t('Sharing stopped') }], null);
+                return json;
+            });
+        },
+        // the banner's list: what this page sends now, in any room
+        readLiveSends() { this.liveSends = moqui.chat.live.sender.list(); this.liveError = moqui.chat.live.sender.error || ''; },
+        liveUntil(millis) { return moqui.chat.live.untilText(millis); },
         // Open in maps: the phone's maps app (geo:) in the Android app, OpenStreetMap elsewhere
         openPlace(place) {
             const desktop = window.moquiDesktop;
@@ -7899,37 +9178,33 @@ const chatRoom = {
         },
 
         // ---- my settings in the room, the room's settings ----
-        setLevel(level) {
-            this.post('setNotification', { chatRoomId: this.roomId, notificationLevelEnumId: level }).then(() => {
-                if (this.member) this.member.notificationLevelEnumId = level;
+        // A reply belongs to the room that made the request. Its archive watermark is the server's, even if
+        // a newer message arrived in the meantime or the user opened another room.
+        setMemberSetting(key, value) {
+            const roomId = this.roomId;
+            const field = key === 'archived' ? 'archivedEventSeq' : key;
+            const writes = this.settingWrites || (this.settingWrites = new Map());
+            const id = roomId + ':' + key;
+            const previous = writes.get(id) || Promise.resolve();
+            const saved = previous.then(() => this.post('setNotification', { chatRoomId: roomId, [key]: String(value) })).then((json) => {
+                if (this.room && this.room.chatRoomId === roomId && this.roomId === roomId && this.member && json[field] !== undefined) {
+                    this.member[field] = json[field];
+                    const versions = this.settingVersions || {};
+                    this.settingVersions = { ...versions, [field]: (versions[field] || 0) + 1 };
+                }
                 this.$emit('changed');
             }, () => {});
+            writes.set(id, saved);
+            return saved.finally(() => { if (writes.get(id) === saved) writes.delete(id); });
         },
-        toggleMute() {
-            const muted = !(this.member && this.member.isMuted);
-            this.post('setNotification', { chatRoomId: this.roomId, isMuted: muted ? 'true' : 'false' }).then(() => {
-                if (this.member) this.member.isMuted = muted;
-                this.$emit('changed');
-            }, () => {});
-        },
-        // my own archive: the room leaves my list until a newer message (ChatRoomMember.archivedEventSeq)
-        toggleArchive() {
-            const archived = !this.archivedByMe;
-            this.post('setNotification', { chatRoomId: this.roomId, archived: archived ? 'true' : 'false' }).then(() => {
-                if (this.member) this.member.archivedEventSeq = archived ? this.events.reduce((max, event) => Math.max(max, Number(event.eventSeq) || 0), Number((this.room && this.room.lastEventSeq) || 0)) : null;
-                this.$emit('changed');
-            }, () => {});
-        },
-        togglePin() {
-            const pinned = !(this.member && this.member.isPinned);
-            this.post('setNotification', { chatRoomId: this.roomId, isPinned: pinned ? 'true' : 'false' }).then(() => {
-                if (this.member) this.member.isPinned = pinned;
-                this.$emit('changed');
-            }, () => {});
-        },
+        setLevel(level) { return this.setMemberSetting('notificationLevelEnumId', level); },
+        toggleMute() { return this.setMemberSetting('isMuted', !(this.member && this.member.isMuted)); },
+        toggleArchive() { return this.setMemberSetting('archived', !this.archivedByMe); },
+        togglePin() { return this.setMemberSetting('isPinned', !(this.member && this.member.isPinned)); },
         join() { this.post('join', { chatRoomId: this.roomId }).then(() => { this.$emit('changed'); this.load(); }, () => {}); },
         // who becomes an owner when the last owner leaves, by the rule of remove#Member (ChatServices.xml): the
-        // longest-standing moderator, else member; agents and outside actors never. The service decides in the end.
+        // longest-standing moderator, else member; agents and outside actors never. For equal join times the stable sort
+        // keeps get#Room's userId order, the same tie-break the service uses when the owner confirms.
         ownerHeir() {
             if (this.isDirect || !this.isOwner) return null;
             const others = this.members.filter((person) => person.userId && !person.isAgent && person.userId !== this.me.userId)
@@ -8212,6 +9487,12 @@ const chatRoom = {
             this.resizer.observe(this.$el);
         }
         this.width = this.$el.clientWidth || 0;
+        // the page's live location sender, held while a room shows (its banner here)
+        if (moqui.chat && moqui.chat.live) {
+            this.unsubscribe.push(moqui.chat.live.sender.hold());
+            this.unsubscribe.push(moqui.chat.live.sender.on(() => this.readLiveSends()));
+            this.readLiveSends();
+        }
         this.load();
     },
     beforeUnmount() {
@@ -8431,7 +9712,8 @@ module.exports = {
         // ---- Activity (find#ChatActivity, the activity transition) and Threads (find#ChatThreads, myThreads) ----
         // the rows of a page: a key each, and a thread's as its last reply (who wrote it, when, its text)
         feedItems(view, items) {
-            if (view !== 'threads') return items.map((item) => Object.assign(item, { key: [item.kind, item.chatRoomId, item.eventSeq].join(':') }));
+            if (view !== 'threads') return items.map((item) => Object.assign(item, { key: item.chatUserActivityId != null
+                ? 'activity:' + item.chatUserActivityId : [item.kind, item.chatRoomId, item.eventSeq, item.date].join(':') }));
             return items.map((item) => Object.assign(item, { key: 'thread:' + item.chatRoomId + ':' + item.threadRootEventSeq, kind: 'thread',
                 actorUserId: item.lastUserId, actorName: item.lastUserName, date: item.lastDate, snippet: item.lastSnippet || item.rootSnippet,
                 eventSeq: item.lastEventSeq, messageEventSeq: item.lastEventSeq }));
@@ -8440,7 +9722,7 @@ module.exports = {
             return view === 'threads' ? this.get('myThreads', { limit: 40, cursor }) : this.get('activity', { limit: 40, cursor });
         },
         // the first page (more false) or the next by the cursor; an encrypted room's text decrypted here
-        loadFeed(more) {
+        loadFeed(more, refresh) {
             const view = this.filter;
             if (view !== 'activity' && view !== 'threads') return;
             const feed = this.feed;
@@ -8449,28 +9731,25 @@ module.exports = {
             // another view's list is not shown under this one; the same view's stays until its first page is read again
             if (!more && feed.view !== view) { feed.view = view; feed.list = []; feed.next = null; feed.loaded = false; }
             feed.loading = true;
-            this.feedRequest(view, more ? feed.next : null).then((json) => this.openFeed(this.feedItems(view, json.items || [])).then((list) => {
+            return this.feedRequest(view, more ? feed.next : null).then((json) => this.openFeed(this.feedItems(view, json.items || [])).then((list) => {
                 if (seq !== feed.seq) return;
-                feed.list = more ? feed.list.concat(list.filter((item) => !feed.list.some((other) => other.key === item.key))) : list;
-                feed.next = json.nextCursor == null ? null : json.nextCursor;
+                let page = { list, next: json.nextCursor ?? null };
+                if (more) {
+                    const known = new Set(feed.list.map((item) => item.key));
+                    page.list = feed.list.concat(list.filter((item) => !known.has(item.key)));
+                } else if (refresh && view === 'activity') {
+                    page = mergeFirstPage(feed, page, (item) => item.key);
+                }
+                Object.assign(feed, page);
                 feed.view = view;
                 feed.loading = false;
                 feed.loaded = true;
                 this.$nextTick(() => this.fillFeed());
             })).catch(() => { if (seq === feed.seq) { feed.loading = false; feed.loaded = true; } });
         },
-        // what is new at the top: the first page read again and merged above the rows already loaded (a thread moves up with
-        // its new reply), so the pages scrolled to stay
+        // Refreshes and load-more share a sequence so a slow, older reply cannot overwrite a newer page.
         refreshFeedTop() {
-            const view = this.filter;
-            const feed = this.feed;
-            if ((view !== 'activity' && view !== 'threads') || feed.view !== view || feed.loading) return;
-            const seq = feed.seq;
-            this.feedRequest(view, null).then((json) => this.openFeed(this.feedItems(view, json.items || [])).then((list) => {
-                if (seq !== feed.seq || feed.view !== view) return;
-                const fresh = new Set(list.map((item) => item.key));
-                feed.list = list.concat(feed.list.filter((item) => !fresh.has(item.key)));
-            })).catch(() => null);
+            if (this.feed.view === this.filter) return this.loadFeed(false, true);
         },
         // an encrypted room's items: the message's text and a reaction's key, decrypted in this page (moqui.chat.openSealed);
         // one this device cannot read says so
@@ -8564,9 +9843,11 @@ module.exports = {
             if (!this.feedShown || !event || event.senderUserId === this.me.userId) return;
             const me = this.me.userId;
             const inThread = event.type === 'message' && event.threadRootEventSeq != null;
+            // Older servers omit the recipient hint. Check Activity again on their thread pushes (the feed itself
+            // enforces membership); a desktop notification still requires positive evidence of a mention or reply.
+            const legacyThread = inThread && event.replyForViewer == null;
             const concerns = this.filter === 'threads' ? inThread
-                : event.type === 'reaction' || inThread || ((event.type === 'message' || event.type === 'edit')
-                    && (((event.mentions || []).includes(me)) || (!!event.replyTo && event.replyTo.senderUserId === me)));
+                : event.type === 'reaction' || legacyThread || ((event.type === 'message' || event.type === 'edit') && moqui.chat.mentionsOrRepliesTo(event, me));
             if (!concerns) return;
             clearTimeout(this.feedTimer);
             this.feedTimer = setTimeout(() => this.refreshFeedTop(), 600);
@@ -10746,18 +12027,19 @@ module.exports = {
                                     icon: "sym_o_call",
                                     class: "m-chat-voice-call",
                                     "aria-label": _ctx.t('Voice call'),
+                                    "aria-description": _ctx.callAudience,
                                     onClick: $event => (_ctx.startCall(false))
                                   }, {
                                     default: _withCtx(() => [
                                       _createVNode(_component_q_tooltip, null, {
                                         default: _withCtx(() => [
-                                          _createTextVNode(_toDisplayString(_ctx.callTip(false)), 1)
+                                          _createTextVNode(_toDisplayString(_ctx.t('Voice call')) + " · " + _toDisplayString(_ctx.callAudience), 1)
                                         ]),
                                         _: 1
                                       })
                                     ]),
                                     _: 1
-                                  }, 8, ["aria-label", "onClick"]),
+                                  }, 8, ["aria-label", "aria-description", "onClick"]),
                                   _createVNode(_component_q_btn, {
                                     flat: "",
                                     round: "",
@@ -10765,18 +12047,19 @@ module.exports = {
                                     icon: "sym_o_videocam",
                                     class: "m-chat-video-call",
                                     "aria-label": _ctx.t('Video call'),
+                                    "aria-description": _ctx.callAudience,
                                     onClick: $event => (_ctx.startCall(true))
                                   }, {
                                     default: _withCtx(() => [
                                       _createVNode(_component_q_tooltip, null, {
                                         default: _withCtx(() => [
-                                          _createTextVNode(_toDisplayString(_ctx.callTip(true)), 1)
+                                          _createTextVNode(_toDisplayString(_ctx.t('Video call')) + " · " + _toDisplayString(_ctx.callAudience), 1)
                                         ]),
                                         _: 1
                                       })
                                     ]),
                                     _: 1
-                                  }, 8, ["aria-label", "onClick"])
+                                  }, 8, ["aria-label", "aria-description", "onClick"])
                                 ], 64))
                               : _createCommentVNode("", true),
                             (!_ctx.narrow)
@@ -11100,6 +12383,7 @@ module.exports = {
                                           ? (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
                                               _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                                                 clickable: "",
+                                                class: "m-chat-voice-call",
                                                 onClick: $event => (_ctx.startCall(false))
                                               }, {
                                                 default: _withCtx(() => [
@@ -11111,7 +12395,18 @@ module.exports = {
                                                   }),
                                                   _createVNode(_component_q_item_section, null, {
                                                     default: _withCtx(() => [
-                                                      _createTextVNode(_toDisplayString(_ctx.t('Voice call')), 1)
+                                                      _createVNode(_component_q_item_label, null, {
+                                                        default: _withCtx(() => [
+                                                          _createTextVNode(_toDisplayString(_ctx.t('Voice call')), 1)
+                                                        ]),
+                                                        _: 1
+                                                      }),
+                                                      _createVNode(_component_q_item_label, { caption: "" }, {
+                                                        default: _withCtx(() => [
+                                                          _createTextVNode(_toDisplayString(_ctx.callAudience), 1)
+                                                        ]),
+                                                        _: 1
+                                                      })
                                                     ]),
                                                     _: 1
                                                   })
@@ -11122,6 +12417,7 @@ module.exports = {
                                               ]),
                                               _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                                                 clickable: "",
+                                                class: "m-chat-video-call",
                                                 onClick: $event => (_ctx.startCall(true))
                                               }, {
                                                 default: _withCtx(() => [
@@ -11133,7 +12429,18 @@ module.exports = {
                                                   }),
                                                   _createVNode(_component_q_item_section, null, {
                                                     default: _withCtx(() => [
-                                                      _createTextVNode(_toDisplayString(_ctx.t('Video call')), 1)
+                                                      _createVNode(_component_q_item_label, null, {
+                                                        default: _withCtx(() => [
+                                                          _createTextVNode(_toDisplayString(_ctx.t('Video call')), 1)
+                                                        ]),
+                                                        _: 1
+                                                      }),
+                                                      _createVNode(_component_q_item_label, { caption: "" }, {
+                                                        default: _withCtx(() => [
+                                                          _createTextVNode(_toDisplayString(_ctx.callAudience), 1)
+                                                        ]),
+                                                        _: 1
+                                                      })
                                                     ]),
                                                     _: 1
                                                   })
@@ -11528,6 +12835,49 @@ module.exports = {
                         : _createCommentVNode("", true)
                     ]),
                     _createVNode(_component_q_separator),
+                    (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.liveSends, (send) => {
+                      return (_openBlock(), _createElementBlock("div", {
+                        key: 'live' + send.shareId,
+                        class: "row items-center no-wrap q-px-sm q-py-xs m-tonal m-chat-live-banner",
+                        role: "status",
+                        "data-live-share": send.shareId
+                      }, [
+                        _createVNode(_component_q_icon, {
+                          name: "sym_o_share_location",
+                          color: "positive",
+                          size: "18px",
+                          class: "q-mr-sm"
+                        }),
+                        _createElementVNode("div", { class: "col text-caption" }, [
+                          _createElementVNode("span", null, _toDisplayString(_ctx.t('Sharing your live location until')) + " " + _toDisplayString(_ctx.liveUntil(send.thruDate)), 1),
+                          _createElementVNode("span", { class: "m-muted" }, " · " + _toDisplayString(_ctx.t('sent from this page while it is open')), 1),
+                          (send.note)
+                            ? (_openBlock(), _createElementBlock("span", {
+                                key: 0,
+                                class: "text-warning"
+                              }, " · " + _toDisplayString(send.note), 1))
+                            : _createCommentVNode("", true),
+                          (_ctx.liveError)
+                            ? (_openBlock(), _createElementBlock("span", {
+                                key: 1,
+                                class: "text-warning"
+                              }, " · " + _toDisplayString(_ctx.liveError), 1))
+                            : _createCommentVNode("", true)
+                        ]),
+                        _createVNode(_component_q_btn, {
+                          dense: "",
+                          flat: "",
+                          "no-caps": "",
+                          size: "sm",
+                          color: "negative",
+                          icon: "sym_o_location_off",
+                          label: _ctx.t('Stop'),
+                          "aria-label": _ctx.t('Stop sharing your live location'),
+                          class: "m-chat-live-banner-stop",
+                          onClick: $event => (_ctx.stopLive(send.shareId))
+                        }, null, 8, ["label", "aria-label", "onClick"])
+                      ], 8, ["data-live-share"]))
+                    }), 128)),
                     (_ctx.setupBar)
                       ? (_openBlock(), _createElementBlock("div", {
                           key: 0,
@@ -12909,7 +14259,7 @@ module.exports = {
                                                   "text-color": _ctx.tabs.reactions.onlyToMe === chip.value ? 'white' : undefined,
                                                   class: "q-ml-none q-mr-xs",
                                                   "data-reactions": chip.value ? 'mine' : 'all',
-                                                  onClick: $event => {_ctx.tabs.reactions.onlyToMe = chip.value; _ctx.loadTab('reactions', false)}
+                                                  onClick: $event => (_ctx.setReactionFilter(chip.value))
                                                 }, {
                                                   default: _withCtx(() => [
                                                     _createTextVNode(_toDisplayString(chip.label), 1)
@@ -12981,9 +14331,19 @@ module.exports = {
                                                                   key: reaction.key,
                                                                   dense: "",
                                                                   square: "",
+                                                                  clickable: "",
                                                                   outline: !reaction.mine,
                                                                   class: "q-ma-none",
-                                                                  "data-key": reaction.key
+                                                                  "data-key": reaction.key,
+                                                                  "aria-label": _ctx.reactionLabel(reaction),
+                                                                  "aria-keyshortcuts": "Shift+Enter",
+                                                                  onClick: _withModifiers($event => (_ctx.pressed() || _ctx.showPeople({ kind: 'reactors', reaction })), ["stop"]),
+                                                                  onTouchstartPassive: $event => (_ctx.pressStart({ kind: 'reactors', reaction }, $event)),
+                                                                  onTouchmovePassive: $event => (_ctx.pressCancel()),
+                                                                  onTouchend: $event => (_ctx.pressEnd($event)),
+                                                                  onTouchcancel: $event => (_ctx.pressEnd($event)),
+                                                                  onContextmenu: _withModifiers($event => (_ctx.pressMenu({ kind: 'reactors', reaction })), ["prevent","stop"]),
+                                                                  onKeydown: _withKeys(_withModifiers($event => (_ctx.pressMenu({ kind: 'reactors', reaction })), ["shift","prevent","stop"]), ["enter"])
                                                                 }, {
                                                                   default: _withCtx(() => [
                                                                     _createTextVNode(_toDisplayString(reaction.key) + " " + _toDisplayString(reaction.count), 1),
@@ -12997,7 +14357,7 @@ module.exports = {
                                                                       : _createCommentVNode("", true)
                                                                   ]),
                                                                   _: 2
-                                                                }, 1032, ["outline", "data-key"]))
+                                                                }, 1032, ["outline", "data-key", "aria-label", "onClick", "onTouchstartPassive", "onTouchmovePassive", "onTouchend", "onTouchcancel", "onContextmenu", "onKeydown"]))
                                                               }), 128))
                                                             ])
                                                           ]),
@@ -16235,11 +17595,13 @@ module.exports = {
         {
             const target = component.components["chat-room"].components["chat-location-box"];
             target.render = (function () {
-                const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementBlock: _createElementBlock, createVNode: _createVNode, createElementVNode: _createElementVNode, withCtx: _withCtx } = Vue
+                const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementBlock: _createElementBlock, createVNode: _createVNode, createElementVNode: _createElementVNode, Fragment: _Fragment, withCtx: _withCtx } = Vue
 
                 return function render(_ctx, _cache) {
                   const _component_q_btn = _resolveComponent("q-btn")
                   const _component_m_text_line = _resolveComponent("m-text-line")
+                  const _component_q_btn_toggle = _resolveComponent("q-btn-toggle")
+                  const _component_q_checkbox = _resolveComponent("q-checkbox")
                   const _component_m_dialog = _resolveComponent("m-dialog")
 
                   return (_openBlock(), _createBlock(_component_m_dialog, {
@@ -16311,7 +17673,42 @@ module.exports = {
                                 onClick: $event => (_ctx.room.openPlace(_ctx.place))
                               }, null, 8, ["label", "onClick"])
                             ]))
-                          : _createCommentVNode("", true)
+                          : _createCommentVNode("", true),
+                        _createElementVNode("div", { class: "q-pt-sm m-chat-live-box" }, [
+                          _createElementVNode("div", { class: "text-subtitle2" }, _toDisplayString(_ctx.t('Live location')), 1),
+                          (_ctx.room.sealed)
+                            ? (_openBlock(), _createElementBlock("div", {
+                                key: 0,
+                                class: "text-caption m-muted m-chat-live-sealed"
+                              }, _toDisplayString(_ctx.t('Live location is not offered in an encrypted room: the server would see where you are. Send a location instead.')), 1))
+                            : (_ctx.canLive)
+                              ? (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
+                                  _createElementVNode("div", { class: "text-caption m-muted" }, _toDisplayString(_ctx.liveNote), 1),
+                                  _createElementVNode("div", { class: "row items-center q-gutter-x-sm q-mt-xs" }, [
+                                    _createVNode(_component_q_btn_toggle, {
+                                      modelValue: _ctx.liveHours,
+                                      "onUpdate:modelValue": $event => ((_ctx.liveHours) = $event),
+                                      options: _ctx.liveOptions,
+                                      dense: "",
+                                      "no-caps": "",
+                                      unelevated: "",
+                                      "toggle-color": "primary",
+                                      class: "m-chat-live-hours"
+                                    }, null, 8, ["modelValue", "onUpdate:modelValue", "options"]),
+                                    _createVNode(_component_q_checkbox, {
+                                      modelValue: _ctx.liveApproximate,
+                                      "onUpdate:modelValue": $event => ((_ctx.liveApproximate) = $event),
+                                      dense: "",
+                                      label: _ctx.t('Approximate (about 1 km)'),
+                                      class: "m-chat-live-approximate"
+                                    }, null, 8, ["modelValue", "onUpdate:modelValue", "label"])
+                                  ])
+                                ], 64))
+                              : (_openBlock(), _createElementBlock("div", {
+                                  key: 2,
+                                  class: "text-caption m-muted m-chat-live-off"
+                                }, _toDisplayString(_ctx.t('This browser cannot give its location, so it cannot share it live')), 1))
+                        ])
                       ]),
                       _createElementVNode("div", { class: "row q-gutter-sm q-mt-md" }, [
                         _createVNode(_component_q_btn, {
@@ -16321,10 +17718,23 @@ module.exports = {
                           icon: "sym_o_send",
                           class: "m-chat-location-send",
                           label: _ctx.t('Send'),
-                          disable: !_ctx.place || _ctx.busy,
+                          disable: !_ctx.place || _ctx.busy || _ctx.liveBusy,
                           loading: _ctx.busy,
                           onClick: _ctx.send
                         }, null, 8, ["label", "disable", "loading", "onClick"]),
+                        (!_ctx.room.sealed && _ctx.canLive)
+                          ? (_openBlock(), _createBlock(_component_q_btn, {
+                              key: 0,
+                              unelevated: "",
+                              "no-caps": "",
+                              class: "m-btn-tonal m-chat-live-share",
+                              icon: "sym_o_share_location",
+                              label: _ctx.t('Share live location'),
+                              disable: _ctx.busy || _ctx.liveBusy,
+                              loading: _ctx.liveBusy,
+                              onClick: _ctx.shareLive
+                            }, null, 8, ["label", "disable", "loading", "onClick"]))
+                          : _createCommentVNode("", true),
                         _createVNode(_component_q_btn, {
                           flat: "",
                           "no-caps": "",
@@ -16757,10 +18167,9 @@ module.exports = {
                                           dense: "",
                                           clickable: "",
                                           class: "rounded-borders q-px-xs",
-                                          disable: !_ctx.room.canVote(_ctx.item),
                                           "data-option": option.id,
-                                          "aria-keyshortcuts": option.voterIds && option.voterIds.length ? 'Shift+Enter' : undefined,
-                                          onClick: _withModifiers($event => (_ctx.room.pressed() || _ctx.room.vote(_ctx.item, option)), ["stop"]),
+                                          "aria-keyshortcuts": !_ctx.item.poll.anonymous && option.voterIds && option.voterIds.length ? 'Shift+Enter' : undefined,
+                                          onClick: _withModifiers($event => (_ctx.room.pressed() || (_ctx.room.canVote(_ctx.item) ? _ctx.room.vote(_ctx.item, option) : _ctx.room.showPeople({ kind: 'voters', item: _ctx.item, option }))), ["stop"]),
                                           onTouchstartPassive: $event => (_ctx.room.pressStart({ kind: 'voters', item: _ctx.item, option }, $event)),
                                           onTouchmovePassive: $event => (_ctx.room.pressCancel()),
                                           onTouchend: $event => (_ctx.room.pressEnd($event)),
@@ -16806,7 +18215,7 @@ module.exports = {
                                             }, {
                                               default: _withCtx(() => [
                                                 _createTextVNode(_toDisplayString(option.voteCount), 1),
-                                                (!_ctx.room.mobile && option.voterIds && option.voterIds.length)
+                                                (!_ctx.room.mobile && !_ctx.item.poll.anonymous && option.voterIds && option.voterIds.length)
                                                   ? (_openBlock(), _createBlock(_component_q_tooltip, { key: 0 }, {
                                                       default: _withCtx(() => [
                                                         _createTextVNode(_toDisplayString(_ctx.room.votersText(option)), 1)
@@ -16819,7 +18228,7 @@ module.exports = {
                                             }, 1024)
                                           ]),
                                           _: 2
-                                        }, 1032, ["disable", "data-option", "aria-keyshortcuts", "onClick", "onTouchstartPassive", "onTouchmovePassive", "onTouchend", "onTouchcancel", "onContextmenu", "onKeydown"]))
+                                        }, 1032, ["data-option", "aria-keyshortcuts", "onClick", "onTouchstartPassive", "onTouchmovePassive", "onTouchend", "onTouchcancel", "onContextmenu", "onKeydown"]))
                                       }), 128)),
                                       _createElementVNode("div", { class: "row items-center no-wrap text-caption m-muted q-mt-xs" }, [
                                         _createElementVNode("span", { class: "ellipsis" }, _toDisplayString(_ctx.room.pollFooter(_ctx.item.poll)), 1),
@@ -17049,8 +18458,7 @@ module.exports = {
                                         "data-reaction": reaction.key,
                                         "aria-label": _ctx.room.reactionLabel(reaction),
                                         "aria-keyshortcuts": "Shift+Enter",
-                                        disable: !_ctx.room.canPost || !_ctx.room.bridgeCaps.reaction,
-                                        onClick: _withModifiers($event => (_ctx.room.pressed() || _ctx.room.react(_ctx.item, reaction.key)), ["stop"]),
+                                        onClick: _withModifiers($event => (_ctx.room.pressed() || (_ctx.room.canPost && _ctx.room.bridgeCaps.reaction ? _ctx.room.react(_ctx.item, reaction.key) : _ctx.room.showPeople({ kind: 'reactors', reaction }))), ["stop"]),
                                         onTouchstartPassive: $event => (_ctx.room.pressStart({ kind: 'reactors', item: _ctx.item, reaction }, $event)),
                                         onTouchmovePassive: $event => (_ctx.room.pressCancel()),
                                         onTouchend: $event => (_ctx.room.pressEnd($event)),
@@ -17070,7 +18478,7 @@ module.exports = {
                                             : _createCommentVNode("", true)
                                         ]),
                                         _: 2
-                                      }, 1032, ["outline", "color", "text-color", "data-reaction", "aria-label", "disable", "onClick", "onTouchstartPassive", "onTouchmovePassive", "onTouchend", "onTouchcancel", "onContextmenu", "onKeydown"]))
+                                      }, 1032, ["outline", "color", "text-color", "data-reaction", "aria-label", "onClick", "onTouchstartPassive", "onTouchmovePassive", "onTouchend", "onTouchcancel", "onContextmenu", "onKeydown"]))
                                     }), 128))
                                   ]))
                                 : _createCommentVNode("", true),
@@ -17881,83 +19289,250 @@ module.exports = {
         {
             const target = component.components["chat-room"].components["chat-message"].components["chat-location-card"];
             target.render = (function () {
-                const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createElementVNode: _createElementVNode, withModifiers: _withModifiers, normalizeStyle: _normalizeStyle, withCtx: _withCtx, createBlock: _createBlock } = Vue
+                const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, normalizeClass: _normalizeClass, Fragment: _Fragment, withModifiers: _withModifiers, normalizeStyle: _normalizeStyle } = Vue
 
                 return function render(_ctx, _cache) {
                   const _component_q_icon = _resolveComponent("q-icon")
+                  const _component_q_badge = _resolveComponent("q-badge")
                   const _component_q_btn = _resolveComponent("q-btn")
                   const _component_q_card = _resolveComponent("q-card")
 
-                  return (_openBlock(), _createBlock(_component_q_card, {
-                    flat: "",
-                    bordered: "",
-                    class: "q-mt-xs q-pa-sm m-chat-location",
-                    style: _normalizeStyle(_ctx.room.mobile ? 'max-width:85vw' : 'max-width:360px')
-                  }, {
-                    default: _withCtx(() => [
-                      _createElementVNode("div", { class: "row no-wrap items-start" }, [
-                        _createVNode(_component_q_icon, {
-                          name: "sym_o_location_on",
-                          size: "28px",
-                          color: "primary",
-                          class: "q-mr-sm"
-                        }),
-                        _createElementVNode("div", {
-                          class: "col",
-                          style: {"min-width":"0"}
-                        }, [
-                          (_ctx.place.label)
+                  return (_ctx.live)
+                    ? (_openBlock(), _createBlock(_component_q_card, {
+                        key: 0,
+                        flat: "",
+                        bordered: "",
+                        class: "q-mt-xs q-pa-sm m-chat-location m-chat-live",
+                        "data-live-state": _ctx.state,
+                        style: _normalizeStyle(_ctx.room.mobile ? 'max-width:85vw' : 'max-width:360px')
+                      }, {
+                        default: _withCtx(() => [
+                          _createElementVNode("div", { class: "row no-wrap items-start" }, [
+                            _createVNode(_component_q_icon, {
+                              name: _ctx.state === 'live' ? 'sym_o_share_location' : 'sym_o_location_off',
+                              size: "28px",
+                              color: _ctx.state === 'live' ? (_ctx.stale ? 'warning' : 'positive') : 'grey',
+                              class: "q-mr-sm"
+                            }, null, 8, ["name", "color"]),
+                            _createElementVNode("div", {
+                              class: "col",
+                              style: {"min-width":"0"}
+                            }, [
+                              _createElementVNode("div", { class: "row items-center no-wrap" }, [
+                                _createElementVNode("span", { class: "text-weight-medium ellipsis m-chat-location-label" }, _toDisplayString(_ctx.liveLabel), 1),
+                                (_ctx.state === 'live')
+                                  ? (_openBlock(), _createBlock(_component_q_badge, {
+                                      key: 0,
+                                      color: _ctx.stale ? 'warning' : 'positive',
+                                      class: "q-ml-xs m-chat-live-badge"
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createTextVNode(_toDisplayString(_ctx.room.t('Live')), 1)
+                                      ]),
+                                      _: 1
+                                    }, 8, ["color"]))
+                                  : _createCommentVNode("", true)
+                              ]),
+                              (_ctx.state === 'live')
+                                ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+                                    (_ctx.coordinates)
+                                      ? (_openBlock(), _createElementBlock("div", {
+                                          key: 0,
+                                          class: "text-caption m-muted m-chat-location-coordinates"
+                                        }, [
+                                          _createTextVNode(_toDisplayString(_ctx.coordinates), 1),
+                                          (_ctx.view.share && _ctx.view.share.approximate)
+                                            ? (_openBlock(), _createElementBlock("span", { key: 0 }, " · " + _toDisplayString(_ctx.room.t('approximate')), 1))
+                                            : _createCommentVNode("", true)
+                                        ]))
+                                      : _createCommentVNode("", true),
+                                    _createElementVNode("div", {
+                                      class: _normalizeClass(["text-caption m-chat-live-age", _ctx.stale ? 'text-warning' : 'm-muted'])
+                                    }, _toDisplayString(_ctx.ageLine), 3),
+                                    (_ctx.view.owner)
+                                      ? (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
+                                          _createElementVNode("div", { class: "text-caption m-muted m-chat-live-audience" }, _toDisplayString(_ctx.room.t('Shared with the members of the room when you started it')), 1),
+                                          (_ctx.leftNames)
+                                            ? (_openBlock(), _createElementBlock("div", {
+                                                key: 0,
+                                                class: "text-caption text-warning m-chat-live-left"
+                                              }, _toDisplayString(_ctx.room.t('No longer in the room, still sees it')) + ": " + _toDisplayString(_ctx.leftNames), 1))
+                                            : _createCommentVNode("", true),
+                                          _createElementVNode("div", {
+                                            class: _normalizeClass(["text-caption m-chat-live-sent", _ctx.sentFrom ? 'text-positive' : 'text-warning'])
+                                          }, _toDisplayString(_ctx.sentText), 3)
+                                        ], 64))
+                                      : _createCommentVNode("", true)
+                                  ], 64))
+                                : (_ctx.state === 'ended')
+                                  ? (_openBlock(), _createElementBlock("div", {
+                                      key: 1,
+                                      class: "text-body2 m-muted m-chat-live-ended"
+                                    }, _toDisplayString(_ctx.room.t('Live location ended')), 1))
+                                  : (_ctx.state === 'notShared')
+                                    ? (_openBlock(), _createElementBlock("div", {
+                                        key: 2,
+                                        class: "text-body2 m-muted m-chat-live-not-shared"
+                                      }, _toDisplayString(_ctx.room.t('This live location is not shared with you')), 1))
+                                    : (_ctx.state === 'failed')
+                                      ? (_openBlock(), _createElementBlock("div", {
+                                          key: 3,
+                                          class: "text-body2 text-warning m-chat-live-failed"
+                                        }, _toDisplayString(_ctx.room.t('The live location could not be read')), 1))
+                                      : (_openBlock(), _createElementBlock("div", {
+                                          key: 4,
+                                          class: "text-caption m-muted"
+                                        }, _toDisplayString(_ctx.room.t('Loading')), 1))
+                            ])
+                          ]),
+                          (_ctx.state === 'live')
                             ? (_openBlock(), _createElementBlock("div", {
                                 key: 0,
-                                class: "text-weight-medium m-chat-location-label",
-                                style: {"overflow-wrap":"anywhere"}
-                              }, _toDisplayString(_ctx.place.label), 1))
-                            : _createCommentVNode("", true),
-                          (_ctx.place.address)
-                            ? (_openBlock(), _createElementBlock("div", {
-                                key: 1,
-                                class: "text-body2 m-chat-location-address",
-                                style: {"overflow-wrap":"anywhere"}
-                              }, _toDisplayString(_ctx.place.address), 1))
-                            : _createCommentVNode("", true),
-                          (_ctx.coordinates)
-                            ? (_openBlock(), _createElementBlock("div", {
-                                key: 2,
-                                class: "text-caption m-muted m-chat-location-coordinates"
-                              }, _toDisplayString(_ctx.coordinates), 1))
+                                class: "row q-mt-xs",
+                                style: {"gap":"4px"}
+                              }, [
+                                (_ctx.position)
+                                  ? (_openBlock(), _createBlock(_component_q_btn, {
+                                      key: 0,
+                                      unelevated: "",
+                                      dense: "",
+                                      "no-caps": "",
+                                      size: "sm",
+                                      color: "primary",
+                                      icon: "sym_o_map",
+                                      class: "m-chat-location-open",
+                                      label: _ctx.room.t('Open in maps'),
+                                      onClick: _withModifiers($event => (_ctx.room.openPlace(_ctx.position)), ["stop"])
+                                    }, null, 8, ["label", "onClick"]))
+                                  : _createCommentVNode("", true),
+                                (_ctx.position)
+                                  ? (_openBlock(), _createBlock(_component_q_btn, {
+                                      key: 1,
+                                      flat: "",
+                                      dense: "",
+                                      "no-caps": "",
+                                      size: "sm",
+                                      color: "primary",
+                                      icon: "sym_o_content_copy",
+                                      class: "m-chat-location-copy",
+                                      label: _ctx.room.t('Copy'),
+                                      onClick: _withModifiers($event => (_ctx.room.copyPlace(_ctx.position)), ["stop"])
+                                    }, null, 8, ["label", "onClick"]))
+                                  : _createCommentVNode("", true),
+                                (_ctx.view.owner)
+                                  ? (_openBlock(), _createElementBlock(_Fragment, { key: 2 }, [
+                                      (!_ctx.sentFrom)
+                                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                                            key: 0,
+                                            flat: "",
+                                            dense: "",
+                                            "no-caps": "",
+                                            size: "sm",
+                                            color: "primary",
+                                            class: "m-chat-live-here",
+                                            label: _ctx.nativeApp ? _ctx.room.t('Send from this device') : _ctx.room.t('Send from here'),
+                                            onClick: _withModifiers(_ctx.sendHere, ["stop"])
+                                          }, null, 8, ["label", "onClick"]))
+                                        : _createCommentVNode("", true),
+                                      _createVNode(_component_q_btn, {
+                                        flat: "",
+                                        dense: "",
+                                        "no-caps": "",
+                                        size: "sm",
+                                        color: "negative",
+                                        icon: "sym_o_location_off",
+                                        class: "m-chat-live-stop",
+                                        label: _ctx.room.t('Stop'),
+                                        onClick: _withModifiers(_ctx.stop, ["stop"])
+                                      }, null, 8, ["label", "onClick"]),
+                                      _createVNode(_component_q_btn, {
+                                        flat: "",
+                                        dense: "",
+                                        "no-caps": "",
+                                        size: "sm",
+                                        color: "primary",
+                                        class: "m-chat-live-who",
+                                        label: _ctx.room.t('Who sees my location'),
+                                        onClick: _withModifiers($event => (_ctx.room.go('/qapps/maps/MyShares')), ["stop"])
+                                      }, null, 8, ["label", "onClick"])
+                                    ], 64))
+                                  : _createCommentVNode("", true)
+                              ]))
                             : _createCommentVNode("", true)
-                        ])
-                      ]),
-                      _createElementVNode("div", {
-                        class: "row q-mt-xs",
-                        style: {"gap":"4px"}
-                      }, [
-                        _createVNode(_component_q_btn, {
-                          unelevated: "",
-                          dense: "",
-                          "no-caps": "",
-                          size: "sm",
-                          color: "primary",
-                          icon: "sym_o_map",
-                          class: "m-chat-location-open",
-                          label: _ctx.room.t('Open in maps'),
-                          onClick: _withModifiers($event => (_ctx.room.openPlace(_ctx.place)), ["stop"])
-                        }, null, 8, ["label", "onClick"]),
-                        _createVNode(_component_q_btn, {
-                          flat: "",
-                          dense: "",
-                          "no-caps": "",
-                          size: "sm",
-                          color: "primary",
-                          icon: "sym_o_content_copy",
-                          class: "m-chat-location-copy",
-                          label: _ctx.room.t('Copy'),
-                          onClick: _withModifiers($event => (_ctx.room.copyPlace(_ctx.place)), ["stop"])
-                        }, null, 8, ["label", "onClick"])
-                      ])
-                    ]),
-                    _: 1
-                  }, 8, ["style"]))
+                        ]),
+                        _: 1
+                      }, 8, ["data-live-state", "style"]))
+                    : (_openBlock(), _createBlock(_component_q_card, {
+                        key: 1,
+                        flat: "",
+                        bordered: "",
+                        class: "q-mt-xs q-pa-sm m-chat-location",
+                        style: _normalizeStyle(_ctx.room.mobile ? 'max-width:85vw' : 'max-width:360px')
+                      }, {
+                        default: _withCtx(() => [
+                          _createElementVNode("div", { class: "row no-wrap items-start" }, [
+                            _createVNode(_component_q_icon, {
+                              name: "sym_o_location_on",
+                              size: "28px",
+                              color: "primary",
+                              class: "q-mr-sm"
+                            }),
+                            _createElementVNode("div", {
+                              class: "col",
+                              style: {"min-width":"0"}
+                            }, [
+                              (_ctx.place.label)
+                                ? (_openBlock(), _createElementBlock("div", {
+                                    key: 0,
+                                    class: "text-weight-medium m-chat-location-label",
+                                    style: {"overflow-wrap":"anywhere"}
+                                  }, _toDisplayString(_ctx.place.label), 1))
+                                : _createCommentVNode("", true),
+                              (_ctx.place.address)
+                                ? (_openBlock(), _createElementBlock("div", {
+                                    key: 1,
+                                    class: "text-body2 m-chat-location-address",
+                                    style: {"overflow-wrap":"anywhere"}
+                                  }, _toDisplayString(_ctx.place.address), 1))
+                                : _createCommentVNode("", true),
+                              (_ctx.coordinates)
+                                ? (_openBlock(), _createElementBlock("div", {
+                                    key: 2,
+                                    class: "text-caption m-muted m-chat-location-coordinates"
+                                  }, _toDisplayString(_ctx.coordinates), 1))
+                                : _createCommentVNode("", true)
+                            ])
+                          ]),
+                          _createElementVNode("div", {
+                            class: "row q-mt-xs",
+                            style: {"gap":"4px"}
+                          }, [
+                            _createVNode(_component_q_btn, {
+                              unelevated: "",
+                              dense: "",
+                              "no-caps": "",
+                              size: "sm",
+                              color: "primary",
+                              icon: "sym_o_map",
+                              class: "m-chat-location-open",
+                              label: _ctx.room.t('Open in maps'),
+                              onClick: _withModifiers($event => (_ctx.room.openPlace(_ctx.place)), ["stop"])
+                            }, null, 8, ["label", "onClick"]),
+                            _createVNode(_component_q_btn, {
+                              flat: "",
+                              dense: "",
+                              "no-caps": "",
+                              size: "sm",
+                              color: "primary",
+                              icon: "sym_o_content_copy",
+                              class: "m-chat-location-copy",
+                              label: _ctx.room.t('Copy'),
+                              onClick: _withModifiers($event => (_ctx.room.copyPlace(_ctx.place)), ["stop"])
+                            }, null, 8, ["label", "onClick"])
+                          ])
+                        ]),
+                        _: 1
+                      }, 8, ["style"]))
                 }
             })();
             delete target.template;
@@ -18891,12 +20466,17 @@ module.exports = {
                 { key: 'comments', label: t('Comments on my records'), icon: 'sym_o_comment', params: { view: 'comments' } },
                 { key: 'internalArchive', label: t('Archive'), icon: 'sym_o_archive', params: { view: 'internalArchive' } }];
         },
+        // the account an account folder or label belongs to
+        viewAccount() {
+            const p = this.params;
+            return p.account ? (this.mailAccounts.find((item) => item.emailAccountId === p.account) ||
+                (this.internalAccount && this.internalAccount.emailAccountId === p.account ? this.internalAccount : null)) : null;
+        },
         viewTitle() {
             const p = this.params;
             if (p.q) return t('Search results');
             if (p.mailbox) return (this.mailbox && this.mailbox.contactListName) || t('Mailbox');
-            const account = p.account ? (this.mailAccounts.find((item) => item.emailAccountId === p.account) ||
-                (this.internalAccount && this.internalAccount.emailAccountId === p.account ? this.internalAccount : null)) : null;
+            const account = this.viewAccount;
             if (account && p.folder) { const folder = account.folderList.find((item) => item.emailFolderId === p.folder); return folder ? folder.folderName + ' · ' + account.accountName : t('Folder'); }
             if (account && p.label) { const label = account.labelList.find((item) => item.emailLabelId === p.label); return label ? label.labelName : t('Label'); }
             const item = this.viewItems.concat(this.internalItems).find((entry) => entry.params.view === (p.view || 'inbox'));
@@ -18907,7 +20487,21 @@ module.exports = {
             const texts = { inbox: t('Your Inbox is empty'), flagged: t('Nothing flagged'), snoozed: t('Nothing snoozed'), scheduled: t('Nothing scheduled'),
                 drafts: t('No drafts'), sent: t('Nothing sent yet'), outbox: t('The Outbox is empty'), junk: t('No spam'), trash: t('The Trash is empty'),
                 internal: t('No internal messages'), comments: t('No comments on your records') };
-            return this.unreadOnly ? t('No unread conversations') : (texts[this.params.view || 'inbox'] || t('No conversations here'));
+            if (this.unreadOnly) return t('No unread conversations');
+            // an account's folder, label or a shared mailbox opens with no view: say what it is, not the Inbox (COM-UI-039)
+            const p = this.params;
+            const account = this.viewAccount;
+            if (account && p.folder) {
+                const folder = account.folderList.find((item) => item.emailFolderId === p.folder);
+                const kind = folder && { EfkInbox: 'inbox', EfkDrafts: 'drafts', EfkSent: 'sent', EfkJunk: 'junk', EfkTrash: 'trash' }[folder.folderKindEnumId];
+                return kind ? texts[kind] : (folder ? t('No conversations in') + ' ' + folder.folderName : t('No conversations here'));
+            }
+            if (account && p.label) {
+                const label = account.labelList.find((item) => item.emailLabelId === p.label);
+                return label ? t('Nothing labelled') + ' ' + label.labelName : t('No conversations here');
+            }
+            if (p.mailbox) return this.mailbox && this.mailbox.contactListName ? t('No conversations in') + ' ' + this.mailbox.contactListName : t('No conversations here');
+            return texts[p.view || 'inbox'] || t('No conversations here');
         },
         termChips() {
             return (this.termList || []).map((term) => ({ term, label: (term.negate ? '-' : '') + term.operator + ':' + term.value }));
@@ -18945,10 +20539,19 @@ module.exports = {
         selectionHasEmail() { return this.allInView ? this.storeList.includes('email') : this.selectionRows.some((row) => row.store === 'email'); },
         // a read member of a mail account may mark its mail read, nothing more; the server refuses the rest (COM-UI-021)
         selectionCanChange() {
-            if (this.allInView) return !this.storeList.includes('email') || this.mailAccounts.every((account) => account.canSend !== false);
+            if (this.allInView && this.storeList.includes('email')) {
+                const p = this.params;
+                const accounts = this.mailAccounts.filter((account) => {
+                    if (p.account) return p.account === account.emailAccountId;
+                    if (!p.q && p.folder) return account.folderList.some((folder) => folder.emailFolderId === p.folder);
+                    if (!p.q && p.label) return account.labelList.some((label) => label.emailLabelId === p.label);
+                    return true;
+                });
+                return accounts.length > 0 && accounts.every((account) => account.canSend !== false);
+            }
             return this.selectionRows.every((row) => this.rowCanChange(row));
         },
-        threadCanChange() { return !this.thread || this.thread.store !== 'email' || this.thread.canSend !== false; },
+        threadCanChange() { return this.rowCanChange(this.thread); },
         selectionCanLabel() {
             const internal = this.allInView ? this.storeList.includes('internal') : this.selectionRows.some((row) => row.store === 'internal');
             return this.selectionHasEmail || internal;
@@ -18970,7 +20573,17 @@ module.exports = {
                 { value: 'off', label: t('No reading pane'), icon: 'sym_o_view_agenda' }];
         },
         lastMessage() { return this.thread && this.thread.messageList.length ? this.thread.messageList[this.thread.messageList.length - 1] : null; },
-        threadInTrash() { return this.thread && this.thread.folderKindEnumId === 'EfkTrash'; },
+        viewActionFolder() { return { junk: 'EfkJunk', trash: 'EfkTrash' }[this.view] || null; },
+        selectionActionFolder() {
+            if (this.allInView || !this.selectionRows.length) return this.viewActionFolder;
+            const folder = this.rowActionFolder(this.selectionRows[0]);
+            return this.selectionRows.every((row) => this.rowActionFolder(row) === folder) ? folder : null;
+        },
+        threadActionFolder() {
+            if (!this.thread) return null;
+            const row = this.threadRow();
+            return this.singleMessageRow(row) ? row.folderKindEnumId : this.thread.folderKindEnumId;
+        },
         threadFolderLabel() {
             if (!this.thread || this.thread.store !== 'email' || !this.thread.folderKindEnumId || this.thread.folderKindEnumId === 'EfkInbox') return null;
             return { EfkSent: t('Sent'), EfkDrafts: t('Drafts'), EfkArchive: t('Archive'), EfkJunk: t('Spam'), EfkTrash: t('Trash'), EfkOther: null }[this.thread.folderKindEnumId] || null;
@@ -19325,6 +20938,9 @@ module.exports = {
                 this.loadingList = false;
                 const json = result.json || {};
                 const rows = json.threadList || [];
+                if (json.conversationView === 'messages') {
+                    for (const row of rows) if (row.store === 'email') row.singleMessage = true;
+                }
                 if (reset) { this.threads = rows; if (this.$refs.list) this.$refs.list.scrollTop = 0; }
                 else {
                     const known = new Set(this.threads.map((row) => row.rowKey));
@@ -19382,11 +20998,13 @@ module.exports = {
             const nameOf = (entry) => (mine(entry) ? t('me') : (entry.name || String(entry.address || '').split('@')[0] || entry.partyId || ''));
             const toView = ['sent', 'drafts', 'outbox', 'scheduled', 'internalSent'].includes(this.params.view);
             // the account's own outgoing message names its own recipients, and none when it has none (COM-UI-028)
-            if (toView && Array.isArray(row.recipientList)) {
+            if (row.store === 'email' && Array.isArray(row.recipientList)) {
                 const named = row.recipientList.map((entry) => entry.name || String(entry.address || '').split('@')[0]).filter(Boolean);
                 return named.length ? t('To') + ': ' + named.slice(0, 3).join(', ') + (named.length > 3 ? ' +' + (named.length - 3) : '') : t('No recipients');
             }
-            if (toView) {
+            if (row.store === 'email' && (['ES_DRAFT', 'ES_READY', 'ES_SCHEDULED', 'ES_SENT'].includes(row.statusId)
+                    || (!row.statusId && (toView || ['EfkDrafts', 'EfkSent'].includes(row.folderKindEnumId))))) return t('Recipients unavailable');
+            if (toView && row.store !== 'email') {
                 const others = list.filter((entry) => !mine(entry));
                 return t('To') + ': ' + (others.slice(0, 3).map(nameOf).join(', ') || t('me')) + (others.length > 3 ? ' +' + (others.length - 3) : '');
             }
@@ -19449,7 +21067,8 @@ module.exports = {
             return { transform: 'translateX(' + dx + 'px)', transition: 'none' };
         },
         swipeAction(row, action) {
-            if (action === 'trash' && this.view === 'trash') return 'deleteForever';
+            if (action === 'trash' && this.rowActionFolder(row) === 'EfkTrash') return 'deleteForever';
+            if (action === 'spam' && this.rowActionFolder(row) === 'EfkJunk') return 'notSpam';
             if (action === 'read' && !row.isUnread) return 'unread';
             if (action === 'unread' && row.isUnread) return 'read';
             if (action === 'flag') return row.isFlagged ? 'unflag' : 'flag';
@@ -19492,8 +21111,10 @@ module.exports = {
         clearFilters() { this.openView({ view: this.params.view, account: this.params.account, folder: this.params.folder, label: this.params.label, mailbox: this.params.mailbox }); },
 
         // ---- actions on threads ----
+        singleMessageRow(row) { return row.store === 'email' && row.emailMessageId && (row.singleMessage || row.rowKey !== 'email:' + row.threadId); },
+        rowActionFolder(row) { return this.singleMessageRow(row) ? row.folderKindEnumId : this.viewActionFolder; },
         targetOf(row) {
-            return { store: row.store, threadId: row.threadId, lastEmailMessageId: row.lastEmailMessageId || null, lastCommEventId: row.lastCommEventId || null,
+            return { store: row.store, ...(this.singleMessageRow(row) ? { emailMessageId: row.emailMessageId } : { threadId: row.threadId }), lastEmailMessageId: row.lastEmailMessageId || null, lastCommEventId: row.lastCommEventId || null,
                 emailFolderId: row.emailFolderId || null, emailAccountId: row.emailAccountId || null, rowKey: row.rowKey };
         },
         snoozeOrMoveRows(targets) {
@@ -19505,9 +21126,15 @@ module.exports = {
             const thread = this.thread;
             const row = this.threads.find((item) => item.rowKey === this.openKey);
             if (row) return row;
+            const snoozedThruDate = thread.messageList.reduce((latest, message) => Math.max(latest, Number(message.snoozedThruDate) || 0), 0);
             const last = this.lastMessage || {};
+            const message = thread.messageList.find((item) => item.key === this.openKey);
+            if (thread.store === 'email' && message && (this.data.prefs.conversationView === 'messages' || this.openKey !== 'email:' + thread.threadId)) {
+                return Object.assign({}, message, { threadId: thread.threadId, rowKey: this.openKey, singleMessage: true });
+            }
             return { store: thread.store, threadId: thread.threadId, rowKey: this.openKey, lastEmailMessageId: last.emailMessageId || null,
-                lastCommEventId: last.communicationEventId || null, emailAccountId: thread.emailAccountId || last.emailAccountId || null, emailFolderId: null };
+                lastCommEventId: last.communicationEventId || null, emailAccountId: thread.emailAccountId || last.emailAccountId || null, emailFolderId: null,
+                folderKindEnumId: thread.folderKindEnumId, canSend: thread.canSend, snoozedThruDate };
         },
         removesFromView(action) {
             const membership = ['archive', 'unarchive', 'trash', 'deleteForever', 'spam', 'notSpam', 'move', 'snooze', 'unsnooze'];
@@ -19522,38 +21149,40 @@ module.exports = {
         applyAction(rows, action, extra, quiet, confirmed) {
             if (!rows.length) return Promise.resolve();
             // keys and swipes come here too: only read and unread on mail the user may only read
-            if (!['read', 'unread'].includes(action) && rows.some((row) => !this.rowCanChange(row))) {
-                moqui.notifyMessages(null, t('You may read this account but not change its mail'));
-                return Promise.resolve();
-            }
+            if (!['read', 'unread'].includes(action) && !this.checkCanChange(rows)) return Promise.resolve();
             // a deletion from the Trash has no Undo, so it is confirmed first, from a button, a swipe or a key (COM-UI-027)
             if (action === 'deleteForever' && !confirmed) {
                 return this.confirmDeleteForever(rows.length).then(() => this.applyAction(rows, action, extra, quiet, true));
             }
             const targets = rows.map((row) => this.targetOf(row));
             const params = Object.assign({ targetsJson: JSON.stringify(targets), action }, extra || {});
-            const openRemoved = this.openKey && rows.some((row) => row.rowKey === this.openKey) && this.removesFromView(action);
+            const view = this.viewKey;
+            const openKey = this.openKey;
+            const threadSeq = this.threadSeq;
+            const selection = this.selected;
+            const openRemoved = openKey && rows.some((row) => row.rowKey === this.openKey) && this.removesFromView(action);
             const nextKey = openRemoved ? this.neighbourKey(this.openKey, 1) : null;
             return this.post('state', params).then((json) => {
                 const failed = new Set((json.failedList || []).map((item) => item.key));
-                const done = rows.filter((row) => !failed.has(row.store + ':' + row.threadId));
-                this.applyLocal(done, action, extra);
+                const done = rows.filter((row, index) => {
+                    const target = targets[index];
+                    return !failed.has(target.store + ':' + (target.emailMessageId || target.communicationEventId || target.threadId));
+                });
+                if (this.viewKey === view) this.applyLocal(done, action, extra, selection);
                 if (json.failedList && json.failedList.length) moqui.notifyMessages(null, json.failedList.map((item) => item.message).join('\n'));
                 if (!quiet && done.length) this.offerUndo(done, action, extra);
-                if (openRemoved && !failed.has(this.openKey)) {
+                if (openRemoved && this.viewKey === view && this.openKey === openKey && this.threadSeq === threadSeq && done.some((row) => row.rowKey === openKey)) {
                     if (nextKey && this.splitMode && this.data.prefs.archiveOpensNext !== false) this.setThreadParam(nextKey); else this.setThreadParam(null);
                 } else if (this.openKey && rows.some((row) => row.rowKey === this.openKey)) this.reloadThread();
                 this.loadData();
                 return json;
             }, () => {});
         },
-        applyLocal(rows, action, extra) {
+        applyLocal(rows, action, extra, selection) {
             const keys = new Set(rows.map((row) => row.rowKey));
             if (this.removesFromView(action)) {
                 this.threads = this.threads.filter((row) => !keys.has(row.rowKey));
-                const next = Object.assign({}, this.selected);
-                keys.forEach((key) => delete next[key]);
-                this.selected = next;
+                if (this.selected === selection) keys.forEach((key) => delete selection[key]);
                 return;
             }
             this.threads.forEach((row) => {
@@ -19578,8 +21207,7 @@ module.exports = {
         offerUndo(rows, action, extra) {
             const inverse = { archive: 'unarchive', unarchive: 'archive', read: 'unread', unread: 'read', flag: 'unflag', unflag: 'flag', snooze: 'unsnooze',
                 spam: 'notSpam', notSpam: 'spam', close: 'reopen', reopen: 'close' };
-            // an unsnooze is undone by snoozing again until the time it had
-            const snoozedUntil = action === 'unsnooze' ? Math.max(0, ...rows.map((row) => Number(row.snoozedThruDate) || 0)) : 0;
+
             const words = { archive: t('Archived'), unarchive: t('Moved to the Inbox'), trash: t('Moved to the Trash'), spam: t('Reported as spam'),
                 notSpam: t('Not spam: back in the Inbox'), snooze: t('Snoozed'), unsnooze: t('Back in the Inbox'), move: t('Moved'), deleteForever: t('Deleted forever') };
             const count = rows.length;
@@ -19594,8 +21222,16 @@ module.exports = {
                     setTimeout(() => this.loadList(true), 400);
                 } else if (action === 'labels') {
                     this.applyAction(rows, 'labels', { addLabelIds: (extra && extra.removeLabelIds) || '', removeLabelIds: (extra && extra.addLabelIds) || '' }, true);
-                } else if (action === 'unsnooze' && snoozedUntil > Date.now()) {
-                    this.applyAction(rows, 'snooze', { snoozedThruDate: String(snoozedUntil) }, true).then(() => this.loadList(true));
+                } else if (action === 'unsnooze') {
+                    const byDeadline = new Map();
+                    for (const row of rows) {
+                        const deadline = Number(row.snoozedThruDate);
+                        if (!(deadline > Date.now())) continue;
+                        if (!byDeadline.has(deadline)) byDeadline.set(deadline, []);
+                        byDeadline.get(deadline).push(row);
+                    }
+                    Promise.all(Array.from(byDeadline, ([deadline, group]) => this.applyAction(group, 'snooze', { snoozedThruDate: String(deadline) }, true)))
+                        .then(() => this.loadList(true));
                 } else if (inverse[action]) {
                     this.applyAction(rows, inverse[action], null, true).then(() => this.loadList(true));
                 }
@@ -19612,7 +21248,12 @@ module.exports = {
         rowCanChange(row) {
             if (!row || row.store !== 'email') return true;
             const account = this.mailAccounts.find((item) => item.emailAccountId === row.emailAccountId);
-            return !account || account.canSend !== false;
+            return row.canSend !== false && (!account || account.canSend !== false);
+        },
+        checkCanChange(rows, bulk) {
+            if (rows.every((row) => this.rowCanChange(row)) && (!bulk || !this.allInView || this.selectionCanChange)) return true;
+            moqui.notifyMessages(null, t('You may read this account but not change its mail'));
+            return false;
         },
         isSnoozed(row) { return !!(row && row.snoozedThruDate && Number(row.snoozedThruDate) > Date.now()); },
         // count null: every conversation in this view
@@ -19622,21 +21263,41 @@ module.exports = {
         },
         toggleRowFlag(row) { this.applyAction([row], row.isFlagged ? 'unflag' : 'flag', null, true); },
         bulk(action, confirmed) {
+            if (!['read', 'unread'].includes(action) && !this.checkCanChange(this.selectionRows, true)) return;
+            const selection = this.selected;
+            const view = this.viewKey;
             if (this.allInView && action === 'deleteForever' && !confirmed) {
-                this.confirmDeleteForever(null).then(() => this.bulk(action, true));
+                this.confirmDeleteForever(null).then(() => {
+                    if (selection === this.selected && this.allInView && this.viewKey === view) this.bulk(action, true);
+                });
                 return;
             }
             if (this.allInView) {
                 const params = Object.assign(this.listParams(), { action });
                 this.post('viewAction', params).then((json) => {
-                    moqui.notifyMessages([{ type: 'success', message: (json.updatedCount || 0) + ' ' + t('conversations changed') }], (json.failedList || []).map((item) => item.message).join('\n') || null);
-                    this.clearSelection();
-                    this.loadList(true);
+                    const changed = json.updatedCount ? [{ type: 'success', message: json.updatedCount + ' ' + t('conversations changed') }] : null;
+                    moqui.notifyMessages(changed, (json.failedList || []).map((item) => item.message).join('\n') || null);
+                    if (this.viewKey === view) this.loadList(true).then(() => this.keepFailedSelection(json, selection, true));
                     this.loadData();
                 }, () => {});
                 return;
             }
-            this.applyAction(this.selectionRows, action).then(() => { if (!this.removesFromView(action)) this.clearSelection(); });
+            this.applySelectionAction(this.selectionRows, action);
+        },
+        applySelectionAction(rows, action, extra) {
+            const selection = this.selected;
+            const all = this.allInView;
+            const changeSelection = all || rows.every((row) => selection[row.rowKey]);
+            return this.applyAction(rows, action, extra).then((json) => {
+                if (changeSelection) this.keepFailedSelection(json, selection, all);
+                return json;
+            });
+        },
+        keepFailedSelection(json, selection, all) {
+            if (!json || selection !== this.selected || all !== this.allInView) return;
+            const failedKeys = new Set((json.failedList || []).map((item) => item.key));
+            this.clearSelection();
+            for (const row of this.threads) if ((all || selection[row.rowKey]) && failedKeys.has(row.rowKey)) this.selected[row.rowKey] = true;
         },
         threadAction(action) {
             if (!this.thread) return;
@@ -19871,13 +21532,23 @@ module.exports = {
         flagMessage(message) {
             const target = message.store === 'email' ? { store: 'email', emailMessageId: message.emailMessageId } : { store: 'internal', communicationEventId: message.communicationEventId };
             const action = message.isFlagged ? 'unflag' : 'flag';
-            this.post('state', { targetsJson: JSON.stringify([target]), action }).then(() => {
-                message.isFlagged = !message.isFlagged;
+            const thread = this.thread;
+            this.changeMessage(message, target, action).then((done) => {
+                if (!done || this.thread !== thread) return;
+                message.isFlagged = action === 'flag';
                 const flagged = this.thread.messageList.some((item) => item.isFlagged);
                 this.thread.isFlagged = flagged;
                 const row = this.threads.find((item) => item.rowKey === this.openKey);
                 if (row) row.isFlagged = flagged;
             }, () => {});
+        },
+        changeMessage(message, target, action) {
+            if (!this.checkCanChange([message])) return Promise.resolve(false);
+            return this.post('state', { targetsJson: JSON.stringify([target]), action }).then((json) => {
+                if (!(json.failedList || []).length) return true;
+                moqui.notifyMessages(null, json.failedList.map((item) => item.message).join('\n'));
+                return false;
+            }, () => false);
         },
         markUnreadFrom(message) {
             const list = this.thread.messageList;
@@ -19911,8 +21582,10 @@ module.exports = {
             });
         },
         reportMessageSpam(message) {
-            this.post('state', { targetsJson: JSON.stringify([{ store: 'email', emailMessageId: message.emailMessageId }]), action: 'spam' }).then(() => {
-                moqui.notifyMessages([{ type: 'success', message: t('Reported as spam') }]);
+            const action = message.folderKindEnumId === 'EfkJunk' ? 'notSpam' : 'spam';
+            this.changeMessage(message, { store: 'email', emailMessageId: message.emailMessageId }, action).then((done) => {
+                if (!done) return;
+                moqui.notifyMessages([{ type: 'success', message: action === 'notSpam' ? t('Not spam: back in the Inbox') : t('Reported as spam') }]);
                 this.reloadThread();
                 this.loadList(true);
             }, () => {});
@@ -19995,7 +21668,7 @@ module.exports = {
         // ---- dialogs: snooze, move, labels ----
         openSnooze(targets) {
             const rows = this.snoozeOrMoveRows(targets);
-            if (!rows.length) return;
+            if (!rows.length || !this.checkCanChange(rows, !targets)) return;
             this.snooze = { open: true, targets: rows, custom: '' };
         },
         shortWhen(millis) {
@@ -20016,21 +21689,21 @@ module.exports = {
             if (!at) return;
             if (at <= Date.now()) { moqui.notifyMessages(null, t('Snooze until a time in the future')); return; }
             const rows = this.snooze.targets;
-            this.applyAction(rows, 'snooze', { snoozedThruDate: String(at) }).then((json) => {
+            this.applySelectionAction(rows, 'snooze', { snoozedThruDate: String(at) }).then((json) => {
                 if (!json || (json.failedList || []).length >= rows.length) return;
-                this.snooze.open = false;
-                this.clearSelection();
+                if (rows === this.snooze.targets) this.snooze.open = false;
             });
         },
         openMove(targets) {
             const rows = this.snoozeOrMoveRows(targets).filter((row) => row.store === 'email');
             if (!rows.length) { moqui.notifyMessages(null, t('Internal messages have no folders')); return; }
+            if (!this.checkCanChange(rows, !targets)) return;
             this.move = { open: true, targets: rows, filter: '', newFolder: '' };
         },
         applyMove(folder) {
             const rows = this.move.targets;
             this.move.open = false;
-            this.applyAction(rows, 'move', { emailFolderId: folder.emailFolderId }).then(() => this.clearSelection());
+            this.applySelectionAction(rows, 'move', { emailFolderId: folder.emailFolderId });
         },
         createFolderAndMove() {
             const account = this.moveAccounts[0];
@@ -20043,6 +21716,7 @@ module.exports = {
             const internal = this.internalAccount;
             const rows = this.snoozeOrMoveRows(targets).filter((row) => row.store === 'email' || row.store === 'internal');
             if (!rows.length) { moqui.notifyMessages(null, t('Labels are for mail')); return; }
+            if (!this.checkCanChange(rows, !targets)) return;
             const choice = {};
             const accounts = new Set(rows.map((row) => row.store === 'internal' && internal ? internal.emailAccountId : row.emailAccountId));
             this.accountsWithLabels.filter((account) => accounts.has(account.emailAccountId)).forEach((account) => account.labelList.forEach((label) => {
@@ -20070,7 +21744,7 @@ module.exports = {
             const rows = this.labels.targets;
             this.labels.open = false;
             if (!add.length && !remove.length) return;
-            this.applyAction(rows, 'labels', { addLabelIds: add.join(','), removeLabelIds: remove.join(',') }).then(() => this.clearSelection());
+            this.applySelectionAction(rows, 'labels', { addLabelIds: add.join(','), removeLabelIds: remove.join(',') });
         },
         removeLabel(label) { this.applyAction([this.threadRow()], 'labels', { removeLabelIds: label.emailLabelId }, true); },
 
@@ -20352,7 +22026,9 @@ module.exports = {
         keyAction(action) {
             const rows = this.keyRows();
             if (!rows.length) return false;
-            if (action === 'trash' && this.params.view === 'trash') action = 'deleteForever';
+            const folder = this.selectedKeys.length ? this.selectionActionFolder : (this.openKey && this.thread ? this.threadActionFolder : this.rowActionFolder(rows[0]));
+            if (action === 'trash' && folder === 'EfkTrash') action = 'deleteForever';
+            if (action === 'spam' && folder === 'EfkJunk') action = 'notSpam';
             if (this.selectedKeys.length) this.bulk(action); else this.applyAction(rows, action);
             return true;
         },
@@ -20412,9 +22088,9 @@ module.exports = {
                 key('a', t('Reply all'), () => this.keyReply(true)),
                 key('f', t('Forward'), () => this.keyForward()),
                 key('s', t('Flag'), () => this.keyFlag()),
-                key('b', t('Snooze'), () => { const rows = this.keyRows(); if (!rows.length) return false; this.openSnooze(rows); return true; }),
-                key('l', t('Labels'), () => { const rows = this.keyRows(); if (!rows.length) return false; this.openLabels(rows); return true; }),
-                key('v', t('Move to'), () => { const rows = this.keyRows(); if (!rows.length) return false; this.openMove(rows); return true; }),
+                key('b', t('Snooze'), () => { const rows = this.keyRows(); if (!rows.length) return false; this.openSnooze(this.selectedKeys.length ? null : rows); return true; }),
+                key('l', t('Labels'), () => { const rows = this.keyRows(); if (!rows.length) return false; this.openLabels(this.selectedKeys.length ? null : rows); return true; }),
+                key('v', t('Move to'), () => { const rows = this.keyRows(); if (!rows.length) return false; this.openMove(this.selectedKeys.length ? null : rows); return true; }),
                 key('Shift+I', t('Mark read'), () => this.keyAction('read')),
                 key('Shift+U', t('Mark unread'), () => this.keyAction('unread')),
                 key('x', t('Select the conversation'), () => this.toggleSelectFocused()),
@@ -21327,14 +23003,14 @@ module.exports = {
                                             flat: "",
                                             round: "",
                                             dense: "",
-                                            icon: _ctx.view === 'trash' ? 'sym_o_delete_forever' : 'sym_o_delete',
-                                            "aria-label": _ctx.view === 'trash' ? _ctx.t('Delete forever') : _ctx.t('Delete'),
-                                            onClick: $event => (_ctx.bulk(_ctx.view === 'trash' ? 'deleteForever' : 'trash'))
+                                            icon: _ctx.selectionActionFolder === 'EfkTrash' ? 'sym_o_delete_forever' : 'sym_o_delete',
+                                            "aria-label": _ctx.selectionActionFolder === 'EfkTrash' ? _ctx.t('Delete forever') : _ctx.t('Delete'),
+                                            onClick: $event => (_ctx.bulk(_ctx.selectionActionFolder === 'EfkTrash' ? 'deleteForever' : 'trash'))
                                           }, {
                                             default: _withCtx(() => [
                                               _createVNode(_component_q_tooltip, null, {
                                                 default: _withCtx(() => [
-                                                  _createTextVNode(_toDisplayString(_ctx.view === 'trash' ? _ctx.t('Delete forever') : _ctx.t('Delete')) + " (#)", 1)
+                                                  _createTextVNode(_toDisplayString(_ctx.selectionActionFolder === 'EfkTrash' ? _ctx.t('Delete forever') : _ctx.t('Delete')) + " (#)", 1)
                                                 ]),
                                                 _: 1
                                               })
@@ -21544,7 +23220,7 @@ module.exports = {
                                                         ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                                                             key: 2,
                                                             clickable: "",
-                                                            onClick: $event => (_ctx.bulk(_ctx.view === 'junk' ? 'notSpam' : 'spam'))
+                                                            onClick: $event => (_ctx.bulk(_ctx.selectionActionFolder === 'EfkJunk' ? 'notSpam' : 'spam'))
                                                           }, {
                                                             default: _withCtx(() => [
                                                               _createVNode(_component_q_item_section, { avatar: "" }, {
@@ -21555,7 +23231,7 @@ module.exports = {
                                                               }),
                                                               _createVNode(_component_q_item_section, null, {
                                                                 default: _withCtx(() => [
-                                                                  _createTextVNode(_toDisplayString(_ctx.view === 'junk' ? _ctx.t('Not spam') : _ctx.t('Report spam')), 1)
+                                                                  _createTextVNode(_toDisplayString(_ctx.selectionActionFolder === 'EfkJunk' ? _ctx.t('Not spam') : _ctx.t('Report spam')), 1)
                                                                 ]),
                                                                 _: 1
                                                               })
@@ -22157,16 +23833,19 @@ module.exports = {
                                                               "onUpdate:modelValue": $event => (_ctx.checkRow(row, $event)),
                                                               "aria-label": _ctx.t('Select')
                                                             }, null, 8, ["model-value", "onClick", "onUpdate:modelValue", "aria-label"]),
-                                                            _createVNode(_component_q_btn, {
-                                                              flat: "",
-                                                              round: "",
-                                                              dense: "",
-                                                              size: "sm",
-                                                              icon: row.isFlagged ? 'star' : 'sym_o_star',
-                                                              color: row.isFlagged ? 'warning' : undefined,
-                                                              "aria-label": row.isFlagged ? _ctx.t('Remove flag') : _ctx.t('Flag'),
-                                                              onClick: _withModifiers($event => (_ctx.toggleRowFlag(row)), ["stop"])
-                                                            }, null, 8, ["icon", "color", "aria-label", "onClick"])
+                                                            (_ctx.rowCanChange(row))
+                                                              ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                                  key: 0,
+                                                                  flat: "",
+                                                                  round: "",
+                                                                  dense: "",
+                                                                  size: "sm",
+                                                                  icon: row.isFlagged ? 'star' : 'sym_o_star',
+                                                                  color: row.isFlagged ? 'warning' : undefined,
+                                                                  "aria-label": row.isFlagged ? _ctx.t('Remove flag') : _ctx.t('Flag'),
+                                                                  onClick: _withModifiers($event => (_ctx.toggleRowFlag(row)), ["stop"])
+                                                                }, null, 8, ["icon", "color", "aria-label", "onClick"]))
+                                                              : _createCommentVNode("", true)
                                                           ])
                                                         ]),
                                                         _: 2
@@ -22259,20 +23938,20 @@ module.exports = {
                                                                     round: "",
                                                                     dense: "",
                                                                     size: "sm",
-                                                                    icon: _ctx.view === 'trash' ? 'sym_o_delete_forever' : 'sym_o_delete',
-                                                                    "aria-label": _ctx.view === 'trash' ? _ctx.t('Delete forever') : _ctx.t('Delete'),
-                                                                    onClick: $event => (_ctx.rowAction(row, _ctx.view === 'trash' ? 'deleteForever' : 'trash'))
+                                                                    icon: _ctx.rowActionFolder(row) === 'EfkTrash' ? 'sym_o_delete_forever' : 'sym_o_delete',
+                                                                    "aria-label": _ctx.rowActionFolder(row) === 'EfkTrash' ? _ctx.t('Delete forever') : _ctx.t('Delete'),
+                                                                    onClick: $event => (_ctx.rowAction(row, _ctx.rowActionFolder(row) === 'EfkTrash' ? 'deleteForever' : 'trash'))
                                                                   }, {
                                                                     default: _withCtx(() => [
                                                                       _createVNode(_component_q_tooltip, null, {
                                                                         default: _withCtx(() => [
-                                                                          _createTextVNode(_toDisplayString(_ctx.view === 'trash' ? _ctx.t('Delete forever') : _ctx.t('Delete')), 1)
+                                                                          _createTextVNode(_toDisplayString(_ctx.rowActionFolder(row) === 'EfkTrash' ? _ctx.t('Delete forever') : _ctx.t('Delete')), 1)
                                                                         ]),
-                                                                        _: 1
-                                                                      })
+                                                                        _: 2
+                                                                      }, 1024)
                                                                     ]),
-                                                                    _: 1
-                                                                  }, 8, ["icon", "aria-label", "onClick"]))
+                                                                    _: 2
+                                                                  }, 1032, ["icon", "aria-label", "onClick"]))
                                                                 : _createCommentVNode("", true),
                                                               _createVNode(_component_q_btn, {
                                                                 flat: "",
@@ -22620,14 +24299,14 @@ module.exports = {
                                                   square: "",
                                                   class: "m-tonal q-ml-none",
                                                   icon: "sym_o_label",
-                                                  removable: "",
+                                                  removable: _ctx.threadCanChange,
                                                   onRemove: $event => (_ctx.removeLabel(label))
                                                 }, {
                                                   default: _withCtx(() => [
                                                     _createTextVNode(_toDisplayString(label.labelName), 1)
                                                   ]),
                                                   _: 2
-                                                }, 1032, ["onRemove"]))
+                                                }, 1032, ["removable", "onRemove"]))
                                               }), 128)),
                                               (_ctx.threadFolderLabel)
                                                 ? (_openBlock(), _createBlock(_component_q_chip, {
@@ -22676,14 +24355,14 @@ module.exports = {
                                                 flat: "",
                                                 round: "",
                                                 dense: "",
-                                                icon: _ctx.threadInTrash ? 'sym_o_delete_forever' : 'sym_o_delete',
-                                                "aria-label": _ctx.threadInTrash ? _ctx.t('Delete forever') : _ctx.t('Delete'),
-                                                onClick: $event => (_ctx.threadAction(_ctx.threadInTrash ? 'deleteForever' : 'trash'))
+                                                icon: _ctx.threadActionFolder === 'EfkTrash' ? 'sym_o_delete_forever' : 'sym_o_delete',
+                                                "aria-label": _ctx.threadActionFolder === 'EfkTrash' ? _ctx.t('Delete forever') : _ctx.t('Delete'),
+                                                onClick: $event => (_ctx.threadAction(_ctx.threadActionFolder === 'EfkTrash' ? 'deleteForever' : 'trash'))
                                               }, {
                                                 default: _withCtx(() => [
                                                   _createVNode(_component_q_tooltip, null, {
                                                     default: _withCtx(() => [
-                                                      _createTextVNode(_toDisplayString(_ctx.threadInTrash ? _ctx.t('Delete forever') : _ctx.t('Delete')) + " (#)", 1)
+                                                      _createTextVNode(_toDisplayString(_ctx.threadActionFolder === 'EfkTrash' ? _ctx.t('Delete forever') : _ctx.t('Delete')) + " (#)", 1)
                                                     ]),
                                                     _: 1
                                                   })
@@ -22698,13 +24377,13 @@ module.exports = {
                                                 round: "",
                                                 dense: "",
                                                 icon: "sym_o_report",
-                                                "aria-label": _ctx.thread.folderKindEnumId === 'EfkJunk' ? _ctx.t('Not spam') : _ctx.t('Report spam'),
-                                                onClick: $event => (_ctx.threadAction(_ctx.thread.folderKindEnumId === 'EfkJunk' ? 'notSpam' : 'spam'))
+                                                "aria-label": _ctx.threadActionFolder === 'EfkJunk' ? _ctx.t('Not spam') : _ctx.t('Report spam'),
+                                                onClick: $event => (_ctx.threadAction(_ctx.threadActionFolder === 'EfkJunk' ? 'notSpam' : 'spam'))
                                               }, {
                                                 default: _withCtx(() => [
                                                   _createVNode(_component_q_tooltip, null, {
                                                     default: _withCtx(() => [
-                                                      _createTextVNode(_toDisplayString(_ctx.thread.folderKindEnumId === 'EfkJunk' ? _ctx.t('Not spam') : _ctx.t('Report spam')) + " (!)", 1)
+                                                      _createTextVNode(_toDisplayString(_ctx.threadActionFolder === 'EfkJunk' ? _ctx.t('Not spam') : _ctx.t('Report spam')) + " (!)", 1)
                                                     ]),
                                                     _: 1
                                                   })
@@ -23273,19 +24952,22 @@ module.exports = {
                                                                 ]),
                                                                 _: 2
                                                               }, 1032, ["id", "aria-label", "aria-controls", "onKeydown", "onClick"]),
-                                                              _createVNode(_component_q_btn, {
-                                                                flat: "",
-                                                                round: "",
-                                                                dense: "",
-                                                                size: "sm",
-                                                                icon: item.message.isFlagged ? 'star' : 'sym_o_star',
-                                                                color: item.message.isFlagged ? 'warning' : undefined,
-                                                                "aria-label": item.message.isFlagged ? _ctx.t('Remove flag') : _ctx.t('Flag'),
-                                                                onClick: _withModifiers($event => (_ctx.flagMessage(item.message)), ["stop"])
-                                                              }, null, 8, ["icon", "color", "aria-label", "onClick"]),
-                                                              (_ctx.canReplyTo(item.message))
+                                                              (_ctx.rowCanChange(item.message))
                                                                 ? (_openBlock(), _createBlock(_component_q_btn, {
                                                                     key: 2,
+                                                                    flat: "",
+                                                                    round: "",
+                                                                    dense: "",
+                                                                    size: "sm",
+                                                                    icon: item.message.isFlagged ? 'star' : 'sym_o_star',
+                                                                    color: item.message.isFlagged ? 'warning' : undefined,
+                                                                    "aria-label": item.message.isFlagged ? _ctx.t('Remove flag') : _ctx.t('Flag'),
+                                                                    onClick: _withModifiers($event => (_ctx.flagMessage(item.message)), ["stop"])
+                                                                  }, null, 8, ["icon", "color", "aria-label", "onClick"]))
+                                                                : _createCommentVNode("", true),
+                                                              (_ctx.canReplyTo(item.message))
+                                                                ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                                    key: 3,
                                                                     flat: "",
                                                                     round: "",
                                                                     dense: "",
@@ -23591,50 +25273,56 @@ module.exports = {
                                                                                       [_directive_close_popup]
                                                                                     ])
                                                                                   : _createCommentVNode("", true),
-                                                                                _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                                                  clickable: "",
-                                                                                  onClick: $event => (_ctx.blockSender(item.message))
-                                                                                }, {
-                                                                                  default: _withCtx(() => [
-                                                                                    _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                                                (_ctx.mailAccounts.some(account => account.emailAccountId === item.message.emailAccountId && account.canManage))
+                                                                                  ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                                                      key: 1,
+                                                                                      clickable: "",
+                                                                                      onClick: $event => (_ctx.blockSender(item.message))
+                                                                                    }, {
                                                                                       default: _withCtx(() => [
-                                                                                        _createVNode(_component_q_icon, { name: "sym_o_block" })
+                                                                                        _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                                                          default: _withCtx(() => [
+                                                                                            _createVNode(_component_q_icon, { name: "sym_o_block" })
+                                                                                          ]),
+                                                                                          _: 1
+                                                                                        }),
+                                                                                        _createVNode(_component_q_item_section, null, {
+                                                                                          default: _withCtx(() => [
+                                                                                            _createTextVNode(_toDisplayString(_ctx.t('Block sender')), 1)
+                                                                                          ]),
+                                                                                          _: 1
+                                                                                        })
                                                                                       ]),
                                                                                       _: 1
-                                                                                    }),
-                                                                                    _createVNode(_component_q_item_section, null, {
+                                                                                    }, 8, ["onClick"])), [
+                                                                                      [_directive_close_popup]
+                                                                                    ])
+                                                                                  : _createCommentVNode("", true),
+                                                                                (_ctx.rowCanChange(item.message))
+                                                                                  ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                                                      key: 2,
+                                                                                      clickable: "",
+                                                                                      onClick: $event => (_ctx.reportMessageSpam(item.message))
+                                                                                    }, {
                                                                                       default: _withCtx(() => [
-                                                                                        _createTextVNode(_toDisplayString(_ctx.t('Block sender')), 1)
+                                                                                        _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                                                          default: _withCtx(() => [
+                                                                                            _createVNode(_component_q_icon, { name: "sym_o_report" })
+                                                                                          ]),
+                                                                                          _: 1
+                                                                                        }),
+                                                                                        _createVNode(_component_q_item_section, null, {
+                                                                                          default: _withCtx(() => [
+                                                                                            _createTextVNode(_toDisplayString(item.message.folderKindEnumId === 'EfkJunk' ? _ctx.t('Not spam') : _ctx.t('Report spam')), 1)
+                                                                                          ]),
+                                                                                          _: 2
+                                                                                        }, 1024)
                                                                                       ]),
-                                                                                      _: 1
-                                                                                    })
-                                                                                  ]),
-                                                                                  _: 1
-                                                                                }, 8, ["onClick"])), [
-                                                                                  [_directive_close_popup]
-                                                                                ]),
-                                                                                _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                                                  clickable: "",
-                                                                                  onClick: $event => (_ctx.reportMessageSpam(item.message))
-                                                                                }, {
-                                                                                  default: _withCtx(() => [
-                                                                                    _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                                                      default: _withCtx(() => [
-                                                                                        _createVNode(_component_q_icon, { name: "sym_o_report" })
-                                                                                      ]),
-                                                                                      _: 1
-                                                                                    }),
-                                                                                    _createVNode(_component_q_item_section, null, {
-                                                                                      default: _withCtx(() => [
-                                                                                        _createTextVNode(_toDisplayString(_ctx.t('Report spam')), 1)
-                                                                                      ]),
-                                                                                      _: 1
-                                                                                    })
-                                                                                  ]),
-                                                                                  _: 1
-                                                                                }, 8, ["onClick"])), [
-                                                                                  [_directive_close_popup]
-                                                                                ])
+                                                                                      _: 2
+                                                                                    }, 1032, ["onClick"])), [
+                                                                                      [_directive_close_popup]
+                                                                                    ])
+                                                                                  : _createCommentVNode("", true)
                                                                               ], 64))
                                                                             : _createCommentVNode("", true)
                                                                         ]),
@@ -26026,7 +27714,7 @@ module.exports = {
             uid: composeCount, query: {}, state: 'loading', error: null, draft: this.emptyDraft(), identities: [], me: {}, undoSeconds: 10, kind: 'new',
             adding: { to: null, cc: null, bcc: null }, showCc: false, showBcc: false, showQuote: false, dragOver: false, uploading: false, picked: null,
             sending: false, sent: false, savedAt: null, saving: false, saveError: null, dirty: false, saveTimer: null, scheduleOpen: false, scheduleCustom: '',
-            blocksOpen: false, blocks: [], blockSearch: '', slashPending: false, slashAt: null, signature: null, signaturePlacement: 'above', belowSignature: null,
+            blocksOpen: false, blocks: [], blocksState: '', blockRequest: 0, blockSearch: '', blockInserted: false, slashPending: false, slashAt: null, signature: null, signaturePlacement: 'above', belowSignature: null,
             loadedOnce: false, pageLayoutOverride: null, hasDrive: false,
             // the desktop client offline (MD4): the files kept by the app until the message is sent from its outbox, the
             // message's clientRef, and whether the email's draft is kept here, not yet on the server
@@ -26708,26 +28396,49 @@ module.exports = {
 
         // ---- text blocks ----
         loadBlocks() {
-            if (this.blocksLoaded) return;
-            moqui.request(this.url('textBlocks')).then((result) => { this.blocks = (result.json || {}).textBlockList || []; this.blocksLoaded = true; }, () => {});
+            const request = ++this.blockRequest;
+            this.blocks = [];
+            this.blocksState = 'loading';
+            this.blockSearch = '';
+            this.blockInserted = false;
+            this.$nextTick(this.focusBlockSearch);
+            moqui.request(this.url('textBlocks')).then((result) => {
+                if (request !== this.blockRequest || !this.blocksOpen) return;
+                this.blocks = (result.json || {}).textBlockList || [];
+                this.blocksState = 'ready';
+            }, () => {
+                if (request === this.blockRequest && this.blocksOpen) this.blocksState = 'failed';
+            });
         },
-        blockText(block) { return String(block.bodyHtml || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 80); },
-        // the menu's search has the focus when it opens, by "/" or the button (COM-UI-023)
+        blockText(block) { return moqui.richText.toPlain(block.bodyHtml || '').slice(0, 80); },
         focusBlockSearch() {
             const input = this.$refs.blockPanel && this.$refs.blockPanel.querySelector('input');
-            if (input) input.focus();
+            if (this.blocksOpen && input) input.focus();
         },
-        // closed with nothing chosen (Esc, a click outside): the "/" stays as typed and the editor has the focus again
         blocksHidden() {
-            if (!this.slashPending) return;
+            if (this.blocksOpen) return;
+            this.blockRequest++;
+            this.blocks = [];
+            const field = this.$refs.editor;
+            if ((this.slashPending || this.blockInserted) && this.draft.plain && field && field.$refs.plainArea) {
+                const area = field.$refs.plainArea;
+                area.focus();
+                if (this.slashPending) area.setSelectionRange(this.slashAt, this.slashAt);
+            } else if ((this.slashPending || this.blockInserted) && field && field.editor) {
+                field.editor.commands.focus(this.slashPending ? this.slashAt : undefined);
+            } else if (!this.blockInserted && this.$refs.blockButton) {
+                this.$refs.blockButton.$el.focus();
+            }
             this.slashPending = false;
-            const editor = this.$refs.editor && this.$refs.editor.editor;
-            if (editor && editor.commands) editor.commands.focus(this.slashAt == null ? undefined : this.slashAt);
             this.slashAt = null;
         },
-        // Enter in the search inserts the first match (a row with the focus takes Enter itself)
+        cancelBlockSearch(event) {
+            if (event.isComposing) return;
+            event.preventDefault();
+            this.blocksOpen = false;
+        },
         insertFirstBlock(event) {
-            if (!event || !event.target || event.target.tagName !== 'INPUT') return;
+            if (!event || event.isComposing || !event.target || event.target.tagName !== 'INPUT') return;
             event.preventDefault();
             const block = this.shownBlocks[0];
             if (!block) return;
@@ -26735,32 +28446,50 @@ module.exports = {
             this.blocksOpen = false;
         },
         insertBlock(block) {
-            const editor = this.$refs.editor && this.$refs.editor.editor;
+            if (!this.blocks.includes(block)) return;
+            const field = this.$refs.editor;
+            const editor = field && field.editor;
             const html = block.bodyHtml || '';
-            if (editor && editor.chain && !this.draft.plain) {
-                // the search had the focus, so the place to insert is where the "/" was typed
-                const slashAt = this.slashPending && this.slashAt != null ? this.slashAt : null;
+            const slashAt = this.slashPending ? this.slashAt : null;
+            if (this.draft.plain && field && field.$refs.plainArea) {
+                const area = field.$refs.plainArea;
+                const replaceSlash = slashAt != null && area.value.charAt(slashAt - 1) === '/';
+                const from = replaceSlash ? slashAt - 1 : area.selectionStart;
+                const to = replaceSlash ? slashAt : area.selectionEnd;
+                area.focus();
+                area.setRangeText(moqui.richText.toPlain(html), from, to, 'end');
+                field.onPlainInput(area.value);
+            } else if (editor && editor.chain && !this.draft.plain) {
                 let chain = slashAt != null ? editor.chain().focus(slashAt) : editor.chain().focus();
-                if (slashAt != null && slashAt > 0) {
-                    const before = editor.state.doc.textBetween(slashAt - 1, slashAt, '\n', '\n');
-                    if (before === '/') chain = chain.deleteRange({ from: slashAt - 1, to: slashAt });
+                if (slashAt != null && slashAt > 0 && editor.state.doc.textBetween(slashAt - 1, slashAt, '\n', '\n') === '/') {
+                    chain = chain.deleteRange({ from: slashAt - 1, to: slashAt });
                 }
                 chain.insertContent(html).run();
             } else {
-                const text = this.blockText({ bodyHtml: html });
-                this.draft.body = this.draft.plain ? String(this.draft.body || '').replace(/\/$/, '') + text : String(this.draft.body || '') + html;
+                this.draft.body = String(this.draft.body || '') + html;
             }
+            this.blockInserted = true;
             this.slashPending = false;
             this.slashAt = null;
         },
-        // "/" at the start of a word opens the text blocks
+        // A slash at a word boundary opens the menu, leaving its insertion point in the editor.
         onEditorKeyup(event) {
-            if (event.key !== '/' || this.draft.plain) return;
-            const editor = this.$refs.editor && this.$refs.editor.editor;
-            if (!editor || !editor.state) return;
-            const at = editor.state.selection.from;
-            const before = editor.state.doc.textBetween(Math.max(0, at - 2), at, '\n', '\n');
-            if (before === '/' || /[\s\n]\/$/.test(before)) { this.slashPending = true; this.slashAt = at; this.blockSearch = ''; this.blocksOpen = true; this.loadBlocks(); }
+            if (event.key !== '/') return;
+            const field = this.$refs.editor;
+            if (!field) return;
+            let at, before;
+            if (this.draft.plain) {
+                const area = field.$refs.plainArea;
+                if (!area || event.target !== area) return;
+                at = area.selectionStart;
+                before = area.value.slice(Math.max(0, at - 2), at);
+            } else {
+                const editor = field.editor;
+                if (!editor || !editor.state) return;
+                at = editor.state.selection.from;
+                before = editor.state.doc.textBetween(Math.max(0, at - 2), at, '\n', '\n');
+            }
+            if (before === '/' || /\s\/$/.test(before)) { this.slashPending = true; this.slashAt = at; this.blocksOpen = true; }
         },
         onKeydown(event) {
             if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); this.send(); }
@@ -26919,7 +28648,7 @@ module.exports = {
         {
             const target = component;
             target.render = (function () {
-                const { resolveComponent: _resolveComponent, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, withCtx: _withCtx, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, normalizeClass: _normalizeClass, resolveDirective: _resolveDirective, withDirectives: _withDirectives, withKeys: _withKeys, withModifiers: _withModifiers } = Vue
+                const { resolveComponent: _resolveComponent, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, withCtx: _withCtx, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, normalizeClass: _normalizeClass, resolveDirective: _resolveDirective, withDirectives: _withDirectives, withModifiers: _withModifiers, withKeys: _withKeys } = Vue
 
                 return function render(_ctx, _cache) {
                   const _component_q_skeleton = _resolveComponent("q-skeleton")
@@ -27550,6 +29279,7 @@ module.exports = {
                                         }, 8, ["aria-label", "onClick"]))
                                       : _createCommentVNode("", true),
                                     _createVNode(_component_q_btn, {
+                                      ref: "blockButton",
                                       flat: "",
                                       round: "",
                                       dense: "",
@@ -27566,6 +29296,7 @@ module.exports = {
                                         _createVNode(_component_q_menu, {
                                           modelValue: _ctx.blocksOpen,
                                           "onUpdate:modelValue": $event => ((_ctx.blocksOpen) = $event),
+                                          "no-refocus": "",
                                           onBeforeShow: _ctx.loadBlocks,
                                           onShow: _ctx.focusBlockSearch,
                                           onHide: _ctx.blocksHidden,
@@ -27577,7 +29308,12 @@ module.exports = {
                                               ref: "blockPanel",
                                               class: "q-pa-sm",
                                               style: {"width":"320px","max-width":"90vw"},
-                                              onKeydown: _withKeys(_ctx.insertFirstBlock, ["enter"])
+                                              onKeydown: [
+                                                _withModifiers(() => {}, ["stop"]),
+                                                _withKeys(_ctx.insertFirstBlock, ["enter"]),
+                                                _withKeys(_ctx.cancelBlockSearch, ["esc"])
+                                              ],
+                                              onKeyup: _withModifiers(() => {}, ["stop"])
                                             }, [
                                               _createVNode(_component_m_text_line, {
                                                 modelValue: _ctx.blockSearch,
@@ -27641,7 +29377,7 @@ module.exports = {
                                                         default: _withCtx(() => [
                                                           _createVNode(_component_q_item_section, { class: "m-muted" }, {
                                                             default: _withCtx(() => [
-                                                              _createTextVNode(_toDisplayString(_ctx.blocks.length ? _ctx.t('No text blocks match') : _ctx.t('No text blocks yet')), 1)
+                                                              _createTextVNode(_toDisplayString(_ctx.blocksState === 'loading' ? _ctx.t('Loading…') : (_ctx.blocksState === 'failed' ? _ctx.t('Text blocks could not be loaded') : (_ctx.blocks.length ? _ctx.t('No text blocks match') : _ctx.t('No text blocks yet')))), 1)
                                                             ]),
                                                             _: 1
                                                           })
@@ -27661,7 +29397,7 @@ module.exports = {
                                                 label: _ctx.t('Manage text blocks'),
                                                 onClick: $event => (_ctx.go(_ctx.appLink() + 'Settings/TextBlocks'))
                                               }, null, 8, ["label", "onClick"])
-                                            ], 40, ["onKeydown"])
+                                            ], 40, ["onKeydown", "onKeyup"])
                                           ]),
                                           _: 1
                                         }, 8, ["modelValue", "onUpdate:modelValue", "onBeforeShow", "onShow", "onHide"])

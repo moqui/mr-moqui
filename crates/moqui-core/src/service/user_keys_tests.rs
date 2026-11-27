@@ -34,6 +34,11 @@ fn entered() -> (EntityFacade, ExecutionContext) {
     (facade, context)
 }
 
+/// The framework's REST file, which declares the scopes of its git and hosting resources.
+fn framework_rest() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/tools/service/moqui.rest.xml")
+}
+
 /// An ed25519 public key line whose key bytes are all `fill`.
 fn key_line(fill: u8) -> String {
     let mut blob = Vec::new();
@@ -312,6 +317,118 @@ fn a_scoped_key_opens_only_its_scope_and_its_holder_ends_it() {
     assert!(made_by(true), "a client by its own key");
 }
 
+/// A git key and a tasks key (plans/archive/design-dev-aide.md question 18) each sign in only where a REST resource declares
+/// their scope (`key-scope`), an application's as the framework's, and neither where it declares the other's or none;
+/// signed in by one, its holder ends that key alone (SEC-RTE-85).
+#[test]
+fn git_and_tasks_keys_open_only_the_resources_that_declare_them_and_end_only_themselves() {
+    let dir = std::env::temp_dir().join(format!("moqui-key-scopes-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let tasks_rest = dir.join("mantle.rest.xml");
+    std::fs::write(
+        &tasks_rest,
+        r#"<resource name="mantle">
+    <resource name="my"><resource name="tasks" key-scope="tasks"><method type="get"><service name="a.B.get#C"/></method></resource>
+        <resource name="noticeCounts"><method type="get"><service name="a.B.get#D"/></method></resource></resource>
+    <resource name="gitRepositories"><id name="repositoryId"><resource name="issues" key-scope="tasks">
+        <method type="get"><service name="a.B.get#E"/></method>
+        <id name="issueId"><method type="get"><service name="a.B.get#F"/></method></id></resource></id></resource>
+    <resource name="docs"><id name="docPath" allow-extra-path="true" key-scope="tasks">
+        <method type="get"><service name="a.B.get#G"/></method></id></resource>
+</resource>"#,
+    )
+    .unwrap();
+    let (facade, context) = entered();
+    let _entered = context.enter();
+    crate::service::load_definitions().unwrap();
+    crate::service::install_rest(context.factory(), &[framework_rest(), tasks_rest]);
+    let _ = std::fs::remove_dir_all(&dir);
+    {
+        let _authz = context.disable_authz();
+        let mut row = facade.make_value("moqui.security.UserAccount").unwrap();
+        row.set("userId", Value::string("keys.dee"));
+        row.set("username", Value::string("keys.dee"));
+        row.create(&facade).unwrap();
+    }
+    let make = |scope: &str| {
+        let (made, errors) = call_as(
+            "keys.dee",
+            "create#UserScopedKey",
+            &[
+                ("scope", Value::string(scope)),
+                ("deviceName", Value::string(format!("Dev AIDE {scope}"))),
+            ],
+        );
+        assert!(errors.is_empty(), "{scope}: {errors}");
+        to_plain_string(&made["loginKey"])
+    };
+    let (git, tasks, gateway) = (make("git"), make("tasks"), make("gateway"));
+    let signs_in = |key: &str, path: &str| {
+        let scopes = crate::user::request_key_scopes(path);
+        let scopes: Vec<&str> = scopes.iter().map(String::as_str).collect();
+        let ok = crate::user::apply_header_keys_scoped(Some(key), None, &scopes).is_ok();
+        if ok {
+            crate::user::logout().unwrap();
+        }
+        ok
+    };
+    for path in [
+        "/rest/s1/mantle/my/tasks",
+        "/rest/s1/mantle/gitRepositories/R1/issues",
+        "/rest/s1/mantle/gitRepositories/R1/issues/12",
+        // an id that takes the extra path, and the dispatcher's fallback to it
+        "/rest/s1/mantle/docs/a/b/c.md",
+        "/rest/s1/mantle/docs",
+    ] {
+        assert!(signs_in(&tasks, path), "the tasks key on {path}");
+        assert!(!signs_in(&git, path), "the git key on {path}");
+    }
+    for path in [
+        "/rest/s1/moqui/git/R1/mergeRequests",
+        "/rest/s1/moqui/hosting/repository",
+    ] {
+        assert!(signs_in(&git, path), "the git key on {path}");
+        assert!(!signs_in(&tasks, path), "the tasks key on {path}");
+    }
+    for path in [
+        "/rest/s1/mantle/my/noticeCounts",
+        "/rest/s1/mantle/gitRepositories/R1",
+        "/rest/s1/moqui/hosting/gatewayKey",
+        "/rest/s1/mantle/my/tasks/../noticeCounts",
+        "/apps/my/tasks",
+    ] {
+        assert!(!signs_in(&tasks, path), "the tasks key on {path}");
+    }
+    assert!(crate::user::login_user_key(&tasks).is_err(), "no account login");
+    crate::user::login_user_key_for(&git, crate::user::ACCESS_TOKEN_SCOPE).unwrap();
+    crate::user::logout().unwrap();
+
+    // signed in by the tasks key, its holder ends it and not the gateway's, which it knows too
+    let revoke_by = |by: &str, key: &str| {
+        crate::user::apply_header_keys_scoped(Some(by), None, &["git", "tasks", "gateway"]).unwrap();
+        let parameters: BTreeMap<String, Value> = [("loginKey".to_string(), Value::string(key))].into();
+        let out =
+            crate::service::call::sync(&format!("{SERVICES}.revoke#UserHeldKey"), &parameters).unwrap_or_default();
+        let errors = ExecutionContext::with_current(|ctx| {
+            let text = ctx.message().errors_text().join("\n");
+            ctx.message().clear();
+            text
+        })
+        .unwrap_or_default();
+        crate::user::logout().unwrap();
+        (out.get("revoked") == Some(&Value::Bool(true)), errors)
+    };
+    let (revoked, errors) = revoke_by(&tasks, &gateway);
+    assert!(!revoked && errors.contains("ends only itself"), "{errors}");
+    crate::user::login_user_key_for(&gateway, "gateway").unwrap();
+    crate::user::logout().unwrap();
+    let (revoked, errors) = revoke_by(&tasks, &tasks);
+    assert!(revoked, "{errors}");
+    assert!(!signs_in(&tasks, "/rest/s1/mantle/my/tasks"), "ended");
+    assert!(revoke_by(&gateway, &gateway).0);
+    assert!(revoke_by(&git, &git).0);
+}
+
 /// An SSH key, an access token and an app password are made only after a sign-in in the last five minutes (SEC-ADM-03,
 /// SEC-ADM-07, SEC-COM-21), so a session or key that came without one cannot make itself lasting credentials. A token
 /// lasts at most 366 days and is git's alone (SEC-PFS-61): git and the git REST take it, every other login refuses it, as
@@ -365,31 +482,23 @@ fn credentials_need_a_recent_sign_in_and_an_access_token_is_for_git_alone() {
     crate::user::login_user_key_for(&token, crate::user::ACCESS_TOKEN_SCOPE).unwrap();
     assert_eq!(crate::user::login_key_kind(), Some(crate::user::LoginKeyKind::Token));
     crate::user::logout().unwrap();
-    let scope = crate::user::request_key_scope("/rest/s1/moqui/git/R1/commits");
+    // the scopes a path takes are what its REST resource declares (key-scope): the framework's own here
+    crate::service::install_rest(context.factory(), &[framework_rest()]);
+    let scopes = |path: &str| crate::user::request_key_scopes(path).to_vec();
+    let git_scopes = scopes("/rest/s1/moqui/git/R1/commits");
+    let git_scopes: Vec<&str> = git_scopes.iter().map(String::as_str).collect();
     assert!(
-        crate::user::apply_header_keys(Some(&token), None, scope).unwrap(),
+        crate::user::apply_header_keys_scoped(Some(&token), None, &git_scopes).unwrap(),
         "the git REST takes it"
     );
     crate::user::logout().unwrap();
-    assert_eq!(
-        crate::user::request_key_scope("/rest/s1/moqui/hosting/repository"),
-        Some("git")
-    );
-    assert_eq!(
-        crate::user::request_key_scope("/rest/s1/moqui/git/../../mantle/orders"),
-        None
-    );
-    assert_eq!(crate::user::request_key_scope("/apps/git"), None);
-    // SEC-RTE-85: a token for git alone makes no key for another service, and ends none
-    assert_eq!(
-        crate::user::request_key_scope("/rest/s1/moqui/hosting/offer"),
-        Some("git")
-    );
-    assert_eq!(
-        crate::user::request_key_scope("/rest/s1/moqui/hosting/gatewayKey"),
-        None
-    );
-    assert_eq!(crate::user::request_key_scope("/rest/s1/moqui/hosting/keyRevoke"), None);
+    assert_eq!(scopes("/rest/s1/moqui/hosting/repository"), ["git"]);
+    assert!(scopes("/rest/s1/moqui/git/../../mantle/orders").is_empty());
+    assert!(scopes("/apps/git").is_empty());
+    // SEC-RTE-85: a token for git alone makes no key for another service, and ends no other key
+    assert_eq!(scopes("/rest/s1/moqui/hosting/offer"), ["git"]);
+    assert!(scopes("/rest/s1/moqui/hosting/gatewayKey").is_empty());
+    assert_eq!(scopes("/rest/s1/moqui/hosting/keyRevoke"), ["git", "tasks", "gateway"]);
 
     // a token made before tokens had a scope is git's too
     {
@@ -404,4 +513,81 @@ fn credentials_need_a_recent_sign_in_and_an_access_token_is_for_git_alone() {
     assert!(refused_everywhere(&token), "an older token opens no login but git's");
     crate::user::login_user_key_for(&token, crate::user::ACCESS_TOKEN_SCOPE).unwrap();
     crate::user::logout().unwrap();
+}
+
+/// A scoped key's login runs its request as the key's user while the web session keeps its own identity (none here):
+/// the session moves to no new id, the request declines it, the HTTP log names the user, and the session bound again
+/// later has nobody in it.
+#[test]
+fn a_scoped_keys_login_is_held_for_its_request_and_never_the_sessions() {
+    let (facade, context) = entered();
+    let _entered = context.enter();
+    crate::service::load_definitions().unwrap();
+    {
+        let _authz = context.disable_authz();
+        let mut row = facade.make_value("moqui.security.UserAccount").unwrap();
+        row.set("userId", Value::string("keys.eve"));
+        row.set("username", Value::string("keys.eve"));
+        row.create(&facade).unwrap();
+    }
+    let (made, errors) = call_as("keys.eve", "create#UserScopedKey", &[("scope", Value::string("tasks"))]);
+    assert!(errors.is_empty(), "{errors}");
+    let key = to_plain_string(&made["loginKey"]);
+    // an anonymous session the client already holds
+    let held = {
+        let guard = crate::user::bind(context.factory(), None, None, false).unwrap();
+        crate::user::session::set_visit("visit-eve", "visitor-eve");
+        // a password sign-in waiting for its second factor, which the key's login leaves as it is
+        crate::user::session::set_session_attribute("moquiPreAuthcUsername", Some("keys.eve"));
+        guard.session_id()
+    };
+    {
+        let _request = crate::user::session::RequestSessionScope::begin();
+        let guard = crate::user::session::bind_id(context.factory(), Some(&held), false).unwrap();
+        assert!(crate::user::apply_header_keys_scoped(Some(&key), None, &["tasks"]).unwrap());
+        assert_eq!(crate::user::current_username().unwrap().as_deref(), Some("keys.eve"));
+        assert_eq!(
+            crate::user::session::stored_user_id(),
+            None,
+            "the session never holds it"
+        );
+        assert!(crate::user::session::session_declined());
+        assert_eq!(guard.session_id(), held, "no new id");
+        assert_eq!(
+            crate::user::session::http_log_identity().username.as_deref(),
+            Some("keys.eve")
+        );
+        // what the request writes to the session's attributes is the request's
+        crate::user::note_header_login();
+    }
+    assert!(!crate::user::session::identity_held(), "the hold ends with its request");
+    {
+        let _guard = crate::user::session::bind_id(context.factory(), Some(&held), false).unwrap();
+        assert_eq!(
+            crate::user::current_user_id().unwrap(),
+            None,
+            "the held session has nobody in it"
+        );
+        assert_eq!(
+            crate::user::session::session_attribute("moquiPreAuthcUsername").as_deref(),
+            Some("keys.eve"),
+            "the pending second factor is the session's still"
+        );
+        assert_eq!(crate::user::session::session_attribute("moquiHeaderLogin"), None);
+    }
+    // a key whose login fails (its account disabled) leaves the session's own identity, and no hold
+    {
+        let _authz = context.disable_authz();
+        facade
+            .find("moqui.security.UserAccount")
+            .unwrap()
+            .eq("userId", Value::string("keys.eve"))
+            .update_all([("disabled".to_string(), Value::string("Y"))])
+            .unwrap();
+    }
+    let _request = crate::user::session::RequestSessionScope::begin();
+    let _guard = crate::user::session::bind_id(context.factory(), Some(&held), false).unwrap();
+    assert!(crate::user::apply_header_keys_scoped(Some(&key), None, &["tasks"]).is_err());
+    assert!(!crate::user::session::identity_held());
+    assert_eq!(crate::user::current_user_id().unwrap(), None);
 }

@@ -26,9 +26,9 @@
                 if (encodeURIComponent(scene).replace(/%[0-9a-f]{2}/gi, 'x').length > Number(ec.factory.getConfValue('board@max-document-bytes'))) {
                     ec.message.addError(ec.l10n.localize('Snapshot too large')); return }
                 let content
-                try { content = JSON.parse(scene) } catch (_) { ec.message.addError('Invalid snapshot scene'); return }
+                try { content = JSON.parse(scene) } catch (_) { ec.message.addError(ec.l10n.localize('Invalid snapshot scene')); return }
                 const images = Array.isArray(content?.elements) ? content.elements.filter(e => e?.type === 'image') : []
-                if (images.length !== 1 || !images[0].locked || images[0].fileId !== 'capture') { ec.message.addError('Snapshot needs a locked frame'); return }
+                if (images.length !== 1 || !images[0].locked || images[0].fileId !== 'capture') { ec.message.addError(ec.l10n.localize('Snapshot needs a locked frame')); return }
                 content.files = {capture:{id:'capture',mimeType:'image/png',attachmentName:'capture.png',created:Date.now()}}
                 pageText = JSON.stringify(content)
                 try { ec.resource.script('component://framework/service/org/moqui/resource/WikiBoardScene.js').parseScene(pageText) }

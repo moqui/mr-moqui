@@ -630,7 +630,9 @@ where
     // a CI token whose answer says it was found good is recorded for web protection, here and on an edge node in front
     let ci_token = crate::guard::ci_credential(request.uri().path(), request.headers());
     let uri_length = request.uri().path_and_query().map_or(0, |whole| whole.as_str().len());
-    let refused = if !host_allowed(web, &raw_host, peer.via) {
+    let refused = if !crate::guard::host_port_valid(&raw_host) {
+        Some(plain(400, "the Host header's port is not a number"))
+    } else if !host_allowed(web, &raw_host, peer.via) {
         Some(plain(421, "this server does not answer for that host name"))
     } else if uri_length > limits.max_uri {
         Some(plain(414, "the request URI is too long"))

@@ -179,7 +179,7 @@ along with this software (see the LICENSE.md file). If not, see
             allow-remote="false">
         <implements service="org.moqui.dev.InstanceServices.check#Database"/></service>
 
-    <!-- ========== Managed instances (plans/Vault-Instances.md §4; docs/Run-Deploy.md "Managed instances") ==========
+    <!-- ========== Managed instances (plans/archive/Vault-Instances.md §4; docs/Run-Deploy.md "Managed instances") ==========
         Rust (crates/moqui-instance), over the container driver CI's runs use (moqui_lib::docker). Each service needs the
         sealed INSTANCE_ADMIN unless authorization is disabled. No parameter or result holds a secret: what an instance
         needs is a vault item by binding, made and deposited by its provision, or leased. -->
@@ -285,7 +285,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="provision" noun="AppInstance" type="rust" location="moqui_instance::services::provision_app_instance"
             allow-remote="false" transaction="ignore">
-        <description>Provision the instance and its dependencies not made yet (plans/Vault-Instances.md §4.3): the
+        <description>Provision the instance and its dependencies not made yet (plans/archive/Vault-Instances.md §4.3): the
             credentials its kinds make, deposited; its database and user, made with the admin login; its volumes,
             network and container with secrets as files; started and checked. One that opens vault items runs only
             under leaseId (a lease this server holds, asked for this provision and opened by an approver) or its
@@ -363,7 +363,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
-    <!-- ========== Deploys (plans/Vault-Instances.md §4.6, M3; docs/tools/Component-Deploy.md "A deploy over the link") ==========
+    <!-- ========== Deploys (plans/archive/Vault-Instances.md §4.6, M3; docs/tools/Component-Deploy.md "A deploy over the link") ==========
         The gate (a passed run of the environment's required pipeline for the commit), the lease its approval opens (or
         the environment's machine access), a backup first, the roll one instance at a time (a cluster member drained over
         the link), the annotations, and rollback to the versions an action recorded, refused across a schema change. -->
@@ -460,7 +460,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="statusEnumId"/>
         </out-parameters>
     </service>
-    <!-- Monitor (plans/Vault-Instances.md §4.8) -->
+    <!-- Monitor (plans/archive/Vault-Instances.md §4.8) -->
     <service verb="get" noun="InstanceFleet" type="rust" location="moqui_instance::services::get_instance_fleet"
             allow-remote="false" transaction="ignore">
         <description>The fleet screen's rows: each instance (not removed) by environment, with its kind, version, health
@@ -499,7 +499,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="cancelled" type="Boolean"/></out-parameters>
     </service>
 
-    <!-- Rotation (plans/Vault-Instances.md §4.7, M5; crates/moqui-instance/src/rotate) -->
+    <!-- Rotation (plans/archive/Vault-Instances.md §4.7, M5; crates/moqui-instance/src/rotate) -->
     <service verb="rotate" noun="Credential" type="rust" location="moqui_instance::rotate::services::rotate_credential"
             allow-remote="false" transaction="ignore">
         <description>The kinds' rotate service (InstanceKindSecret.rotateService): one instance's secret, now, under the

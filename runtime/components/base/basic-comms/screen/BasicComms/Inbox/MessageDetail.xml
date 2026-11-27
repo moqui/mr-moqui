@@ -100,10 +100,12 @@ along with this software (see the LICENSE.md file). If not, see
             inboxUrl = detail && detail.threadKey ? '/qapps/' + (appRoot || 'BasicComms') + '/Inbox?view=all&thread=' + encodeURIComponent(detail.threadKey) : null
             replyUrl = detail ? (detail.kind === 'email' && detail.emailMessageId ? '/qapps/' + (appRoot || 'BasicComms') + '/Inbox/Compose?replyToEmailMessageId=' + encodeURIComponent(detail.emailMessageId)
                     : (detail.communicationEventId ? '/qapps/' + (appRoot || 'BasicComms') + '/Inbox/Compose?replyToCommEventId=' + encodeURIComponent(detail.communicationEventId) : null)) : null
-            // the .eml and the print are this screen's own, under whichever app mounts it (COM-UI-016)
+            // the .eml and the print are this screen's own, under whichever app mounts it (COM-UI-016); the print goes through
+            // /apps, as /qapps renders only html and its html-print would be the document wrapper alone (COM-UI-038)
             hasEml = !!(detail && detail.kind === 'email')
-            printParams = detail ? (detail.emailMessageId ? {emailMessageId: detail.emailMessageId, renderMode: 'html-print'}
-                    : {communicationEventId: detail.communicationEventId, renderMode: 'html-print'}) : {}
+            printUrl = detail ? '/apps/' + (appRoot || 'BasicComms') + '/Inbox/MessageDetail?' + (detail.emailMessageId
+                    ? 'emailMessageId=' + encodeURIComponent(detail.emailMessageId) : 'communicationEventId=' + encodeURIComponent(detail.communicationEventId))
+                    + '&renderMode=html-print' : null
             statusColor = !detail ? 'grey-7' : (/BOUNCED|CANCEL/.test(detail.statusId || '') ? 'negative' : (/SENT|RECEIVED|VIEWED/.test(detail.statusId || '') ? 'info'
                     : (detail.statusId === 'ES_DRAFT' ? 'grey-7' : 'primary')))
             statusHtml = String((detail && detail.statusText) || '').replace(/[<>&"]/g, (ch) => ({'<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;'})[ch])
@@ -136,7 +138,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <link url="${replyUrl}" url-type="plain" text="Reply" icon="sym_o_reply" condition="replyUrl"/>
                         <link url="downloadEml" text="Download .eml" icon="sym_o_download" link-type="anchor" target-window="_blank" condition="hasEml"
                                 parameter-map="{emailMessageId:detail.emailMessageId}"/>
-                        <link url="." text="Print" icon="sym_o_print" link-type="anchor" target-window="_blank" parameter-map="printParams"/>
+                        <link url="${printUrl}" url-type="plain" text="Print" icon="sym_o_print" link-type="anchor" target-window="_blank" condition="printUrl"/>
                         <link url="resend" text="Resend" icon="sym_o_forward_to_inbox" btn-type="warning" condition="detail.canResend"
                                 confirmation="Send this message again to its recipients?" parameter-map="{emailMessageId:detail.emailMessageId}"/>
                         <container-dialog id="LinkRecordDialog" button-text="Link to a record" icon="sym_o_add_link" width="520">

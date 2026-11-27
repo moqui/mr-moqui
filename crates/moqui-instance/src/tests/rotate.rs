@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! M5's Tests column (plans/Vault-Instances.md §6), against the fake engine and a fake of the instances' link: a
+//! M5's Tests column (plans/archive/Vault-Instances.md §6), against the fake engine and a fake of the instances' link: a
 //! rotation changes the source, then the instances, then the item, and puts the old value back when the check fails;
 //! an item past its age shows on the fleet screen. And the rules beside them: nothing changes while an instance that
 //! uses the credential is not up and unsealed, the rotation list and its by-hand items, a binding's own age, the offer a

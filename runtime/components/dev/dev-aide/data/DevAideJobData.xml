@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The Dev AIDE's jobs (plans/archive/design-dev-aide.md 21.8): every five minutes, the worktrees of sessions whose conversation
+    ended while a run of it was still at work, or while the server was down, are ended (WorktreeServices). -->
+<entity-facade-xml type="seed-initial">
+    <moqui.service.job.ServiceJob jobName="sweep_DevAideWorktrees_frequent" description="End the worktrees of ended Assist sessions"
+            serviceName="org.moqui.devaide.WorktreeServices.sweep#ConversationWorktrees" cronExpression="0 0/5 * * * ?"
+            paused="N" errorHistoryOnly="Y"/>
+</entity-facade-xml>

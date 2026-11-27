@@ -14,7 +14,7 @@ spec({ server: false, timeout: 60 })
 browser.runInPage({
     styles: ["/libs/quasar/quasar.prod.css", "/css/WebrootVue.qvt.css"],
     scripts: ["/libs/vue/vue.runtime.global.prod.js", "/libs/quasar/quasar.umd.prod.js", "/libs/quasar/lang/en-US.umd.prod.js",
-        "/js/MoquiLib.js", "/js/MoquiL10n.js", "/js/WebrootChat.js", "/js/WebrootExt.js", "/js/WebrootEmoji.js", "/js/WebrootCrypto.js", "/js/WebrootVue.qvt.render.js", "/js/WebrootVue.qvt.js",
+        "/js/MoquiLib.js", "/js/MoquiL10n.js", "/js/WebrootChat.js", "/js/WebrootChatExpiry.js", "/js/WebrootExt.js", "/js/WebrootEmoji.js", "/js/WebrootCrypto.js", "/js/WebrootVue.qvt.render.js", "/js/WebrootVue.qvt.js",
         "/files/crates/moqui-desktop/shell/js/bundled-screens.js"],
     test: "/files/component/basic-comms/test/client/pages/ShellSync.page.js",
 })

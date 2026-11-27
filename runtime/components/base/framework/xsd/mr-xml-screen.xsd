@@ -184,6 +184,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:element ref="subscreens" minOccurs="0"/>
             <xs:element ref="shell-providers" minOccurs="0"/>
             <xs:choice minOccurs="0" maxOccurs="unbounded">
+                <xs:element ref="client-library"/>
                 <xs:element ref="ext-action"/>
                 <xs:element ref="ext-panel"/>
             </xs:choice>
@@ -191,6 +192,11 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:group ref="section-elements"/>
         </xs:sequence>
     </xs:extension></xs:complexContent></xs:complexType></xs:element>
+
+    <xs:element name="client-library"><xs:complexType>
+        <xs:attribute name="library" type="xs:token" use="required"/>
+        <xs:attribute name="render-mode" type="xs:token" use="required"/>
+    </xs:complexType></xs:element>
 
     <xs:element name="screen-extend"><xs:annotation>
         <xs:documentation>
@@ -220,6 +226,7 @@ along with this software (see the LICENSE.md file). If not, see
                 is added at the end. Labels never identify an entry.
             </xs:documentation></xs:annotation></xs:element>
             <xs:choice minOccurs="0" maxOccurs="unbounded">
+                <xs:element ref="client-library"/>
                 <xs:element ref="ext-action"><xs:annotation><xs:documentation>Replaces the screen's ext-action of the
                     same name, the whole descriptor, or adds one.</xs:documentation></xs:annotation></xs:element>
                 <xs:element ref="ext-panel"><xs:annotation><xs:documentation>Replaces the screen's ext-panel of the
@@ -600,6 +607,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:element ref="call-target"/>
             <xs:element ref="chat-target"/>
             <xs:element ref="chat-calendar"/>
+            <xs:element ref="shell-indicator"/>
         </xs:choice>
     </xs:complexType></xs:element>
     <xs:attributeGroup name="provider-attributes">
@@ -657,6 +665,12 @@ along with this software (see the LICENSE.md file). If not, see
         user's calendar, changes or removes it (org.moqui.comms.ProviderInterfaces.chat#CalendarEntry, called by
         org.moqui.chat.ChatCalServices): given only the event's room, message and an action, it reads the event and the
         user's answer itself. With no provider a chat event is offered as an .ics file.</xs:documentation></xs:annotation></xs:element>
+    <xs:element name="shell-indicator" type="provider-type"><xs:annotation><xs:documentation>The status chips of the shell's
+        app bar for the current user, on every screen (the /shellIndicators transition, asked when the page starts and again
+        when a push its answer names comes or after its refreshInSeconds): called with no parameters, it answers indicators, each
+        {key, label, icon, tone, url, title, refreshInSeconds (from now)}, an empty list when there is nothing to show, and
+        refreshOn [{topicPrefix, events}], the pushes on which the shell asks again. A component's conf may answer it too,
+        for every signed-in user (mr-moqui-conf.xsd screen-facade shell-providers: the framework's live location).</xs:documentation></xs:annotation></xs:element>
 
     <!-- ================ Declared actions and panels ================ -->
     <xs:attributeGroup name="ext-item-attributes">
@@ -835,7 +849,7 @@ along with this software (see the LICENSE.md file). If not, see
     <xs:element name="page-action"><xs:annotation><xs:documentation>
         An action of the Assist drawer's header on every app page of a user who may open this app: it opens the drawer with
         the agent named, whose suggested prompts for the page follow (the dev-aide's "Customize this screen" on a dev
-        instance, plans/design-dev-aide.md 3.5). A user without the agent is not offered it. With screen instead, it opens
+        instance, plans/archive/design-dev-aide.md 3.5). A user without the agent is not offered it. With screen instead, it opens
         that screen of this app (a path under its root) with the page's path and query as the page parameter (the
         dev-aide's "Open in screen builder").
     </xs:documentation></xs:annotation><xs:complexType>
@@ -1468,6 +1482,81 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="line-numbers" type="boolean" default="true"/>
         <xs:attribute name="highlight-lines" type="xs:string"><xs:annotation><xs:documentation>Lines to mark, as 3,5-7;
             the first is scrolled to.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="condition" type="xs:string"/>
+        <xs:attribute name="style" type="xs:string"/>
+    </xs:complexType></xs:element>
+
+    <xs:element name="map-view" substitutionGroup="AllWidgets"><xs:annotation><xs:documentation>
+        A map (plans/archive/Maps.md §3.2): in qvt an m-map, which loads js/WebrootMap.js and the vendored OpenLayers bundle when it
+        first mounts and draws the profile's basemap (the Natural Earth country outline when no provider is configured), its
+        layers and the places given, with a scale line, attribution, a coordinate readout, Locate me (on request only) and,
+        with pick, the choice of a point; when the map cannot draw it lists the places instead. Bound over the screen's data
+        in a server-static screen. In html and print the places as text (label, coordinates, precision, source) and the
+        attribution, with no map image; in the text modes the same as lines; in tui the map component, the places as a list
+        over a braille land mask. Coordinates are WGS84 degrees, longitude first wherever they are a pair or a list
+        (GeoJSON's order); the text shows latitude, longitude, as people read them. Labels and other texts are plain
+        text, escaped where they are shown. The attributes may hold ${} expressions. A record shown through an adapter
+        is resolved by the effective configuration (config-transition), never by the browser.
+    </xs:documentation></xs:annotation><xs:complexType>
+        <xs:attribute name="id" type="xs:string"/>
+        <xs:attribute name="profile" type="xs:string"><xs:annotation><xs:documentation>A MapProfile ID (moqui.maps):
+            its basemap and default layers. Empty for the user's maps.profile preference, else the installation's
+            (OUTLINE when seeded); a profile that is missing or disabled is drawn as the outline.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="layers" type="xs:string"><xs:annotation><xs:documentation>Registered MapLayer IDs to draw
+            over the basemap besides the profile's, comma separated. An ID the effective configuration does not offer
+            the user is left out with a named status, never an error of the map.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="center" type="xs:string"><xs:annotation><xs:documentation>The initial center as
+            longitude,latitude in WGS84 degrees (-87.63,41.88). Empty for the place given, else the
+            profile's.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="zoom" type="xs:string"><xs:annotation><xs:documentation>The initial zoom level, 0 (the
+            world) to 22.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="extent" type="xs:string"><xs:annotation><xs:documentation>The area to fit as
+            west,south,east,north in WGS84 degrees; west greater than east crosses the antimeridian. It wins over center
+            and zoom, as an approximate position (a postal area) shows its area rather than a point.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="projection" type="xs:string"><xs:annotation><xs:documentation>The view's projection:
+            EPSG:3857 (Web Mercator, the default) or EPSG:4326. Interchange stays WGS84 whatever it
+            is.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="adapter" type="xs:string"><xs:annotation><xs:documentation>A registered map adapter's key
+            (moqui.maps.MapAdapter): the record's place, label, precision and actions come from its get#RecordMapContext
+            after its own access check, through the effective configuration. The browser sends only this
+            key.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="record-key" type="xs:string"><xs:annotation><xs:documentation>With adapter, an expression of
+            the record's primary key fields ({partyId}).</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="address-purpose" type="xs:string"><xs:annotation><xs:documentation>With adapter, which of
+            the record's locations: the adapter's own purpose ID; empty for its default.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="longitude" type="xs:string"><xs:annotation><xs:documentation>A plain point's longitude,
+            WGS84 degrees (-180 to 180). A plain point grants no record access.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="latitude" type="xs:string"><xs:annotation><xs:documentation>A plain point's latitude, WGS84
+            degrees (-90 to 90).</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="label" type="xs:string"><xs:annotation><xs:documentation>The plain point's label, plain
+            text.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="precision" type="xs:string"><xs:annotation><xs:documentation>How exact the plain point is: a
+            GeoPointPrecision enumId (GPP_USER_CONFIRMED, GPP_ADDRESS_MATCH, GPP_STREET_RANGE, GPP_POSTAL_AREA,
+            GPP_PLACE_ESTIMATE), shown as its description, or a text.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="source" type="xs:string"><xs:annotation><xs:documentation>Where the plain point came from,
+            in words (a data set and its edition, a user's confirmation).</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="points" type="xs:string"><xs:annotation><xs:documentation>An expression of a list of places,
+            each a map of longitude and latitude (or lon and lat), label, precisionEnumId (or precision), sourceText (or
+            source) and an optional id; drawn after the plain point. A place whose coordinates are not WGS84 degrees is
+            left out and logged.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="features" type="xs:string"><xs:annotation><xs:documentation>An expression of a GeoJSON
+            FeatureCollection in WGS84 (each feature's label property its label), such as a record's area or line as the
+            effective configuration's features give it, drawn over the basemap in qvt; the other modes list the places only.
+            At most 1000 features are taken.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="config-transition" type="xs:string"><xs:annotation><xs:documentation>A transition of the
+            screen (or a path) that answers the map's effective configuration as JSON (the shape documented in
+            js/WebrootMap.js and docs/ui/Qvt-Client.md); m-map asks it with profileId, layerIds, adapterKey, recordKey
+            (JSON) and addressPurpose, and the view and places given here win over its answer. Empty draws the places on
+            the outline.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="height" type="xs:string"><xs:annotation><xs:documentation>The map's CSS height; 360px by
+            default.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="pick" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>The user may choose a
+            point: a click, Enter at the map's center from the keyboard, or a typed latitude and longitude. m-map emits
+            pick with {lon, lat} (WGS84) and dispatches the DOM event m-map-pick with that detail from its element; the
+            tui map takes the latitude and longitude as numbers. A choice saves nothing by itself.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="pick-form" type="xs:string"><xs:annotation><xs:documentation>With pick, the name of a form of the
+            screen whose latitude and longitude fields a choice fills (in qvt), so the form posts the point: the local-map
+            dialog's Choose location. In the other modes the fields are typed.</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="condition" type="xs:string"/>
         <xs:attribute name="style" type="xs:string"/>
     </xs:complexType></xs:element>

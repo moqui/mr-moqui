@@ -437,6 +437,72 @@ fn a_changed_copy_of_a_context_value_is_noticed() -> Result<(), Error> {
     Ok(())
 }
 
+/// A run keeps the entity value objects it made, so a cell that comes back is the object the script holds, but only the
+/// most recently used: a script that read a row at a time for a long while held every row until it ended (a loop
+/// polling a ServiceJob's run row grew about 5 KB a read, a GB over a 20,000-row import). A value handed back to the
+/// host is kept again, so the cell returned after it is still that object.
+#[test]
+fn a_run_keeps_only_its_most_recently_used_entity_values() -> Result<(), Error> {
+    use quickjs_oxide::engine::api::core::{Scope, Value as JsValue};
+    clear_context_stack();
+    push_context_frame();
+    let cell_of = |id: usize| -> Arc<crate::script::runtime::EntityCell> {
+        let mut fields = std::collections::BTreeMap::new();
+        fields.insert(Arc::from("orderId"), Value::string(format!("O{id}")));
+        let entity = crate::entity::EntityValue::from_read_fields(Arc::from("mantle.order.OrderHeader"), fields);
+        Arc::new(std::sync::Mutex::new(entity))
+    };
+    let order = cell_of(0);
+    let rows = super::engine::MAX_ENTITY_OBJECTS * 3;
+    set_context_name(
+        "rows",
+        Value::List((1..=rows).map(|id| Value::Object(HostObject(cell_of(id)))).collect()),
+    )?;
+    let context = super::engine::context_for_tests();
+    let global = context.global_object().unwrap();
+    let engine = || super::engine::current().expect("an oxide run");
+    context
+        .define_function(&global, "kept", 0, move |_scope: &mut Scope<'_>| -> Result<JsValue, _> {
+            Ok(JsValue::Int(i32::try_from(engine().kept_entities()).unwrap_or(i32::MAX)))
+        })
+        .unwrap();
+    context
+        .define_function(&global, "handBack", 1, move |scope: &mut Scope<'_>| -> Result<JsValue, _> {
+            let arg = scope.arg(0);
+            super::convert::to_host(scope, &engine(), &arg).map_err(|conv| super::engine::host_error(scope, conv))?;
+            Ok(JsValue::Undefined)
+        })
+        .unwrap();
+    context
+        .define_function(&global, "theOrder", 0, move |scope: &mut Scope<'_>| -> Result<JsValue, _> {
+            let host = Value::Object(HostObject(order.clone()));
+            super::convert::to_js(scope, &engine(), &host).map_err(|conv| super::engine::host_error(scope, conv))
+        })
+        .unwrap();
+    // every row read, then the order handed back: the run keeps no more than the most recent, the order among them
+    let found = value(
+        "(() => { const o = theOrder(); let ids = 0; for (const row of rows) ids += row.orderId.length; \
+         const most = kept(); handBack(o); return [ids, most, theOrder() === o, theOrder().orderId]; })()",
+    )?;
+    let Value::List(found) = found else {
+        panic!("the result: {found:?}");
+    };
+    let number = |at: usize| match &found[at] {
+        Value::I32(number) => usize::try_from(*number).unwrap_or(usize::MAX),
+        other => panic!("{at}: {other:?}"),
+    };
+    assert!(number(0) > rows, "every row was read");
+    let most = number(1);
+    assert!(
+        most <= super::engine::MAX_ENTITY_OBJECTS,
+        "{most} kept of {rows} rows read, more than {}",
+        super::engine::MAX_ENTITY_OBJECTS
+    );
+    assert_eq!(found[2], Value::Bool(true), "the order handed back is the object returned after");
+    assert_eq!(found[3], Value::string("O0"));
+    Ok(())
+}
+
 #[test]
 fn an_entity_value_reads_its_fields() -> Result<(), Error> {
     clear_context_stack();

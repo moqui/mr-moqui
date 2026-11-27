@@ -1,4 +1,4 @@
-# The vault crypto of plans/Vault-Instances.md §3.2, with no I/O and no framework dependency: the formats, Argon2id and
+# The vault crypto of plans/archive/Vault-Instances.md §3.2, with no I/O and no framework dependency: the formats, Argon2id and
 # HKDF, the HPKE wraps, Ed25519 signatures on wraps and leases, the item AEAD with its associated data, the lease and
 # machine-access seals, Shamir shares and zeroized key types. Linked natively by the server, the shells and the moqui
 # command, and built to wasm32-unknown-unknown for the browser (feature wasm), so a vault opens the same way everywhere.

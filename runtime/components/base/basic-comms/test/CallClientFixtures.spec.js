@@ -43,3 +43,14 @@ feature("the client specs' callees exist with their password", {
         thirdId != null
     }
 })
+
+feature("the encrypted chat walk has its own users and devices", {
+    when() {
+        const users = ["a", "b", "c"].map(suffix => ensureUser("chat.crypto." + suffix, "Chat Crypto " + suffix.toUpperCase()))
+        return {users}
+    },
+    then({users}) {
+        users.length == 3
+        users.every(id => !!id)
+    }
+})

@@ -555,11 +555,56 @@ interface ServiceResultFuture<S extends string> {
     get(timeoutMillis?: number): MoquiOut<S>;
 }
 
+/** A file or location a data load could not load, and why. */
+interface DataLoadFailure {
+    location: string;
+    reason: string;
+}
+
+/** `ec.entity.makeDataLoader()`: each setter returns the loader; `load`, `check`, `checkInfo` and `list` run it. */
+interface EntityDataLoader {
+    location(location: string): EntityDataLoader;
+    locationList(locations: Iterable<string>): EntityDataLoader;
+    xmlText(text: string): EntityDataLoader;
+    csvText(text: string): EntityDataLoader;
+    jsonText(text: string): EntityDataLoader;
+    dataTypes(types: Iterable<string>): EntityDataLoader;
+    componentNameList(names: Iterable<string>): EntityDataLoader;
+    defaultValues(values: MoquiMap): EntityDataLoader;
+    csvEntityName(name: string): EntityDataLoader;
+    csvFieldNames(names: Iterable<string>): EntityDataLoader;
+    csvDelimiter(delimiter: string): EntityDataLoader;
+    csvCommentStart(commentStart: string): EntityDataLoader;
+    csvQuoteChar(quoteChar: string): EntityDataLoader;
+    transactionTimeout(seconds: number): EntityDataLoader;
+    useTryInsert(flag: boolean): EntityDataLoader;
+    onlyCreate(flag: boolean): EntityDataLoader;
+    dummyFks(flag: boolean): EntityDataLoader;
+    disableEntityEca(flag: boolean): EntityDataLoader;
+    disableAuditLog(flag: boolean): EntityDataLoader;
+    disableFkCreate(flag: boolean): EntityDataLoader;
+    disableDataFeed(flag: boolean): EntityDataLoader;
+    messageNoActionFiles(flag: boolean): EntityDataLoader;
+    restrictSensitiveEntities(flag: boolean): EntityDataLoader;
+    protectUserAccounts(flag: boolean): EntityDataLoader;
+    /** The records loaded. A file or location that failed is in the messages and, as `{location, reason}`, in failures; a text that fails throws. */
+    load(messages?: string[], failures?: DataLoadFailure[]): number;
+    /** With no argument the messages of what did not match; with an array, the fields checked. */
+    check(): string[];
+    check(messages: string[]): number;
+    /** With no argument the diff rows; with arrays, the fields checked. */
+    checkInfo(): MoquiMap[];
+    checkInfo(diffInfoList: MoquiMap[], messages?: string[]): number;
+    /** The values of the records the data has, with nothing written; a location that failed is in the arrays given. */
+    list(messages?: string[], failures?: DataLoadFailure[]): EntityList;
+}
+
 // ---- server ec: the facade surface ----
 
 interface MoquiEntityFacade {
     find<N extends (keyof MoquiEntityMap & string) | (string & {})>(entityName: N): EntityFind<N>;
     makeValue<N extends (keyof MoquiEntityMap & string) | (string & {})>(entityName: N): EntityValue<N>;
+    makeDataLoader(): EntityDataLoader;
     getDataDocuments(...args: unknown[]): MoquiMap[];
     /** Flatten a graph to unpersisted values, inheriting keys and skipping read-only relationships. */
     getValueListFromPlainMap(graph: MoquiMap, entityName: string): EntityList;
@@ -727,6 +772,9 @@ interface MoquiResourceFacade {
     /** The versions under a location, newest first; on git:// each commit under the path with the paths it changed. */
     getChangeLog(location: string, limit?: number | null): { versionName: string; previousVersionName: string | null; versionDate: unknown; userId: string | null; note: string | null; paths: string[] }[];
     getTreeSize(location: string): number;
+    /** What the storage names a file's content by (`location#versionName`: that version's), to pin a revision: the tag
+     * and size to give sendPinnedResourceResponse. Null for a file on disk or nothing there. */
+    getContentAddress(location: string): { kind: "git-lfs" | "git-object" | "content-blob" | "digest"; id: string; size: number; tag: string } | null;
     /** A version written back as the newest; the new version's name. */
     restoreVersion(location: string, versionName: string, note?: string | null): string | null;
     getVersionBytes(location: string, versionName: string): Uint8Array | null;
@@ -742,14 +790,16 @@ interface MoquiResourceFacade {
     readSheetPreview(location: string, sheetName?: string | null, maxRows?: number | null, maxCols?: number | null): { sheetNames: string[]; sheetName: string; rows: unknown[][]; truncated: boolean } | null;
     /** The text of a PDF, spreadsheet or text file (maxChars, 100000), kept under runtime://tmp/file-text by cacheKey; "" when it has none; null with cacheOnly when not extracted yet. */
     extractText(location: string, cacheKey: string, maxChars?: number | null, cacheOnly?: boolean | null): string | null;
-    /** A zip of the files at the entries' locations, each under its path; an entry that cannot be read is in failures. */
-    writeZip(target: string, entries: { path: string; location: string }[]): { count: number; size: number; failures: { path: string; error: string }[] };
+    /** A zip of the files at the entries' locations, each under its path, deflated or with stored true as it is; an entry that cannot be read is in failures. */
+    writeZip(target: string, entries: { path: string; location: string; stored?: boolean | null }[]): { count: number; size: number; failures: { path: string; error: string }[] };
     /** The digest of text's UTF-8 bytes, lower-case hex (sha256 by default). */
     digestText(text: string | null, algorithm?: "sha256" | "sha1" | null): string;
     /** HMAC-SHA256 of message with key (both UTF-8), lower-case hex or unpadded base64url; throws without a key. */
     hmac(key: string, message: string | null, encoding?: "hex" | "base64url" | null): string;
     /** A signed grant for subject, valid ttlSeconds (3600); checkGrant verifies it with the same key. */
     makeGrant(key: string, subject: string, ttlSeconds?: number | null): string;
+    /** Text in a new file of the server's user alone (0600, a random name under runtime/tmp/private); its runtime:// location. For text a job reads and deletes, never its parameters. */
+    writePrivateFile(text: string | null, extension: string): string;
     checkGrant(key: string, subject: string, token: string | null): boolean;
 }
 
@@ -874,8 +924,8 @@ interface MoquiUserFacade {
     getVisitorId(): string | null;
     /** The user of the visit, which a later login in the same visit does not change. */
     getVisitUserId(): string | null;
-    /** Whether the login key logged its user in; a key that does not adds an error message. */
-    loginUserKey(loginKey: string): boolean;
+    /** Whether the login key logged its user in; a key that does not adds an error message. With `scope` (`git`), a key made for that scope logs in too, and a key of another scope does not. */
+    loginUserKey(loginKey: string, scope?: string): boolean;
     /** The old password of a password change, behind the login gate: true when it is the current password or the reset password still in date. A null or unknown userId, a locked or terminated account and a wrong password are all false and take as long; a wrong one counts as a failed login. */
     checkOldPassword(userId: string | null, oldPassword: string | null): boolean;
     /** A second factor's code that stands in for a login (validate#UserAuthcFactorCode with countFailure), behind the login gate: the id of the factor it verified, else null. A still disabled account is counted and its code not checked, no more of a user's codes are compared at once than the failures the account has left (one past them is counted and not compared), and a wrong code counts as a failed login. */
@@ -912,9 +962,12 @@ interface MoquiUserFacade {
     setEffectiveTime(time: TimestampInput | null): void;
     readonly passwordRules: { minLength: number; minDigits: number; minOthers: number };
     getPreference(key: string): string | null;
-    /** The kind of login key this request's user signed in with (the `api_key` or `login_key` header, or `loginUserKey`): `device` (a device's key), `token` (an access token, which only git over HTTP and the git REST take), `session` (a `getLoginKey` key) or `scoped` (a key for one service, which only that service's login takes); null for any other login. */
+    /** The kind of login key this request's user signed in with (the `api_key` or `login_key` header, or `loginUserKey`): `device` (a device's key), `token` (an access token or a key for git alone, which only git over HTTP and the REST resources that declare `key-scope` git take), `session` (a `getLoginKey` key) or `scoped` (a key for one service, tasks or the gateway, which only that service's login and the REST resources that declare its `key-scope` take); null for any other login. A key made for one service signs in its request alone, never the web session. */
     readonly loginKeyKind: "device" | "token" | "session" | "scoped" | null;
     getLoginKeyKind(): "device" | "token" | "session" | "scoped" | null;
+    /** The id of the `UserLoginKey` this request's user signed in with, with `loginKeyKind` (its stored hash, as the device list names a device; never the key itself); null for any other login. For this request only. */
+    readonly loginKeyId: string | null;
+    getLoginKeyId(): string | null;
     /** The `moqui.server.Visit` id of this session, null outside one. */
     readonly visitId: string | null;
     getVisitId(): string | null;
@@ -1005,6 +1058,10 @@ interface MoquiWebFacade {
     sendTextResponse(text: string | null, contentType?: string | null, filename?: string | null): void;
     /** The bytes at a resource location, inline or (the default) as an attachment. 404 when nothing is there. */
     sendResourceResponse(location: string, inline?: boolean): void;
+    /** One revision of a file (`location#versionName`, read by range where the storage can) when it is still the
+     * content recorded by getContentAddress (its tag and size; else 409 and false), with that tag as its ETag; cached
+     * private, a GET's range and If-Range answered, nothing written. */
+    sendPinnedResourceResponse(location: string, checksum: string, size: number, inline?: boolean, filename?: string | null): boolean;
     saveScreenLastInfo(path?: string | null, parameters?: MoquiMap | null): void;
     getPageMessages(): MoquiPageMessage[];
     getScreenHistory(): { name: string; url: string; urlNoParams: string }[];
@@ -1283,9 +1340,11 @@ interface MoquiRestResponse {
     getReasonPhrase(): string | null;
     /** Throws for a status outside 200 to 299; else the response. */
     checkError(): MoquiRestResponse;
-    text(): string | null;
+    /** The body as text; with maxBytes, a body larger than that throws, and a kept body (send()) is not read past it. */
+    text(maxBytes?: number): string | null;
     getBodyText(): string | null;
-    bytes(): Uint8Array | null;
+    /** The body as received; maxBytes as text's. */
+    bytes(maxBytes?: number): Uint8Array | null;
     jsonObject(): unknown;
     /** The body parsed as XML. */
     xmlNode(): unknown;
@@ -1540,7 +1599,7 @@ interface MoquiServerEc {
     readonly search: { [method: string]: (...args: unknown[]) => unknown };
     /** The model calls of app code, in a build with the `llm` feature. */
     readonly llm: MoquiLlmFacade;
-    /** A vault value, only from the lease the code runs under (plans/Vault-Instances.md §3.7). */
+    /** A vault value, only from the lease the code runs under (plans/archive/Vault-Instances.md §3.7). */
     readonly vault: MoquiVaultFacade;
 }
 
@@ -1821,6 +1880,10 @@ interface MoquiStringUtilities {
     cleanChatHtml(text: string | null): string;
     /** Markdown with its raw HTML cleaned to the safe set and the markdown around it kept. */
     cleanMarkdown(text: string | null): string;
+    /** Whether text has a match of pattern, matched in linear time (the Rust `regex` syntax: no back-references or look-around); throws for a pattern over 1000 characters or one that does not compile. */
+    regexTest(pattern: string, text: string | null, ignoreCase?: boolean | null): boolean;
+    /** Text with each character of each match of pattern replaced by mask's first character (`*` by default), matched as regexTest matches. */
+    regexMask(pattern: string, text: string | null, mask?: string | null, ignoreCase?: boolean | null): string;
     urlEncodeIfNeeded(text: string | null): string;
     encodeAsciiFilename(filename: string | null): string;
     /** A formatter of a mask (`#` digit, `U`/`L` letter, `A` letter or digit, `?` letter, `H` hex, `*` any), or null for no mask. */

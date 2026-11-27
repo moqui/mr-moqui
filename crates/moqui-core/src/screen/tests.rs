@@ -862,6 +862,34 @@ fn script_send_json_response_writes_the_web_slot() {
     assert!(text.contains("loggedIn"), "{text}");
 }
 
+/// SEC-RTE-90: a JSON response whose errors are all validation errors (the client's input) is a 400, with the errors in
+/// it; one with any other error is a 500.
+#[test]
+fn a_json_response_with_only_validation_errors_is_a_400() {
+    let context = ExecutionContextFactory::test_context();
+    let _entered = context.enter();
+    let send = |script: &str| {
+        let _web = crate::web::install(BTreeMap::new());
+        crate::script::run_script(script).unwrap();
+        let (status, _headers, body, _sent) = crate::web::take_output();
+        crate::context::ExecutionContext::with_current(|ec| ec.message().clear_errors());
+        (status, String::from_utf8(body).unwrap())
+    };
+    let (status, body) = send(
+        "ec.message.addValidationError(null, 'newPasswordVerify', 'update#Password', 'Field is required'); \
+         ec.web.sendJsonResponse({done:false})",
+    );
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("Field is required"), "{body}");
+    let (status, body) = send(
+        "ec.message.addValidationError(null, 'f', 's', 'Field is required'); ec.message.addError('The database is down'); \
+         ec.web.sendJsonResponse({done:false})",
+    );
+    assert_eq!(status, 500, "{body}");
+    let (status, _) = send("ec.message.addError('No such order'); ec.web.sendJsonResponse({done:false})");
+    assert_eq!(status, 500);
+}
+
 /// As Java's `sendTextResponseInternal`: a text response sent while the message facade has an error is the errors,
 /// with a 500.
 #[test]

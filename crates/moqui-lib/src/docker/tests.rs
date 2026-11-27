@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The driver for containers that stay, against the fake engine as Docker and as Podman (plans/Vault-Instances.md §6
+//! The driver for containers that stay, against the fake engine as Docker and as Podman (plans/archive/Vault-Instances.md §6
 //! M1): secrets go in files and nowhere else, and each call says what it should. On a real socket it is the opt-in
 //! `docker_real` test.
 
@@ -21,7 +21,7 @@ use std::time::Duration;
 use serde_json::json;
 use zeroize::Zeroizing;
 
-use super::fake::FakeEngine;
+use super::fake::{FakeEngine, RemoveFault};
 use super::{
     demux_logs, ContainerSpec, DockerHost, Engine, HealthCheck, HostAddress, Mount, MountKind, PortBinding,
     RestartPolicy, SecretFile, SECRETS_LABEL,
@@ -633,4 +633,33 @@ fn logs_are_read_framed_or_raw_and_a_host_address_shows_no_key() {
         .unwrap_err()
         .message()
         .contains("not reached over plain http"));
+}
+
+/// A removal the engine answers with an error is taken as done when the container is gone all the same, as rootless
+/// Podman leaves it when only its network's cleanup fails (Ubuntu 26.04's AppArmor profile for pasta refuses Podman's
+/// signal); one the engine refused, the container still there, is the engine's error.
+#[test]
+fn a_removal_whose_container_is_gone_is_done_though_its_network_cleanup_failed() {
+    let engine = FakeEngine::podman();
+    let host = engine.host();
+    let id = host.create_spec(&database()).unwrap();
+    engine.remove_fault(Some(RemoveFault::Refused));
+    let err = host.remove_container(&id, true).unwrap_err();
+    assert!(err.message().contains("device or resource busy"), "{err}");
+    assert!(err.message().contains("500"), "{err}");
+    assert!(host.inspect(&id).unwrap().is_some());
+    engine.remove_fault(Some(RemoveFault::NetworkCleanup));
+    host.remove_container(&id, true).unwrap();
+    assert!(host.inspect(&id).unwrap().is_none());
+    // the plain removal too
+    engine.remove_fault(None);
+    let other = host
+        .create_spec(&ContainerSpec {
+            name: "pg-other".to_string(),
+            ..database()
+        })
+        .unwrap();
+    engine.remove_fault(Some(RemoveFault::NetworkCleanup));
+    host.remove(&other).unwrap();
+    assert!(host.inspect(&other).unwrap().is_none());
 }

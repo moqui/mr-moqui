@@ -8,7 +8,7 @@
 // states are the call screen's (Comms-Messaging phase 4). An acceptance test (a walk at two widths):
 // ./moq accept basic-comms --spec ChatLabels
 const SCRIPTS = ["/libs/vue/vue.runtime.global.prod.js", "/libs/quasar/quasar.umd.prod.js", "/libs/quasar/lang/en-US.umd.prod.js",
-    "/js/MoquiLib.js", "/js/MoquiL10n.js", "/js/WebrootChat.js", "/js/WebrootExt.js", "/js/WebrootCrypto.js", "/js/WebrootVue.qvt.render.js",
+    "/js/MoquiLib.js", "/js/MoquiL10n.js", "/js/WebrootChat.js", "/js/WebrootChatExpiry.js", "/js/WebrootExt.js", "/js/WebrootVue.qvt.render.js",
     "/js/WebrootVue.qvt.js", "/files/crates/moqui-desktop/shell/js/bundled-screens.js",
     "/files/component/basic-comms/test/acceptance/client/pages/ChatLabels.page.js"]
 const STYLES = ["/libs/material-symbols/outlined.css", "/libs/quasar/quasar.prod.css", "/css/WebrootVue.qvt.css", "/files/crates/moqui-desktop/shell/shell.css"]

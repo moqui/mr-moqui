@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Hosted roots (plans/archive/design-dev-aide.md 4.10), implemented in the dev-aide crate (src/hosted.rs): a repository of
+    this server's git hosting at a branch, a root of the Workspace with no working tree. The Workspace's file services
+    read it through org.moqui.git.GitServices as the user, and each Save is a commit by the user (commit#GitFiles, with
+    the update right and the branch rules a push meets). Not loaded or run. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
+    <service verb="get" noun="HostedRepositories" type="rust" location="dev_aide::hosted::get_hosted_repositories" allow-remote="false" read-only="true">
+        <description>The repositories of this server's hosting the user may update and that are not archived (the first
+            200 the user may view), each with its branches, the default first. The extend tier.</description>
+        <out-parameters>
+            <parameter name="repositories" type="List"><description>Maps: repositoryId, description, repositoryKind,
+                defaultBranch, branches</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="HostedRoot" type="rust" location="dev_aide::hosted::get_hosted_root" allow-remote="false" read-only="true">
+        <description>A hosted root's repository and branch, and whether the user may commit to it: refused when they
+            may not update the repository, it is archived, or the branch's rules refuse a direct commit.</description>
+        <in-parameters><parameter name="rootId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="repositoryId"/>
+            <parameter name="branch"/>
+            <parameter name="canCommit" type="Boolean"/>
+            <parameter name="refusal"/>
+        </out-parameters>
+    </service>
+    <service verb="store" noun="HostedRoot" type="rust" location="dev_aide::hosted::store_hosted_root" allow-remote="false">
+        <description>Add a hosted root: a repository the user may update, at one of its branches (the default one when
+            empty), or set the label of one there. The extend tier.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="branch"/>
+            <parameter name="label"/>
+        </in-parameters>
+        <out-parameters><parameter name="rootId"/></out-parameters>
+    </service>
+    <service verb="delete" noun="HostedRoot" type="rust" location="dev_aide::hosted::delete_hosted_root" allow-remote="false">
+        <description>Take a hosted root out of the Workspace: by the user who added it, or the full tier. The repository
+            stays as it is.</description>
+        <in-parameters><parameter name="rootId" required="true"/></in-parameters>
+    </service>
+</services>

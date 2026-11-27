@@ -1,14 +1,18 @@
 # moqui-build: the image pipeline jobs run in (docs/interfaces/Pipelines.md "Images", plans/Dogfood.md §8.3). The same
 # Debian base as the server's image (Containerfile), with what a build and a test run of MR Moqui need
 # (docs/Build-Test.md): the pinned Rust toolchain, a C toolchain, git, bash and curl, and the libraries the embedded
-# Postgres loads. Node is not needed. Chromium and a Java runtime for OpenSearch are optional, by build argument.
+# Postgres loads. Node builds the verified webroot libraries. Chromium and a Java runtime for OpenSearch are optional, by build argument.
 # It holds the moqui binary too: the runner is `moqui ci-run`, and the built-in pipeline of a component repository
 # runs `./moq test` in the MR Moqui tree at /opt/moqui.
 #
 # Build it with podman/build.sh --build-image, which stages the binary and the tree. A job's container has a
 # read-only root, no privilege and the user 1000, with a volume at /workspace (the checkout is /workspace/src) and a
 # tmpfs at /tmp, so everything a job writes is under /workspace or /tmp: CARGO_HOME and HOME are there.
+FROM docker.io/library/node:24.22.3-bookworm-slim AS node
 FROM docker.io/library/debian:13-slim
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm
 
 ARG RUST_VERSION
 ARG WITH_CHROMIUM=0
@@ -27,6 +31,7 @@ RUN apt-get update \
         libgcc-s1 \
         libgssapi-krb5-2 \
         liblz4-1 \
+        libpq5 \
         libssl3t64 \
         libxml2 \
         libzstd1 \
@@ -34,6 +39,8 @@ RUN apt-get update \
         pkg-config \
         procps \
         tar \
+        tzdata \
+        tzdata-legacy \
         unzip \
         xz-utils \
         zip \

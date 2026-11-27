@@ -751,6 +751,24 @@ fn the_code_view_is_bound_over_the_scope_in_a_static_template() {
     assert!(!html.contains("{{x}}"), "{html}");
 }
 
+/// A map-view of a server-static screen is bound over the scope: its configuration an object of the attributes (texts
+/// expanded, points and record-key expressions of the screen's data), which m-map checks in the browser; the transition is
+/// its path, the condition a v-if; no place is in the template.
+#[test]
+fn the_map_view_is_bound_over_the_scope_in_a_static_template() {
+    let (html, _) = static_fixture("mapview");
+    for expected in [
+        r#"<m-map id="Offices" :config="{'profileId':'OUTLINE','zoom':'3','points':[].concat(((places)||[])),'pick':true}" class="q-mt-sm"></m-map>"#,
+        r#"'points':[{'lon':'-0.1278','lat':ec.resource.expandNoL10n('${lat}',{'lat':()=&gt;(lat)}),'label':'London &amp; Co','precision':'GPP_USER_CONFIRMED','source':'Entered'}]"#,
+        r#"config-url="/mapConfig" height="240px"></m-map>"#,
+        r#"<template v-if="(false)"><m-map"#,
+        r#"'adapter':'party','recordKey':({partyId: 'P1'})}"#,
+    ] {
+        assert!(html.contains(expected), "{expected} in {html}");
+    }
+    assert!(!html.contains("Chicago"), "{html}");
+}
+
 /// A split of a server-static screen is the same m-container-split, its panes the side and main slots, the selection read from
 /// the URL in the browser: nothing in it is request data. A wizard or stack panel reads its steps from the menu data.
 #[test]
@@ -1194,7 +1212,10 @@ fn only_a_server_static_screen_answers_its_actions_package() {
     assert_eq!(plain_row["rowId"], "R1", "{plain_rows}");
     assert_eq!(plain_row["statusId"], "S1", "{plain_rows}");
     assert_eq!(plain_row["rowListed"], "listed", "{plain_rows}");
-    assert!(plain_row.get("rowNote").is_none() && plain_row.get("unshown").is_none(), "{plain_rows}");
+    assert!(
+        plain_row.get("rowNote").is_none() && plain_row.get("unshown").is_none(),
+        "{plain_rows}"
+    );
     // a placeholder screen: hideNav, which its form-lists read outside the template, and nothing of its parent's but
     // what the parent's always-actions list in client-context
     let child = json_of(&get("/Parent/Child/actions", &[("hideNav", "true")]));
@@ -1212,6 +1233,56 @@ fn only_a_server_static_screen_answers_its_actions_package() {
     let plain = get("/Plain/actions", &[]);
     assert_eq!(plain.status, 404, "{}", plain.body_text());
     assert!(!plain.body_text().contains("internal"), "{}", plain.body_text());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A server-static template sent from its cache still names the screen's qvt client libraries, which the client loads
+/// before it makes the component; a screen without any sends no header.
+#[test]
+fn a_server_static_template_names_its_client_libraries() {
+    let context = ExecutionContextFactory::test_context();
+    let factory = context.factory();
+    let dir = std::env::temp_dir().join(format!("moqui-static-libraries-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root")).unwrap();
+    std::fs::write(
+        dir.join("Root.xml"),
+        "<screen require-authentication=\"false\"><widgets><subscreens-active/></widgets></screen>",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Root/Charted.xml"),
+        "<screen require-authentication=\"false\" server-static=\"qvt\">\
+         <client-library library=\"app/charts\" render-mode=\"qvt\"/><client-library library=\"site/maps\" render-mode=\"qvt\"/>\
+         <widgets><label text=\"chart\"/></widgets></screen>",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Root/Plain.xml"),
+        "<screen require-authentication=\"false\" server-static=\"qvt\"><widgets><label text=\"plain\"/></widgets></screen>",
+    )
+    .unwrap();
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let get = |path: &str| {
+        make_render(factory)
+            .root_screen(root.clone())
+            .screen_path(path)
+            .render()
+            .unwrap_or_else(|err| panic!("{path}: {err}"))
+    };
+    for _ in 0..2 {
+        let charted = get("/Charted.qvt");
+        assert_eq!(
+            header(&charted, "X-Moqui-Qvt"),
+            "static-template",
+            "{}",
+            charted.body_text()
+        );
+        assert_eq!(header(&charted, "X-Moqui-Libraries"), "app/charts,site/maps");
+    }
+    let plain = get("/Plain.qvt");
+    assert_eq!(header(&plain, "X-Moqui-Qvt"), "static-template");
+    assert_eq!(plain.header("X-Moqui-Libraries"), None);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

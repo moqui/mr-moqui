@@ -564,6 +564,11 @@ fn the_native_call_tells_the_page_its_audio_picture_in_picture_and_hold() {
     assert!(tell_script("muteToggle", "true")
         .unwrap()
         .ends_with("moqui.call.toggleMute()"));
+    // the native screen share's leg ended
+    let screen = tell_script("screen", r#"{"state":"ended","reason":"lost"}"#).unwrap();
+    assert!(screen.contains("typeof moqui.call.nativeScreen === \"function\" && moqui.call.nativeScreen({"));
+    assert!(screen.contains("\"state\":\"ended\""));
+    assert!(tell_script("screen", "true").is_none());
     // the phone's contacts allowed later: the chat names its phone rooms again
     assert!(tell_script("contacts", "true")
         .unwrap()

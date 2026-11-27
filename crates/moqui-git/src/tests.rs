@@ -238,6 +238,68 @@ fn an_import_from_an_https_source_connects_only_to_a_public_address() {
     );
 }
 
+/// SEC-GIT-86: an import from a caller's source is fetched with no credential: a host that answers 401 is never offered
+/// the token the administrator stored for the repository's own remoteUrl.
+#[test]
+fn an_import_from_a_callers_source_offers_no_stored_token() {
+    use std::io::{Read as _, Write as _};
+    let fixture = fixture_conf(
+        "import-token",
+        Some(r#"<moqui-conf><git-server webhook-private-network="true"/></moqui-conf>"#),
+    );
+    let _entered = fixture.context.enter();
+    define(
+        &fixture.entity,
+        "tok",
+        "db",
+        None,
+        Some("https://git.example.com/own.git"),
+    );
+    {
+        let mut row = fixture
+            .entity
+            .find(super::GIT_REPOSITORY)
+            .unwrap()
+            .eq("repositoryId", Value::string("tok"))
+            .one()
+            .unwrap()
+            .unwrap();
+        row.set("username", Value::string("deploy"));
+        row.set("accessToken", Value::string("STORED_TOKEN_9K"));
+        row.update(&fixture.entity).unwrap();
+    }
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let kept = std::sync::Arc::clone(&seen);
+    std::thread::spawn(move || {
+        for stream in listener.incoming().take(4) {
+            let Ok(mut stream) = stream else { break };
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+            let mut head = [0u8; 8192];
+            let read = stream.read(&mut head).unwrap_or(0);
+            kept.lock()
+                .unwrap()
+                .push(String::from_utf8_lossy(&head[..read]).into_owned());
+            let _ = stream.write_all(
+                b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"x\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+        }
+    });
+    let provider = crate::provider(fixture.context.factory()).expect("git provider");
+    let refused = provider.import("tok", Some(&format!("http://127.0.0.1:{port}/other.git")));
+    assert!(refused.is_err());
+    let token = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, "deploy:STORED_TOKEN_9K");
+    let requests = seen.lock().unwrap().clone();
+    assert!(!requests.is_empty(), "the source was asked");
+    for request in &requests {
+        assert!(
+            !request.contains(&token) && !request.to_ascii_lowercase().contains("authorization:"),
+            "{request}"
+        );
+    }
+}
+
 #[test]
 fn a_db_repository_exports_and_imports_with_the_same_ids() {
     let fixture = fixture("db");
@@ -1020,6 +1082,133 @@ fn lfs_files_through_git_locations_are_content_blobs_behind_pointers() {
     assert_eq!((gc.blobs, gc.bytes), (1, image.len() as u64));
 }
 
+/// A pinned revision of an LFS file (`location#version`) opens by range from its content blob with its oid as the
+/// strong tag, never read whole (`plans/archive/Maps.md` §5); the content address tells an LFS object from a git object, at
+/// the head and at a version.
+#[test]
+fn a_version_of_an_lfs_file_opens_by_range_and_names_its_object() {
+    use moqui_core::context::ContentKind;
+    let fixture = fixture("lfs-version");
+    let _entered = fixture.context.enter();
+    define(&fixture.entity, "maps", "db", None, None);
+    let resources = fixture.context.factory().resource();
+    let provider = crate::provider(fixture.context.factory()).unwrap();
+    provider
+        .setup_lfs("maps", &super::attributes::DEFAULT_LFS_PATTERNS)
+        .unwrap();
+    let first: Vec<u8> = (0..300_000u32).map(|n| (n * 7 % 251) as u8).collect();
+    let second: Vec<u8> = first.iter().rev().copied().collect();
+    let location = "git://maps/world.pmtiles";
+    resources.write_bytes(location, &first).unwrap();
+    let pinned = resources.current_version(location).unwrap().unwrap().version_name;
+    resources.write_bytes(location, &second).unwrap();
+    resources.write_bytes("git://maps/style.json", b"{}").unwrap();
+
+    let (first_oid, second_oid) = (
+        moqui_core::resource::blob::blob_id(&first),
+        moqui_core::resource::blob::blob_id(&second),
+    );
+    let at_version = format!("{location}#{pinned}");
+    let opened = resources.open(&at_version).unwrap().unwrap();
+    assert_eq!(opened.stat.size, first.len() as u64);
+    assert_eq!(
+        opened.source.tag(),
+        Some(format!("sha256-{first_oid}")),
+        "a content blob, not the whole version"
+    );
+    assert_eq!(opened.source.read_at(123_456, 1000).unwrap(), first[123_456..124_456]);
+    assert_eq!(resources.read_version(location, &pinned).unwrap(), Some(first.clone()));
+
+    // each address has the tag its content is opened with, the checksum a pinned response compares
+    let address = |location: &str| {
+        let address = resources.content_address(location).unwrap().unwrap();
+        let opened = resources.open(location).unwrap().unwrap();
+        assert_eq!(opened.source.tag().as_deref(), Some(address.tag.as_str()), "{location}");
+        assert_eq!(opened.stat.size, address.size, "{location}");
+        address
+    };
+    let head = address(location);
+    assert_eq!(
+        (head.kind, head.id, head.size),
+        (ContentKind::GitLfs, second_oid, second.len() as u64)
+    );
+    let old = address(&at_version);
+    assert_eq!((old.kind, old.id), (ContentKind::GitLfs, first_oid.clone()));
+    assert_eq!(old.tag, format!("sha256-{first_oid}"));
+    let style = address("git://maps/style.json");
+    assert_eq!((style.kind, style.size), (ContentKind::GitObject, 2));
+    assert_eq!(style.tag, format!("git-{}", style.id));
+    // an LFS pointer whose content the repository does not have is a git object: the pointer is what reads
+    let pointer = format!(
+        "version https://git-lfs.github.com/spec/v1\noid sha256:{}\nsize 999999\n",
+        "0".repeat(64)
+    );
+    resources
+        .write_bytes("git://maps/missing.txt", pointer.as_bytes())
+        .unwrap();
+    let missing = address("git://maps/missing.txt");
+    assert_eq!(
+        (missing.kind, missing.size),
+        (ContentKind::GitObject, pointer.len() as u64)
+    );
+    assert!(resources.content_address("git://maps/none.pmtiles").unwrap().is_none());
+    assert!(resources.open(&format!("{location}#0000000")).unwrap().is_none());
+
+    // a `db` repository's large object that is not in LFS: a version of it is read by range from its content blob
+    let raw = "git://maps/raw.bin";
+    let large: Vec<u8> = (0..9 * 1024 * 1024u32).map(|n| (n * 13 % 251) as u8).collect();
+    resources.write_bytes(raw, &large).unwrap();
+    let pinned = resources.current_version(raw).unwrap().unwrap().version_name;
+    resources.write_bytes(raw, b"replaced").unwrap();
+    let opened = resources.open(&format!("{raw}#{pinned}")).unwrap().unwrap();
+    assert_eq!(opened.stat.size, large.len() as u64);
+    assert_eq!(
+        opened.source.tag(),
+        Some(format!("sha256-{}", moqui_core::resource::blob::blob_id(&large)))
+    );
+    assert_eq!(
+        opened.source.read_at(8_000_000, 64).unwrap(),
+        large[8_000_000..8_000_064]
+    );
+    let address = address(&format!("{raw}#{pinned}"));
+    assert_eq!(
+        (address.kind, address.size),
+        (ContentKind::GitObject, large.len() as u64)
+    );
+    // a db repository's large object is opened from its content blob, and its address has that tag
+    assert_eq!(
+        address.tag,
+        format!("sha256-{}", moqui_core::resource::blob::blob_id(&large))
+    );
+}
+
+/// A version of a file in a `local` (filesystem) repository that is not in LFS: its object is deflated, so it is read
+/// whole on the first read, tagged by its blob id, as its content address says.
+#[test]
+fn a_version_in_a_local_repository_is_read_whole_and_tagged_by_its_blob() {
+    use moqui_core::context::ContentKind;
+    let fixture = fixture("local-version");
+    let _entered = fixture.context.enter();
+    let path = fixture.dir.join("maps.git");
+    define(&fixture.entity, "atlas", "local", Some(&path), None);
+    let resources = fixture.context.factory().resource();
+    let location = "git://atlas/style.json";
+    resources.write_bytes(location, b"{\"v\":1}").unwrap();
+    let pinned = resources.current_version(location).unwrap().unwrap().version_name;
+    resources.write_bytes(location, b"{\"v\":22}").unwrap();
+    let at_version = format!("{location}#{pinned}");
+    let opened = resources.open(&at_version).unwrap().unwrap();
+    let address = resources.content_address(&at_version).unwrap().unwrap();
+    assert_eq!(
+        (address.kind, address.size, opened.stat.size),
+        (ContentKind::GitObject, 7, 7)
+    );
+    assert_eq!(opened.source.tag(), Some(format!("git-{}", address.id)));
+    assert_eq!(address.tag, format!("git-{}", address.id));
+    assert_eq!(opened.source.read_at(2, 100).unwrap(), b"v\":1}");
+    assert_eq!(resources.content_address(location).unwrap().unwrap().size, 8);
+}
+
 type GcHook = std::sync::Arc<dyn Fn() + Send + Sync>;
 
 static LOCAL_GC_HOOK: std::sync::Mutex<Option<(String, GcHook)>> = std::sync::Mutex::new(None);
@@ -1217,4 +1406,50 @@ fn gc_removes_a_dead_pushs_quarantine() {
     provider.gc(Some("left"), &gc_options(false)).unwrap();
     assert!(!dead.exists(), "the dead push's quarantine is removed");
     assert!(own.exists(), "this process's is kept");
+}
+
+/// A read of one object is an equality on both columns of the primary key, and no other index of `GitObject` (nor a
+/// foreign key's) leads with `repositoryId`: with one that did, Postgres read a repository added or grown since the
+/// table was analyzed through that index, reckoning it at one row, and filtered every object of the repository for
+/// each object read (a commit of 2,001 files took 10 s, a listing of them 14 s).
+#[test]
+fn an_object_is_read_by_its_primary_key() {
+    let tape = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let entity = moqui_core::testing::open_with_tape(std::sync::Arc::clone(&tape));
+    entity
+        .with_entity(super::db::GIT_OBJECT, |definition, _, _| {
+            for index in &definition.indexes {
+                assert_ne!(
+                    index.fields.first().map(String::as_str),
+                    Some("repositoryId"),
+                    "{}",
+                    index.name
+                );
+            }
+            for relationship in definition
+                .relationships
+                .iter()
+                .filter(|rel| rel.relationship_type == "one")
+            {
+                let first = relationship.key_pairs.first().map(|(field, _)| field.as_str());
+                assert_ne!(
+                    first,
+                    Some("repositoryId"),
+                    "the foreign key to {}",
+                    relationship.related
+                );
+            }
+            Ok(())
+        })
+        .unwrap();
+    let store = super::db::DbStore::new(entity, "code", super::db::object_cache());
+    let id = gix::ObjectId::from_hex(b"8ab686eafeb1f44702738c8b0f24f2567c36da6d").unwrap();
+    assert_eq!(store.object_size(&id).unwrap(), None);
+    let statements = moqui_lib::sync::lock(&tape).clone();
+    let read = statements
+        .iter()
+        .find(|sql| sql.contains("git_object") && sql.starts_with("SELECT"))
+        .expect("a read of the object");
+    assert!(read.contains(r#""object_id" = ?"#), "{read}");
+    assert!(!read.contains(" IN ("), "{read}");
 }

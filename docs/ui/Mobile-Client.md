@@ -108,6 +108,36 @@ own `/qapps`), never both:
   (`account::base_url`), so the debug app reaches `http://localhost:8080` through `adb reverse tcp:8080 tcp:8080`. Start the server with the loopback HTTP settings in [Build-Test](../Build-Test.md#android-app). When the verifier cannot start the app makes no request, answers from the store, and the
   commands that need the server say so.
 
+## Offline map packages
+
+The phone keeps downloaded map regions as the desktop does ([Desktop-Client](Desktop-Client.md#offline-map-packages):
+the store under `client/data/`, `packages-max-mb`, the checks, the shell's `/__moqui-app/maps/` path and the
+commands, and the bundled offline Maps screen: [Maps, Offline packages](../tools/Maps.md#offline-packages)); what differs is who
+runs the download (plans/archive/Maps-Offline.md §2.4) and the screen's "Download only on Wi-Fi" choice, the phone's alone.
+
+- **`PackageDownloadWorker`** (WorkManager, `PackageDownloadWorker.kt`, a `ListenableWorker` on a thread of its own, so
+  one map download runs at a time and WorkManager's threads stay for `FlushWorker` and `RegisterWorker`; a second
+  package's download waits until the first's run ends): `packages_download` hands it the account, package and revision
+  (`MobileHost::start_package_download`, `PackageDownloadWorker.start` through JNI), one work per account and package, a
+  new revision replacing the work of another, and a tap on Download again replacing a work that has not run (its "only
+  on Wi-Fi" choice with it). It waits for a network, an unmetered one when the shell asks `wifiOnly` ("only on Wi-Fi"),
+  and storage not low, and calls Rust (`Native.packageDownload`, `native::package_download`) with the process's client,
+  made from the store when WorkManager started the process. A cut, a server error or WorkManager's stop (the network or
+  Wi-Fi gone, its ten minutes up: `onStopped` pauses the run at its next range, `Native.packagePause`, its own run only:
+  the work's id is the run's) keeps the part file, and the next run, backing off from 30 seconds, goes on from its
+  length. Its 20th run tells Rust it is the last: a failure then (but a pause, which WorkManager runs again), no
+  network, or an exception in the worker (`Native.packageGiveUp`) is made final (`retry` false), so the shell does not
+  show a download nothing will run again; the part is kept for the next download asked. A cancel, a delete, and an
+  account's data deleted cancel its works (`cancelUniqueWork`, `cancelAllWorkByTag`).
+- **The bridge:** `moquiDesktop.packages` on the shell's page only (`list`, `download(packageId, revision, wifiOnly)`,
+  `cancel`, `remove`, `status`, `addresses`), with the load's nonce.
+- **The offline screen** in the one webview: the drawer's Maps opens Maps' Browse (the server's page, in the webview)
+  when the server answers and the shell's offline Maps screen when it does not; a place saved there waits in the
+  outbox, and `FlushWorker` sends it when the network is back.
+- **Android's WebView and ranges:** the patched `RustWebViewClient.kt` hands a 206 body on as it starts at its range,
+  and reads an intercepted body's length as an Int32, so no member past 2 GiB less a byte is unpacked (on every device,
+  so a package is the same everywhere); the server's `maps@package-max-bytes` (2 GiB) keeps packages under it.
+
 ## Back
 
 Android's back (the gesture or the button) asks the page first (`MainActivity.kt`'s back callback, added after
@@ -225,7 +255,9 @@ answered (plans/Mobile-Desktop.md MD6, MT2; a Rust native audio client is later)
   notifications, and asks nothing when the dialog named the microphone alone (SEC-CLI-120). Android's permission
   dialog asks for the unlock first, so on a locked phone the Answer does not ask and the page asks after the unlock.
   `CAMERA` is asked at a video call's Answer or by the page. `READ_CONTACTS` is asked at the first contacts
-  search ([The phone's dialer and contacts](#the-phones-dialer-and-contacts)). `MANAGE_OWN_CALLS`,
+  search ([The phone's dialer and contacts](#the-phones-dialer-and-contacts)). The location is asked at a chat
+  location's first use, or before the first live location share with a dialog that says why ([Live location](#live-location)).
+  `MANAGE_OWN_CALLS`,
   `FOREGROUND_SERVICE_PHONE_CALL` and `USE_FULL_SCREEN_INTENT` are granted at install; Android 14+ lets the user (and
   Google Play's policy) turn the full-screen intent off, so after the notifications question the app says why calls
   need it and opens its setting, once. The notification check fixes either later.
@@ -321,6 +353,53 @@ The call's media stays the WebView's; the native code gives it what a phone's ow
 - **The Telecom library.** These use `android.telecom` directly, and so does the calling account below:
   `androidx.core.telecom` has no managed account, and moving the self-managed calls alone is later work
   ([plans/Comms-Messaging.md §9.1](../../plans/Comms-Messaging.md)).
+
+## Sharing the screen in a call
+
+Android's WebView has no `getDisplayMedia`, so in the app **Share the screen** shares the phone's screen natively, as a
+**screen leg**: a second leg of the participant (`CltScreen`, `add#ScreenLeg`) whose only track is the screen, sent by
+the app's Rust rather than the WebView ([WebRTC, Presenting in a call](../interfaces/WebRTC.md#presenting-in-a-call);
+plans/archive/Comms-Whiteboard.md §3.6, the spike's numbers in plans/archive/MM-Spike.md).
+
+- **Capture.** The system's consent each time (`ScreenConsentActivity`, Android 14 refuses a projection kept from an
+  earlier one), then a foreground service of type `mediaProjection` (`ScreenShareService`, before the projection is
+  taken) with an ongoing notification whose **Stop sharing** ends the share. The projection draws into a
+  VirtualDisplay on a MediaCodec VP8 encoder's input surface: the phone's hardware VP8 encoder where it has one, else
+  the platform's `c2.android.vp8.encoder`. The capture keeps the screen's aspect with a long side of at most 1280
+  (`ScreenRules`), at most 15 frames a second (`KEY_MAX_FPS_TO_ENCODER`), and repeats its last frame after 250 ms of a
+  still screen so a keyframe asked for comes then. A rotation or a resize (`onCapturedContentResize`, the display's
+  change before Android 14) starts the encoder again at the new size. The app's own `FLAG_SECURE` screens (an
+  encrypted room, a view-once photo; [Screen security](#screen-security)) are black in the capture, Android's rule.
+- **Send.** Each encoded frame goes over JNI (`Native.screenFrame`) to the leg's thread in Rust (`src/screen.rs`), a
+  str0m client of the media server (the workspace's str0m, on the aws-lc-rs the app already links): one send-only VP8
+  video, its candidates from the server's answer (a UDP socket for each local address that reaches one, IPv4 and IPv6,
+  and ICE-TCP when the server offers it). The media server's keyframe requests ask the encoder for one
+  (`PARAMETER_KEY_REQUEST_SYNC_FRAME`), and the TWCC estimate sets its bitrate (85 % of it, 150 kbps to 2.5 Mbps,
+  within what the encoder takes).
+- **Signalling through the page.** The page holds the call and its socket, so it signals for the leg: it makes the leg
+  for its own leg, gets the app's offer (`screen_offer`), joins the leg on its socket, hands the server's answer and
+  offers to the app (`screen_answer`, `screen_remote_offer`), asks for the stage with the leg, and publishes its video
+  as the screen. No credential leaves the page, and the server checks the leg is the socket user's. The leg's frames
+  never reach the page's own connection. The commands are the shell's (`moquiDesktop.screenStart` and the rest of
+  `src/bridge.js`).
+- **The end.** Stop (in the call or the notification), a take over or a host's Stop, the page leaving the call, its
+  hold, or its socket gone end the share: the page sends the leg's `leave` and stops the app's capture, and the server
+  ends a screen leg with its page leg in any case (the WebView is paused while the app is in the background, so the
+  page cannot be relied on then). The app's leg ends by itself when its connection is lost for 10 s, and tells the page
+  (`moqui.call.nativeScreen`).
+- **An encrypted call.** In an end-to-end encrypted call the screen leg is the page device's, with a key index of its
+  own (`add#ScreenLeg` with `sframe`), and its frames are SFrame-sealed in Rust exactly as the pages' worker seals
+  theirs: the VP8 frame's first 10 bytes (a keyframe) or 3 in the clear as authenticated metadata, then the SFrame
+  header, ciphertext and tag (AES_128_GCM_SHA256_128, the `sframe` crate). Its keys are the page's to make
+  (`moqui.callKeys.addSender`): each rotation makes one for the screen leg too, sends it to the others' devices over Olm
+  as its own, and then hands it to the app (`screen_key`, the first at once, a later one a second on). The leg sends
+  nothing before its first key, and the page's own device is never sent a key of its own legs. An app without the
+  command (an older build) is refused and the page says so.
+- **Not yet.** There is no annotation over another app (Android would need a draw-over permission). A direct call
+  moves to the media server before the share starts, as a browser's share does.
+- **Tests.** The leg against the repository's media server on loopback, over UDP and ICE-TCP (`screen_tests.rs`, with
+  `moqui-rtc` as a dev-dependency); the size and bitrate rules (`ScreenRulesTest`); on the emulator, consent for
+  automation is `adb shell appops set org.moqui.mobile PROJECT_MEDIA allow` (and `appops reset` after).
 
 ## The phone's dialer and contacts
 
@@ -473,9 +552,111 @@ before it), Chat downloads the event's `.ics` file instead.
 A chat location's Use my current location (plans/Comms-Messaging.md §18.3 phase 20) is the WebView's
 `navigator.geolocation`: the manifest has `ACCESS_COARSE_LOCATION` and `ACCESS_FINE_LOCATION`, and the patched wry
 `RustWebChromeClient` asks for them at the first use (refused, Chat says how to allow it and offers to enter the place).
-The app never reads the position in the background. Open in maps hands a `geo:` URI to Android
-(`moquiDesktop.openExternal`, which takes `geo:` beside http, https, mailto, tel and sip), so the person's maps app
-opens at the place.
+Open in maps hands a `geo:` URI to Android (`moquiDesktop.openExternal`, which takes `geo:` beside http, https, mailto,
+tel and sip), so the person's maps app opens at the place. The app reads the position in the background only for a live
+location share the person started, under its notification (below).
+
+### Live location
+
+A live location share started in Maps, a chat room or a record's page (Share my location with the customer) is sent from
+the phone by the app, also while it is in the background (plans/archive/Location-Sharing.md §3.4). Who sees it, its reach,
+retention and precision are the guide [Maps, Live location](../tools/Maps.md#live-location); this is the app's part. The
+Kotlin is `LocationShare.kt` (the object and `LocationShareService`), `LocationStops.kt` (the stops kept until the
+server confirms them) and `LocationRules.kt` (JVM-tested); the Rust is `src/location.rs` with `moqui_client::location`.
+`location_allow` and `location_share_start` (as `push_test` and `contacts_search`) run on Tauri's blocking pool
+(`moqui_client_tauri::commands::blocking`, a panic answered as an error): the share's read is reqwest's blocking client,
+which panics in a debug build and blocks a runtime worker in release when run on one, and the person's answer is waited
+for there. The emulator walk `scripts/android-location-share.sh` drives it ([Tests](#tests)).
+
+- **Started by the person's Send in the app's own dialog.** A server page has `moquiDesktop.location` (`allow`, `start`,
+  `stop`, `status`; the host commands `location_allow`, `location_share_start`, `location_share_stop`,
+  `location_share_status`, each for the page's account while it is the current one). Browse's Share asks `allow` first:
+  without the location permission the app shows a dialog that says why (to send where you are to the people you chose,
+  until the time you chose, with a notification and Stop while it does), then Android's question: for an exact share
+  precise and approximate (the person may give either; given approximate only it sends the phone's approximate fixes;
+  precise is asked again only after a Not now), for an approximate share approximate alone, so where precise was never
+  given the phone's own fixes are approximate (about 3 km² on Android 12+) before the server rounds them. Not now, or
+  the dialog dismissed, answers no and no share is started. Once the share is made, `start` names it (its id alone): the
+  host reads it from the server with the account's device key (`/qapps/clientLocationShare`, `get#AppShare`: whom with,
+  until when, exact or approximate, its interval, its audience version, and that this device sends it), and the app asks
+  in its own dialog: "Send your location from this phone to Sam Smith (sam) and Family (4 members) until Fri 09:00? It
+  goes on while the app is in the background, with a notification and Stop.", Send or Not now. The words are the
+  server's: each person by name and unique username, a group with the members it reaches, "anyone with the guest link",
+  and the end with its weekday when it is not today. The dialog refuses touches through another app's window
+  (`ObscuredTouches`, and Send's own check of `FLAG_WINDOW_IS_PARTIALLY_OBSCURED`), hides other apps' overlays while it
+  shows (Android 12+, `HIDE_OVERLAY_WINDOWS`), keeps Send disabled for a second after it has the window's focus, marks
+  its text sensitive for accessibility services (Android 14+), and goes with no answer after a minute. **That native
+  dialog is the control**, and it guards two things: the start of sending from this phone, and the audience it sends to.
+  A server page's script can reach the app's IPC and ask for a start, but nothing is sent from the phone in the
+  background without the person's Send there. The share has an audience version (`LocationShare.audienceVersion`) that
+  every change of its audience that can reach someone new raises (an entry added, a group added again, whose snapshot is
+  written again; a revoke does not); the phone sends the version the person confirmed with each report, and the server
+  refuses a report of another version, or of none from a share sent from a device, with 409 `AUDIENCE_CHANGED` before it
+  writes or pushes anything. On that 409 the phone pauses the share, and a notification asks the person to open the app
+  (at once when it is in front), where the same dialog asks again with the server's words (Send sends it to that
+  version; Not now stops the share on the server; a share not read for want of a network stays paused for the next
+  time). So no position the phone sends reaches an audience the person did not confirm, and a person added sees only
+  what the server received after the audience reached them ([the reach rule](../tools/Maps.md#who-sees-what)). It does
+  not guard what the server does with the reports it gets, nor the shares a browser or another device sends. Nor does it
+  guard a page in front: with the location permission given, a server page the app shows gets the WebView's geolocation
+  with no prompt (`RustWebChromeClient` answers for the app's own origins), as any browser page with the permission
+  does, so a page in front can read the position and send it itself while it is open (the `unavailable` path's own
+  sending; its reports carry the version the page read). Send starts `LocationShareService`, a foreground service of
+  type `location` (`FOREGROUND_SERVICE_LOCATION`), only while the app is in front (`LocationShare.foreground`), with the
+  permission and notifications allowed (`LocationRules.mayStart`); `start` answers `started`, `declined` (Not now: a
+  share just made is stopped, and the page sends nothing) or `unavailable` (the page sends while it is open, as a
+  browser does). So the app has no `ACCESS_BACKGROUND_LOCATION`: Android lets a foreground service started from the app
+  in front keep reading the location once the app goes to the background. The service is not sticky: a process Android
+  ended does not start it again, and the share goes stale until its end or a Stop.
+- **The notification** (channel Location sharing, low importance, ongoing) lasts as long as the service sends: "Sharing
+  your location with Sam and 2 others until 15:30" (several shares: the first's audience and the latest end), with
+  Stop and a tap that opens the app. One the person dismisses (Android 14+ lets them) is posted again by its delete
+  intent, and the half-minute check posts it again too; with notifications turned off (Android 13+ lets the person
+  during a share) the check stops every share, on its server too, since none is sent without the notification showing.
+- **Stop** (the notification's, notifications turned off, or the permission gone while the process lives on) is
+  handled before anything else the service does: each share is no longer sent, and its stop on the server
+  (`/qapps/stopClientLocation`, so the audience is told at once) is kept in the app's preferences with the share's end,
+  tried at once on the location thread and then by `LocationStopWorker` (WorkManager, with a network, backing off from
+  30 seconds, also after the process ended) until the server says it stopped it or has no such share, or the share's end
+  has passed (`LocationRules.stopOutcome`); a "Stopping location sharing" notification shows while one waits. An answer
+  that is not the transition's JSON (a sign-in page) is a signed-out account, as for a report; a stop let go so before
+  the share's end leaves a notice ("your server could not be told; the share shows your last position until 15:30").
+  A sign-out posts the account's shares' stops, and those still waiting, while its key is still held
+  (`MobileHost::account_signing_out`), when the app can reach the server; and the server stops every active share of a
+  device key it revokes (`stop#DeviceShares`), so a sign-out with no network stops them when its pending revoke reaches
+  the server (SEC-CLI-108).
+- **The fixes.** Android's `LocationManager`, no Google Play services: the platform's `fused` provider (Android 12+),
+  else GPS for an exact share and the network's for an approximate one, else whichever is on, never GPS without the
+  precise permission (a provider the permission does not reach waits, as with none); on Android 12+ a
+  `LocationRequest` of high accuracy while an exact share is sent, else balanced. The interval is the shortest of the
+  shares': 5 seconds while the phone moves, 30 while it is still (a speed of 0.8 m/s, or 25 m from the last fix), never
+  under a share's own interval (`location@min-interval-seconds`), and an approximate share's own
+  (`location@approximate-interval-seconds`). Each fix goes to Rust on the location service's own thread (never the
+  native code's, which pushes, a call's hang-up and chat replies use), at most one report a share under way and one
+  fix waiting behind it (`LocationRules.queueFix`): `Native.reportLocation`, the host command `report_location`. A
+  `Reporter` a share keeps only the newest point not yet sent and posts it to `/qapps/reportClientLocation` through the
+  client's proxy with the account's device key, so the share's device binding (`LocationShare.userLoginKeyId`) takes
+  it, within 15 seconds (`moqui_client::location::POST_TIMEOUT`, not the proxy's ten minutes for a page's request: a
+  half-open connection gives up and the point waits). A 429 waits `retryAfterSeconds`, a stale point or another 400 is
+  passed over, `CLOCK_AHEAD` and `BEFORE_SHARE` send from then on with the server's time, a 408 or a 429 that is not the
+  transition's (a proxy, the server's tarpit) waits its `Retry-After` (else the interval, or 30 seconds), no answer
+  tries again after the interval; a point that waits is sent when its wait is over. A report on its way as the account's
+  key is renewed is taken by the server from the key the renewal replaced, for that key's few minutes' grace
+  (`LocationShare.renewedFromKeyId`); an `OTHER_DEVICE` that came while the key changed is tried again once with the new
+  key too.
+- **It stops** a share at its end, on a 410 or 404, when another device sends it (409 `OTHER_DEVICE`: a Send from here
+  in a browser or another phone), at the account's sign-out or removal (`MobileHost::account_signing_out` and
+  `account_signed_out`, `LocationShare.forgetAccount`), on Stop (the notification's or the page's), with notifications
+  off, and when the location permission is taken away: Android ends the app's process then, so sending stops and the
+  share goes stale (its audience sees the age) until its end or a Stop. With no share left the service and its
+  notification end. Each share the service no longer sends goes from Rust's reporters too (`Native.forgetLocation`),
+  and the page's `status` is the service's own list, so the page never says "sent from this phone" while nothing is.
+  Send from this device on a share another device sends takes it over (`sendFromHere`) and starts the service. The app
+  bar's chip says "sending from this phone" while the service sends, also after Browse closes.
+- **Never logged.** A position goes to no log (Kotlin's `Log`, Rust's), crash report or telemetry: the logs name a share
+  and an outcome only.
+- **The notification check** lists the location permission (precise, approximate only, or not allowed, with a Fix that
+  opens the app's settings) and, while the phone sends any, how many shares it sends.
 
 ## Screen security
 
@@ -523,12 +704,18 @@ What fills each gap of MT1 and MT2 is MT3's record ([Mobile-Desktop](../../plans
 ## Tests
 
 - `cd crates/moqui-mobile && cargo test`: the page check, where a navigation goes, the
-  sealed key store, the schemes' redirect and `fetch` handling, the build's conf, the bridge's split by origin.
+  sealed key store, the schemes' redirect and `fetch` handling, the build's conf, the bridge's split by origin, and live
+  location's ask from the page and its reports through a stand-in poster (`location_tests.rs`).
 - `cd crates/moqui-client-tauri && cargo test`: the schemes' answer, with no network.
 - `scripts/check-android.sh`: clippy for both Android targets.
 - `./gradlew :app:testUniversalDebugUnitTest` in `gen/android` (`ANDROID_HOME` set): the Kotlin rules' JVM tests
-  (`CallRules`: the ring's time, the audio route, the screen at the ear, picture-in-picture, the service's types, the
-  calling account's state, a contact's number, the contacts' question once; `ChatRules`: channels, tags, links, mute).
+  (`PackageDownloadRules`: the map download's constraints and its resume; `CallRules`: the ring's time, the audio route,
+  the screen at the ear, picture-in-picture, the service's types, the calling account's state, a contact's number, the
+  contacts' question once; `ChatRules`: channels, tags, links, mute; `LocationRules`: live location's interval moving,
+  still and approximate, its stop rules, its start only from the app in front, the provider and the notification's
+  words).
+- `cargo test -p moqui-client --lib location`: `report_location`'s reporter (the newest point only, 429, a stale point,
+  the device's clock, a 410, 404, another device or a sign-out stopping it).
 - Instrumented, on the emulator when asked: `CallTelecomTest` (a joined call in Telecom, held and resumed by the page,
   its audio on the earpiece for voice and the speaker for video, the page's choice holding, left); `DialAccountTest`
   (the calling account registered and taken away, a dialed number handed to the app by a nonce only with Telecom's call
@@ -555,3 +742,29 @@ What fills each gap of MT1 and MT2 is MT3's record ([Mobile-Desktop](../../plans
   classes Rust calls by name (`dexdump`) and that the log has no JNI lookup failure. With `MOQUI_SMOKE_APP=/qapps/...` and an
   account signed in, the frame check opens that server page and puts the frames there, and checks that the page cannot
   call a shell command or go to the shell's origin itself.
+- `scripts/android-maps-offline.sh`: the acceptance walk `MapsOfflinePackage` of offline map packages, on the emulator
+  when asked (not in `./moq test-all` or `accept-all`; about half a minute once the server's data is saved). It starts
+  the server half, the tools acceptance spec `MapsOfflinePackage` (a small archive registered as a basemap, a saved
+  place, a postal code, Overture rows and the user's package of the region, built), with `moqui test --serve` on
+  `127.0.0.1:18086`, which the app reaches through `adb reverse`; installs the debug APK with its data cleared; and
+  drives the app over its WebView's DevTools socket (`scripts/android-maps-offline.py`): sign in, Offline maps,
+  Download until installed; the network cut (airplane mode, Wi-Fi and data off, the `adb reverse` removed) and the app
+  ended in the background and started again (a connection made through `adb reverse` outlives the rule's removal);
+  the drawer's Maps opening the offline screen; the package opened, its tiles drawn (the packaged style's earth and
+  water colours in the map's canvas), offline and its built date said; a saved place, a postal code, an Overture place
+  and an address found; a place saved, waiting in the outbox and not on the server; the network back, the outbox
+  sending it and the server listing it. Needs the debug APK, a `./moq build --debug` binary (or
+  `MOQUI_WALK_PACKAGE=release`) and python3's websocket-client; the server's log is `target/maps-offline/server.log`.
+- `scripts/android-location-share.sh`: the phone half of the acceptance walk `LocationShareWalk` of live location
+  (plans/archive/Location-Sharing.md LL7), on the emulator when asked (not in `./moq test-all` or `accept-all`; about 40 s once
+  the server's data is saved). It serves the tools acceptance spec `LocationShareWalkFixtures` (loc.walk.ann, ben and cy
+  in Walk family) with `moqui test --serve` on `127.0.0.1:18087`, reached through `adb reverse`; installs the debug APK
+  with its permissions granted and its data cleared; and drives the app over its WebView's DevTools socket and Android's
+  own UI (uiautomator, `scripts/android-location-share.py`): sign in as Ann, the drawer's Maps, Share my location with
+  Walk family (the emulator's position by `adb emu geo fix`), the app's confirmation dialog read and answered Send once
+  Send is enabled, Browse saying the phone sends it, the foreground notification naming Walk family, Ben's read given
+  the phone's position and, with the app in the background, the moved one; then the notification's Stop in the shade,
+  after which Ben's read lists nothing, the notification is gone and Ann has no active share. The browser half (three
+  browsers, the push, the extension, a member taken out) is `./moq accept tools --spec LocationShareWalk`. Needs the
+  debug APK, a `./moq build` binary (or `MOQUI_WALK_PACKAGE=debug`) and python3's websocket-client; the server's log is
+  `target/location-walk/server.log`.

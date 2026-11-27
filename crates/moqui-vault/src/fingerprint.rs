@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Fingerprints and key checks (plans/Vault-Instances.md §3.5). A fingerprint is a phrase two people compare by
+//! Fingerprints and key checks (plans/archive/Vault-Instances.md §3.5). A fingerprint is a phrase two people compare by
 //! another channel: 96 bits of SHA-256 over both public keys of a personal key (or over the server's lease key),
 //! written as six proquints (pronounceable five-letter words, consonant-vowel-consonant-vowel-consonant, 16 bits
 //! each). A check that was made is remembered as a [`KeyCheck`], signed by the checker, which a client verifies

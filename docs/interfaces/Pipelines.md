@@ -418,7 +418,7 @@ The files are in `podman/` ([README](../../podman/README.md)). `podman/build.sh 
 (`Containerfile.build`) beside the server's image, on the same Debian base: the Rust toolchain `rust-toolchain.toml`
 pins with clippy and rustfmt, a C toolchain, git, bash, curl, the libraries the embedded Postgres loads, the `moqui`
 binary (the runner), and an MR Moqui tree at `/opt/moqui` for the built-in pipeline. `--chromium` and `--java` add
-Chromium and a Java runtime. Node is not needed.
+Chromium and a Java runtime. The build image includes Node 24 LTS and npm for the browser asset build.
 
 The engine builds no image. A pool lists the images it allows (the job's and its services'), and the host of a
 trusted pool pulls one it does not have; an untrusted pool's host must have it. A job's image
@@ -557,7 +557,7 @@ the run check decides trust and approval as for any run (`waiting-pipeline`; `fa
 such pipeline, the run is refused, or pipelines are off here). A job of that pipeline in an environment that requires
 approval holds the run for a maintainer first, as any such run; that approval is of the run, and does not count for
 the deployment: `decide#GitDeployment` is the one approval step (as approving opens the lease in
-[Vault-Instances](../../plans/Vault-Instances.md) §4.6). When the run ends:
+[Vault-Instances](../../plans/archive/Vault-Instances.md) §4.6). When the run ends:
 
 - not `success`: the deployment is `failed` (`errorText` names the run and how it ended);
 - `success`, with `approvalRequired` (the deployment's or the environment's): `waiting-approval` until
@@ -618,7 +618,7 @@ an existing target's token is entered again as the vault item below, and the env
 it deploys; the old column, left in the database, holds the old encrypted value until it is dropped
 (`ALTER TABLE ... DROP COLUMN TARGET_TOKEN`).
 
-What a deploy signs or opens with is an item of an operational vault ([Vault-Instances](../../plans/Vault-Instances.md)
+What a deploy signs or opens with is an item of an operational vault ([Vault-Instances](../../plans/archive/Vault-Instances.md)
 §3.7, §3.8), never a row's value: a target's token, and for managed instances a host's client key, a registry login,
 a replaced container's secret files and a database's admin login for its backup. Once the pipeline passed:
 
@@ -641,7 +641,7 @@ a replaced container's secret files and a database's admin login for its backup.
 ### Deploys to managed instances
 
 An environment that names an `InstanceEnvironment` (`instanceEnvironmentId`) deploys to that environment's mr-moqui
-instances over the manager link ([Vault-Instances](../../plans/Vault-Instances.md) §4.6, M3; the instance side is
+instances over the manager link ([Vault-Instances](../../plans/archive/Vault-Instances.md) §4.6, M3; the instance side is
 [Component-Deploy](../tools/Component-Deploy.md#a-deploy-over-the-link)):
 
 1. once the pipeline passed, `org.moqui.dev.InstanceServices.prepare#GitDeployment` (crates/moqui-instance, called by

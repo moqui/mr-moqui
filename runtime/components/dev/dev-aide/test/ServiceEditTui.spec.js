@@ -1,4 +1,4 @@
-// The service writer's terminal twin (screen/DevAide/Services/EditTui.xml, plans/design-dev-aide.md D14): an edit is
+// The service writer's terminal twin (screen/DevAide/Services/EditTui.xml, plans/archive/design-dev-aide.md D14): an edit is
 // staged in the user's edit buffer and nothing is written until Save; Discard drops it; Save writes the staged files of
 // a throw-away root (test/GuidedFixture.js), and a file changed on disk since is a conflict with "Save mine over it"
 // and "Take the disk's"; Try in sim through the twin; and the twin's one tui render (its own tui texts: the tabs, the

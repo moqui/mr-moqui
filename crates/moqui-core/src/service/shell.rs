@@ -647,7 +647,7 @@ pub(crate) fn request_sends(factory: &Arc<ExecutionContextFactory>, users: &[Str
         let worker = Arc::clone(&publisher);
         let started = std::thread::Builder::new()
             .name("moqui-shell-counts".to_string())
-            .spawn(move || run_sends(&worker));
+            .spawn(crate::context::framework_thread(move || run_sends(&worker)));
         if let Err(err) = started {
             state.running = false;
             tracing::error!("Could not start the shell counts sender: {err}");
@@ -695,6 +695,7 @@ fn send_counts(factory: &Arc<ExecutionContextFactory>, user_id: &str) {
     let _cleanup = super::pool::WorkCleanup::new(Some(Arc::clone(factory)));
     let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<(), Error> {
         let ctx = factory.new_context();
+        // a framework thread (request_sends): leaving runs none of an inline factory's queued work
         let _entered = ctx.enter();
         let _authz = ctx.disable_authz();
         use_user_locale(user_id);

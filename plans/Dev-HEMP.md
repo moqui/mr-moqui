@@ -1,17 +1,17 @@
 # Dev AIDE by HEMP
 
-November 18, 2026 — design, not implemented. This plan makes HEMP the structure of [Dev AIDE](design-dev-aide.md):
+November 18, 2026 — design, not implemented. This plan makes HEMP the structure of [Dev AIDE](archive/design-dev-aide.md):
 its terms, its process as the menu, Coarchy's screens adapted for the requirements work, and a diagram-like overview
 of a site. It adds to the Dev AIDE design and changes its menu (§4); the decisions D1 to D22 cited here are that
 design's. The storage, the Coarchy scope, the overview and the place of agents were decided with the user the same
 day (H3, §5, H8, H9, H13), and the book in the component after the first draft, also that day (H14, §9). The
 first draft's eight open questions were answered that day too (H15 to H22).
 
-It depends on the whiteboard of [Comms-Whiteboard](Comms-Whiteboard.md), which is built first (its phase MW1): the
+It depends on the whiteboard of [Comms-Whiteboard](archive/Comms-Whiteboard.md), which is built first (its phase MW1): the
 Boards are an optional tool here (H23 to H26, §7.6): layout sketches beside a Screen Outline, design and interview
 boards, a story or the Screen Flow Diagram opened on a board, and the book's figures; nothing here starts before MW1
 is done. Workflow-like editing of a story on a board is later, with the process editing of
-[Comms-Whiteboard §7](Comms-Whiteboard.md#7-process-editing-on-a-board).
+[Comms-Whiteboard §7](archive/Comms-Whiteboard.md#7-process-editing-on-a-board).
 
 Sources. HEMP: "HEMP: An agile approach to analysis and design", David E. Jones, revision 1.0, 2013
 (`~/Dropbox/Business/MyBooks/hemp/HempTheBookv1.0.pdf`; "p." is its printed page) and its back-cover artifact diagram
@@ -49,10 +49,10 @@ Coarchy clone, and `my-site` stands for a site's own component (D17). Every othe
 | H20 | A Functional Wireframe is a prototype: a draft screen made from its outline in the screen builder, with sample data, reviewed by role playing before it is finished. An image may also be attached to an outline, kept beside it and named for it (`outline/Pack.png` with `outline/Pack.xml`, `Pack-2.png` for a second state). | Answered question 6. The book lets a partly functional prototype stand in for a wireframe (p. 50), and here a real screen is quick to make. The image is for a layout sketched elsewhere. |
 | H21 | A commit names the activities it delivers in a trailer (`Activity: FulfilOrder#a3`), which Publish offers from the files changed. A story row lists its commits from the root's git history, whoever made them: Publish, an agent or a terminal. The dev agent's skill and the contributor notes say to add the trailer. Nothing is recorded outside git, and nothing changes on a task source. | Answered question 7. Tasks often live on another server; git is in every root. |
 | H22 | Dev AIDE's own `hemp/` set is the first real one: the book's chapter 2 as its summary story, its screens as the design. Other existing plans stay as prose; HEMP sets are for new work. | Answered question 8. Chapter 2 is already a process story, and the tool is tested on itself. |
-| H23 | A drawn HEMP artifact is a board: an Excalidraw `.excalidraw` file in `hemp/`, its images in a directory named for it beside it, edited with `m-whiteboard` in file mode ([Comms-Whiteboard §4.2](Comms-Whiteboard.md#42-m-whiteboard)) and saved whole through the save pipeline like any file, so the audit, the lock and the git diff are the ones every save has. No co-editing on a dev instance (D19); the Boards screen lists a component's boards | Asked for, 2026-11-21: the whiteboard is built first and HEMP uses it. A board in git is a readable diff by element, and the same file opens in a wiki space |
+| H23 | A drawn HEMP artifact is a board: an Excalidraw `.excalidraw` file in `hemp/`, its images in a directory named for it beside it, edited with `m-whiteboard` in file mode ([Comms-Whiteboard §4.2](archive/Comms-Whiteboard.md#42-m-whiteboard)) and saved whole through the save pipeline like any file, so the audit, the lock and the git diff are the ones every save has. No co-editing on a dev instance (D19); the Boards screen lists a component's boards | Asked for, 2026-11-21: the whiteboard is built first and HEMP uses it. A board in git is a readable diff by element, and the same file opens in a wiki space |
 | H24 | A board's element may link to a HEMP artifact or an implementation artifact with a `hemp:` link (`hemp:FulfilOrder#a3`, `hemp:outline/Pack#e4`, `hemp:entity/mantle.order.OrderHeader`). The index reads a board's links as references of the type `drawn`, so the Trace and References show the boards an item is on, and a link to something gone is an unresolved reference | Proposed, 2026-11-21. One store of links (H5); a board is part of the design, not a picture beside it |
 | H25 | A Board is an optional tool for prototyping and talking about layouts: a **layout sketch** beside the outline (`outline/Pack.excalidraw`, `Pack-2.excalidraw` for a second state), drawn freehand with the wireframe library or started by Draw sketch from the outline's sections and elements, each shape linked to its element. Once the general idea of a screen is known, the Functional Wireframe, the prototype screen of H20, is the recommended form. A sketch is not the Functional Wireframe and does not count in its coverage; it stays as the record of how the layout was worked out | Asked for, 2026-11-21. A sketch is quicker while a layout is still open, and easier to show others; a prototype with sample data is what role playing walks through (p. 55) |
-| H26 | A derived diagram stays derived: the Screen Flow Diagram and a story's flow are Mermaid made from the files. Open as board puts one on a board as a Mermaid frame that keeps its source ([Comms-Whiteboard §4.5](Comms-Whiteboard.md#45-mermaid-on-a-board)) for a session to mark up, saved under `board/`; Regenerate replaces the frame from the files. Editing a story's activities on a board, workflow-like, waits for process editing ([Comms-Whiteboard §7](Comms-Whiteboard.md#7-process-editing-on-a-board)), which needs a plan of its own; until then a story is edited in its rows, and a board of it is a copy. The Overview stays as H8 decided | Asked for, 2026-11-21. The files are the truth; process editing is a significant piece of work that the BOSS editors share |
+| H26 | A derived diagram stays derived: the Screen Flow Diagram and a story's flow are Mermaid made from the files. Open as board puts one on a board as a Mermaid frame that keeps its source ([Comms-Whiteboard §4.5](archive/Comms-Whiteboard.md#45-mermaid-on-a-board)) for a session to mark up, saved under `board/`; Regenerate replaces the frame from the files. Editing a story's activities on a board, workflow-like, waits for process editing ([Comms-Whiteboard §7](archive/Comms-Whiteboard.md#7-process-editing-on-a-board)), which needs a plan of its own; until then a story is edited in its rows, and a board of it is a copy. The Overview stays as H8 decided | Asked for, 2026-11-21. The files are the truth; process editing is a significant piece of work that the BOSS editors share |
 
 ---
 
@@ -123,7 +123,7 @@ The primary roles colour the cards: Analyst, UI Designer, System Architect, Deve
   (`DA/screen/devstatic/DevAide.js:137`). Mermaid is vendored and drawn by `markdown-view`.
 - No drawing tool exists. The whiteboard (`m-whiteboard` on Excalidraw, the `excalidraw` file type, file mode,
   skeletons, element links, the wireframe and flowchart libraries, Mermaid frames) is planned in
-  [Comms-Whiteboard](Comms-Whiteboard.md) MW1, to be built before this plan's P0.
+  [Comms-Whiteboard](archive/Comms-Whiteboard.md) MW1, to be built before this plan's P0.
 - A new site component is made from `DA/template/site/`. The agent's skills and recipes are in `DA/skill/`.
 - The regression budget is 30 seconds of server specs and 2 of client specs (`DA/test/budget`).
 
@@ -400,11 +400,13 @@ artifact's name and Open, and Link to on an element picks an artifact by the ind
 - **Later: a story edited on a board.** Workflow-like editing, a lane per actor, activities moved between lanes and
   in order, alternate flows as branches, a detailed story as a frame that opens it, and a note made into an activity,
   each change an operation on the story file as the rows' are (H7). It is designed with the BOSS process editors in
-  [Comms-Whiteboard §7](Comms-Whiteboard.md#7-process-editing-on-a-board), and the story editor gains it after P2 once
+  [Comms-Whiteboard §7](archive/Comms-Whiteboard.md#7-process-editing-on-a-board), and the story editor gains it after P2 once
   that plan is done.
 - **In a meeting.** A session over a Comms call shares the board's area of the tab ([Comms-Whiteboard
-  §3.2](Comms-Whiteboard.md#32-browser-upgrades), Element Capture). The Expert User drawing on it too needs the
-  board co-edited, which on a dev instance waits for the group server ([design-dev-aide](design-dev-aide.md) §21).
+  §3.2](archive/Comms-Whiteboard.md#32-browser-upgrades), Element Capture). The Expert User drawing on it too needs the
+  board co-edited, which on a dev instance waits for the group server ([design-dev-aide](archive/design-dev-aide.md) §21).
+  §21 is built (Nov 14, 2026), but its connection carries the repositories, merge requests, tasks and the model gateway,
+  not boards: a board co-edited with the Expert User is still one on an instance both reach.
 - **The terminal.** A board has no drawing there: the terminal shows its name, its text elements and its links, with
   the board's browser link. Everything a board links to is reachable from the terminal's own screens.
 - **Checks** (§8): a `hemp:` link to an artifact that is gone, as any other link.
@@ -546,9 +548,9 @@ element. The Assist prompts on HEMP screens name the artifact open, as the artif
 | P5 | Implementation Review; High Level Test Scenario and its spec skeleton; the `Activity` trailer in Publish and commits on story rows | A review file written and read back; a generated spec that parses |
 | P6 | The trace: HEMP kinds in the Artifact Browser | The Browser spec extended, not a second render |
 | P7 | The role skills | Agent evals with replays, as `DA/test/agent/` has |
-| Later | Stories edited on a board, after the process editing plan ([Comms-Whiteboard §7](Comms-Whiteboard.md#7-process-editing-on-a-board)); Graphic Design, End User Documentation, Deployment and Migration Plan; a design pinned to the story revision it was made from, with the differences since | |
+| Later | Stories edited on a board, after the process editing plan ([Comms-Whiteboard §7](archive/Comms-Whiteboard.md#7-process-editing-on-a-board)); Graphic Design, End User Documentation, Deployment and Migration Plan; a design pinned to the story revision it was made from, with the differences since | |
 
-Every phase comes after [Comms-Whiteboard](Comms-Whiteboard.md) MW1; P0 uses its file type for the figures, and P4
+Every phase comes after [Comms-Whiteboard](archive/Comms-Whiteboard.md) MW1; P0 uses its file type for the figures, and P4
 its file mode, skeletons, links and libraries.
 
 **Rules for every phase.**

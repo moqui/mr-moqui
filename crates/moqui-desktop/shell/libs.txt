@@ -1,10 +1,13 @@
 # The libraries of webroot/libs the shell may load (by directory), staged in a bundle by ./moq desktop build and the only
 # ones a development run serves too (src/client/assets.rs), so a library the bundle lacks fails in development first.
 # vue, quasar and the icon fonts load with the page; dompurify and marked when the chat store or m-markdown needs them;
-# tiptap with the first m-rich-text (Chat's composer, Compose); matrix-sdk-crypto (a WebAssembly module, the CSP's
-# wasm-unsafe-eval) when WebrootCrypto.js opens the crypto device of an encrypted room; emoji (a data file) when
-# m-emoji-picker opens. A meeting board loads Excalidraw; its diagram source editor loads Mermaid and CodeMirror.
-# Markup and shared-screen annotation load drauu.
+# tiptap with the first m-rich-text (Chat's composer, Compose), after yjs (its Yjs, which a meeting board uses too);
+# matrix-sdk-crypto (a WebAssembly module, the CSP's wasm-unsafe-eval) when WebrootCrypto.js opens the crypto device of
+# an encrypted room; emoji (a data file) when m-emoji-picker opens. A meeting board loads Excalidraw; its diagram
+# source editor loads Mermaid and CodeMirror. Markup and shared-screen annotation load drauu. The offline Maps screen
+# (plans/archive/Maps-Offline.md §2.5) loads OpenLayers with ol-pmtiles and pmtiles, its main part only ("<lib> <part>": the files
+# the library's parts.json lists for the part; no COG layer is packaged, so the raster part and its decoders stay out), and
+# the label fonts and the outline come from each package.
 vue
 quasar
 material-symbols
@@ -12,9 +15,14 @@ material-icons
 dompurify
 marked
 tiptap
+yjs
 matrix-sdk-crypto
 emoji
 excalidraw
 mermaid
 codemirror
 drauu
+atkinson-next
+atkinson-mono
+fonts-extra
+openlayers main

@@ -36,6 +36,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use moqui_core::context::conf_reload;
+use moqui_core::context::framework_thread;
 use moqui_core::context::{ComponentInfo, ExecutionContext, ExecutionContextFactory};
 use moqui_db::sql::Condition;
 use moqui_git::checkout::FetchCredentials;
@@ -133,7 +134,7 @@ pub struct UpdatePreview {
 /// The commit an attested deploy on this thread may put in place ([`deploy_attested`]): the attestation, verified with
 /// the secret this server issued, stands for the `COMPONENT_DEPLOY` permission, and pins the component and commit. A
 /// managed deploy ([`deploy_managed`]) is its manager's, over the pinned manager link: the link stands for both the
-/// permission and `component-deploy` `enabled` (plans/Vault-Instances.md §4.6).
+/// permission and `component-deploy` `enabled` (plans/archive/Vault-Instances.md §4.6).
 #[derive(Clone, Debug)]
 struct Attested {
     component: String,
@@ -255,20 +256,7 @@ fn url_host(url: &str) -> Option<(String, u16)> {
     Some((host.trim_matches(['[', ']']).to_string(), port))
 }
 
-/// A component name as a directory and a repository id may hold it.
-fn check_name(name: &str) -> Result<(), String> {
-    let good = !name.is_empty()
-        && name.len() <= 100
-        && !name.starts_with('.')
-        && name
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'));
-    if good {
-        Ok(())
-    } else {
-        Err(format!("{name:?} is not a component name a deploy takes"))
-    }
-}
+pub(crate) use super::load::{check_name, component_location};
 
 fn provider(factory: &ExecutionContextFactory) -> Result<GitProvider, String> {
     moqui_git::provider(factory).ok_or_else(|| "the git resources are not installed".to_string())
@@ -426,7 +414,10 @@ pub fn deploy(factory: &Arc<ExecutionContextFactory>, name: &str, mode: Mode, da
     if let Err(err) = gate_commit(factory, name, &text(&row, "commitId")) {
         return failed(err);
     }
-    let location = PathBuf::from(text(&row, "location"));
+    let location = match component_location(name, &text(&row, "location"), None) {
+        Ok(location) => location,
+        Err(err) => return failed(err),
+    };
     let staged = location
         .parent()
         .map(|parent| parent.join(format!(".staging-{name}")))
@@ -468,7 +459,7 @@ pub fn discard(factory: &Arc<ExecutionContextFactory>, name: &str) -> Result<(),
     let Some(row) = row else {
         return Err(format!("{name} is not staged"));
     };
-    let location = PathBuf::from(text(&row, "location"));
+    let location = component_location(name, &text(&row, "location"), None)?;
     if let Some(parent) = location.parent() {
         let _ = std::fs::remove_dir_all(parent.join(format!(".staging-{name}")));
     }
@@ -491,7 +482,7 @@ pub fn preview_update(factory: &Arc<ExecutionContextFactory>, name: &str) -> Res
 }
 
 /// [`preview_update`] to the commit `at` of the component's repository instead of its branch's head: a managed
-/// deploy's rollback to the commit an instance action recorded (plans/Vault-Instances.md §4.6, step 8). Only a
+/// deploy's rollback to the commit an instance action recorded (plans/archive/Vault-Instances.md §4.6, step 8). Only a
 /// component kept in the database or a bare repository moves to another commit; a clone moves by a fast-forward to its
 /// branch's head.
 ///
@@ -508,7 +499,8 @@ pub fn preview_update_at(
         .filter(|row| text(row, "source") == "git" && text(row, "status") == "deployed")
         .ok_or_else(|| format!("{name} was not deployed from git"))?;
     let storage = Storage::parse(&text(&row, "storage")).unwrap_or_default();
-    let location = PathBuf::from(text(&row, "location"));
+    // only the component's own directory (SEC-TLS-104)
+    let location = super::load::deployed_location(factory, name, &text(&row, "location"))?;
     let from = text(&row, "commitId");
     let mut preview = UpdatePreview {
         component: name.to_string(),
@@ -657,7 +649,14 @@ pub fn update_at(
         }
     };
     let storage = Storage::parse(&text(&row, "storage")).unwrap_or_default();
-    let location = PathBuf::from(text(&row, "location"));
+    // only the component's own directory (SEC-TLS-104)
+    let location = match super::load::deployed_location(factory, name, &text(&row, "location")) {
+        Ok(location) => location,
+        Err(err) => {
+            report.problems.push(err);
+            return report;
+        }
+    };
     let applied = reload::with_reload_lock(factory, || {
         update_held(
             factory,
@@ -940,7 +939,7 @@ enum Taken {
     ManagedRollback,
 }
 
-/// A managed deploy (plans/Vault-Instances.md §4.6): the commit its manager names over the manager link, with no
+/// A managed deploy (plans/archive/Vault-Instances.md §4.6): the commit its manager names over the manager link, with no
 /// signature, since the link's pinned keys name the caller and the manager checked the passed run itself; so the
 /// instance needs no `attestation-secret` and no `allow` entry. Not a service: only the link's command handler calls
 /// it, as the link's one identity. Only a rollback (`"rollback": true` in the deploy, to the commits an instance action
@@ -1124,12 +1123,12 @@ pub fn install(factory: &Arc<ExecutionContextFactory>) {
         // the work reads a repository and reloads artifacts: not on the thread that received the message
         let spawned = std::thread::Builder::new()
             .name("component-deploy".into())
-            .spawn(move || {
+            .spawn(framework_thread(move || {
                 let applied = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| apply_remote(&factory, &body)));
                 if applied.is_err() {
                     tracing::error!("Applying another cluster member's component deploy failed: {body}");
                 }
-            });
+            }));
         if let Err(err) = spawned {
             tracing::error!("Could not start applying another cluster member's component deploy: {err}");
         }
@@ -1696,6 +1695,15 @@ fn git_process_with(
     config: &[(String, String)],
 ) -> Command {
     let mut command = Command::new("git");
+    // a read of the clone runs nothing its config names (moqui_lib::git_read); a fetch or a merge reaches on purpose
+    if args.first().is_some_and(|sub| {
+        matches!(
+            *sub,
+            "status" | "rev-parse" | "merge-base" | "diff" | "log" | "show" | "ls-files"
+        )
+    }) {
+        moqui_lib::git_read::isolate(&mut command);
+    }
     command.env("GIT_TERMINAL_PROMPT", "0");
     if let Some(dir) = dir {
         command.current_dir(dir);

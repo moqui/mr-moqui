@@ -31,6 +31,8 @@ pub struct JdbcExtractor {
     driver: Option<Arc<dyn DbDriver>>,
     record_type: String,
     select_sql: String,
+    ssl_mode: String,
+    ssl_root_cert: String,
 }
 
 impl JdbcExtractor {
@@ -53,7 +55,17 @@ impl JdbcExtractor {
         self
     }
 
-    /// Connect to the database by its `database-list` conf name, through [`super::conf_driver`].
+    /// The TLS of a later [`Self::set_db_info`]: a datasource's `sslmode` (empty is verified TLS off loopback, plain to
+    /// a loopback address; `disable` for a server with no TLS) and `sslrootcert` (SEC-DAT-97).
+    #[must_use]
+    pub fn set_ssl(mut self, ssl_mode: impl Into<String>, ssl_root_cert: impl Into<String>) -> Self {
+        self.ssl_mode = ssl_mode.into();
+        self.ssl_root_cert = ssl_root_cert.into();
+        self
+    }
+
+    /// Connect to the database by its `database-list` conf name, through [`super::conf_driver`], with the TLS of
+    /// [`Self::set_ssl`].
     ///
     /// # Errors
     ///
@@ -68,8 +80,8 @@ impl JdbcExtractor {
         password: &str,
     ) -> Result<Self, Error> {
         self.driver = Some(super::conf_driver(&moqui_core::driver::ConfDb {
-            ssl_mode: String::new(),
-            ssl_root_cert: String::new(),
+            ssl_mode: self.ssl_mode.clone(),
+            ssl_root_cert: self.ssl_root_cert.clone(),
             address_guard: moqui_core::driver::AddressGuard::Off,
             db_type: db_type.to_string(),
             host: host.to_string(),

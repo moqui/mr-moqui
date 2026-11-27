@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The instance's end of the manager link (plans/Vault-Instances.md §4.4): pairing ([`pair`]) and the [`Dialer`],
+//! The instance's end of the manager link (plans/archive/Vault-Instances.md §4.4): pairing ([`pair`]) and the [`Dialer`],
 //! which keeps one link to its manager open, redialing with a backoff. It opens no listener, so it runs while the
 //! instance is sealed (Sealed-Secrets §3.3): a server's gate starts it before it waits ([`start_for_gate`]), and keeps
 //! the bootstrap bundle it takes on a first start until the seal opens ([`after_unseal`]).
@@ -21,7 +21,7 @@
 //! status every so often, and once unsealed an event and the Serve stream, down which the manager's commands come
 //! ([`super::commands`]). A seal closes the Serve stream; the link goes on with status alone.
 //!
-//! The managed sealed start (plans/Vault-Instances.md §4.5, M6) on the link:
+//! The managed sealed start (plans/archive/Vault-Instances.md §4.5, M6) on the link:
 //! - while sealed after an automatic unseal failed (the manager down, or holding it for an approval), the unseal is
 //!   tried again on each status, through the manager's transit ([`super::unseal`]);
 //! - while sealed and opened by recovery shares, the instance offers a key it made for this unseal, signed with its
@@ -419,7 +419,9 @@ impl Dialer {
         let _ = self.stop.send(true);
     }
 
-    /// Keep a bootstrap bundle that waits for the seal to open, with `managed`; true when one was kept.
+    /// Keep a bootstrap bundle that waits for the seal to open, with `managed`; true when one was kept. The operator
+    /// gate is the only caller, and it is Unix.
+    #[cfg(unix)]
     fn store_pending(&self, managed: &dyn Managed) -> bool {
         store_pending(&self.shared, managed)
     }
@@ -1432,7 +1434,9 @@ fn start_thread(runtime_dir: &Path, setting: super::Settings<'_>) {
 }
 
 /// After the gate's seal opened: on a first start, wait up to `manage@bootstrap-wait-seconds` for the bootstrap bundle
-/// and keep it in the seal before the boot reads its datasource password.
+/// and keep it in the seal before the boot reads its datasource password. The operator gate is the only caller, and
+/// it is Unix.
+#[cfg(unix)]
 pub(crate) fn after_unseal(runtime_dir: &Path, conf: &moqui_lib::node::MNode) {
     let Some(dialer) = dialer_of(runtime_dir) else {
         return;

@@ -13,3 +13,11 @@
 - Persist a protected seed flag; only the internal importer holding a scoped seed semaphore may mutate seed or its flag.
 - Amend architecture/load gates for merge/seed guards, secret/SSO plans for references, and search/messaging plans for safe rebuild/reset.
 - Deliver classification → merge/guards → dev export/import; test conflicts, concurrency, bypasses, leaks and no production traffic.
+
+Note (Nov 25, 2026): the Dev AIDE has the three-way part for one data file ([design-dev-aide.md](../archive/design-dev-aide.md) §12):
+Load the changed records compares each record by entity and primary key in the base (the text its last load committed,
+a `DevDataLoadBaseline` row, else the last commit's), the file and the database; writes only where the database still
+has the base's values, shows a conflict with Keep database or Take file, deletes a removed record only by choice, writes
+in one transaction and moves the baseline after the commit, so a retry finds its writes applied; a conflict hides
+password and encrypted fields. The rest of this proposal (ownership and sensitivity, seed protection, dev export,
+importing code across repositories) is not built.

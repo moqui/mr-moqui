@@ -1,4 +1,4 @@
-# Vaults on the server (plans/Vault-Instances.md §3): the vault tables' services, personal keys and key checks,
+# Vaults on the server (plans/archive/Vault-Instances.md §3): the vault tables' services, personal keys and key checks,
 # members and key versions, deliveries, leases, deposits, machine access, reveal, recovery and events. Core reaches it
 # only through moqui_core::extension, which this crate fills with an inventory entry; moqui-host links it under its
 # vault feature. The crypto is moqui-vault's.

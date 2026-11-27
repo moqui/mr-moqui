@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Operational vaults (plans/Vault-Instances.md V2): every rule of the V2 Tests column, against the in-memory entity
+//! Operational vaults (plans/archive/Vault-Instances.md V2): every rule of the V2 Tests column, against the in-memory entity
 //! facade, with clients that are the vault crate's own sessions. Two registries stand for two cluster members.
 
 use std::collections::BTreeMap;

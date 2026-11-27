@@ -149,6 +149,17 @@ fn recheck_meeting_boards(
     let mut calls: Vec<String> = text(parameters, "callSessionId").into_iter().collect();
     if let Some(room) = text(parameters, "chatRoomId") {
         let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        // the room's own boards (its space's access is its membership): their editors are asked again too
+        let space = facade
+            .find("moqui.chat.ChatRoom")?
+            .eq("chatRoomId", Value::string(&room))
+            .select_field("wikiSpaceId")
+            .one()?
+            .and_then(|row| row.get("wikiSpaceId").map(to_plain_string))
+            .filter(|id| !id.is_empty());
+        if let Some(space) = space {
+            announce_after_commit(facade, Recheck::Space(space));
+        }
         let sessions = facade
             .find("moqui.call.CallSession")?
             .eq("chatRoomId", Value::string(&room))
@@ -162,7 +173,7 @@ fn recheck_meeting_boards(
         );
     }
     for call in calls {
-        announce_after_commit(facade, call);
+        announce_after_commit(facade, Recheck::Call(call));
     }
     Ok(BTreeMap::new())
 }
@@ -174,20 +185,26 @@ thread_local! {
     };
 }
 
-fn announce_after_commit(facade: &EntityFacade, call: String) {
+/// What a `collab-recheck` asks again: a call's meeting grants, or the grants of the editors of a space's pages.
+enum Recheck {
+    Call(String),
+    Space(String),
+}
+
+fn announce_after_commit(facade: &EntityFacade, what: Recheck) {
+    let (body, call) = match what {
+        Recheck::Call(id) => (serde_json::json!({"callSessionId": id}), format!("call {id}")),
+        Recheck::Space(id) => (serde_json::json!({"wikiSpaceId": id}), format!("space {id}")),
+    };
     let send = {
         let facade = facade.clone();
         let call = call.clone();
         move || {
-            let body = serde_json::json!({"callSessionId": call});
             let sent = moqui_core::cluster::prepare_message(body).and_then(|message| {
                 moqui_core::cluster::publish(&facade, moqui_core::notify::COLLAB_RECHECK, &message)
             });
             if let Err(err) = sent {
-                tracing::warn!(
-                    "co-editing: the meeting boards of call {call} were not announced: {}",
-                    err.message()
-                );
+                tracing::warn!("co-editing: the boards of {call} were not announced: {}", err.message());
             }
         }
     };
@@ -214,7 +231,7 @@ fn announce_after_commit(facade: &EntityFacade, call: String) {
         .on_commit(on_commit)
         .and_then(|()| tx.on_rollback(forget(call.clone())))
     {
-        tracing::warn!("co-editing: the meeting boards of call {call} were not announced after the commit: {err}");
+        tracing::warn!("co-editing: the boards of {call} were not announced after the commit: {err}");
         forget(call)();
     }
 }

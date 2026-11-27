@@ -28,7 +28,7 @@ fn mr_clone(name: &str) -> PathBuf {
     ))
     .unwrap();
     std::fs::create_dir_all(root.join("runtime/components/base")).unwrap();
-    std::os::unix::fs::symlink(framework, root.join("runtime/components/base/framework")).unwrap();
+    moqui_lib::fs_link::link(&framework, &root.join("runtime/components/base/framework")).unwrap();
     // only the sets the manifest lists load
     std::fs::copy(
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../runtime/components/components.xml"),
@@ -227,6 +227,8 @@ fn a_topology_conf_is_in_the_structure() {
     std::fs::create_dir_all(root.join("runtime/conf/edge")).unwrap();
     std::fs::write(root.join("runtime/conf/MoquiDevConf.xml"), "<moqui-conf/>").unwrap();
     std::fs::write(root.join("runtime/conf/edge/MoquiEdgeConf.xml"), "<moqui-conf/>").unwrap();
+    // a symbolic link to a directory (here a loop) is not followed
+    #[cfg(unix)]
     std::os::unix::fs::symlink(root.join("runtime/conf"), root.join("runtime/conf/edge/loop")).unwrap();
     let project = super::super::detect(&root).unwrap();
     let ctx = ExecutionContextFactory::test_context();

@@ -111,6 +111,16 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- the mobile app's native screen share (plans/archive/Comms-Whiteboard.md §3.6): a screen leg of the user's own -->
+    <transition name="addScreenLeg">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.call.CallServices.add#ScreenLeg').parameters({callSessionId: callSessionId || '', callLegId: (typeof callLegId !== 'undefined' && callLegId) || null, sframe: typeof sframe !== 'undefined' && String(sframe) === 'true'}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {callLegId: out.callLegId || null, screenOfLegId: out.screenOfLegId || null, call: out.call || null}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- call waiting (§8.3 item 7): the user's own leg on hold while they answer another call, or off it -->
     <transition name="holdOwnLeg">
         <actions><script><![CDATA[

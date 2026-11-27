@@ -166,6 +166,9 @@ pub(crate) fn server_config(store: impl Into<Arc<CertStore>>) -> Result<rustls::
         .with_no_client_auth()
         .with_cert_resolver(store);
     config.alpn_protocols = web_alpn(http2_enabled());
+    // the server's order, the provider's (AES-256-GCM first), not the client's: a client that lists AES-128-GCM first
+    // still gets AES-256-GCM when it offers both (SEC-WEB-88, ASVS v5.0.0-12.1.2)
+    config.ignore_client_order = true;
     Ok(config)
 }
 
@@ -575,7 +578,8 @@ fn held_slot(dir: &Path, name: &str) -> (PathBuf, String) {
 }
 
 /// Drop every key held in memory: the seal drops the keys (plans/Sealed-Secrets.md §3.5); the next unsealed start's
-/// ACME sync holds them again from their rows.
+/// ACME sync holds them again from their rows. The operator gate is the only caller, and it is Unix.
+#[cfg(all(unix, feature = "axum", any(feature = "postgres", feature = "mysql")))]
 pub(crate) fn drop_held_keys() {
     sync::write(&HELD).clear();
 }

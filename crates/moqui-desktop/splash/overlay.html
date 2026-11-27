@@ -1,0 +1,54 @@
+<!doctype html>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- The annotation overlay over a shared window or screen (src/capture.rs): transparent and click-through. The host
+     sets the strokes, in fractions of the shared picture, with window.drawInk; nothing here calls the host. -->
+<html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'">
+<style>html,body{margin:0;width:100%;height:100%;background:transparent;overflow:hidden}svg{width:100%;height:100%;display:block}</style>
+</head><body><svg id="ink" aria-hidden="true"></svg>
+<script>
+(function () {
+    "use strict";
+    const svg = document.getElementById("ink");
+    const ns = "http://www.w3.org/2000/svg";
+    const color = (c) => /^#[0-9a-f]{6}$/i.test(c) ? c : "#e53935";
+    const fraction = (n) => Math.min(1, Math.max(0, Number(n) || 0));
+    // in the overlay's pixels: it covers the shared picture, whose fractions the strokes are in
+    function shape(stroke, w, h) {
+        const pts = (Array.isArray(stroke.points) ? stroke.points : []).slice(0, 512).map(p => [fraction(p[0]) * w, fraction(p[1]) * h]);
+        if (!pts.length) return null;
+        const [a, b] = [pts[0], pts[pts.length - 1]];
+        let el;
+        if (stroke.tool === "rectangle") {
+            el = document.createElementNS(ns, "rect");
+            el.setAttribute("x", Math.min(a[0], b[0])); el.setAttribute("y", Math.min(a[1], b[1]));
+            el.setAttribute("width", Math.abs(b[0] - a[0])); el.setAttribute("height", Math.abs(b[1] - a[1]));
+        } else if (stroke.tool === "ellipse") {
+            el = document.createElementNS(ns, "ellipse");
+            el.setAttribute("cx", (a[0] + b[0]) / 2); el.setAttribute("cy", (a[1] + b[1]) / 2);
+            el.setAttribute("rx", Math.abs(b[0] - a[0]) / 2); el.setAttribute("ry", Math.abs(b[1] - a[1]) / 2);
+        } else {
+            el = document.createElementNS(ns, "polyline");
+            el.setAttribute("points", (stroke.tool === "line" ? [a, b] : pts).map(p => p.join(",")).join(" "));
+        }
+        el.setAttribute("fill", "none");
+        el.setAttribute("stroke", color(stroke.color));
+        el.setAttribute("stroke-width", Math.max(1, Math.min(0.1, Math.max(0.001, Number(stroke.width) || 0.006)) * Math.min(w, h)));
+        el.setAttribute("stroke-linecap", "round");
+        el.setAttribute("stroke-linejoin", "round");
+        if (stroke.kind === "laser") el.setAttribute("opacity", "0.8");
+        return el;
+    }
+    let last = [];
+    window.drawInk = function (strokes) {
+        last = Array.isArray(strokes) ? strokes.slice(0, 128) : [];
+        const w = window.innerWidth, h = window.innerHeight;
+        while (svg.firstChild) svg.removeChild(svg.firstChild);
+        for (const stroke of last) {
+            const el = shape(stroke || {}, w, h);
+            if (el) svg.appendChild(el);
+        }
+    };
+    window.addEventListener("resize", () => window.drawInk(last));
+})();
+</script></body></html>

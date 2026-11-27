@@ -121,24 +121,33 @@ first branch pushed) its default branch.
   `max-sessions-per-source` where many users come from one address (an office, a CI provider); the git pool
   (`git-server` `max-concurrent`) still bounds the work done at once.
 
-- **An installed app** (a dev instance's Dev AIDE connecting to its group server, plans/design-dev-aide.md 21.2; the
-  desktop and mobile apps) gets a login key without a pasted token: it opens `/sso/appLogin` in the browser with a PKCE
-  challenge, a state and its redirect URI; the browser signs in (at an identity provider, or with no `authFlowId` at
-  this server's own login; a browser signed in already stays signed in and enters the account's password, and its
-  second factor, again on the confirmation, or, with no password here, signs out and in again from it); the user
-  confirms (the form answers only the sign-in it was shown for, not one another start put in its place), on a page that names the port the code goes to and
-  says the app's name is the app's own word; the code goes to the redirect URI and the app takes it at `/sso/appToken`
-  with its verifier for the key (`service/sso_app.rs`). The pages are never shown in a frame (`frame-ancestors
-  'none'`, `X-Frame-Options: DENY`). A redirect URI is one of `webapp-list/webapp[webroot]@app-redirect-uris` exactly, or any loopback one
-  by its IP literal (RFC 8252 §7.3, §8.3: `http://127.0.0.1:<port>/...` or `http://[::1]:<port>/...`, any port; not
-  `localhost`) unless `webapp-list/webapp[webroot]@app-loopback-redirect` is false. It is on by default: any program on the user's computer
-  may listen on a loopback port, which is why the confirmation names the port and the code is good only with the
-  app's PKCE verifier; a server whose users never connect an installed app may turn it off. A shared dev server that
-  is not on loopback is listed in `webapp-list/webapp[webroot]@app-redirect-uris`, or its users paste a token.
-- **A key for one service.** `create#UserScopedKey` makes a key of the current user that opens only the LLM gateway
-  (`UserLoginKey.scope` `gateway`): every other login (the web, REST, git, a socket) refuses it, and it is in the
-  user's device list. A client that is let go ends what it held with `revoke#UserHeldKey` (the key itself, the user's
-  own only). The REST has both as `hosting/gatewayKey` and `hosting/keyRevoke` (POST).
+- **An installed app** (a dev instance's Dev AIDE connecting to its group server,
+  [Dev-AIDE](../tools/Dev-AIDE.md#group-servers); the desktop and mobile apps) gets a login key without a pasted token:
+  it opens `/sso/appLogin` in the browser with a PKCE challenge, a state and its redirect URI; the browser signs in (at
+  an identity provider, or with no `authFlowId` at this server's own login; a browser signed in already stays signed in
+  and enters the account's password, and its second factor, again on the confirmation, or, with no password here, signs
+  out and in again from it); the user confirms (the form answers only the sign-in it was shown for, not one another
+  start put in its place), on a page that names the port the code goes to and says the app's name is the app's own word;
+  the code goes to the redirect URI and the app takes it at `/sso/appToken` with its verifier for the key
+  (`service/sso_app.rs`). The pages are never shown in a frame (`frame-ancestors 'none'`, `X-Frame-Options: DENY`). A
+  redirect URI is one of `webapp-list/webapp[webroot]@app-redirect-uris` exactly, or any loopback one by its IP literal
+  (RFC 8252 §7.3, §8.3: `http://127.0.0.1:<port>/...` or `http://[::1]:<port>/...`, any port; not `localhost`) unless
+  `webapp-list/webapp[webroot]@app-loopback-redirect` is false. It is on by default: any program on the user's computer
+  may listen on a loopback port, which is why the confirmation names the port and the code is good only with the app's
+  PKCE verifier; a server whose users never connect an installed app may turn it off. A shared dev server that is not on
+  loopback is listed in `webapp-list/webapp[webroot]@app-redirect-uris`, or its users paste a token.
+- **A key for one service.** `create#UserScopedKey` makes a key of the current user that opens one service alone
+  (`UserLoginKey.scope`): `gateway`, the LLM gateway; `git`, git over HTTP and the REST resources that declare
+  `key-scope="git"` (the `git` resource and the `hosting` reads: `offer`, `repository`, `mergeRequests`, `agreement`);
+  `tasks`, the REST resources that declare `key-scope="tasks"` (Mantle's `my/tasks` and a repository's `issues`: the
+  user's tasks read, a repository's issues read and filed, since a scope is a resource's, every method of it). Every
+  other login (the web, any other REST resource, a socket) refuses it, and it is in the user's device list. A REST
+  resource names the scopes it takes (`key-scope`, for it and the resources below it; `mr-rest-api.xsd`), so an
+  application declares its own routes. A client that is let go ends what it held with `revoke#UserHeldKey` (the key
+  itself, the user's own only); a request a scoped key signed in ends that key alone. The REST has both as
+  `hosting/gatewayKey` (made only with the account's key) and `hosting/keyRevoke` (POST; it takes every scope). The Dev
+  AIDE's Connect keeps a `git`, a `tasks` and a `gateway` key, never the account's but for a Smithy server's installed
+  app key ([Dev-AIDE](../tools/Dev-AIDE.md#group-servers); plans/archive/design-dev-aide.md question 18).
 
 An account page adds and removes SSH keys and creates and revokes access tokens through
 `org.moqui.impl.UserServices` (My Account, Git Access of mr-marble; BOSS's Git Access): `create#UserSshKey`,
@@ -408,6 +417,7 @@ Mantle-free: Mantle links merge requests to work items and comments to lines.
 |---|---|
 | `find#GitRepositories` | the repositories the user may view, paged, by id list, text and kind; archived ones only with `includeArchived` or `archivedOnly`; each with its open merge requests |
 | `find#GitUpdates` | a repository's push log, newest first: every push (refused ones too), mirror fetch, import and write, its refs and the state of its gitECA rules |
+| `get#GitUpdateEventContexts` | the contexts the gitECA rules of an event had, or would have had, from a change of the push log, built as the events build them (one for pre-receive and post-receive, one a ref, a tag created or a new commit; at most 50 contexts and 200 commits): for trying a rule's condition against a recorded push (the Dev AIDE's ECA view); only the commits the caller reads by id are listed, from tips the caller reads, and a ref the change did not make (a refused push's) lists none, what is left out marking the list short (`newCommitsTruncated`, `truncated`) |
 | `get#GitTree` | a directory at a revision, directories first, each entry with its size (a file in LFS: its content's) and last commit, from the path index of the branch the revision names (or of the commit) |
 | `get#GitRefs`, `get#GitLog`, `get#GitCommit`, `get#GitCommitDiff`, `get#GitBlob` | as before ([Revision-Management](../data/Revision-Management.md)); `get#GitBlob` reads a file of at most `git-server` `blob-max-bytes` (16 MiB, an LFS file's content counted) and answers a larger one's `size` and `tooLarge` only (a `git://` location streams it, as a screen's raw download does); a commit's diff diffs its first `commit-max-diff-files` (300) files and lists the rest with `tooLarge`; a `get#GitLog` page with a `path` compares at most `log-max-commits` (10,000) commits at it and ends there, with `hasMore` when it found any |
 | `get#GitBlame` | for each line of a file at a revision, the commit that last changed it ([below](#blame-and-archive)) |
@@ -529,7 +539,8 @@ node, or the first merge request hidden there, counts at once.
   to `refs/for/` whose head is not read (a hidden merge request's), no `ecaError`, and of each ref's `result` only
   `ok`, `pending` or `refused` (the text of a refusal names objects and says what a rule checks). Its
   `updateListCount` is then the rows given up to this page, one more while rows may follow, not the size of the
-  log.
+  log. `get#GitUpdateEventContexts` is for a user with the update right only, as the whole log is: a context holds
+  the user, the push options and object ids. It lists only the commits that user reads by id (`get#GitCommit`'s rule: not a hidden merge request's, nor another fork's of a shared store), so it says no more about the store than those reads do.
 - **Hidden.** `GitReviewServices.set#MergeRequestHidden(mergeRequestId, hidden)` (with authorization disabled, else
   the delete right) sets `GitMergeRequest.hiddenDate` while an application holds a merge request's text: its head is
   then fetched by nobody, by name or by id, its commits are not read by id, and `get#MergeRequest`,
@@ -571,7 +582,11 @@ revision of `headRepositoryId`, another repository of the fork network that the 
 fork's branch against its parent's) answers as GitHub's compare: the
 merge base, the commits in head and not in base (oldest first, at most 250), ahead and behind, the files changed from
 the merge base to head with their line counts, and with `withDiffs` each file's diff (at most 300 files) as the
-`moqui-diff` html and as hunks of numbered lines (`oldNo`, `newNo`) for a review to anchor to.
+`moqui-diff` html and as hunks of numbered lines (`oldNo`, `newNo`) for a review to anchor to. With `diffLineLimit` a
+file's hunks hold only that many lines from `diffLineOffset` (counted without the hunks' headers; past the end, the last
+such window), a hunk cut at its start has `skippedLines`, and the file has `diffLineCount` and `diffLineOffset`: a page
+of a large file asks for its part, and the rest of the file's lines are never made into values (`get#GitCommitDiff`
+takes the same two, and gives such a file its hunks in place of `unifiedDiff` and `html`).
 
 `merge#GitRefs(source, target, method, message)` merges a revision into a branch as the current user, by gix-merge
 (gix's `merge` feature: git's `merge-ort` rules, renames followed, both sides' changes to one file merged by lines):
@@ -1093,7 +1108,7 @@ remote:   https://moqui.org/moqui/mr-moqui/-/merge-requests/12
 ### REST
 
 The framework's REST for hosting is in the `moqui` root resource (`tools/service/moqui.rest.xml`), in OpenAPI at
-`/rest/service.swagger/moqui.json` (plans/Dogfood.md F9, plans/design-dev-aide.md F18). Every path is open to a
+`/rest/service.swagger/moqui.json` (plans/Dogfood.md F9, plans/archive/design-dev-aide.md F18). Every path is open to a
 signed-in user (`MOQUI_API_GIT`, `MOQUI_API_HOSTING` in `ToolsSecurityData.xml`) and the services under it check the
 repository's rights as they do without REST, so an access token (a login key) reaches what its account may; a
 repository the caller may not view answers as one that is not there. Merge requests and pipeline runs are named by
@@ -1120,7 +1135,7 @@ call `GitServices`, `GitReviewServices` and `GitCiServices`.
 | `hosting/repository` | GET `url` | `resolve#RepositoryUrl`: the repository a clone, SSH or page URL names, as `get#Repository` |
 | `hosting/mergeRequests` | GET | `find#MergeRequests` across the repositories the caller may view |
 | `hosting/agreement` | GET | `get#AuthorSigned` |
-| `hosting/gatewayKey`, `hosting/keyRevoke` | POST | `create#UserScopedKey` (a key for the LLM gateway alone), `revoke#UserHeldKey` |
+| `hosting/gatewayKey`, `hosting/keyRevoke` | POST | `create#UserScopedKey` (a key for the LLM gateway, git or tasks alone: `scope`), `revoke#UserHeldKey` |
 | `.../mergeRequests/{n}/threads` | GET, POST | `find#ReviewThreads` (`path`), `create#ReviewComment` (a new thread on a line, or a reply: `threadId`) |
 | `.../mergeRequests/{n}/threads/{threadId}/resolve` | POST | `resolve#ReviewThread` (`resolved`, true by default) |
 
@@ -1148,24 +1163,30 @@ with `${name}`, as a `myaddons.xml` location takes them, `sshHost`, `sshPort`, `
 `rest` (the paths above and the OpenAPI document); `signIn` (an installed app's sign-in: `appLogin`, `appToken`,
 `appProviders`, `loopbackRedirect`, `keyRevoke`; [Logging in](#logging-in)); `gateway` (`enabled`, `url`: the LLM
 gateway, `keyPath`: where a key for it alone is made, `requireClient`: whether the key needs an `LlmApiClient`,
-docs/ai/Gateway.md); `agreement` (`path`, `decided`); `forks`. `git-server` `offer-service` (interface
-`add#GitHostingOffer`, with the offer and the user, authorization off) returns the offer as the application has it:
-its REST (`application`: `name`, `restBase`), its task source (`tasks`: `kind`, `path`, and a task app's paths),
-whether it makes forks, and so on. It is asked for callers with no credentials too, so it gives no one's data.
+docs/ai/Gateway.md); `agreement` (`path`, `decided`); `forks`; `pages` (a repository's pages for a person: none
+here). `git-server` `offer-service` (interface `add#GitHostingOffer`, with the offer and the user, authorization off)
+returns the offer as the application has it: its REST (`application`: `name`, `restBase`, and `pages`, the templates of
+a repository's pages it keeps: `file` with `{repositoryPath}` or `{repositoryId}`, `{ref}`, `{file}` and `{line}`,
+`commit` with `{commitId}`, `branch` with `{branch}`, absolute URLs on the server's own address, which the Dev AIDE's
+"Open on the server" fills), the same templates in `pages` for the repositories this server's hosting keeps where the
+application has pages for them (IronStone Projects' Code: `ironstone.projects.CodeServices.add#HostingOffer`, which
+calls Mantle's first), its task source (`tasks`: `kind`, `path`, and a task app's paths), whether it makes forks, and
+so on. With no application's pages, a client shows no "Open on the server".
+It is asked for callers with no credentials too, so it gives no one's data.
 
 **An application that keeps a repository.** A hosting application with rules of its own (Smithy's roles, confirmed
 addresses, gate and conversation) names `git-server` `rest-write-check-service` (interface `check#GitRestWrite`; none by
-default). It is asked, with authorization off, before each write on a repository through this REST, with
-`repositoryId`, `operation` (`ref.create`, `ref.delete`, `commitStatus.create`, `mergeRequest.create`,
-`mergeRequest.update`, `mergeRequest.close`, `mergeRequest.reopen`, `mergeRequest.reviewers`, `mergeRequest.review`,
-`mergeRequest.merge`, `pipeline.run`, `pipeline.rerun`, `pipeline.cancel`, `pipeline.approve`, `job.retry`), `userId` and
-`mergeRequestId`, and answers `allowed`, `message`, `application` and `restUrl` (its own REST for the repository). `allowed`
-false (or `N`) refuses the write with `GitKeptByApplication: <message> (use <restUrl>)`; a service that fails refuses
-too. It is also asked with `operation` `read` by `get#Repository` and `resolve#RepositoryUrl`, whose `keptBy` then
-names the application and its REST, so a client goes there for that repository (the Dev AIDE does,
-plans/design-dev-aide.md 21.4). An application answers allowed for the writes it lets through this REST (it may run
-its own checks first), and false for the rest. Reads are not asked: the repository's authorization service already
-decides who reads.
+default). It is asked, with authorization off, before each write on a repository through this REST, with `repositoryId`,
+`operation` (`ref.create`, `ref.delete`, `commitStatus.create`, `mergeRequest.create`, `mergeRequest.update`,
+`mergeRequest.close`, `mergeRequest.reopen`, `mergeRequest.reviewers`, `mergeRequest.review`, `mergeRequest.merge`,
+`pipeline.run`, `pipeline.rerun`, `pipeline.cancel`, `pipeline.approve`, `job.retry`), `userId` and `mergeRequestId`,
+and answers `allowed`, `message`, `application` and `restUrl` (its own REST for the repository). `allowed` false (or
+`N`) refuses the write with `GitKeptByApplication: <message> (use <restUrl>)`; a service that fails refuses too. It is
+also asked with `operation` `read` by `get#Repository` and `resolve#RepositoryUrl`, whose `keptBy` then names the
+application and its REST, so a client goes there for that repository (the Dev AIDE does,
+[Dev-AIDE](../tools/Dev-AIDE.md#group-servers)). An application answers allowed for the writes it lets through this REST
+(it may run its own checks first), and false for the rest. Reads are not asked: the repository's authorization service
+already decides who reads.
 
 **The contributor agreement.** `get#AuthorSigned` answers whether an author (`authorUserId` or `authorEmail`, the
 caller when both are empty) has signed a repository's agreement (docs/dev/Contributions.md), from `git-server`
@@ -1330,8 +1351,18 @@ row refers to and that were not written or referenced again in the last `resourc
 
 File responses stream (`sendResourceResponse`, a screen's static files): a file over 256 KiB is read a window at a time
 as the client takes it, on a thread of its own (at most `webapp` `transfer-workers`, 4, reading the database at once, fewer when the content pool cannot hold them), so
-a slow download holds no request worker. One `Range` is answered from the bytes it names, with `ETag` (a git file's
-blob id, a content blob's SHA-256) and `If-Range`. Only text types are compressed. An upload is read as it arrives: a
+a slow download holds no request worker; a client that goes away is read no further, and a window still waiting for a
+thread is not read. One `Range` of a GET is answered with `ETag` (a git file's blob id, a content blob's or a small
+DbResource file's SHA-256) and `If-Range` (by strong comparison: a weak tag, such as a file on disk has, never
+satisfies it), reading only the bytes it names from a file on disk, a content blob (a DbResource file over 64 KiB, a
+`db` repository's object over 8 MiB) and a Git LFS object, at the branch head or at a `location#versionName`; a
+`local` repository's object that is not in LFS (deflated in its object store) and a smaller `db` object are read whole
+first. `ec.resource.getContentAddress` names what a reader pins a revision by (an LFS object's oid, a git object's id,
+a content blob's SHA-256) with the strong tag its content is sent with, and `ec.web.sendPinnedResourceResponse`
+(`web::send_pinned_response`) serves one `location#versionName` while it is still that content (else 409), with the
+tag as its `ETag` and `Cache-Control: private` for `resource-facade` `pinned-max-age` (a day), for a reader that asks
+for many ranges (a map archive). Only text types are
+compressed. An upload is read as it arrives: a
 file part over 256 KiB goes to a file in `runtime/tmp/upload`, and from there to its storage (a content blob, a git
 object) as it is read; `webapp-list/webapp[webroot]/web-protection/requests@max-upload` (2 GiB) bounds it and `webapp-list/webapp[webroot]/web-protection/requests@upload-idle-timeout` (60 seconds) of silence
 ends it.
@@ -1379,7 +1410,7 @@ keeps therefore never passes what the service allows, however many uploads run a
 Moqui itself writes LFS files through `git://` locations: a file the `.gitattributes` of the branch head keep in LFS
 (`filter=lfs`) is stored as a content blob, linked to the repository, and committed as its pointer; a read gives the
 content, streamed for a response, and its size is the content's. `setup#GitLfs(repositoryId, patterns)` adds the
-patterns to `.gitattributes` (images, video, audio, PDFs and archives when empty); a content repository gets them when
+patterns to `.gitattributes` (images, video, audio, PDFs, archives and PMTiles map archives when empty); a content repository gets them when
 it is made (`init#GitRepository` with `contentRepository`, the tools screen's Content option, and the Content option of
 a project's new repository). A web site's images and their variants (`convert#Image` writes an image and its sizes in
 one commit) can so live in a `db` repository, with their history, in the database.

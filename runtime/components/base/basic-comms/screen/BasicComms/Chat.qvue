@@ -396,6 +396,17 @@ const timeText = (millis) => moqui.chat.timeText(millis);
 const fullTime = (millis) => moqui.chat.fullTime(millis);
 const dayLabel = (millis) => moqui.chat.dayLabel(millis);
 const shortWhen = (millis) => moqui.chat.shortWhen(millis);
+// For rows with a fixed ordering, keep the scrolled tail when the last row of the fresh page joins it.
+// Reactions and Threads can reorder older rows on a removal, so those lists always take the fresh cursor.
+function mergeFirstPage(current, page, keyOf) {
+    if (page.next == null || !page.list.length) return page;
+    const last = page.list[page.list.length - 1];
+    const lastKey = keyOf(last);
+    const anchor = current.list.findIndex((item) => keyOf(item) === lastKey);
+    if (anchor < 0 || anchor === current.list.length - 1) return page;
+    const fresh = new Set(page.list.map(keyOf));
+    return { list: page.list.concat(current.list.slice(anchor + 1).filter((item) => !fresh.has(keyOf(item)))), next: current.next };
+}
 const sizeText = (bytes) => {
     const n = Number(bytes || 0);
     if (n < 1024) return n + ' B';
@@ -583,9 +594,9 @@ const messageTemplate = `
                     <span style="overflow-wrap:anywhere">{{item.poll.question}}</span></div>
                 <!-- a tap votes; a long press, its own context menu (Android's long press, the menu key) or Shift+Enter shows who
                      voted (a hover on the count, with a pointer) -->
-                <q-item v-for="option in item.poll.options" :key="option.id" dense clickable class="rounded-borders q-px-xs" :disable="!room.canVote(item)"
-                        :data-option="option.id" :aria-keyshortcuts="option.voterIds && option.voterIds.length ? 'Shift+Enter' : undefined"
-                        @click.stop="room.pressed() || room.vote(item, option)"
+                <q-item v-for="option in item.poll.options" :key="option.id" dense clickable class="rounded-borders q-px-xs"
+                        :data-option="option.id" :aria-keyshortcuts="!item.poll.anonymous && option.voterIds && option.voterIds.length ? 'Shift+Enter' : undefined"
+                        @click.stop="room.pressed() || (room.canVote(item) ? room.vote(item, option) : room.showPeople({ kind: 'voters', item, option }))"
                         @touchstart.passive="room.pressStart({ kind: 'voters', item, option }, $event)" @touchmove.passive="room.pressCancel()"
                         @touchend="room.pressEnd($event)" @touchcancel="room.pressEnd($event)"
                         @contextmenu.prevent.stop="room.pressMenu({ kind: 'voters', item, option })" @keydown.enter.shift.prevent.stop="room.pressMenu({ kind: 'voters', item, option })">
@@ -594,7 +605,7 @@ const messageTemplate = `
                         <q-item-label style="overflow-wrap:anywhere">{{option.text}}</q-item-label>
                         <q-linear-progress :value="room.optionShare(item, option)" rounded size="6px" :color="option.mine ? 'primary' : 'grey-5'" class="q-mt-xs"></q-linear-progress>
                     </q-item-section>
-                    <q-item-section side class="text-caption">{{option.voteCount}}<q-tooltip v-if="!room.mobile && option.voterIds && option.voterIds.length">{{room.votersText(option)}}</q-tooltip></q-item-section>
+                    <q-item-section side class="text-caption">{{option.voteCount}}<q-tooltip v-if="!room.mobile && !item.poll.anonymous && option.voterIds && option.voterIds.length">{{room.votersText(option)}}</q-tooltip></q-item-section>
                 </q-item>
                 <div class="row items-center no-wrap text-caption m-muted q-mt-xs">
                     <span class="ellipsis">{{room.pollFooter(item.poll)}}</span><q-space></q-space>
@@ -645,7 +656,7 @@ const messageTemplate = `
                 <q-chip v-for="reaction in item.reactions" :key="reaction.key" dense clickable :outline="!reaction.mine" :color="reaction.mine ? 'primary' : undefined"
                         :text-color="reaction.mine ? 'white' : undefined" class="q-ml-none q-mr-xs m-chat-reaction" :data-reaction="reaction.key"
                         :aria-label="room.reactionLabel(reaction)" aria-keyshortcuts="Shift+Enter"
-                        :disable="!room.canPost || !room.bridgeCaps.reaction" @click.stop="room.pressed() || room.react(item, reaction.key)"
+                        @click.stop="room.pressed() || (room.canPost && room.bridgeCaps.reaction ? room.react(item, reaction.key) : room.showPeople({ kind: 'reactors', reaction }))"
                         @touchstart.passive="room.pressStart({ kind: 'reactors', item, reaction }, $event)" @touchmove.passive="room.pressCancel()"
                         @touchend="room.pressEnd($event)" @touchcancel="room.pressEnd($event)"
                         @contextmenu.prevent.stop="room.pressMenu({ kind: 'reactors', item, reaction })" @keydown.enter.shift.prevent.stop="room.pressMenu({ kind: 'reactors', item, reaction })">
@@ -1073,9 +1084,46 @@ const chatSticker = {
 };
 
 // A location message: a pin, its label, address and coordinates, Open in maps (geo: in the Android app, OpenStreetMap
-// elsewhere) and Copy. No map.
+// elsewhere) and Copy. No map. A live location (plans/archive/Location-Sharing.md §3.5; its message carries its share's id, never
+// a position): the position and its age while the share is on, read through liveLocation (get#Share checks the audience)
+// and moved by the share's pushes (locationShare:<shareId>, which only its audience gets); "Live location ended" after;
+// for one the share does not reach (who joined the room after it started, or was taken out), that it is not shared with
+// them. Its owner sees whom it was shared with, where it is sent from, Send from here, Stop and Who sees my location.
 const locationCardTemplate = `
-<q-card flat bordered class="q-mt-xs q-pa-sm m-chat-location" :style="room.mobile ? 'max-width:85vw' : 'max-width:360px'">
+<q-card v-if="live" flat bordered class="q-mt-xs q-pa-sm m-chat-location m-chat-live" :data-live-state="state" :style="room.mobile ? 'max-width:85vw' : 'max-width:360px'">
+    <div class="row no-wrap items-start">
+        <q-icon :name="state === 'live' ? 'sym_o_share_location' : 'sym_o_location_off'" size="28px" :color="state === 'live' ? (stale ? 'warning' : 'positive') : 'grey'" class="q-mr-sm"></q-icon>
+        <div class="col" style="min-width:0">
+            <div class="row items-center no-wrap">
+                <span class="text-weight-medium ellipsis m-chat-location-label">{{liveLabel}}</span>
+                <q-badge v-if="state === 'live'" :color="stale ? 'warning' : 'positive'" class="q-ml-xs m-chat-live-badge">{{room.t('Live')}}</q-badge>
+            </div>
+            <template v-if="state === 'live'">
+                <div v-if="coordinates" class="text-caption m-muted m-chat-location-coordinates">{{coordinates}}<span v-if="view.share && view.share.approximate"> · {{room.t('approximate')}}</span></div>
+                <div class="text-caption m-chat-live-age" :class="stale ? 'text-warning' : 'm-muted'">{{ageLine}}</div>
+                <template v-if="view.owner">
+                    <div class="text-caption m-muted m-chat-live-audience">{{room.t('Shared with the members of the room when you started it')}}</div>
+                    <div v-if="leftNames" class="text-caption text-warning m-chat-live-left">{{room.t('No longer in the room, still sees it')}}: {{leftNames}}</div>
+                    <div class="text-caption m-chat-live-sent" :class="sentFrom ? 'text-positive' : 'text-warning'">{{sentText}}</div>
+                </template>
+            </template>
+            <div v-else-if="state === 'ended'" class="text-body2 m-muted m-chat-live-ended">{{room.t('Live location ended')}}</div>
+            <div v-else-if="state === 'notShared'" class="text-body2 m-muted m-chat-live-not-shared">{{room.t('This live location is not shared with you')}}</div>
+            <div v-else-if="state === 'failed'" class="text-body2 text-warning m-chat-live-failed">{{room.t('The live location could not be read')}}</div>
+            <div v-else class="text-caption m-muted">{{room.t('Loading')}}</div>
+        </div>
+    </div>
+    <div v-if="state === 'live'" class="row q-mt-xs" style="gap:4px">
+        <q-btn v-if="position" unelevated dense no-caps size="sm" color="primary" icon="sym_o_map" class="m-chat-location-open" :label="room.t('Open in maps')" @click.stop="room.openPlace(position)"></q-btn>
+        <q-btn v-if="position" flat dense no-caps size="sm" color="primary" icon="sym_o_content_copy" class="m-chat-location-copy" :label="room.t('Copy')" @click.stop="room.copyPlace(position)"></q-btn>
+        <template v-if="view.owner">
+            <q-btn v-if="!sentFrom" flat dense no-caps size="sm" color="primary" class="m-chat-live-here" :label="nativeApp ? room.t('Send from this device') : room.t('Send from here')" @click.stop="sendHere"></q-btn>
+            <q-btn flat dense no-caps size="sm" color="negative" icon="sym_o_location_off" class="m-chat-live-stop" :label="room.t('Stop')" @click.stop="stop"></q-btn>
+            <q-btn flat dense no-caps size="sm" color="primary" class="m-chat-live-who" :label="room.t('Who sees my location')" @click.stop="room.go('/qapps/maps/MyShares')"></q-btn>
+        </template>
+    </div>
+</q-card>
+<q-card v-else flat bordered class="q-mt-xs q-pa-sm m-chat-location" :style="room.mobile ? 'max-width:85vw' : 'max-width:360px'">
     <div class="row no-wrap items-start">
         <q-icon name="sym_o_location_on" size="28px" color="primary" class="q-mr-sm"></q-icon>
         <div class="col" style="min-width:0">
@@ -1092,9 +1140,106 @@ const locationCardTemplate = `
 const chatLocationCard = {
     name: 'ChatLocationCard',
     props: { item: Object, room: Object },
+    data: () => ({ view: { state: 'loading', owner: false, share: null, latest: null, seenAt: null }, sentFrom: '' }),
     computed: {
         place() { return this.item.event.location || {}; },
-        coordinates() { return moqui.chat.place.coordinatesText(this.place); }
+        live() { return !!this.place.liveShareId; },
+        shareId() { return this.place.liveShareId ? String(this.place.liveShareId) : ''; },
+        // the view's state, ended once its end has passed (the hourly clean's ended push may come later)
+        state() {
+            const thru = Number((this.view.share && this.view.share.thruDate) || this.place.thruDate) || 0;
+            return this.view.state === 'live' && thru && thru <= (this.room.tick || Date.now()) ? 'ended' : this.view.state;
+        },
+        // the live position as a place: Open in maps and Copy take it as a static one's
+        position() {
+            const latest = this.view.latest;
+            return latest ? { latitude: latest.latitude, longitude: latest.longitude, accuracy: latest.accuracy, label: this.liveLabel } : null;
+        },
+        coordinates() { return moqui.chat.place.coordinatesText(this.live ? this.position : this.place); },
+        liveLabel() { return (this.view.share && this.view.share.label) || this.place.label || this.room.t('Live location'); },
+        // the room's clock (a tick a second) moves the age on
+        age() { return moqui.chat.live.ageSeconds(this.view, this.room.tick || Date.now()); },
+        stale() { return moqui.chat.live.stale(this.view, this.room.tick || Date.now()); },
+        ageLine() {
+            const thru = (this.view.share && this.view.share.thruDate) || this.place.thruDate;
+            const age = this.view.latest ? this.room.t('Updated') + ' ' + moqui.chat.live.ageText(this.age) : moqui.chat.live.ageText(null);
+            return age + (thru ? ' · ' + this.room.t('until') + ' ' + moqui.chat.live.untilText(thru) : '');
+        },
+        nativeApp() { return !!moqui.chat.live.native(); },
+        // the people it still reaches who left the room by themselves (the owner takes them out in Who sees my location)
+        leftNames() { return Array.isArray(this.view.share && this.view.share.leftRoomNames) ? this.view.share.leftRoomNames.join(', ') : ''; },
+        // where the owner's share is sent from: this page, this phone, another device, or nothing now
+        sentText() {
+            if (this.sentFrom === 'page') return this.room.t('Sent from this page while it is open');
+            if (this.sentFrom === 'phone') return this.room.t('Sent from this phone, also while the app is in the background');
+            const share = this.view.share || {};
+            if (share.sentFromDevice && !share.fromThisDevice) return this.room.t('Sent from') + ' ' + (share.deviceName || this.room.t('another device'));
+            return this.room.t('Not sent from here now: the room sees your last position grow old');
+        }
+    },
+    methods: {
+        load() {
+            if (!this.live || !this.room.roomId) return;
+            this.room.liveView(this.item.eventSeq).then((json) => {
+                this.view = moqui.chat.live.view(json, Date.now());
+                this.follow();
+                this.readSentFrom();
+            }, () => { this.view = moqui.chat.live.view(null); });
+        },
+        // the share's topic while it is live (its audience's pushes: positions, a new end, its end); let go after
+        follow() {
+            const wanted = this.view.state === 'live' && this.shareId ? 'locationShare:' + this.shareId : null;
+            if (this.topic === wanted) return;
+            if (this.unfollow) { this.unfollow(); this.unfollow = null; }
+            this.topic = null;
+            const shell = this.$root && this.$root.notificationClient ? this.$root : moqui.webrootVue;
+            const client = shell && shell.notificationClient;
+            if (!wanted || !client || typeof client.registerListener !== 'function') return;
+            this.topic = wanted;
+            const listener = (jsonObj) => this.onPush(jsonObj);
+            const off = client.registerListener(wanted, listener);
+            this.unfollow = typeof off === 'function' ? off : () => client.unregisterListener(wanted, listener);
+        },
+        onPush(jsonObj) {
+            const next = moqui.chat.live.apply(this.view, moqui.chat.live.message(jsonObj), Date.now());
+            if (!next) return;
+            this.view = next;
+            if (next.state !== 'live') {
+                moqui.chat.live.sender.stop(this.shareId, 'ended');
+                this.follow();
+            }
+        },
+        // the sender of this page (its reports' latest, for the owner, who gets no position push) and the app's service
+        onSender(change) {
+            if (!change || (change.shareId && String(change.shareId) !== this.shareId)) { this.readSentFrom(); return; }
+            if (change.kind === 'reported' && this.view.owner && this.view.state === 'live') {
+                const latest = moqui.chat.live.point(change.latest);
+                if (latest) this.view = Object.assign({}, this.view, { latest, seenAt: Date.now() });
+            }
+            if (change.kind === 'stopped' && change.reason === 'ended' && this.view.owner) this.load();
+            this.readSentFrom();
+        },
+        readSentFrom() {
+            if (!this.view.owner) { this.sentFrom = ''; return; }
+            if (moqui.chat.live.sender.sending(this.shareId)) { this.sentFrom = 'page'; return; }
+            const native = moqui.chat.live.native();
+            this.sentFrom = '';
+            if (!native || typeof native.status !== 'function') return;
+            Promise.resolve(native.status()).then((list) => {
+                if (Array.isArray(list) && list.map(String).includes(this.shareId)) this.sentFrom = 'phone';
+            }, () => {});
+        },
+        sendHere() { this.room.sendLiveFromHere(this.view.share || { shareId: this.shareId }, this.item.eventSeq).then(() => this.load(), () => {}); },
+        stop() { this.room.stopLive(this.shareId).then(() => this.load(), () => {}); }
+    },
+    mounted() {
+        if (!this.live) return;
+        this.offSender = moqui.chat.live.sender.on((change) => this.onSender(change));
+        this.load();
+    },
+    beforeUnmount() {
+        if (this.unfollow) this.unfollow();
+        if (this.offSender) this.offSender();
     },
     template: locationCardTemplate
 };
@@ -1115,9 +1260,25 @@ const locationBoxTemplate = `
             <div v-if="coordinates" class="text-caption m-muted">{{coordinates}}</div>
             <q-btn flat dense no-caps size="sm" color="primary" icon="sym_o_map" :label="t('Check it in maps')" @click="room.openPlace(place)"></q-btn>
         </div>
+        <!-- live location (plans/archive/Location-Sharing.md §3.5): the room's members now see where you are as you move, until the
+            end chosen; not in an encrypted room, where the server would see each position -->
+        <div class="q-pt-sm m-chat-live-box">
+            <div class="text-subtitle2">{{t('Live location')}}</div>
+            <div v-if="room.sealed" class="text-caption m-muted m-chat-live-sealed">{{t('Live location is not offered in an encrypted room: the server would see where you are. Send a location instead.')}}</div>
+            <template v-else-if="canLive">
+                <div class="text-caption m-muted">{{liveNote}}</div>
+                <div class="row items-center q-gutter-x-sm q-mt-xs">
+                    <q-btn-toggle v-model="liveHours" :options="liveOptions" dense no-caps unelevated toggle-color="primary" class="m-chat-live-hours"></q-btn-toggle>
+                    <q-checkbox v-model="liveApproximate" dense :label="t('Approximate (about 1 km)')" class="m-chat-live-approximate"></q-checkbox>
+                </div>
+            </template>
+            <div v-else class="text-caption m-muted m-chat-live-off">{{t('This browser cannot give its location, so it cannot share it live')}}</div>
+        </div>
     </div>
     <div class="row q-gutter-sm q-mt-md">
-        <q-btn unelevated no-caps color="primary" icon="sym_o_send" class="m-chat-location-send" :label="t('Send')" :disable="!place || busy" :loading="busy" @click="send"></q-btn>
+        <q-btn unelevated no-caps color="primary" icon="sym_o_send" class="m-chat-location-send" :label="t('Send')" :disable="!place || busy || liveBusy" :loading="busy" @click="send"></q-btn>
+        <q-btn v-if="!room.sealed && canLive" unelevated no-caps class="m-btn-tonal m-chat-live-share" icon="sym_o_share_location" :label="t('Share live location')"
+                :disable="busy || liveBusy" :loading="liveBusy" @click="shareLive"></q-btn>
         <q-btn flat no-caps :label="t('Cancel')" @click="$emit('close')"></q-btn>
     </div>
 </m-dialog>`;
@@ -1125,9 +1286,17 @@ const chatLocationBox = {
     name: 'ChatLocationBox',
     props: { room: Object, threadRoot: Number },
     emits: ['close'],
-    data: () => ({ uid: Math.random().toString(36).slice(2, 8), here: null, typed: '', label: '', locating: false, problem: '', busy: false }),
+    data: () => ({ uid: Math.random().toString(36).slice(2, 8), here: null, typed: '', label: '', locating: false, problem: '', busy: false,
+        liveHours: 1, liveApproximate: false, liveBusy: false }),
     computed: {
         canLocate() { return typeof navigator !== 'undefined' && !!navigator.geolocation && (typeof window === 'undefined' || window.isSecureContext !== false); },
+        // a live share is sent by the Android app's location service, else by this page while it is open
+        canLive() { return !!moqui.chat.live.native() || this.canLocate; },
+        liveOptions() { return [{ label: '15 ' + t('min'), value: 0.25 }, { label: '1 ' + t('h'), value: 1 }, { label: '8 ' + t('h'), value: 8 }]; },
+        liveNote() {
+            return t('The room\'s members see where you are as you move, until the end you choose; people who join later do not.') + ' '
+                + (moqui.chat.live.native() ? t('This phone sends it, also while the app is in the background.') : t('This page sends it while it is open.'));
+        },
         typedPlace() { return this.typed ? moqui.chat.place.parse(this.typed) : null; },
         place() {
             const base = this.here && !this.typed ? this.here : this.typedPlace;
@@ -1158,6 +1327,15 @@ const chatLocationBox = {
             this.busy = true;
             const place = Object.assign({ source: this.here && !this.typed ? 'here' : 'typed' }, this.place);
             this.room.sendPlace(place, this.threadRoot).then(() => { this.busy = false; this.$emit('close'); }, () => { this.busy = false; });
+        },
+        // one clientRef for this dialog, so Share live location again after a lost answer is the same send (the server
+        // answers the first message and its share, and starts no second one)
+        shareLive() {
+            if (this.liveBusy || needsConnection()) return;
+            this.liveBusy = true;
+            if (!this.liveRef) this.liveRef = moqui.chat.newClientRef ? moqui.chat.newClientRef() : '';
+            this.room.sendLivePlace({ hours: this.liveHours, approximate: this.liveApproximate, clientRef: this.liveRef }, this.threadRoot)
+                .then((json) => { this.liveBusy = false; if (json) this.$emit('close'); }, () => { this.liveBusy = false; });
         }
     },
     template: locationBoxTemplate
@@ -1830,8 +2008,8 @@ const roomTemplate = `
             <q-btn v-if="access.canJoin" dense unelevated no-caps color="primary" :label="t('Join')" class="q-mx-xs" @click="join"></q-btn>
             <!-- a voice call and a video call (Comms-Messaging §8.3 item 1); in the tray's narrow Chat tab they are in the room's menu -->
             <template v-if="canCall && !compact">
-                <q-btn flat round dense icon="sym_o_call" class="m-chat-voice-call" :aria-label="t('Voice call')" @click="startCall(false)"><q-tooltip>{{callTip(false)}}</q-tooltip></q-btn>
-                <q-btn flat round dense icon="sym_o_videocam" class="m-chat-video-call" :aria-label="t('Video call')" @click="startCall(true)"><q-tooltip>{{callTip(true)}}</q-tooltip></q-btn>
+                <q-btn flat round dense icon="sym_o_call" class="m-chat-voice-call" :aria-label="t('Voice call')" :aria-description="callAudience" @click="startCall(false)"><q-tooltip>{{t('Voice call')}} · {{callAudience}}</q-tooltip></q-btn>
+                <q-btn flat round dense icon="sym_o_videocam" class="m-chat-video-call" :aria-label="t('Video call')" :aria-description="callAudience" @click="startCall(true)"><q-tooltip>{{t('Video call')}} · {{callAudience}}</q-tooltip></q-btn>
             </template>
             <q-btn v-if="!narrow" flat round dense icon="sym_o_search" :aria-label="t('Search in the room')" @click="openSide('search')"><q-tooltip>{{t('Search in the room')}}</q-tooltip></q-btn>
             <q-btn v-if="!narrow" flat round dense icon="sym_o_keep" :aria-label="t('Pinned messages')" @click="openSide('pinned')"><q-tooltip>{{t('Pinned messages')}}</q-tooltip></q-btn>
@@ -1865,10 +2043,10 @@ const roomTemplate = `
                         <q-separator></q-separator>
                     </template>
                     <template v-if="canCall && compact">
-                        <q-item clickable v-close-popup @click="startCall(false)">
-                            <q-item-section avatar><q-icon name="sym_o_call"></q-icon></q-item-section><q-item-section>{{t('Voice call')}}</q-item-section></q-item>
-                        <q-item clickable v-close-popup @click="startCall(true)">
-                            <q-item-section avatar><q-icon name="sym_o_videocam"></q-icon></q-item-section><q-item-section>{{t('Video call')}}</q-item-section></q-item>
+                        <q-item clickable v-close-popup class="m-chat-voice-call" @click="startCall(false)">
+                            <q-item-section avatar><q-icon name="sym_o_call"></q-icon></q-item-section><q-item-section><q-item-label>{{t('Voice call')}}</q-item-label><q-item-label caption>{{callAudience}}</q-item-label></q-item-section></q-item>
+                        <q-item clickable v-close-popup class="m-chat-video-call" @click="startCall(true)">
+                            <q-item-section avatar><q-icon name="sym_o_videocam"></q-icon></q-item-section><q-item-section><q-item-label>{{t('Video call')}}</q-item-label><q-item-label caption>{{callAudience}}</q-item-label></q-item-section></q-item>
                     </template>
                     <q-item v-if="!isDirect" clickable v-close-popup @click="openSide('members')">
                         <q-item-section avatar><q-icon name="sym_o_group"></q-icon></q-item-section><q-item-section>{{t('Members')}}</q-item-section></q-item>
@@ -1912,6 +2090,20 @@ const roomTemplate = `
         </template>
     </div>
     <q-separator></q-separator>
+    <!-- each live location this page sends, in any room (plans/archive/Location-Sharing.md §1 "Visible to everyone it concerns",
+        §3.5): until when, that this page sends it while it is open, and Stop -->
+    <div v-for="send in liveSends" :key="'live' + send.shareId" class="row items-center no-wrap q-px-sm q-py-xs m-tonal m-chat-live-banner" role="status"
+            :data-live-share="send.shareId">
+        <q-icon name="sym_o_share_location" color="positive" size="18px" class="q-mr-sm"></q-icon>
+        <div class="col text-caption">
+            <span>{{t('Sharing your live location until')}} {{liveUntil(send.thruDate)}}</span>
+            <span class="m-muted"> · {{t('sent from this page while it is open')}}</span>
+            <span v-if="send.note" class="text-warning"> · {{send.note}}</span>
+            <span v-if="liveError" class="text-warning"> · {{liveError}}</span>
+        </div>
+        <q-btn dense flat no-caps size="sm" color="negative" icon="sym_o_location_off" :label="t('Stop')" :aria-label="t('Stop sharing your live location')"
+                class="m-chat-live-banner-stop" @click="stopLive(send.shareId)"></q-btn>
+    </div>
     <!-- a new device (Comms-Messaging §6.5): Set up this device in the banner's place until it reads what came before it -->
     <div v-if="setupBar" class="row no-wrap items-center q-px-sm q-py-xs text-caption m-tonal text-warning m-chat-setup-bar" role="status">
         <q-icon name="sym_o_phonelink_lock" size="16px"></q-icon>
@@ -2175,7 +2367,7 @@ const roomTemplate = `
                 <div class="row q-px-sm q-py-xs">
                     <q-chip v-for="chip in reactionChips" :key="String(chip.value)" dense clickable :outline="tabs.reactions.onlyToMe !== chip.value" :color="tabs.reactions.onlyToMe === chip.value ? 'primary' : undefined"
                             :text-color="tabs.reactions.onlyToMe === chip.value ? 'white' : undefined" class="q-ml-none q-mr-xs" :data-reactions="chip.value ? 'mine' : 'all'"
-                            @click="tabs.reactions.onlyToMe = chip.value; loadTab('reactions', false)">{{chip.label}}</q-chip>
+                            @click="setReactionFilter(chip.value)">{{chip.label}}</q-chip>
                 </div>
                 <div class="col scroll m-chat-tab" style="min-height:0" @scroll="onTabScroll">
                     <q-linear-progress v-if="tabs.reactions.loading" indeterminate color="primary"></q-linear-progress>
@@ -2186,7 +2378,12 @@ const roomTemplate = `
                                 <q-item-label class="text-weight-medium">{{nameOf(message.senderUserId, message.senderName)}}<span class="text-caption m-muted"> · {{shortWhen(message.sentDate)}}</span></q-item-label>
                                 <q-item-label caption class="ellipsis-2-lines">{{message.undecryptable ? t('Encrypted message') : (message.snippet || filesText(message))}}</q-item-label>
                                 <div class="row q-gutter-xs q-mt-xs">
-                                    <q-chip v-for="reaction in message.reactions" :key="reaction.key" dense square :outline="!reaction.mine" class="q-ma-none" :data-key="reaction.key">
+                                    <q-chip v-for="reaction in message.reactions" :key="reaction.key" dense square clickable :outline="!reaction.mine" class="q-ma-none" :data-key="reaction.key"
+                                            :aria-label="reactionLabel(reaction)" aria-keyshortcuts="Shift+Enter"
+                                            @click.stop="pressed() || showPeople({ kind: 'reactors', reaction })"
+                                            @touchstart.passive="pressStart({ kind: 'reactors', reaction }, $event)" @touchmove.passive="pressCancel()"
+                                            @touchend="pressEnd($event)" @touchcancel="pressEnd($event)"
+                                            @contextmenu.prevent.stop="pressMenu({ kind: 'reactors', reaction })" @keydown.enter.shift.prevent.stop="pressMenu({ kind: 'reactors', reaction })">
                                         {{reaction.key}} {{reaction.count}}<q-tooltip v-if="!mobile">{{reactorsText(reaction)}}</q-tooltip></q-chip>
                                 </div>
                             </q-item-section>
@@ -2699,7 +2896,7 @@ const chatRoom = {
             pollBox: { open: false, threadRoot: null, question: '', options: ['', ''], multiple: 'N', anonymous: 'N', closes: '', busy: false },
             cardBox: { open: false, threadRoot: null },
             calBox: { open: false, threadRoot: null, item: null }, calZone: null, calZones: [], calProvider: false, calFieldsLoaded: false,
-            locationBox: { open: false, threadRoot: null }, stickerPacks: [], stickerPacksFailed: false, stickerPacksLoaded: false,
+            locationBox: { open: false, threadRoot: null }, liveSends: [], liveError: '', stickerPacks: [], stickerPacksFailed: false, stickerPacksLoaded: false,
             copyWantedSeq: null, screenHeld: null,
             searchPane: { text: '', results: [], loading: false, searched: false }, addPeople: { userIds: [], busy: false },
             settings: { open: false, roomName: '', topic: '', visibility: '', busy: false },
@@ -2739,7 +2936,8 @@ const chatRoom = {
         archivedByMe() {
             const seq = this.member && this.member.archivedEventSeq;
             if (seq == null) return false;
-            const last = this.events.reduce((max, event) => (event.type === 'message' ? Math.max(max, Number(event.eventSeq) || 0) : max), 0);
+            const last = this.events.reduce((max, event) => event.type === 'message' && event.threadRootEventSeq == null
+                ? Math.max(max, Number(event.eventSeq) || 0) : max, Number(this.room && this.room.lastMessageSeq || 0));
             return last <= Number(seq);
         },
         isDirect() { return !!this.room && this.room.roomTypeEnumId === 'CrtDirect'; },
@@ -2767,6 +2965,11 @@ const chatRoom = {
         // a call from the room, where the server holds calls and the user may post, with someone on this server to ring (a
         // bridged or texting room's other side is on another network: no empty call)
         canCall() { return !!(moqui.call && moqui.config && moqui.config.calls && this.access && this.access.canPost && this.room && !this.room.archivedDate) && this.callees.length > 0; },
+        callAudience() {
+            if (this.isDirect) return fill(t('Calls {name}'), { name: this.displayName });
+            return this.room && this.room.bridged ? t('Invites eligible room members on this server only. Their call settings determine which devices ring.')
+                : t('Invites eligible members of this room. Their call settings determine which devices ring.');
+        },
         callees() { return this.members.filter((person) => person.userId && !person.isAgent && person.userId !== (this.me && this.me.userId)); },
         isMember() { return !!this.access.isMember; },
         canPost() { return !!this.access.canPost; },
@@ -3247,14 +3450,9 @@ const chatRoom = {
         // the room's call, voice or video: a direct room calls the person, a group room starts a group call its members join
         // from the chat (one going on is opened to join); an encrypted room's call is end-to-end encrypted (§6.1 rule 4)
         startCall(video) {
-            if (needsConnection()) return;
+            if (!this.canCall || needsConnection()) return;
             // asked so, a browser that cannot is refused before anyone rings
             if (moqui.call) moqui.call.startCall(Object.assign({ chatRoomId: this.roomId, video: video !== false }, this.sealed ? { requireE2ee: true } : {}));
-        },
-        callTip(video) {
-            if (this.isDirect) return fill(video ? t('Video call {name}') : t('Voice call {name}'), { name: this.displayName });
-            if (this.room && this.room.bridged) return video ? t('Video call: the people on this server in the room ring, not those on the bridged network') : t('Voice call: the people on this server in the room ring, not those on the bridged network');
-            return video ? t('Video call: everyone in the room rings, and members can join') : t('Voice call: everyone in the room rings, and members can join');
         },
         go(target) { if (target) this.$root.setUrl(target); },
         domId(seq, inThread) { return 'chat-' + this.uid + (inThread ? '-t-' : '-m-') + seq; },
@@ -3343,10 +3541,12 @@ const chatRoom = {
         // ---- loading and paging ----
         load() {
             this.state = 'loading';
+            const roomId = this.roomId, settings = this.settingVersions;
             const aroundSeq = this.seq ? Number(this.seq) : null;
-            this.get('roomView', { chatRoomId: this.roomId, aroundSeq: aroundSeq || '', limit: 50 }).then((json) => {
+            return this.get('roomView', { chatRoomId: roomId, aroundSeq: aroundSeq || '', limit: 50 }).then((json) => {
+                if (this.roomId !== roomId || (json.room && json.room.chatRoomId !== roomId)) return;
                 if (!json.room) { this.state = 'missing'; return; }
-                this.applyMeta(json);
+                this.applyMeta(json, settings);
                 const page = json.timeline || {};
                 this.mergeNames(page.userNames);
                 this.events = page.eventList || [];
@@ -3369,11 +3569,18 @@ const chatRoom = {
                     if (this.thread) this.openThread(Number(this.thread), true);
                     else if (!this.compact) this.focusComposer();
                 });
-            }, (err) => { this.state = moqui.unreachable && moqui.unreachable(err) ? 'unreachable' : 'missing'; });
+            }, (err) => { if (this.roomId === roomId) this.state = moqui.unreachable && moqui.unreachable(err) ? 'unreachable' : 'missing'; });
         },
-        applyMeta(json) {
+        applyMeta(json, settings) {
+            const member = json.member ? { ...json.member } : null;
+            // Keep only settings confirmed since this read began. The other membership and room data are fresh to the view.
+            if (member && this.member && this.room && this.room.chatRoomId === json.room.chatRoomId && settings !== this.settingVersions) {
+                for (const [field, version] of Object.entries(this.settingVersions || {})) {
+                    if (version !== (settings || {})[field]) member[field] = this.member[field];
+                }
+            }
             this.room = json.room;
-            this.member = json.member || null;
+            this.member = member;
             this.access = json.access || {};
             this.members = json.memberList || [];
             this.members.forEach((person) => { if (person.name) this.names[person.userId] = person.name; });
@@ -3427,7 +3634,10 @@ const chatRoom = {
                 t('Block'), true).then(() => this.post('blockUser', { userId: person.userId }).then(() => { this.reloadMeta(); this.$emit('changed', this.roomId); }, () => {}));
         },
         reloadMeta() {
-            return this.get('room', { chatRoomId: this.roomId }).then((json) => { if (json.room) this.applyMeta(json); }, () => {});
+            const roomId = this.roomId, settings = this.settingVersions;
+            return this.get('room', { chatRoomId: roomId }).then((json) => {
+                if (this.roomId === roomId && json.room && json.room.chatRoomId === roomId) this.applyMeta(json, settings);
+            }, () => {});
         },
         loadOlder() {
             if (!this.hasMoreBefore || this.loadingOlder || !this.events.length) return;
@@ -4092,7 +4302,7 @@ const chatRoom = {
                 people: order.map((id) => ({ userId: id, name: id === this.me.userId ? t('You') : this.nameOf(id), detail: byUser[id].join(' ') })) };
         },
         showPeople(what) {
-            const ids = what.kind === 'voters' ? (what.option.voterIds || []) : (what.reaction.userIds || []);
+            const ids = what.kind === 'voters' ? (what.item.poll.anonymous ? [] : what.option.voterIds || []) : (what.reaction.userIds || []);
             const people = ids.map((id) => ({ userId: id, name: id === this.me.userId ? t('You') : this.nameOf(id) }));
             const title = what.kind === 'voters' ? fill(t('Voted for {option}'), { option: what.option.text || '' })
                 : fill(t('Reacted with {emoji}'), { emoji: what.reaction.key });
@@ -4207,7 +4417,7 @@ const chatRoom = {
             });
         },
         react(item, key) {
-            if (!this.canPost || (!this.queues('chat-react') && needsConnection())) return;
+            if (!this.canPost || !this.bridgeCaps.reaction || (!this.queues('chat-react') && needsConnection())) return;
             this.tapKey = null;
             const me = this.me.userId;
             const reactions = item.event.reactions = item.event.reactions || [];
@@ -4344,13 +4554,27 @@ const chatRoom = {
         },
         redact(item) {
             if (!this.queues('chat-redact') && needsConnection()) return;
-            this.confirm(t('Delete the message?'), t('It is removed for everyone; the room shows that a message was removed.')
-                + (this.textMemberCount ? ' ' + t('Text members already got it as a text.') : ''), t('Delete'), true).then(() => {
-                // through the app's outbox it shows as waiting under the message until it is answered
-                this.change('chat-redact', 'redact', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then((json) => {
-                    if (!(json && json.queued)) this.applyRedaction(item.eventSeq);
-                }, () => {});
-            });
+            const message = t('It is removed for everyone; the room shows that a message was removed.') + (this.textMemberCount ? ' ' + t('Text members already got it as a text.') : '');
+            // through the app's outbox it shows as waiting under the message until it is answered
+            const remove = () => this.change('chat-redact', 'redact', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then((json) => {
+                if (!(json && json.queued)) this.applyRedaction(item.eventSeq);
+            }, () => {});
+            // the user's own live location (plans/archive/Location-Sharing.md §3.5): deleting its message does not stop the share,
+            // which the dialog says, with Stop sharing too chosen
+            const place = item.event && item.event.location;
+            const liveShareId = place && place.liveShareId && item.event.senderUserId === this.me.userId ? String(place.liveShareId) : null;
+            if (liveShareId) {
+                this.$q.dialog({ title: t('Delete the message?'), class: 'm-chat-live-delete',
+                    message: message + ' ' + t('Deleting it does not stop sharing your live location: the people it was shared with see it until it ends.'),
+                    options: { type: 'checkbox', model: ['stop'], items: [{ label: t('Also stop sharing my live location'), value: 'stop' }] },
+                    ok: { label: t('Delete'), color: 'negative', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
+                    .onOk((chosen) => {
+                        if (Array.isArray(chosen) && chosen.includes('stop')) this.stopLive(liveShareId).catch(() => {});
+                        remove();
+                    });
+                return;
+            }
+            this.confirm(t('Delete the message?'), message, t('Delete'), true).then(remove);
         },
         copyText(item) {
             const text = item.event.bodyText || plainOf(item.event.body);
@@ -4590,54 +4814,45 @@ const chatRoom = {
         // ---- the details' tabs (Comms-Messaging §5.1): each a page at a time by the server's cursor, more as it scrolls ----
         // A tab's latest request wins (a token per tab): a filter changed, or the tab read again, while a page loads drops
         // that page's answer. A page of more never lists an item twice (a reaction taken back between pages).
-        loadTab(name, more) {
+        loadTab(name, more, refresh) {
             const tab = this.tabs[name];
             if (!tab || (more && (tab.loading || tab.next == null))) return;
             const roomId = this.roomId;
             const token = this.tabToken(name);
             tab.loading = true;
-            this.fetchTab(name, more ? tab.next : '').then((page) => {
+            return this.fetchTab(name, more ? tab.next : '').then((page) => {
                 if (roomId !== this.roomId || this.tabTokens[name] !== token) return;
                 const current = this.tabs[name];
-                const known = new Set(more ? current.list.map((item) => this.tabKey(name, item)) : []);
-                const list = (more ? current.list : []).concat(page.list.filter((item) => !known.has(this.tabKey(name, item))));
-                this.tabs[name] = Object.assign({}, current, { list, next: page.next, loading: false, loaded: true });
+                const keyOf = (item) => this.tabKey(name, item);
+                if (more) {
+                    const known = new Set(current.list.map(keyOf));
+                    page.list = current.list.concat(page.list.filter((item) => !known.has(keyOf(item))));
+                } else if (refresh && name !== 'reactions') {
+                    page = mergeFirstPage(current, page, keyOf);
+                }
+                this.tabs[name] = Object.assign({}, current, page, { loading: false, loaded: true });
                 this.$nextTick(() => this.fillTab(name));
             }, () => {
                 if (roomId === this.roomId && this.tabTokens[name] === token) this.tabs[name] = Object.assign({}, this.tabs[name], { loading: false });
             });
         },
-        // a pushed change: the tab's first page read again and merged at the top, so a tab scrolled far keeps its place;
-        // what the first page no longer has, of the stretch it covers, is gone (a removed message, a reaction taken back)
-        refreshTab(name) {
-            const tab = this.tabs[name];
-            if (!tab) return;
-            if (!tab.loaded) { this.loadTab(name, false); return; }
-            const roomId = this.roomId;
-            const token = this.tabToken(name);
-            this.fetchTab(name, '').then((page) => {
-                if (roomId !== this.roomId || this.tabTokens[name] !== token) return;
-                const current = this.tabs[name];
-                const fresh = new Set(page.list.map((item) => this.tabKey(name, item)));
-                // the first page is all there is, or what is older than its last item stays
-                const last = page.list.length ? this.tabOrder(name, page.list[page.list.length - 1]) : null;
-                const older = page.next == null ? [] : current.list.filter((item) => !fresh.has(this.tabKey(name, item))
-                    && (last == null || this.tabOrder(name, item) < last));
-                this.tabs[name] = Object.assign({}, current, { list: page.list.concat(older), next: page.next == null ? null : current.next, loading: false, loaded: true });
-            }, () => null);
+        // A push rereads the first page using the same request token as load-more.
+        refreshTab(name) { return this.loadTab(name, false, true); },
+        setReactionFilter(onlyToMe) {
+            if (this.tabs.reactions.onlyToMe !== onlyToMe) this.tabs.reactions = Object.assign(emptyTab(), { onlyToMe });
+            return this.loadTab('reactions', false);
         },
         tabToken(name) {
             this.tabTokens = this.tabTokens || {};
             this.tabTokens[name] = (this.tabTokens[name] || 0) + 1;
             return this.tabTokens[name];
         },
-        // an item of a tab: its key, and where it sorts (newest first)
+        // an item of a tab: its key across pages
         tabKey(name, item) {
             if (name === 'reactions') return String(item.eventSeq);
             if (name === 'links') return item.eventSeq + ' ' + item.url;
             return String(item.chatAttachmentId);
         },
-        tabOrder(name, item) { return Number(name === 'reactions' ? item.latestReactionSeq || 0 : item.eventSeq || 0); },
         // one page of a tab, {list, next}
         fetchTab(name, cursor) {
             const roomId = this.roomId;
@@ -5011,6 +5226,89 @@ const chatRoom = {
                 return json;
             });
         },
+        // ---- live location (plans/archive/Location-Sharing.md §3.5, LL4): a share with the room's members, sent by the Android
+        // app's location service once the person confirms it in the app's own dialog (moquiDesktop.location, LL3), else by
+        // this page while it is open (moqui.chat.live.sender, with its banner); never in an encrypted room ----
+        sendLivePlace(choice, threadRoot) {
+            if (this.sealed || needsConnection()) return Promise.resolve(null);
+            const native = moqui.chat.live.native();
+            const approximate = !!(choice && choice.approximate);
+            const hours = Number(choice && choice.hours) || 1;
+            // in the Android app the location permission first, after the app's dialog that says why: no share is started
+            // that this phone could not send
+            const allowed = native && typeof native.allow === 'function' ? Promise.resolve(native.allow(!approximate)) : Promise.resolve(true);
+            return allowed.then((ok) => {
+                if (!ok) { moqui.notifyMessages(null, [t('Allow the app to use this phone\'s location to share it, then try again')]); return null; }
+                const replyTo = threadRoot ? null : this.replyTo;
+                if (!threadRoot) this.replyTo = null;
+                return this.post('sendLiveLocation', { chatRoomId: this.roomId, thruDate: String(Date.now() + hours * 3600000),
+                    precisionEnumId: approximate ? 'LspApproximate' : 'LspExact', threadRootEventSeq: threadRoot || '', replyToEventSeq: replyTo ? replyTo.eventSeq : '',
+                    clientRef: (choice && choice.clientRef) || (moqui.chat.newClientRef ? moqui.chat.newClientRef() : '') }).then((json) => {
+                    if (!json || !json.shareId) return null;
+                    this.onSent({ chatRoomId: this.roomId, threadRootEventSeq: threadRoot, json });
+                    const place = json.event && json.event.location;
+                    if (place) this.applyFields(json.eventSeq, { location: place });
+                    // the same send again (an answer lost): the first one's share, sent from here unless it already is
+                    if (json.duplicate && moqui.chat.live.sender.sending(json.shareId)) return json;
+                    return this.startLive(json.shareId, { intervalSeconds: json.intervalSeconds, approximate: place ? place.approximate === true : approximate,
+                        thruDate: json.thruDate, label: place ? place.label : '', audienceVersion: 1, fresh: true, created: true,
+                        reread: this.liveVersion(json.eventSeq) }).then(() => json);
+                });
+            }, () => null);
+        },
+        // a share of the user's own sent from here: by the app's service once the person says Send in the app's own dialog,
+        // else by this page; the person's Not now there stops a share just started
+        startLive(shareId, info) {
+            const native = moqui.chat.live.native();
+            const shared = () => { if (info.thruDate) moqui.notifyMessages([{ type: 'success', message: t('Your live location is shared until') + ' ' + moqui.chat.live.untilText(info.thruDate) }], null); };
+            const onPage = () => { moqui.chat.live.sender.start(shareId, Object.assign({ url: this.url('reportLiveLocation') }, info)); shared(); return 'page'; };
+            if (!native) return Promise.resolve(onPage());
+            return Promise.resolve(native.start({ shareId })).then((answer) => {
+                if (answer === 'started') { shared(); return 'phone'; }
+                if (answer === 'declined') {
+                    if (info.created) {
+                        this.stopLive(shareId).catch(() => {});
+                        moqui.notifyMessages(null, [t('Your location was not shared')]);
+                    } else moqui.notifyMessages(null, [t('Nothing sends this share now: its audience sees your last position until you send it again or stop it')]);
+                    return 'declined';
+                }
+                return onPage();
+            }, onPage);
+        },
+        // the live location card's read: its share as this user may see it (get#Share checks the audience)
+        liveView(eventSeq) {
+            return moqui.request(this.url('liveLocation'), { params: { chatRoomId: this.roomId, eventSeq } }).then((result) => result.json || {});
+        },
+        // the sender's read of a share's audience version again, after a report refused as AUDIENCE_CHANGED
+        liveVersion(eventSeq) {
+            return () => this.liveView(eventSeq).then((json) => (json && json.owner && json.share ? json.share.audienceVersion : null));
+        },
+        // Send from here (Send from this device in the app): the share taken over from the device that sent it, then sent here
+        sendLiveFromHere(share, eventSeq) {
+            const native = moqui.chat.live.native();
+            const allowed = native && typeof native.allow === 'function' ? Promise.resolve(native.allow(!share.approximate)) : Promise.resolve(true);
+            return allowed.then((ok) => {
+                if (!ok) { moqui.notifyMessages(null, [t('Allow the app to use this phone\'s location to share it, then try again')]); return null; }
+                return this.post('sendLiveFromHere', { shareId: share.shareId }).then((json) => {
+                    if (!json.applied) { moqui.notifyMessages(null, [json.reason || t('That did not change the share')]); return null; }
+                    return this.startLive(share.shareId, { approximate: !!share.approximate, thruDate: json.thruDate || share.thruDate, label: share.label || '',
+                        intervalSeconds: share.intervalSeconds, audienceVersion: share.audienceVersion, fresh: true, reread: eventSeq ? this.liveVersion(eventSeq) : null });
+                });
+            });
+        },
+        stopLive(shareId) {
+            moqui.chat.live.sender.stop(shareId, 'stopped');
+            const native = moqui.chat.live.native();
+            if (native && typeof native.stop === 'function') Promise.resolve(native.stop(shareId)).catch(() => {});
+            return this.post('stopLiveLocation', { shareId }).then((json) => {
+                if (!json.applied) moqui.notifyMessages(null, [json.reason || t('That did not change the share')]);
+                else moqui.notifyMessages([{ type: 'success', message: t('Sharing stopped') }], null);
+                return json;
+            });
+        },
+        // the banner's list: what this page sends now, in any room
+        readLiveSends() { this.liveSends = moqui.chat.live.sender.list(); this.liveError = moqui.chat.live.sender.error || ''; },
+        liveUntil(millis) { return moqui.chat.live.untilText(millis); },
         // Open in maps: the phone's maps app (geo:) in the Android app, OpenStreetMap elsewhere
         openPlace(place) {
             const desktop = window.moquiDesktop;
@@ -5046,37 +5344,33 @@ const chatRoom = {
         },
 
         // ---- my settings in the room, the room's settings ----
-        setLevel(level) {
-            this.post('setNotification', { chatRoomId: this.roomId, notificationLevelEnumId: level }).then(() => {
-                if (this.member) this.member.notificationLevelEnumId = level;
+        // A reply belongs to the room that made the request. Its archive watermark is the server's, even if
+        // a newer message arrived in the meantime or the user opened another room.
+        setMemberSetting(key, value) {
+            const roomId = this.roomId;
+            const field = key === 'archived' ? 'archivedEventSeq' : key;
+            const writes = this.settingWrites || (this.settingWrites = new Map());
+            const id = roomId + ':' + key;
+            const previous = writes.get(id) || Promise.resolve();
+            const saved = previous.then(() => this.post('setNotification', { chatRoomId: roomId, [key]: String(value) })).then((json) => {
+                if (this.room && this.room.chatRoomId === roomId && this.roomId === roomId && this.member && json[field] !== undefined) {
+                    this.member[field] = json[field];
+                    const versions = this.settingVersions || {};
+                    this.settingVersions = { ...versions, [field]: (versions[field] || 0) + 1 };
+                }
                 this.$emit('changed');
             }, () => {});
+            writes.set(id, saved);
+            return saved.finally(() => { if (writes.get(id) === saved) writes.delete(id); });
         },
-        toggleMute() {
-            const muted = !(this.member && this.member.isMuted);
-            this.post('setNotification', { chatRoomId: this.roomId, isMuted: muted ? 'true' : 'false' }).then(() => {
-                if (this.member) this.member.isMuted = muted;
-                this.$emit('changed');
-            }, () => {});
-        },
-        // my own archive: the room leaves my list until a newer message (ChatRoomMember.archivedEventSeq)
-        toggleArchive() {
-            const archived = !this.archivedByMe;
-            this.post('setNotification', { chatRoomId: this.roomId, archived: archived ? 'true' : 'false' }).then(() => {
-                if (this.member) this.member.archivedEventSeq = archived ? this.events.reduce((max, event) => Math.max(max, Number(event.eventSeq) || 0), Number((this.room && this.room.lastEventSeq) || 0)) : null;
-                this.$emit('changed');
-            }, () => {});
-        },
-        togglePin() {
-            const pinned = !(this.member && this.member.isPinned);
-            this.post('setNotification', { chatRoomId: this.roomId, isPinned: pinned ? 'true' : 'false' }).then(() => {
-                if (this.member) this.member.isPinned = pinned;
-                this.$emit('changed');
-            }, () => {});
-        },
+        setLevel(level) { return this.setMemberSetting('notificationLevelEnumId', level); },
+        toggleMute() { return this.setMemberSetting('isMuted', !(this.member && this.member.isMuted)); },
+        toggleArchive() { return this.setMemberSetting('archived', !this.archivedByMe); },
+        togglePin() { return this.setMemberSetting('isPinned', !(this.member && this.member.isPinned)); },
         join() { this.post('join', { chatRoomId: this.roomId }).then(() => { this.$emit('changed'); this.load(); }, () => {}); },
         // who becomes an owner when the last owner leaves, by the rule of remove#Member (ChatServices.xml): the
-        // longest-standing moderator, else member; agents and outside actors never. The service decides in the end.
+        // longest-standing moderator, else member; agents and outside actors never. For equal join times the stable sort
+        // keeps get#Room's userId order, the same tie-break the service uses when the owner confirms.
         ownerHeir() {
             if (this.isDirect || !this.isOwner) return null;
             const others = this.members.filter((person) => person.userId && !person.isAgent && person.userId !== this.me.userId)
@@ -5359,6 +5653,12 @@ const chatRoom = {
             this.resizer.observe(this.$el);
         }
         this.width = this.$el.clientWidth || 0;
+        // the page's live location sender, held while a room shows (its banner here)
+        if (moqui.chat && moqui.chat.live) {
+            this.unsubscribe.push(moqui.chat.live.sender.hold());
+            this.unsubscribe.push(moqui.chat.live.sender.on(() => this.readLiveSends()));
+            this.readLiveSends();
+        }
         this.load();
     },
     beforeUnmount() {
@@ -5578,7 +5878,8 @@ module.exports = {
         // ---- Activity (find#ChatActivity, the activity transition) and Threads (find#ChatThreads, myThreads) ----
         // the rows of a page: a key each, and a thread's as its last reply (who wrote it, when, its text)
         feedItems(view, items) {
-            if (view !== 'threads') return items.map((item) => Object.assign(item, { key: [item.kind, item.chatRoomId, item.eventSeq].join(':') }));
+            if (view !== 'threads') return items.map((item) => Object.assign(item, { key: item.chatUserActivityId != null
+                ? 'activity:' + item.chatUserActivityId : [item.kind, item.chatRoomId, item.eventSeq, item.date].join(':') }));
             return items.map((item) => Object.assign(item, { key: 'thread:' + item.chatRoomId + ':' + item.threadRootEventSeq, kind: 'thread',
                 actorUserId: item.lastUserId, actorName: item.lastUserName, date: item.lastDate, snippet: item.lastSnippet || item.rootSnippet,
                 eventSeq: item.lastEventSeq, messageEventSeq: item.lastEventSeq }));
@@ -5587,7 +5888,7 @@ module.exports = {
             return view === 'threads' ? this.get('myThreads', { limit: 40, cursor }) : this.get('activity', { limit: 40, cursor });
         },
         // the first page (more false) or the next by the cursor; an encrypted room's text decrypted here
-        loadFeed(more) {
+        loadFeed(more, refresh) {
             const view = this.filter;
             if (view !== 'activity' && view !== 'threads') return;
             const feed = this.feed;
@@ -5596,28 +5897,25 @@ module.exports = {
             // another view's list is not shown under this one; the same view's stays until its first page is read again
             if (!more && feed.view !== view) { feed.view = view; feed.list = []; feed.next = null; feed.loaded = false; }
             feed.loading = true;
-            this.feedRequest(view, more ? feed.next : null).then((json) => this.openFeed(this.feedItems(view, json.items || [])).then((list) => {
+            return this.feedRequest(view, more ? feed.next : null).then((json) => this.openFeed(this.feedItems(view, json.items || [])).then((list) => {
                 if (seq !== feed.seq) return;
-                feed.list = more ? feed.list.concat(list.filter((item) => !feed.list.some((other) => other.key === item.key))) : list;
-                feed.next = json.nextCursor == null ? null : json.nextCursor;
+                let page = { list, next: json.nextCursor ?? null };
+                if (more) {
+                    const known = new Set(feed.list.map((item) => item.key));
+                    page.list = feed.list.concat(list.filter((item) => !known.has(item.key)));
+                } else if (refresh && view === 'activity') {
+                    page = mergeFirstPage(feed, page, (item) => item.key);
+                }
+                Object.assign(feed, page);
                 feed.view = view;
                 feed.loading = false;
                 feed.loaded = true;
                 this.$nextTick(() => this.fillFeed());
             })).catch(() => { if (seq === feed.seq) { feed.loading = false; feed.loaded = true; } });
         },
-        // what is new at the top: the first page read again and merged above the rows already loaded (a thread moves up with
-        // its new reply), so the pages scrolled to stay
+        // Refreshes and load-more share a sequence so a slow, older reply cannot overwrite a newer page.
         refreshFeedTop() {
-            const view = this.filter;
-            const feed = this.feed;
-            if ((view !== 'activity' && view !== 'threads') || feed.view !== view || feed.loading) return;
-            const seq = feed.seq;
-            this.feedRequest(view, null).then((json) => this.openFeed(this.feedItems(view, json.items || [])).then((list) => {
-                if (seq !== feed.seq || feed.view !== view) return;
-                const fresh = new Set(list.map((item) => item.key));
-                feed.list = list.concat(feed.list.filter((item) => !fresh.has(item.key)));
-            })).catch(() => null);
+            if (this.feed.view === this.filter) return this.loadFeed(false, true);
         },
         // an encrypted room's items: the message's text and a reaction's key, decrypted in this page (moqui.chat.openSealed);
         // one this device cannot read says so
@@ -5711,9 +6009,11 @@ module.exports = {
             if (!this.feedShown || !event || event.senderUserId === this.me.userId) return;
             const me = this.me.userId;
             const inThread = event.type === 'message' && event.threadRootEventSeq != null;
+            // Older servers omit the recipient hint. Check Activity again on their thread pushes (the feed itself
+            // enforces membership); a desktop notification still requires positive evidence of a mention or reply.
+            const legacyThread = inThread && event.replyForViewer == null;
             const concerns = this.filter === 'threads' ? inThread
-                : event.type === 'reaction' || inThread || ((event.type === 'message' || event.type === 'edit')
-                    && (((event.mentions || []).includes(me)) || (!!event.replyTo && event.replyTo.senderUserId === me)));
+                : event.type === 'reaction' || legacyThread || ((event.type === 'message' || event.type === 'edit') && moqui.chat.mentionsOrRepliesTo(event, me));
             if (!concerns) return;
             clearTimeout(this.feedTimer);
             this.feedTimer = setTimeout(() => this.refreshFeedTop(), 600);

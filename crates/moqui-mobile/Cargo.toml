@@ -39,6 +39,12 @@ getrandom = { version = "0.4", features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 log = "0.4"
+# The native screen share's leg (plans/archive/MM-Spike.md): a WebRTC client of the media server, the workspace's str0m on the
+# aws-lc-rs crypto rustls already links here.
+str0m = { version = "0.25.0", default-features = false, features = ["aws-lc-rs"] }
+# SFrame (RFC 9605) of the screen leg in an end-to-end encrypted call (src/screen.rs): the workspace's crate, whose tests
+# check it against the RFC's vectors and the pages' frames (crates/moqui-rtc/tests/sframe.rs).
+sframe = { version = "2.1.0", default-features = false, features = ["rust-crypto"] }
 # moqui-client logs through tracing: with no subscriber its events go to log, so to logcat.
 tracing = { version = "0.1", features = ["log"] }
 
@@ -50,6 +56,10 @@ ndk-context = "0.1"
 # As rustls-platform-verifier 0.7's.
 jni = "0.22"
 rustls-platform-verifier = "0.7"
+
+[dev-dependencies]
+# The screen leg's tests against the repository's own media server (src/screen_tests.rs), on loopback.
+moqui-rtc = { path = "../moqui-rtc" }
 
 [build-dependencies]
 tauri-build = { version = "=3.0.0-alpha.4", features = [] }

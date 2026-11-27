@@ -548,7 +548,7 @@ impl Driver<'_> {
             "peer" => self.peer(&route, room, leg, generation, frame, now).map(|()| None),
             "join" => self
                 .sfu
-                .join(now, &key, generation, sdp())
+                .join_as(now, &key, generation, sdp(), frame["boundScreenOf"].as_str())
                 .and_then(|answer| {
                     // a leg here of a call whose media is on another node: this node is a leg node, linked to that one
                     if !origin.is_empty() && origin != self.own {
@@ -669,7 +669,12 @@ impl Driver<'_> {
                     return self.reply(&route, room, json!({"rtc":"error","id":id,"code":"stageUnavailable"}));
                 }
                 if frame["action"] == "snapshot" {
-                    if leg_route.guest || stage["inkEmbedded"] != true {
+                    // a snapshot replaces the share with a board, so only one who may draw on it asks, and the
+                    // presenter's page asks its user unless the presenter asked
+                    if leg_route.guest
+                        || stage["inkEmbedded"] != true
+                        || !super::ink::may_draw(stage, leg_route.host, leg)
+                    {
                         return self.reply(&route, room, json!({"rtc":"error","id":id,"code":"notAllowed"}));
                     }
                     self.spread(

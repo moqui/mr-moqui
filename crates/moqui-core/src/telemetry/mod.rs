@@ -70,6 +70,16 @@ pub fn rollup(
 mod prometheus;
 #[cfg(feature = "telemetry")]
 mod sdk;
+mod tail;
+
+/// The span attribute of a kept root that counts the spans of its trace dropped while it was recorded: by the tails
+/// (tail.rs) and by the export queue when it refused children promoted with the root. A lower bound: a span of a new
+/// trace past tail-traces, a buffer the sweep expired, a span that ended after its root was decided and one the
+/// queue refused at enqueue are counted only in the dropped counter (docs/tools/Monitoring.md).
+const DROPPED_SPANS: &str = "moqui.trace.dropped_spans";
+/// The spans a root's thread dropped as it did not keep the trace, which count as dropped only when the export keeps
+/// the trace (`worker`); never stored.
+const UNKEPT_SPANS: &str = "moqui.trace.unkept_spans";
 
 /// The defaults of [`Capacity`].
 const MAX_QUEUE: usize = 8192;
@@ -320,7 +330,9 @@ pub struct Capacity {
     pub queue_bytes: usize,
     /// Traces whose spans wait for their root (tail-traces).
     pub tail_traces: usize,
-    /// Spans one trace may hold there (tail-trace-spans).
+    /// Spans one trace holds while its root decides, on the thread under an open root and in the export's buffer; past
+    /// it a span is dropped and counted; on the thread a failed or slow frame takes the place of an ordinary one
+    /// (tail-trace-spans).
     pub tail_trace_spans: usize,
 }
 
@@ -562,7 +574,7 @@ pub fn for_factory(factory: &ExecutionContextFactory) -> Arc<Telemetry> {
         if !name.is_empty() {
             resource.service_name = name;
         }
-        // what a manager sets on its instances (plans/Vault-Instances.md §4.8): the version at each deploy, the
+        // what a manager sets on its instances (plans/archive/Vault-Instances.md §4.8): the version at each deploy, the
         // environment at the provision
         let version = factory.conf_setting("telemetry", "service-version");
         if !version.is_empty() {
@@ -1639,7 +1651,10 @@ fn text(document: &Document, key: &str) -> String {
         .unwrap_or_default()
 }
 fn number(document: &Document, key: &str) -> f64 {
-    match document.get(key) {
+    value_number(document.get(key))
+}
+fn value_number(value: Option<&Value>) -> f64 {
+    match value {
         Some(Value::I64(value)) => *value as f64,
         Some(Value::I32(value)) => f64::from(*value),
         Some(Value::F64(value)) => *value,
@@ -1661,14 +1676,39 @@ fn mandatory_root(document: &Document) -> bool {
         || true_field(document, "moqui.synthetic.check")
 }
 
+/// [`admit_ready`] for this server's spans: a root admitted with children of its trace that the full queue refused
+/// counts them (MON-UI-003).
+fn admit_spans(ready: &mut Vec<Document>, capacity: &Capacity, count: &mut usize, bytes: &mut usize) -> usize {
+    let mut refused = HashMap::<String, u64>::new();
+    let dropped = admit_ready(ready, true, capacity, count, bytes, |document| {
+        if !is_root(document) {
+            *refused.entry(string_field(document, "trace_id").to_string()).or_default() += 1;
+        }
+    });
+    if !refused.is_empty() {
+        for document in ready.iter_mut().filter(|document| is_root(document)) {
+            if let Some(refused) = refused.remove(string_field(document, "trace_id")) {
+                add_dropped_spans(document, refused);
+            }
+        }
+    }
+    dropped
+}
+
+/// A span that decides its trace in the export: a mandatory root, or one with no parent.
+fn is_root(document: &Document) -> bool {
+    mandatory_root(document) || string_field(document, "parent_span_id").is_empty()
+}
+
 /// Tail promotion may make a large batch. Charge mandatory local roots first,
-/// retaining the original document order while dropping only excess children.
+/// retaining the original document order while dropping only excess children. `dropped` sees each document dropped.
 fn admit_ready(
     ready: &mut Vec<Document>,
     local_roots: bool,
     capacity: &Capacity,
     count: &mut usize,
     bytes: &mut usize,
+    mut dropped: impl FnMut(&Document),
 ) -> usize {
     let original = ready.len();
     let mut admit = |document: &Document, record_limit: usize, byte_limit: usize| {
@@ -1678,6 +1718,7 @@ fn admit_ready(
             *bytes += document_bytes;
             true
         } else {
+            dropped(document);
             false
         }
     };
@@ -1691,6 +1732,38 @@ fn admit_ready(
         (local_roots && mandatory_root(document)) || admit(document, ordinary_records, ordinary_bytes)
     });
     original - ready.len()
+}
+
+/// A span the export buffers is important as one in a thread's tail is (sdk.rs `PendingSpan::close`): it failed, or
+/// it was a slow artifact hit.
+impl tail::Waiting for Document {
+    fn important(&self) -> bool {
+        has_exception(self) || (true_field(self, "moqui.artifact.slow") && number(self, "duration_nano") > 1e9)
+    }
+}
+
+/// Take the count of spans its thread dropped out of a span's attributes.
+fn take_unkept_spans(document: &mut Document) -> u64 {
+    match document.get_mut("attributes") {
+        Some(Value::Map(attributes)) => attributes
+            .shift_remove(UNKEPT_SPANS)
+            .map_or(0, |value| value_number(Some(&value)) as u64),
+        _ => 0,
+    }
+}
+
+/// Add `dropped` to the count of dropped spans a kept root carries in its attributes.
+fn add_dropped_spans(document: &mut Document, dropped: u64) {
+    if dropped == 0 {
+        return;
+    }
+    let entry = document
+        .entry("attributes".to_string())
+        .or_insert_with(|| Value::Map(Document::default()));
+    if let Value::Map(attributes) = entry {
+        let total = (number(attributes, DROPPED_SPANS) as u64).saturating_add(dropped);
+        attributes.insert(DROPPED_SPANS.into(), Value::I64(i64::try_from(total).unwrap_or(i64::MAX)));
+    }
 }
 
 fn has_exception(document: &Document) -> bool {
@@ -1772,7 +1845,7 @@ fn worker(shared: Arc<Shared>, receiver: mpsc::Receiver<Command>) {
     let mut pending_bytes = 0_usize;
     let mut tail_bytes = 0_usize;
     let mut tail_count = 0_usize;
-    let mut traces = HashMap::<String, (Instant, Vec<Document>)>::new();
+    let mut traces = HashMap::<String, (Instant, tail::TraceBuffer<Document>)>::new();
     let mut decisions = Recent::default();
     let mut counted_errors = Recent::default();
     let mut next_command = None;
@@ -1807,8 +1880,9 @@ fn worker(shared: Arc<Shared>, receiver: mpsc::Receiver<Command>) {
                 let mut ready = Vec::new();
                 if last_sweep.elapsed() >= Duration::from_secs(1) {
                     let now = Instant::now();
-                    traces.retain(|_, (started, spans)| {
+                    traces.retain(|_, (started, buffer)| {
                         if now.duration_since(*started) > Duration::from_secs(120) {
+                            let spans = buffer.spans();
                             tail_count = tail_count.saturating_sub(spans.len());
                             tail_bytes = tail_bytes.saturating_sub(spans.iter().map(document_bytes).sum::<usize>());
                             shared.counters.dropped.fetch_add(spans.len() as u64, Ordering::Relaxed);
@@ -1821,32 +1895,34 @@ fn worker(shared: Arc<Shared>, receiver: mpsc::Receiver<Command>) {
                     counted_errors.expire(now);
                     last_sweep = now;
                 }
-                for document in documents {
+                for mut document in documents {
                     if index == "otel_spans" && local {
+                        let unkept = take_unkept_spans(&mut document);
                         let trace = string_field(&document, "trace_id");
                         let mandatory_root = mandatory_root(&document);
-                        let root = mandatory_root || string_field(&document, "parent_span_id").is_empty();
+                        let root = is_root(&document);
                         let sampled = true_field(&document, "sampled");
                         let important = has_exception(&document)
                             || number(&document, "duration_nano") > shared.live.load().slow_root.as_nanos() as f64;
                         if root {
                             let keep = sampled
                                 || important
-                                || traces.get(trace).is_some_and(|(_, spans)| {
-                                    spans.iter().any(|span| {
-                                        has_exception(span)
-                                            || (true_field(span, "moqui.artifact.slow")
-                                                && number(span, "duration_nano") > 1e9)
-                                    })
-                                });
-                            if let Some((_, spans)) = traces.remove(trace) {
+                                || traces.get(trace).is_some_and(|(_, buffer)| buffer.has_important());
+                            let trace = trace.to_string();
+                            if let Some((_, buffer)) = traces.remove(&trace) {
+                                let spans = buffer.spans();
                                 tail_count = tail_count.saturating_sub(spans.len());
                                 tail_bytes = tail_bytes.saturating_sub(spans.iter().map(document_bytes).sum::<usize>());
                                 if keep {
-                                    ready.extend(spans);
+                                    // the kept root says how many spans of its trace were dropped here (MON-UI-003)
+                                    add_dropped_spans(&mut document, buffer.dropped());
+                                    ready.extend(buffer.into_spans());
                                 }
                             }
-                            decisions.insert(trace, keep, Instant::now());
+                            if keep {
+                                add_dropped_spans(&mut document, unkept);
+                            }
+                            decisions.insert(&trace, keep, Instant::now());
                             if mandatory_root || keep {
                                 ready.push(document);
                             }
@@ -1861,19 +1937,32 @@ fn worker(shared: Arc<Shared>, receiver: mpsc::Receiver<Command>) {
                         } else {
                             let capacity = &shared.config.capacity;
                             if traces.len() < capacity.tail_traces || traces.contains_key(trace) {
-                                let (_, buffered) = traces
+                                let (_, buffer) = traces
                                     .entry(trace.to_string())
-                                    .or_insert_with(|| (Instant::now(), Vec::new()));
+                                    .or_insert_with(|| (Instant::now(), tail::TraceBuffer::default()));
                                 let bytes = document_bytes(&document);
-                                if buffered.len() < capacity.tail_trace_spans
+                                let room = buffer.len() < capacity.tail_trace_spans
                                     && tail_count < capacity.queue_records
-                                    && tail_bytes.saturating_add(bytes) <= capacity.queue_bytes
-                                {
-                                    tail_count += 1;
-                                    tail_bytes += bytes;
-                                    buffered.push(document);
-                                } else {
-                                    shared.counters.dropped.fetch_add(1, Ordering::Relaxed);
+                                    && tail_bytes.saturating_add(bytes) <= capacity.queue_bytes;
+                                // full, a failed or slow span takes the place of the latest ordinary one, as in a
+                                // thread's tail, when the bytes still fit (tail.rs, MON-UI-003)
+                                let fits = |held: &Document| {
+                                    tail_bytes.saturating_sub(document_bytes(held)).saturating_add(bytes)
+                                        <= capacity.queue_bytes
+                                };
+                                match buffer.add(document, room, fits) {
+                                    tail::Added::Held => {
+                                        tail_count += 1;
+                                        tail_bytes += bytes;
+                                    }
+                                    tail::Added::Dropped => {
+                                        shared.counters.dropped.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                    tail::Added::Replaced(held) => {
+                                        tail_bytes =
+                                            tail_bytes.saturating_sub(document_bytes(&held)).saturating_add(bytes);
+                                        shared.counters.dropped.fetch_add(1, Ordering::Relaxed);
+                                    }
                                 }
                             } else {
                                 shared.counters.dropped.fetch_add(1, Ordering::Relaxed);
@@ -1884,13 +1973,18 @@ fn worker(shared: Arc<Shared>, receiver: mpsc::Receiver<Command>) {
                     }
                 }
                 if !ready.is_empty() {
-                    let dropped = admit_ready(
-                        &mut ready,
-                        local && index == "otel_spans",
-                        &shared.config.capacity,
-                        &mut pending_count,
-                        &mut pending_bytes,
-                    );
+                    let dropped = if local && index == "otel_spans" {
+                        admit_spans(&mut ready, &shared.config.capacity, &mut pending_count, &mut pending_bytes)
+                    } else {
+                        admit_ready(
+                            &mut ready,
+                            false,
+                            &shared.config.capacity,
+                            &mut pending_count,
+                            &mut pending_bytes,
+                            |_| {},
+                        )
+                    };
                     shared.counters.dropped.fetch_add(dropped as u64, Ordering::Relaxed);
                     if !ready.is_empty() {
                         if let Some((_, documents, _)) = pending
@@ -1942,7 +2036,7 @@ fn worker(shared: Arc<Shared>, receiver: mpsc::Receiver<Command>) {
         }
     }
     shared.counters.dropped.fetch_add(
-        (pending_count + traces.values().map(|(_, spans)| spans.len()).sum::<usize>()) as u64,
+        (pending_count + traces.values().map(|(_, buffer)| buffer.len()).sum::<usize>()) as u64,
         Ordering::Relaxed,
     );
 }

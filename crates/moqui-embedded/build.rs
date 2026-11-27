@@ -50,6 +50,9 @@ fn main() {
     );
 
     let mut watch = |path: &Path| println!("cargo:rerun-if-changed={}", path.display());
+    if level.whole_webroot() {
+        check_browser_libs(&runtime, level);
+    }
     let files = select::gather(&runtime, &manifest, level, &mut watch).unwrap_or_else(|err| panic!("{err}"));
     let (blob, index) = select::pack(&files).unwrap_or_else(|err| panic!("{err}"));
 
@@ -58,6 +61,78 @@ fn main() {
     write_out(&out.join("embedded.idx"), index.as_bytes());
 
     stage_programs();
+}
+
+/// The JavaScript libraries of each component this build packs that has a `build/js-build.json` (`./moq build-js`
+/// makes them; git keeps only their `MANIFEST.json`): the components of the sets the level packs (`production` base
+/// and addon, `all` every set), as `select::gather` takes them. A file its manifest lists and the build has not made
+/// fails the build; a component the level does not pack (a dev or test one in a production build) is not checked.
+fn check_browser_libs(runtime: &Path, level: select::Level) {
+    let components = runtime.join("components");
+    let mut roots: Vec<PathBuf> = level
+        .component_sets()
+        .iter()
+        .flat_map(|set| std::fs::read_dir(components.join(set)).into_iter().flatten().flatten())
+        .map(|component| component.path())
+        .filter(|root| root.join("build/js-build.json").is_file())
+        .collect();
+    roots.sort();
+    for root in roots {
+        check_component_libs(&root);
+    }
+}
+
+fn check_component_libs(root: &Path) {
+    let config_path = root.join("build/js-build.json");
+    println!("cargo:rerun-if-changed={}", config_path.display());
+    let config: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&config_path).unwrap_or_else(|err| panic!("{}: {err}", config_path.display())),
+    )
+    .unwrap_or_else(|err| panic!("{}: {err}", config_path.display()));
+    let output = config["output"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{}: no output", config_path.display()));
+    let libs = root.join(output);
+    let manifest = libs.join("MANIFEST.json");
+    println!("cargo:rerun-if-changed={}", manifest.display());
+    let json: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&manifest).unwrap_or_else(|err| panic!("{}: {err}; run ./moq build-js", manifest.display())),
+    )
+    .unwrap_or_else(|err| panic!("{}: {err}", manifest.display()));
+    let files: Vec<&serde_json::Value> = json["libraries"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|library| library["files"].as_array().into_iter().flatten())
+        .collect();
+    // Only a component with optional font packs (the webroot) records which are installed.
+    let selected: Vec<String> = if files.iter().any(|file| file["pack"].is_string()) {
+        let selection = libs.join("fonts-extra/installed.json");
+        println!("cargo:rerun-if-changed={}", selection.display());
+        serde_json::from_slice(
+            &std::fs::read(&selection)
+                .unwrap_or_else(|err| panic!("{}: {err}; run ./moq build-js", selection.display())),
+        )
+        .expect("installed font packs")
+    } else {
+        Vec::new()
+    };
+    for file in files {
+        if file["pack"]
+            .as_str()
+            .is_some_and(|pack| !selected.iter().any(|name| name == pack))
+        {
+            continue;
+        }
+        let base = if file["target"] == "server" {
+            root.join("script/libs")
+        } else {
+            libs.clone()
+        };
+        let path = base.join(file["path"].as_str().expect("asset path"));
+        println!("cargo:rerun-if-changed={}", path.display());
+        assert!(path.is_file(), "{} missing; run ./moq build-js", path.display());
+    }
 }
 
 /// Name the OpenSearch and Chromium archives to embed, under their features, for src/programs.rs: their paths in

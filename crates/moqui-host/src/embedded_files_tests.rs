@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use super::{ensure_runtime, names};
+use super::{ensure_runtime, missing_browser_libs, names};
 
 #[test]
 fn a_new_runtime_gets_its_directories_and_reads_the_built_in_files_in_place() {
@@ -133,4 +133,45 @@ fn shared_files_come_after_the_runtime_and_the_binary_and_merge_addons() {
         moqui_lib::vfs::mount_shared(&local.join(tree), None);
     }
     std::fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
+fn a_component_names_each_library_whose_listed_files_are_missing() {
+    let root = std::env::temp_dir().join(format!("moqui-missing-libs-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let component = root.join("shop");
+    let put = |path: &str, text: &str| {
+        let file = component.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    };
+    assert!(
+        missing_browser_libs(&component).is_empty(),
+        "no build/js-build.json, nothing to check"
+    );
+    put(
+        "build/js-build.json",
+        r#"{"output": "screen/shop/libs", "libraries": []}"#,
+    );
+    put(
+        "screen/shop/libs/MANIFEST.json",
+        r#"{"libraries": [
+            {"id": "math", "files": [{"target": "client", "path": "math.js"}, {"target": "server", "path": "math.js"}]},
+            {"id": "dates", "files": [{"target": "server", "path": "dates.js"}]}]}"#,
+    );
+    put("screen/shop/libs/math.js", "client");
+    put("script/libs/math.js", "server");
+    assert_eq!(
+        missing_browser_libs(&component),
+        vec!["shop/dates"],
+        "a server file is looked for under script/libs"
+    );
+    put("script/libs/dates.js", "server");
+    assert!(missing_browser_libs(&component).is_empty());
+    put("build/js-build.json", "{");
+    assert_eq!(
+        missing_browser_libs(&component),
+        vec!["shop (unreadable build/js-build.json)"]
+    );
+    let _ = std::fs::remove_dir_all(&root);
 }

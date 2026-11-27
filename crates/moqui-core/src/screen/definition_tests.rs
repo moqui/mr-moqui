@@ -14,7 +14,7 @@
 
 use moqui_lib::node::MNode;
 
-use super::{merge_extend, Extended, ScreenDef, SectionKind};
+use super::{client_libraries, merge_extend, Extended, ScreenDef, SectionKind};
 use crate::context::ExecutionContextFactory;
 
 fn names_in(node: &MNode) -> Vec<String> {
@@ -29,8 +29,40 @@ fn names_in(node: &MNode) -> Vec<String> {
         .collect()
 }
 
+/// A screen-extend adds a client library to the screen's, by library and render mode, once; the merged screen lists
+/// them by render mode in declaration order, and an id that is not `component/library` is refused.
+#[test]
+fn a_screen_extend_adds_client_libraries_by_library_and_mode() {
+    let screen = MNode::parse_text(
+        "s",
+        r#"<screen><client-library library="app/charts" render-mode="qvt"/><widgets/></screen>"#,
+    )
+    .unwrap();
+    let extend = MNode::parse_text(
+        "e",
+        r#"<screen-extend>
+                <client-library library="app/charts" render-mode="qvt"/>
+                <client-library library="site/maps" render-mode="qvt"/>
+                <client-library library="site/maps" render-mode="other"/>
+            </screen-extend>"#,
+    )
+    .unwrap();
+    merge_extend(&screen, &extend, "test", &mut Extended::default());
+    let by_mode = client_libraries(&screen, "test").unwrap();
+    assert_eq!(by_mode["qvt"], ["app/charts", "site/maps"]);
+    assert_eq!(by_mode["other"], ["site/maps"]);
+    for bad in ["charts", "app/", "../x/y", "app/a.js"] {
+        let screen = MNode::parse_text(
+            "s",
+            &format!(r#"<screen><client-library library="{bad}" render-mode="qvt"/></screen>"#),
+        )
+        .unwrap();
+        assert!(client_libraries(&screen, "test").is_err(), "{bad}");
+    }
+}
+
 /// `widgets-extend where="prepend|append"` puts its widgets first or last inside the named element: a section's
-/// widgets, a container-box's body, a container itself (plans/design-dev-aide.md F16).
+/// widgets, a container-box's body, a container itself (plans/archive/design-dev-aide.md F16).
 #[test]
 fn widgets_extend_prepends_and_appends_inside_the_named_element() {
     let screen = MNode::parse_text(
@@ -704,4 +736,31 @@ fn an_action_blocks_authorization_toggles_end_with_it() {
     if !eca {
         context.enable_entity_eca();
     }
+}
+
+/// SEC-SCR-11: a screen holds actions, so no screen is read from another server; this server's own locations are.
+#[test]
+fn a_screen_is_never_read_from_another_server() {
+    for remote in [
+        "http://evil.example/Root.xml",
+        "HTTPS://evil.example/Root.xml",
+        " ftp://evil.example/x.xml",
+        "http:attacker.example/x.xml",
+        "Https:attacker.example/x.xml",
+    ] {
+        assert!(super::remote_location(remote), "{remote}");
+    }
+    for local in [
+        "component://webroot/screen/webroot.xml",
+        "dbresource://screens/x.xml",
+        "/tmp/Root.xml",
+        "runtime://x.xml",
+    ] {
+        assert!(!super::remote_location(local), "{local}");
+    }
+    let context = crate::context::ExecutionContextFactory::test_context();
+    let factory = context.factory();
+    let facade = super::super::ScreenFacade::of(factory);
+    let refused = facade.screen_def(factory, "https://evil.example/Root.xml").unwrap_err();
+    assert!(refused.to_string().contains("not from another server"), "{refused}");
 }

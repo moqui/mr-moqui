@@ -14,7 +14,14 @@
         releaseList = []
         if (incidentAllowed) {
             const result = ec.service.sync().name('org.moqui.monitor.MonitorServices.list#Releases').parameters({serviceName}).call()
-            releaseList = (result.releases || []).map(item => Object.assign({}, item, {instances: (item.instancesNow || []).join(', ')}))
+            // releasedDate comes as UTC date text: shown in the user's zone, as ReleaseDetail shows it
+            const displayTime = value => {
+                if (value == null || value === '') return ec.l10n.localize('Not recorded')
+                const date = new Date(/^-?\d+$/.test(String(value)) ? Number(value) : value)
+                return Number.isNaN(date.getTime()) ? String(value) : ec.l10n.format(date, 'yyyy-MM-dd HH:mm:ss')
+            }
+            releaseList = (result.releases || []).map(item => Object.assign({}, item, {instances: (item.instancesNow || []).join(', '),
+                releasedText: displayTime(item.releasedDate)}))
             if (instanceId) releaseList = releaseList.filter(item => (item.instancesNow || []).includes(instanceId))
         }
     ]]></script></actions>
@@ -29,11 +36,12 @@
                 <field name="instanceId"><default-field title="Instance"><text-line/></default-field></field>
                 <field name="find"><default-field><submit text="Find"/></default-field></field>
             </form-single>
+            <label condition="releaseList.length" text="Times shown in ${ec.user.timeZone}." type="p" style="m-muted"/>
             <form-list name="ReleaseList" list="releaseList" skip-form="true">
                 <field name="serviceName"><default-field title="Service"><display/></default-field></field>
                 <field name="version"><default-field title="Version"><link url="releaseDetail" text="${version}" parameter-map="{serviceName:serviceName, version:version}" link-type="anchor"/></default-field></field>
                 <field name="revision"><default-field title="Revision"><display/></default-field></field>
-                <field name="releasedDate"><default-field title="Released"><display/></default-field></field>
+                <field name="releasedText"><default-field title="Released"><display/></default-field></field>
                 <field name="instances"><default-field title="Instances now"><display/></default-field></field>
                 <field name="openRegressions"><default-field title="Open regressions"><display/></default-field></field>
                 <field name="previousVersion"><default-field title="Compare with">

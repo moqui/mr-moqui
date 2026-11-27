@@ -206,7 +206,7 @@ fn may_decide(facade: &EntityFacade, deployment: &EntityValue) -> Result<(), Str
 /// `decide#GitDeployment`: approve or refuse (`decision`, with a `reason`) a deployment whose pipeline passed and that
 /// waits for approval. By an approver (the environment's approver group, else a maintainer), never the requester. A
 /// deployment with a lease is approved by opening it: `leaseApproval`, the approver's client's approval of the lease,
-/// goes with the decision unless the lease is open already (plans/Vault-Instances.md §4.6). Out: `statusId`.
+/// goes with the decision unless the lease is open already (plans/archive/Vault-Instances.md §4.6). Out: `statusId`.
 fn decide_git_deployment(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let Some(deployment) = deployment_of(facade, parameters)? else {
         return none();

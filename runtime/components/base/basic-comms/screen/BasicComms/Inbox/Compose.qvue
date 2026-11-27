@@ -139,9 +139,9 @@ along with this software (see the LICENSE.md file). If not, see
                     </q-btn-dropdown>
                     <q-btn flat round dense icon="sym_o_attach_file" :aria-label="t('Attach files')" @click="pickFiles"><q-tooltip>{{t('Attach files')}}</q-tooltip></q-btn>
                     <q-btn v-if="hasDrive" flat round dense icon="sym_o_add_to_drive" :aria-label="t('Attach from Files')" @click="openPicker"><q-tooltip>{{t('Attach from Files')}}</q-tooltip></q-btn>
-                    <q-btn flat round dense icon="sym_o_text_snippet" :aria-label="t('Text blocks')"><q-tooltip>{{t('Text blocks')}} (/)</q-tooltip>
-                        <q-menu v-model="blocksOpen" @before-show="loadBlocks" @show="focusBlockSearch" @hide="blocksHidden" anchor="top left" self="bottom left">
-                            <div ref="blockPanel" class="q-pa-sm" style="width:320px;max-width:90vw" @keydown.enter="insertFirstBlock">
+                    <q-btn ref="blockButton" flat round dense icon="sym_o_text_snippet" :aria-label="t('Text blocks')"><q-tooltip>{{t('Text blocks')}} (/)</q-tooltip>
+                        <q-menu v-model="blocksOpen" no-refocus @before-show="loadBlocks" @show="focusBlockSearch" @hide="blocksHidden" anchor="top left" self="bottom left">
+                            <div ref="blockPanel" class="q-pa-sm" style="width:320px;max-width:90vw" @keydown.stop @keyup.stop @keydown.enter="insertFirstBlock" @keydown.esc="cancelBlockSearch">
                                 <m-text-line v-model="blockSearch" name="blockSearch" :label="t('Find a text block')"></m-text-line>
                                 <q-list dense class="q-mt-xs" style="max-height:240px;overflow:auto">
                                     <q-item v-for="block in shownBlocks" :key="block.emailTextBlockId" clickable v-close-popup @click="insertBlock(block)">
@@ -149,7 +149,7 @@ along with this software (see the LICENSE.md file). If not, see
                                             <q-item-label caption class="ellipsis">{{blockText(block)}}</q-item-label></q-item-section>
                                         <q-item-section v-if="block.shortcut" side class="text-caption">{{block.shortcut}}</q-item-section>
                                     </q-item>
-                                    <q-item v-if="!shownBlocks.length"><q-item-section class="m-muted">{{blocks.length ? t('No text blocks match') : t('No text blocks yet')}}</q-item-section></q-item>
+                                    <q-item v-if="!shownBlocks.length"><q-item-section class="m-muted">{{blocksState === 'loading' ? t('Loading…') : (blocksState === 'failed' ? t('Text blocks could not be loaded') : (blocks.length ? t('No text blocks match') : t('No text blocks yet')))}}</q-item-section></q-item>
                                 </q-list>
                                 <q-btn flat dense no-caps size="sm" color="primary" :label="t('Manage text blocks')" @click="go(appLink() + 'Settings/TextBlocks')"></q-btn>
                             </div>
@@ -259,7 +259,7 @@ module.exports = {
             uid: composeCount, query: {}, state: 'loading', error: null, draft: this.emptyDraft(), identities: [], me: {}, undoSeconds: 10, kind: 'new',
             adding: { to: null, cc: null, bcc: null }, showCc: false, showBcc: false, showQuote: false, dragOver: false, uploading: false, picked: null,
             sending: false, sent: false, savedAt: null, saving: false, saveError: null, dirty: false, saveTimer: null, scheduleOpen: false, scheduleCustom: '',
-            blocksOpen: false, blocks: [], blockSearch: '', slashPending: false, slashAt: null, signature: null, signaturePlacement: 'above', belowSignature: null,
+            blocksOpen: false, blocks: [], blocksState: '', blockRequest: 0, blockSearch: '', blockInserted: false, slashPending: false, slashAt: null, signature: null, signaturePlacement: 'above', belowSignature: null,
             loadedOnce: false, pageLayoutOverride: null, hasDrive: false,
             // the desktop client offline (MD4): the files kept by the app until the message is sent from its outbox, the
             // message's clientRef, and whether the email's draft is kept here, not yet on the server
@@ -941,26 +941,49 @@ module.exports = {
 
         // ---- text blocks ----
         loadBlocks() {
-            if (this.blocksLoaded) return;
-            moqui.request(this.url('textBlocks')).then((result) => { this.blocks = (result.json || {}).textBlockList || []; this.blocksLoaded = true; }, () => {});
+            const request = ++this.blockRequest;
+            this.blocks = [];
+            this.blocksState = 'loading';
+            this.blockSearch = '';
+            this.blockInserted = false;
+            this.$nextTick(this.focusBlockSearch);
+            moqui.request(this.url('textBlocks')).then((result) => {
+                if (request !== this.blockRequest || !this.blocksOpen) return;
+                this.blocks = (result.json || {}).textBlockList || [];
+                this.blocksState = 'ready';
+            }, () => {
+                if (request === this.blockRequest && this.blocksOpen) this.blocksState = 'failed';
+            });
         },
-        blockText(block) { return String(block.bodyHtml || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 80); },
-        // the menu's search has the focus when it opens, by "/" or the button (COM-UI-023)
+        blockText(block) { return moqui.richText.toPlain(block.bodyHtml || '').slice(0, 80); },
         focusBlockSearch() {
             const input = this.$refs.blockPanel && this.$refs.blockPanel.querySelector('input');
-            if (input) input.focus();
+            if (this.blocksOpen && input) input.focus();
         },
-        // closed with nothing chosen (Esc, a click outside): the "/" stays as typed and the editor has the focus again
         blocksHidden() {
-            if (!this.slashPending) return;
+            if (this.blocksOpen) return;
+            this.blockRequest++;
+            this.blocks = [];
+            const field = this.$refs.editor;
+            if ((this.slashPending || this.blockInserted) && this.draft.plain && field && field.$refs.plainArea) {
+                const area = field.$refs.plainArea;
+                area.focus();
+                if (this.slashPending) area.setSelectionRange(this.slashAt, this.slashAt);
+            } else if ((this.slashPending || this.blockInserted) && field && field.editor) {
+                field.editor.commands.focus(this.slashPending ? this.slashAt : undefined);
+            } else if (!this.blockInserted && this.$refs.blockButton) {
+                this.$refs.blockButton.$el.focus();
+            }
             this.slashPending = false;
-            const editor = this.$refs.editor && this.$refs.editor.editor;
-            if (editor && editor.commands) editor.commands.focus(this.slashAt == null ? undefined : this.slashAt);
             this.slashAt = null;
         },
-        // Enter in the search inserts the first match (a row with the focus takes Enter itself)
+        cancelBlockSearch(event) {
+            if (event.isComposing) return;
+            event.preventDefault();
+            this.blocksOpen = false;
+        },
         insertFirstBlock(event) {
-            if (!event || !event.target || event.target.tagName !== 'INPUT') return;
+            if (!event || event.isComposing || !event.target || event.target.tagName !== 'INPUT') return;
             event.preventDefault();
             const block = this.shownBlocks[0];
             if (!block) return;
@@ -968,32 +991,50 @@ module.exports = {
             this.blocksOpen = false;
         },
         insertBlock(block) {
-            const editor = this.$refs.editor && this.$refs.editor.editor;
+            if (!this.blocks.includes(block)) return;
+            const field = this.$refs.editor;
+            const editor = field && field.editor;
             const html = block.bodyHtml || '';
-            if (editor && editor.chain && !this.draft.plain) {
-                // the search had the focus, so the place to insert is where the "/" was typed
-                const slashAt = this.slashPending && this.slashAt != null ? this.slashAt : null;
+            const slashAt = this.slashPending ? this.slashAt : null;
+            if (this.draft.plain && field && field.$refs.plainArea) {
+                const area = field.$refs.plainArea;
+                const replaceSlash = slashAt != null && area.value.charAt(slashAt - 1) === '/';
+                const from = replaceSlash ? slashAt - 1 : area.selectionStart;
+                const to = replaceSlash ? slashAt : area.selectionEnd;
+                area.focus();
+                area.setRangeText(moqui.richText.toPlain(html), from, to, 'end');
+                field.onPlainInput(area.value);
+            } else if (editor && editor.chain && !this.draft.plain) {
                 let chain = slashAt != null ? editor.chain().focus(slashAt) : editor.chain().focus();
-                if (slashAt != null && slashAt > 0) {
-                    const before = editor.state.doc.textBetween(slashAt - 1, slashAt, '\n', '\n');
-                    if (before === '/') chain = chain.deleteRange({ from: slashAt - 1, to: slashAt });
+                if (slashAt != null && slashAt > 0 && editor.state.doc.textBetween(slashAt - 1, slashAt, '\n', '\n') === '/') {
+                    chain = chain.deleteRange({ from: slashAt - 1, to: slashAt });
                 }
                 chain.insertContent(html).run();
             } else {
-                const text = this.blockText({ bodyHtml: html });
-                this.draft.body = this.draft.plain ? String(this.draft.body || '').replace(/\/$/, '') + text : String(this.draft.body || '') + html;
+                this.draft.body = String(this.draft.body || '') + html;
             }
+            this.blockInserted = true;
             this.slashPending = false;
             this.slashAt = null;
         },
-        // "/" at the start of a word opens the text blocks
+        // A slash at a word boundary opens the menu, leaving its insertion point in the editor.
         onEditorKeyup(event) {
-            if (event.key !== '/' || this.draft.plain) return;
-            const editor = this.$refs.editor && this.$refs.editor.editor;
-            if (!editor || !editor.state) return;
-            const at = editor.state.selection.from;
-            const before = editor.state.doc.textBetween(Math.max(0, at - 2), at, '\n', '\n');
-            if (before === '/' || /[\s\n]\/$/.test(before)) { this.slashPending = true; this.slashAt = at; this.blockSearch = ''; this.blocksOpen = true; this.loadBlocks(); }
+            if (event.key !== '/') return;
+            const field = this.$refs.editor;
+            if (!field) return;
+            let at, before;
+            if (this.draft.plain) {
+                const area = field.$refs.plainArea;
+                if (!area || event.target !== area) return;
+                at = area.selectionStart;
+                before = area.value.slice(Math.max(0, at - 2), at);
+            } else {
+                const editor = field.editor;
+                if (!editor || !editor.state) return;
+                at = editor.state.selection.from;
+                before = editor.state.doc.textBetween(Math.max(0, at - 2), at, '\n', '\n');
+            }
+            if (before === '/' || /\s\/$/.test(before)) { this.slashPending = true; this.slashAt = at; this.blocksOpen = true; }
         },
         onKeydown(event) {
             if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); this.send(); }

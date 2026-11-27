@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The indexes of other projects a running dev server answers about, kept in memory (plans/design-dev-aide.md 13.6).
+//! The indexes of other projects a running dev server answers about, kept in memory (plans/archive/design-dev-aide.md 13.6).
 //!
 //! [`open`] gives a project's [`ProjectIndex`]: booted ([`super::boot`]) and read into a [`MemoryIndex`] on first use,
 //! then kept for the next requests. At most [`capacity`] projects are kept (`dev-reload@projects`, 3), the least
@@ -369,9 +369,11 @@ impl ProjectIndex {
 }
 
 /// A service definition's parameters as the artifact tool answers them: `{in: [...], out: [...]}`, each
-/// `{name, type, required}`.
+/// `{name, type, required}`, merged by name with the `auto-parameters` expanded as a call takes them
+/// (`moqui_core::service::define::merged_in_params`).
 #[must_use]
 pub fn parameters_of(def: &moqui_core::service::define::ServiceDef) -> serde_json::Value {
+    use moqui_core::service::define::{merged_in_params, merged_out_params};
     let list = |params: &[moqui_core::service::define::ParamDef]| -> Vec<serde_json::Value> {
         params
             .iter()
@@ -381,7 +383,7 @@ pub fn parameters_of(def: &moqui_core::service::define::ServiceDef) -> serde_jso
             })
             .collect()
     };
-    serde_json::json!({"in": list(&def.in_params), "out": list(&def.out_params)})
+    serde_json::json!({"in": list(&merged_in_params(def)), "out": list(&merged_out_params(def))})
 }
 
 /// The paths whose change boots the project again, with their stamps: each component directory found (with its
@@ -565,7 +567,7 @@ pub fn requested(
     open(found, dirs, model).map(Some)
 }
 
-/// The project of an allowed directory (a `DevArtifactProject` row an admin allowed, plans/design-dev-aide.md 7.4),
+/// The project of an allowed directory (a `DevArtifactProject` row an admin allowed, plans/archive/design-dev-aide.md 7.4),
 /// read against the server `own`. Unlike [`requested`] it is read on any instance, production too: the row is the
 /// admin's decision to expose its index. It is always the project's own index, read into memory, also when the
 /// directory is the server's own runtime, so a read that names a project never answers from the server's rows.

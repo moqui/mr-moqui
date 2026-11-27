@@ -1,5 +1,5 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
-// A lease of an operational vault approved end to end over REST (/rest/s1/vault, plans/Vault-Instances.md V2,
+// A lease of an operational vault approved end to end over REST (/rest/s1/vault, plans/archive/Vault-Instances.md V2,
 // docs/security/Vaults.md "Leases") with the test client's `vault` member, the vault crate's own session as the lease
 // dialog's worker and `moqui vault approve` run it: a manager asks for a lease of one item, the approver checks the
 // server's lease key once, opens the vault through its chain, approves in their client (each item key unwrapped under

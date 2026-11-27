@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# moq's save-db, reload-save, clean-db, clean-log, clean-all and tidy-cargo. Sourced by moq, which holds the task table; bash 3.2, as moq is.
+# moq's save-db, reload-save, clean-db, clean-log, clean-dev, clean-all and tidy-cargo. Sourced by moq, which holds the task table; bash 3.2, as moq is.
 
 # ========== database and files ==========
 
@@ -33,23 +33,84 @@ clean_log() {
     done
 }
 
-task_clean_all() {
-    [ $# -eq 0 ] || die "clean-all takes no arguments"
-    clean_all
-    # load-save uses clean_all alone: it must not touch target/
+task_clean() {
+    task_tidy_cargo "$@"
+}
+
+# Collect the exact runtime paths once, before displaying or removing them.
+clean_dev_paths() {
+    local path
+    CLEAN_PATHS=()
+    for path in "$CLUSTER_DIR" "$RUNTIME_DIR/txlog" "$OS_DIR/data" "$OS_DIR"/logs/* "$OS_DIR"/logs/.[!.]* \
+        "$RUNTIME_DIR"/log/* "$RUNTIME_DIR"/log/.[!.]* "$RUNTIME_DIR/tmp"; do
+        if [ -e "$path" ] || [ -L "$path" ]; then CLEAN_PATHS+=("$path"); fi
+    done
+}
+
+remove_dev_paths() {
+    local path pause=
+    if [ -d "$OS_DIR/data" ] || [ -d "$OS_DIR/logs" ]; then
+        opensearch_pause || return 1
+        pause=1
+    fi
+    local status=0
+    for path in "${CLEAN_PATHS[@]}"; do rm_path "$path" || status=1; done
+    if [ -n "$pause" ]; then opensearch_resume || status=1; fi
+    return "$status"
+}
+
+clean_dev() {
+    require_server_stopped clean-dev
+    clean_dev_paths
+    remove_dev_paths
+}
+
+# The task also drops the old cargo artifacts, after the data reset so that a tidy failure leaves the instance reset.
+# clean_dev alone stays data only, for load-save.
+task_clean_dev() {
+    [ $# -eq 0 ] || die "clean-dev takes no arguments"
+    clean_dev || return 1
     tidy_cargo
+}
+
+task_clean_all() {
+    local yes= path arg answer target=$ROOT/target
+    for arg in "$@"; do
+        case "$arg" in --yes) yes=1 ;; --dry-run) local MOQ_DRY_RUN=1 ;; *) die "unknown clean-all option: $arg" ;; esac
+    done
+    require_server_stopped clean-all
+    clean_dev_paths
+    local entry
+    local -a js_paths
+    local vault=$JS_WEBROOT/screen/webroot/js/vault/moqui_vault.wasm
+    # runtime/types is build output (moqui types), which an editor's jsconfig reads: clean-all removes it, clean-dev keeps it
+    js_paths=("$RUNTIME_DIR/types" "$vault" "$vault.json")
+    [ "$JS_CACHE" = "$target/js" ] || js_paths+=("$JS_CACHE")
+    local built
+    built=$(js_built_paths) || return 1
+    while IFS= read -r entry; do
+        [ -z "$entry" ] || js_paths+=("$entry")
+    done <<<"$built"
+    info "Removing:"
+    for path in "${CLEAN_PATHS[@]}" "${js_paths[@]}" "$target"; do
+        if [ -e "$path" ] || [ -L "$path" ]; then du -sh "$path" || return 1; fi
+    done
+    info "Keeping downloads, certificates, local configuration, the font pack selection, saves, worktrees and named exports."
+    dry_run && return 0
+    if [ -z "$yes" ]; then
+        [ -t 0 ] || die "clean-all needs a terminal or --yes"
+        read -r -p "Remove the paths listed above? [y/N] " answer
+        case "$answer" in y|Y|yes|YES) ;; *) die "clean-all cancelled" ;; esac
+    fi
+    need_tool cargo
+    remove_dev_paths || return 1
+    for entry in "${js_paths[@]}"; do run_cmd rm -rf -- "$entry" || return 1; done
+    run_cmd cargo clean --target-dir "$target"
 }
 
 task_tidy_cargo() {
     [ $# -eq 0 ] || die "tidy-cargo takes no arguments"
     tidy_cargo
-}
-
-# The runtime data: database, logs, and runtime/tmp.
-clean_all() {
-    clean_db
-    clean_log
-    rm_path "$RUNTIME_DIR/tmp"
 }
 
 # Drop old cargo artifacts under target/ and keep the current build.
@@ -85,7 +146,7 @@ tidy_cargo_run() {
     # layout) or build/ in it. Do not walk into deps/ or incremental/, and never into the generated
     # crate at target/moqui-app.
     find "$ROOT/target" -maxdepth 3 \
-        \( -path "$ROOT/target/moqui-app" -o -path "$ROOT/target/moqui-app/*" \) -prune -o \
+        \( -path "$ROOT/target/js" -o -path "$ROOT/target/moqui-app" -o -path "$ROOT/target/moqui-app/*" \) -prune -o \
         -type d \( -name .fingerprint -o -name build \) -print >"$TIDY_TMP/found" \
         || die "tidy-cargo: could not read target/"
     while IFS= read -r profile; do
@@ -931,12 +992,14 @@ help_clean_log() {
     echo 'Deletes everything in runtime/log.'
 }
 
+help_clean() { help_tidy_cargo; }
+
+help_clean_dev() {
+    echo 'Reset the stopped instance: database, transaction log, OpenSearch data and logs, runtime/log and tmp. Then tidy-cargo drops the old cargo artifacts; the current build, runtime/types among it, stays.'
+}
+
 help_clean_all() {
-    cat <<'EOF'
-clean-db, clean-log, runtime/tmp, and tidy-cargo. tidy-cargo removes old cargo artifacts and keeps
-the current build of each package. Saves in runtime/save are kept; delete those by hand.
-load-save cleans the runtime data only, not target/.
-EOF
+    echo 'Reset the stopped instance and remove its build output. Preview with --dry-run. Use --yes in scripts.'
 }
 
 help_tidy_cargo() {

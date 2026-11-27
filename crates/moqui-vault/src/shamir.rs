@@ -13,7 +13,7 @@
  */
 
 //! Shamir's secret sharing over GF(2^8), k of n (plans/Sealed-Secrets.md §3.3, 3 of 5 by default; the organization
-//! recovery key of plans/Vault-Instances.md §3.10). Each byte of the secret is the constant term of its own random
+//! recovery key of plans/archive/Vault-Instances.md §3.10). Each byte of the secret is the constant term of its own random
 //! polynomial of degree k-1, and share `x` holds each polynomial's value at `x`.
 //!
 //! The field arithmetic is constant time: multiplication is shift-and-add with masks, not log and exp tables, and

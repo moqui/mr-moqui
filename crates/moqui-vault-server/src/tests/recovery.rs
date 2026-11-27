@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Organization recovery, split k of n (plans/Vault-Instances.md §3.10, V4's Tests column): k holders recover a vault
+//! Organization recovery, split k of n (plans/archive/Vault-Instances.md §3.10, V4's Tests column): k holders recover a vault
 //! to a member's new personal key and every member is told; k − 1 cannot; a single-secret vault never gets a recovery
 //! wrap; a holder's step without `VAULT_RECOVERY` or a recent sign-in is refused; an operational vault cannot drop to
 //! one member with recovery off.

@@ -351,7 +351,7 @@ A drive is a tree of files with members and permissions; every user has a person
 | `get#ResourceInfo` | `driveId*`, `path*`, `versionName` → `resource`, with the location to read it from |
 | `find#Resources` | `text`, `driveId`, `path`, `fileType`, `modifiedFrom`, `tagId`, `limit` → `resultList` |
 | `upload#Resource` | `driveId*`, `path`, `file` or `fileList`, `versionNote`, `conflictPolicy` → `uploadedList`, `versionName` |
-| `save#Text` | `driveId*`, `path*`, `text`, `versionNote` → `versionName` |
+| `save#Text` | `driveId*`, `path*`, `text`, `versionNote` → `versionName`; refused past the drive's quota |
 | `create#Folder` | `driveId*`, `path`, `name*` → `newPath` |
 | `rename#Resource` | `driveId*`, `path*`, `newName*` → `newPath` |
 | `move#Resource`, `copy#Resource` | `driveId*`, `path` or `pathList`, `toDriveId`, `toPath`, `conflictPolicy` → `movedList`, `copiedList` |
@@ -414,7 +414,7 @@ Also members and ownership, favorites, tags, activity, previews, public share li
 
 | Service | |
 |---|---|
-| `ReportServices.list#Datasets`, `get#Dataset` | → `datasets`; `datasetId*` → `dataset` |
+| `ReportServices.list#Datasets`, `get#Dataset` | → `datasets`; `datasetId*` → `dataset` (each with `id`, `timeField` and `service`, true for a dataset that answers report queries with frames rather than records) |
 | `ReportServices.query#Documents` | `datasetId*`, `queryString`, `filters`, `from`, `thru`, `sort`, `pageIndex`, `pageSize` → `hits`, `total`, `nextCursor`, `notices` |
 | `ReportServices.run#Query` | `query*` → `frames`, `range`, `notices` |
 | `ReportServices.list#Definitions`, `get#Definition`, `save#Definition` | `definitionType`; `definitionId*`; `definition*`, `note` → `definition`. The group a definition is shared with (`definition.userGroupId`) is one the saver belongs to or one whose share artifact (`org.moqui.report.share.<userGroupId>`) their own grant holds (`SHARE_GROUP_UNAVAILABLE` otherwise); a group kept as stored is not asked again |

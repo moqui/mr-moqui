@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! M4's Tests column (plans/Vault-Instances.md §6), against the fake engine: a provision sets the instance id and an
+//! M4's Tests column (plans/archive/Vault-Instances.md §6), against the fake engine: a provision sets the instance id and an
 //! ingest key; the recovery adapter's restart takes the instance action path and waits for a lease in approval mode
 //! (and needs machine access when automatic); a sealed instance raises its alert. And what the alert rules and the fleet
 //! read: an unseal from an address the instance never used, the rollout pause.

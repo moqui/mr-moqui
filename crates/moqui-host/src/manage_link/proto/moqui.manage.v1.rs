@@ -35,7 +35,7 @@ pub struct InstanceStatus {
 pub struct Approver {
     #[prost(string, tag = "1")]
     pub user_id: ::prost::alloc::string::String,
-    /// the Ed25519 key of the approver's personal key (plans/Vault-Instances.md §3.5)
+    /// the Ed25519 key of the approver's personal key (plans/archive/Vault-Instances.md §3.5)
     #[prost(bytes = "vec", tag = "2")]
     pub verify_public: ::prost::alloc::vec::Vec<u8>,
 }

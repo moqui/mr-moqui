@@ -664,7 +664,11 @@ fn deploy_and_update_check_the_attested_component_and_commit() {
             ("status", "staged"),
             ("storage", "database"),
             ("commitId", COMMIT),
-            ("location", &location.join("site").display().to_string()),
+            // a deployed component's own directory under a components directory (SEC-TLS-104)
+            (
+                "location",
+                &location.join("components/addon/site").display().to_string(),
+            ),
         ],
     );
     let problems = |report: crate::deploy::load::LoadReport| report.problems.join("; ");
@@ -774,7 +778,8 @@ fn an_attested_update_puts_in_place_only_the_attested_head() {
     let first = git.branch_head("site-src").unwrap().unwrap();
     repository("component-site", Some("git://site-src"));
     git.import("component-site", None).unwrap();
-    let location = dir.join("addon").join("site");
+    // a deployed component's own directory under a components directory (SEC-TLS-104)
+    let location = dir.join("components/addon/site");
     git.write_tree("component-site", Some(&first), &location).unwrap();
     deployed(
         &entity,
@@ -829,7 +834,7 @@ fn an_attested_update_puts_in_place_only_the_attested_head() {
     assert!(gate_restore(factory, "site", &second).is_ok());
     assert!(gate_restore(factory, "site", &first).is_err());
 
-    // a managed deploy (plans/Vault-Instances.md §4.6), its manager's over the pinned link with no signature: back to
+    // a managed deploy (plans/archive/Vault-Instances.md §4.6), its manager's over the pinned link with no signature: back to
     // the commit before, as a rollback goes, and recorded as the commit a start writes; a text that is not an
     // attestation of a passed run is refused
     let (text, _) = signed(SECRET, &attestation(now + 1_000));

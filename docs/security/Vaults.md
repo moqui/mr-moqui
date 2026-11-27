@@ -1,6 +1,6 @@
 # Vaults
 
-A vault holds secrets under a key the server does not hold ([Vault-Instances](../../plans/Vault-Instances.md) has
+A vault holds secrets under a key the server does not hold ([Vault-Instances](../../plans/archive/Vault-Instances.md) has
 the design). It covers the crypto every client and the server share, what the server keeps and serves (V1): personal
 keys, key checks, vaults of both locks, items, members, deliveries and events, with the `moqui vault` command;
 operational vaults (V2): the deposit key, leases, machine access and reveal, with System › Vaults and the lease dialog;
@@ -453,7 +453,7 @@ those entries; the rustc version; and the module's own SHA-256. The script rebui
 the moq test tasks run it first ([Build-Test, Build](../Build-Test.md#build)); a build with the production or all
 runtime built in refuses to build without the module. On a runtime without it, the lease dialog says the module is not
 built, and Commons › Vault gets no integrity hash for it and does not load it. The desktop and mobile shells
-carry their own copy (plans/Vault-Instances.md §3.6): a shell build that bundles it runs the script first.
+carry their own copy (plans/archive/Vault-Instances.md §3.6): a shell build that bundles it runs the script first.
 
 ### The vault screens' policy
 
@@ -516,11 +516,14 @@ process.
   limit.
 - **Locking.** A page's session locks after its idle time with no call (the page's `idleMinutes`, 15 by default, at
   most 60; the app sweeps every 30 seconds whether or not a page calls), on the page's Lock, when the page leaves the
-  vault screens or its window closes, on sign-out, revocation and removal, and when another account becomes current. On
-  macOS also when the screen locks, the session is switched, or the computer goes to sleep (the OS's notices); on
-  macOS, Linux and Android when the client's clocks show a sleep; on the phone when the app leaves the screen (the phone
-  locked or another app in front). Not done yet: the screen lock on Linux and Windows, and a sleep on Windows (whose
-  monotonic clock counts through it), where only the idle time locks.
+  vault screens or its window closes, on sign-out, revocation and removal, and when another account becomes current.
+  On the desktop also when the screen locks or the computer goes to sleep, as the OS tells it
+  (`moqui-desktop` `client/screen_lock.rs`): on macOS its lock and sleep notices and a switched session; on Linux
+  logind's `PrepareForSleep` and the session's `Lock` and `LockedHint`, and the screen saver's `ActiveChanged` on the
+  session bus (GNOME, KDE); on Windows `WTS_SESSION_LOCK` and `PBT_APMSUSPEND` to a hidden window of the app's. Where a
+  bus cannot be reached the app logs it and the idle time still locks. On macOS, Linux and Android also when the
+  client's clocks show a sleep; on the phone when the app leaves the screen (the phone locked or another app in
+  front).
 - **Rollback memory** (decision (d) of §9). The app keeps, per account and vault, the highest key version and revision
   it accepted with the hash of that member list (`vault/<account>.seen.json` in the client's directory, owner-only),
   and hands it to `chain_verify`, `vault_key_open`, `key_version_next`, `vault_rotate`, `recovery_open_vault` and

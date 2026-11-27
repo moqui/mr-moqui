@@ -4,6 +4,6 @@
 spec({ server: false, timeout: 60 })
 
 browser.runInPage({
-    scripts: ["/js/MoquiLib.js", "/js/MoquiL10n.js", "/js/WebrootCall.js"],
+    scripts: ["/js/MoquiLib.js", "/js/MoquiL10n.js", "/js/WebrootCallKeys.js", "/js/WebrootCall.js"],
     test: "/files/component/webroot/test/client/pages/WebrootCall.page.js",
 })

@@ -107,3 +107,32 @@ fn a_component_location_names_its_file_before_it_is_registered() {
         PathBuf::from("/srv/runtime/components/addon/c/data/CSeedData.xml")
     );
 }
+
+/// SEC-TLS-104: a removal or a deploy moves only the directory of the component its row names: one under a `components`
+/// directory named for it (or where it was found), never the runtime's `conf` or `db`, another component, or a path with
+/// `..`; and only for a name a deploy takes.
+#[test]
+fn a_deployed_components_directory_is_its_own_under_components() {
+    use super::component_location;
+    use std::path::Path;
+    let runtime = "/srv/moqui/runtime";
+    assert!(component_location("shop", &format!("{runtime}/components/addon/shop"), None).is_ok());
+    assert!(component_location(
+        "shop",
+        &format!("{runtime}/components/addon/shop-repo"),
+        Some(Path::new(&format!("{runtime}/components/addon/shop-repo")))
+    )
+    .is_ok());
+    for location in [
+        format!("{runtime}/conf"),
+        format!("{runtime}/db"),
+        format!("{runtime}/components/addon/other"),
+        format!("{runtime}/components/addon/../../conf/shop"),
+        format!("{runtime}/shop"),
+        "shop".to_string(),
+    ] {
+        assert!(component_location("shop", &location, None).is_err(), "{location}");
+    }
+    assert!(component_location("../conf", &format!("{runtime}/components/../conf"), None).is_err());
+    assert!(component_location("", &format!("{runtime}/components/addon"), None).is_err());
+}

@@ -877,6 +877,8 @@ test("the app notifies a message by the room's level, not its own, not on do not
     // review gaps: a reply to me and a reply in my thread count as mentions, as the server's activity does
     assert.ok(chat.notification(event({ replyTo: { eventSeq: 3, senderUserId: "ann" } }), "R1", mentionsOnly), "a reply to me");
     assert.ok(chat.notification(event({ threadRootEventSeq: 3, threadRootSenderUserId: "ann" }), "R1", mentionsOnly), "in my thread");
+    assert.ok(chat.notification(event({ replyForViewer: true, threadRootEventSeq: 3 }), "R1", mentionsOnly), "in a thread I wrote in");
+    assert.equal(chat.notification(event({ threadRootEventSeq: 3 }), "R1", mentionsOnly), null, "another member's thread");
     assert.equal(chat.notification(message, "R1", Object.assign({}, base, { preview: false })).body, null, "previews off");
     assert.equal(chat.notification(event({ encrypted: true, bodyText: "x" }), "R1", base).body, "New message", "encrypted: no text");
     assert.equal(chat.notification(event({ type: "reaction" }), "R1", base), null, "only messages");
@@ -1744,6 +1746,142 @@ test("an event's times: a wall clock in its zone, the box's start and end, the v
     } finally {
         moqui.l10n.setTimeZone(null);
     }
+});
+
+test("live location (plans/archive/Location-Sharing.md §3.5): a push moves a card's view, ends it or takes a viewer out; the page's sender sends at most one fix an interval, waits on 429, stops on 410, another device, an audience it cannot read again and a lost sign-in (said), notes the chip, and stops once no chat view holds it", async () => {
+    const live = chat.live;
+    const view = live.view({ state: "live", owner: false, share: { shareId: "S1", thruDate: 5000 }, latest: { latitude: 1, longitude: 2, ageSeconds: 30 } }, 100000);
+    assert.equal(view.seenAt, 70000);
+    assert.equal(live.ageText(live.ageSeconds(view, 100000)), "just now");
+    assert.equal(live.ageText(live.ageSeconds(view, 250000)), "3 min ago");
+    assert.equal(live.view({ state: "bogus" }).state, "failed");
+    assert.equal(live.apply(view, { shareId: "S2", event: "ended" }, 1), null, "another share's push changes nothing");
+    const moved = live.apply(view, { shareId: "S1", event: "position", latitude: 3, longitude: 4, accuracy: 7.4 }, 200000);
+    assert.deepEqual(moved.latest, { latitude: 3, longitude: 4, accuracy: 7, observedDate: null });
+    assert.equal(moved.seenAt, 200000);
+    assert.equal(live.stale(moved, 200000 + 301000), true);
+    assert.equal(live.stale(moved, 200000 + 299000), false);
+    assert.equal(live.apply(view, { shareId: "S1", event: "position", latitude: 95, longitude: 4 }, 1), null, "a position out of range");
+    assert.equal(live.apply(view, { shareId: "S1", event: "changed", thruDate: 9000 }).share.thruDate, 9000);
+    assert.equal(live.apply(view, { shareId: "S1", event: "ended" }).state, "ended");
+    assert.equal(live.apply(view, { shareId: "S1", event: "revoked" }).state, "notShared", "a viewer taken out");
+    assert.equal(live.apply(Object.assign({}, view, { owner: true }), { shareId: "S1", event: "revoked" }), null, "the owner is told of an entry revoked, not the share");
+    assert.equal(live.message({ message: JSON.stringify({ shareId: "S1", event: "ended" }) }).event, "ended");
+    assert.equal(live.message({ message: { event: "ended" } }), null);
+
+    // the sender, with a stand-in browser location, clock and server
+    let clock = 1000;
+    const posts = [];
+    const replies = [];
+    const watch = { fn: null, cleared: 0 };
+    const timers = { pump: null, release: null };
+    const sender = live.makeSender({
+        geolocation: { watchPosition: (fn) => { watch.fn = fn; return 7; }, clearWatch: () => { watch.cleared += 1; }, getCurrentPosition: () => {} },
+        now: () => clock,
+        post: (url, params) => {
+            posts.push({ url, params });
+            const reply = replies.shift() || { statusCode: 200 };
+            return reply.rejected ? Promise.reject(reply.rejected) : Promise.resolve(reply);
+        },
+        setInterval: (fn) => { timers.pump = fn; return 1; }, clearInterval: () => { timers.pump = null; },
+        setTimeout: (fn) => { timers.release = fn; return 2; }, clearTimeout: () => { timers.release = null; },
+        notify: (words) => notes.push(words)
+    });
+    const notes = [];
+    const hooksBefore = new Set(moqui.beforeLogoutHooks || []);
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const fix = async (at, latitude) => { clock = at; watch.fn({ coords: { latitude, longitude: 2, accuracy: 10 }, timestamp: at }); await settle(); };
+    assert.equal(sender.start("S1", { url: "/r", intervalSeconds: 5 }), false, "nothing is sent while no chat view holds the sender");
+    const release = sender.hold();
+    const told = [];
+    sender.on((change) => told.push(change.kind));
+    assert.equal(sender.start("S1", { url: "/r", intervalSeconds: 5, thruDate: 999999, fresh: true }), true);
+    await fix(1500, 10);
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].url, "/r");
+    assert.equal(posts[0].params.latitude, "10");
+    assert.equal(posts[0].params.observedDate, "1500");
+    await fix(3000, 11);
+    assert.equal(posts.length, 1, "at most one a share's interval");
+    replies.push({ statusCode: 429, retryAfterSeconds: 9 });
+    await fix(7000, 12);
+    assert.equal(posts.length, 2);
+    await fix(8000, 13);
+    assert.equal(posts.length, 2, "429 waits retryAfterSeconds");
+    replies.push({ statusCode: 410, reasonCode: "SHARE_ENDED" });
+    await fix(16500, 14);
+    assert.equal(posts.length, 3);
+    assert.equal(sender.sending("S1"), false, "410 stops it");
+    assert.equal(watch.cleared, 1, "the watch let go");
+    assert.ok(told.includes("reported") && told.includes("stopped"));
+    // the app bar's chip says "sending here" while it sends, beside what Maps says, and takes only its own words off
+    const chip = () => moqui.shellIndicators.state.notes.locationSharing || "";
+    moqui.shellIndicators.noteFrom("locationSharing", "maps", "sending from this phone");
+    sender.start("S3", { url: "/r", intervalSeconds: 5, thruDate: 999999 });
+    assert.equal(chip(), "sending from this phone, sending here");
+    // another device sends it now: stopped, and said
+    replies.push({ statusCode: 409, reasonCode: "OTHER_DEVICE" });
+    await fix(30000, 15);
+    assert.equal(sender.sending("S3"), false);
+    assert.equal(chip(), "sending from this phone");
+    moqui.shellIndicators.noteFrom("locationSharing", "maps", null);
+    assert.equal(chip(), "");
+    assert.ok(notes.pop().includes("Another device"), "said");
+    // the audience changed: its version read again and sending goes on with it; a reread that finds no change stops it, said
+    sender.start("S4", { url: "/r", intervalSeconds: 5, thruDate: 999999, audienceVersion: 1, reread: () => Promise.resolve(2) });
+    replies.push({ statusCode: 409, reasonCode: "AUDIENCE_CHANGED" });
+    await fix(40000, 16);
+    await settle();
+    assert.equal(sender.sending("S4"), true);
+    await fix(41000, 17);
+    assert.equal(posts[posts.length - 1].params.audienceVersion, "2", "sent with the version read again");
+    sender.stop("S4");
+    sender.start("S5", { url: "/r", intervalSeconds: 5, thruDate: 999999, audienceVersion: 1 });
+    replies.push({ statusCode: 409, reasonCode: "AUDIENCE_CHANGED" });
+    await fix(50000, 18);
+    assert.equal(sender.sending("S5"), false);
+    assert.ok(notes.pop().includes("Who sees your live location changed"));
+    // a sign-in lost (401 or 403 from the transition): every share stops, and the page says so; no more posts
+    sender.start("S6", { url: "/r", intervalSeconds: 5, thruDate: 999999 });
+    sender.start("S7", { url: "/r", intervalSeconds: 5, thruDate: 999999 });
+    replies.push({ rejected: { status: 401 } }, { rejected: { status: 403 } });
+    await fix(60000, 19);
+    assert.equal(sender.sending("S6") || sender.sending("S7"), false);
+    assert.ok(sender.error.includes("sign in again"));
+    assert.ok(notes.pop().includes("sign in again"));
+    const count = posts.length;
+    await fix(70000, 20);
+    assert.equal(posts.length, count, "nothing posted after a lost sign-in");
+    // a 403 alone (the sign-in refused) stops it as a lost sign-in does
+    sender.start("S9", { url: "/r", intervalSeconds: 5, thruDate: 999999 });
+    replies.push({ rejected: { status: 403 } });
+    await fix(72000, 23);
+    assert.equal(sender.sending("S9"), false, "403 stops it");
+    assert.ok(notes.pop().includes("sign in again"));
+    // a sign-out (the shell's beforeLogoutHooks, which the sender added at its first start) stops what it sends
+    const hook = Array.from(moqui.beforeLogoutHooks).find((one) => !hooksBefore.has(one));
+    assert.equal(typeof hook, "function", "a before-logout hook added");
+    sender.start("S10", { url: "/r", intervalSeconds: 5, thruDate: 999999 });
+    hook();
+    assert.equal(sender.sending("S10"), false, "a sign-out stops it");
+    const counted = posts.length;
+    await fix(74000, 24);
+    assert.equal(posts.length, counted);
+    // a network failure is tried again at the next interval
+    sender.start("S8", { url: "/r", intervalSeconds: 5, thruDate: 999999 });
+    replies.push({ rejected: { status: 0 } });
+    await fix(80000, 21);
+    assert.equal(sender.sending("S8"), true);
+    await fix(85500, 22);
+    assert.equal(posts.length, counted + 2, "tried again");
+    sender.stop("S8");
+    // the last chat view let go: after a moment (not a room changed for another) the page sends nothing more
+    sender.start("S2", { url: "/r", intervalSeconds: 5, thruDate: 999999 });
+    release();
+    assert.equal(sender.sending("S2"), true);
+    timers.release();
+    assert.equal(sender.sending("S2"), false);
+    assert.deepEqual(sender.list(), []);
 });
 
 test("a place typed or pasted: coordinates, degrees, a geo: URI, three maps links, an address; its words as the server's, its links, out of range refused", () => {

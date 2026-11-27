@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `moqui check` and `moqui refs` (plans/design-dev-aide.md 13.6, F13): the checks of `moqui_devkit::check` and
+//! `moqui check` and `moqui refs` (plans/archive/design-dev-aide.md 13.6, F13): the checks of `moqui_devkit::check` and
 //! the references of `moqui_devkit::refs` from the command line, on a model-only boot as `moqui types` boots,
 //! for a developer, a git hook or a coding agent outside the server.
 
@@ -209,7 +209,7 @@ pub(crate) fn dispatch_check(args: &[String]) -> Result<(), Error> {
     Ok(())
 }
 
-/// `moqui check --agreement` (F19, plans/design-dev-aide.md 21.7): whether the next commit's author (git's
+/// `moqui check --agreement` (F19, plans/archive/design-dev-aide.md 21.7): whether the next commit's author (git's
 /// `user.email`) has signed the contributor agreement of the repository at `origin`, as its group server says
 /// (`hosting/repository` for the remote, then `hosting/agreement`). The server is `MOQUI_GROUP_SERVER`, else the
 /// origin of an https remote; the key is `MOQUI_GROUP_TOKEN` (a login key or access token of that server), else none
@@ -416,9 +416,13 @@ fn changed_files() -> Result<Vec<PathBuf>, Error> {
     Ok(paths)
 }
 
-/// Run `git` with `args` for its output, as the dev tools run it: argv, no prompt, no optional locks.
+/// Run `git` with `args` for its output, as the dev tools run it: argv, no prompt, no optional locks, a read that runs
+/// nothing the repository's config names (`moqui_lib::git_read::harden`; a hook's `GIT_INDEX_FILE` is kept, as `moqui
+/// check` runs as a pre-commit hook).
 fn git(args: &[&str]) -> Result<String, Error> {
-    let output = std::process::Command::new("git")
+    let mut command = std::process::Command::new("git");
+    moqui_lib::git_read::harden(&mut command);
+    let output = command
         .args(["-c", "core.quotepath=off", "-c", "color.ui=false"])
         .args(args)
         .env("LC_ALL", "C")
@@ -690,7 +694,7 @@ pub(crate) fn dispatch_autodoc(args: &[String]) -> Result<(), Error> {
 }
 
 /// `moqui refs <name> [--in | --out] [--kind k] [--json]`: what uses an artifact (`--in`, the default) or what it uses
-/// (`--out`), from the artifact index read into memory (plans/design-dev-aide.md 7.1, 13.6). The name is an index id
+/// (`--out`), from the artifact index read into memory (plans/archive/design-dev-aide.md 7.1, 13.6). The name is an index id
 /// (`entity:moqui.example.Example`), a full or short name (`OrderHeader`, `place#Order`), or a file; `--kind` keeps the
 /// references whose other side is of that kind (entity, field, service, screen, transition, form, seca, ...).
 pub(crate) fn dispatch_refs(args: &[String]) -> Result<(), Error> {

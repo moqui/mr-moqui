@@ -301,7 +301,7 @@ its file system or database. See [Attack-Surface](../security/Attack-Surface-Too
 
 ## A deploy over the link
 
-A managed instance (plans/Vault-Instances.md §4.6, M3; [Run-Deploy](../Run-Deploy.md)) is deployed to by its manager
+A managed instance (plans/archive/Vault-Instances.md §4.6, M3; [Run-Deploy](../Run-Deploy.md)) is deployed to by its manager
 over the manager link, not by an attestation posted to its REST:
 
 - **No attestation secret.** The manager sends the link's `deploy-component` command with the commit (the repository

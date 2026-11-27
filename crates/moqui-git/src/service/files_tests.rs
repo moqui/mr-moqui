@@ -1517,6 +1517,24 @@ fn an_upload_past_the_quota_is_refused_whole() {
     );
 }
 
+#[test]
+fn a_text_save_past_the_quota_is_refused() {
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    install();
+    users(&facade);
+    login("alice");
+    let small = drive("folder", "Small text", &[("quotaBytes", Value::I64(10))]);
+    let save = |path: &str, body: &str| vec![("driveId", text(&small)), ("path", text(path)), ("text", text(body))];
+    ok("save#Text", &save("a.txt", "12345"));
+    // UTF-8 bytes: six characters of two bytes each pass the five left
+    refused("save#Text", &save("b.txt", "éééééé"), "would pass the quota of drive");
+    assert_eq!(names(&ok("list#Folder", &[("driveId", text(&small))])), ["a.txt"]);
+    // replacing a file counts only the difference, and a smaller one is never refused
+    ok("save#Text", &save("a.txt", "1234567890"));
+    ok("save#Text", &save("a.txt", "1"));
+}
+
 /// The stub of the record visibility hook (a record whose id starts with OPEN is visible), counting its calls in the
 /// execution context's shared map so a test sees that each record is asked once per request.
 const RECORD_HOOK: &str = r#"<services>
@@ -2724,11 +2742,16 @@ fn the_drive_temporary_files_older_than_a_day_are_removed() {
     std::fs::write(tmp.join("old.zip"), b"old").unwrap();
     std::fs::write(tmp.join("a1b2/named copy.pdf"), b"old").unwrap();
     std::fs::write(tmp.join("new.zip"), b"new").unwrap();
+    // a load's private file a job never read (SEC-DAT-96): runtime://tmp/private is swept too, the folder kept
+    let private = context.factory().runtime_dir().join("tmp").join("private");
+    std::fs::create_dir_all(&private).unwrap();
+    let orphan = private.join(format!("{:032x}.xml", std::process::id()));
+    std::fs::write(&orphan, b"old").unwrap();
     let two_days_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 86_400);
-    for old in ["old.zip", "a1b2/named copy.pdf"] {
+    for old in [tmp.join("old.zip"), tmp.join("a1b2/named copy.pdf"), orphan.clone()] {
         std::fs::File::options()
             .write(true)
-            .open(tmp.join(old))
+            .open(old)
             .unwrap()
             .set_modified(two_days_ago)
             .unwrap();
@@ -2741,6 +2764,10 @@ fn the_drive_temporary_files_older_than_a_day_are_removed() {
     assert!(!tmp.join("old.zip").exists());
     assert!(!tmp.join("a1b2").exists(), "the folder its last file left");
     assert!(tmp.join("new.zip").exists(), "a file of today stays");
+    assert!(
+        !orphan.exists() && private.is_dir(),
+        "the old private file goes, its folder stays"
+    );
     let _ = std::fs::remove_dir_all(&tmp);
 }
 /// An external user (the permission EXTERNAL_USER, an app's client contacts) reaches no records drive, whatever its

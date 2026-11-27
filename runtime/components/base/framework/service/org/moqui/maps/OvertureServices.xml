@@ -1,0 +1,264 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
+    <!-- Optional Overture data (plans/archive/Maps-Overture.md, stages O1 and O2 of plans/archive/Maps.md §4.3; docs/tools/Maps.md "Overture
+        places and buildings" and "Overture addresses"): an administrator's region, a theme of it (Places, Buildings,
+        Addresses) imported from a pinned release as a run
+        (moqui.maps.OvertureImport, MapOvertureEntities.xml), staged, checked and activated, and rolled back or removed. The
+        services but the two read# ones and search#OvertureAddresses are MAPS_ADMIN's (tools data/MapsSecurityData.xml), asked
+        again of the caller's own grant (isPermittedOwn) as Geo data's are; their logic is OvertureData.js. Those three are the
+        moqui-maps crate's, which the host links under its overture feature: no group's and not remote, the read# ones called
+        by OvertureData.js after its checks, search#OvertureAddresses by the local geocoder (MapGeocoders.js) for any user
+        who may search. An import never writes a Mantle record, a Geo, a point or a record's location. -->
+
+    <service verb="read" noun="OvertureReleases" type="rust" location="moqui_maps::service::find_overture_releases" allow-remote="false">
+        <description>The releases of the catalog at maps@overture-catalog (Overture's STAC root when empty), the newest
+            first, each {version, latest}; refused (valid false) while outside requests are off and when the catalog does
+            not read.</description>
+        <out-parameters>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="catalogUrl"/>
+            <parameter name="releases" type="List"/>
+        </out-parameters>
+    </service>
+
+    <service verb="read" noun="OvertureTheme" type="rust" location="moqui_maps::service::read_overture_theme" allow-remote="false"
+            transaction="ignore">
+        <description>Read run importId's theme for its region from its release (moqui-maps: the release's catalog and
+            schema version, the items whose extent meets the region, each GeoParquet file by range, only the row groups whose
+            box statistics meet it and only the theme's columns). Places are written as the run's OverturePlace rows in
+            batches of 2,000, a transaction each; Buildings answer the footprints as a PMTiles archive (bytes). The counts
+            are written to the run as it goes and its cancelRequested read then. valid false with reasonCode and reason
+            when it does not complete; cancelled true when it was cancelled. Addresses are written as the run's
+            OvertureAddress rows in batches of 2,000 (at most 1,000,000 a run), with countryCodes, and changes: what the
+            release changed against the run active now, by address (country, street, number, unit and postal code; never by
+            GERS ID): {comparedWith, added, removed, moved (more than 25 m), unchanged}.</description>
+        <in-parameters><parameter name="importId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="cancelled" type="Boolean"/>
+            <parameter name="schemaVersion"/>
+            <parameter name="filesRead" type="Long"/>
+            <parameter name="rowGroupsRead" type="Long"/>
+            <parameter name="rowGroupsSkipped" type="Long"/>
+            <parameter name="bytesRead" type="Long"/>
+            <parameter name="rowsRead" type="Long"/>
+            <parameter name="rowsKept" type="Long"/>
+            <parameter name="rowsRejected" type="Long"/>
+            <parameter name="licenses" type="List"/>
+            <parameter name="rejections" type="List"/>
+            <parameter name="bytes" type="Object"/>
+            <parameter name="size" type="Long"/>
+            <parameter name="tileCount" type="Long"/>
+            <parameter name="maxZoom" type="Integer"/>
+            <parameter name="bounds" type="List"/>
+            <parameter name="stoppedReason"/>
+            <parameter name="countryCodes"/>
+            <parameter name="changes" type="Map"/>
+        </out-parameters>
+    </service>
+
+    <service verb="search" noun="OvertureAddresses" type="rust" location="moqui_maps::address_service::search_overture_addresses"
+            allow-remote="false">
+        <description>The local geocoder's search (MPK_GEOCODER_OVERTURE, MapGeocoders.js) of the address points of the
+            active Addresses runs: the text read into number, street, unit, postal code and locality (as an address of
+            country, else of each country of the active runs), the rows of its street and number read by their indexed keys
+            (case, diacritics and the street words of the country's languages folded), ranked: number and street matched an
+            address match (GPP_ADDRESS_MATCH; a source's position kind is not stated), the postal code agreeing then the
+            locality; points of one address within 30 m one candidate; candidates within 15 points of the best choices
+            (ambiguous); a number found without its suffix, and a street without the number, estimates (GPP_PLACE_ESTIMATE).
+            No outside request, and nothing written. reasonCode NO_DATA (no Addresses run active), QUERY_UNREAD (no street in
+            the text) or NO_MATCH, with parsed (the parts read) for the postal fallback.</description>
+        <in-parameters>
+            <parameter name="query" required="true"/>
+            <parameter name="country"><description>ISO alpha-2</description></parameter>
+            <parameter name="viewport" type="Object"><description>west, south, east, north: its middle breaks ties</description></parameter>
+            <parameter name="limit" type="Integer" default="10"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="candidates" type="List"/>
+            <parameter name="ambiguous" type="Boolean"/>
+            <parameter name="parsed" type="Map"/>
+            <parameter name="countries" type="List"/>
+        </out-parameters>
+    </service>
+
+    <service verb="find" noun="OvertureData">
+        <description>What Maps › Configuration › Overture shows: each theme with its licenses, attribution, obligations and
+            acknowledgement; each region with its themes' active and previous runs, last run and layer; the last 50 runs;
+            whether this server has the overture feature, whether outside requests are on, and the largest region
+            (maps@overture-max-area, km²).</description>
+        <out-parameters>
+            <parameter name="themes" type="List"/>
+            <parameter name="regions" type="List"/>
+            <parameter name="runs" type="List"/>
+            <parameter name="built" type="Boolean"/>
+            <parameter name="offline" type="Boolean"/>
+            <parameter name="maxArea" type="BigDecimal"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/OvertureData.js').execute('findData', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="OvertureReleases">
+        <description>The catalog's releases for the region form (read#OvertureReleases), newest first; refused while outside
+            requests are off or without the overture feature.</description>
+        <out-parameters>
+            <parameter name="releases" type="List"/>
+            <parameter name="latest"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/OvertureData.js').execute('findReleases', context))</script></actions>
+    </service>
+
+    <service verb="acknowledge" noun="OvertureLicense">
+        <description>Acknowledge a theme's license and attribution (who and when, in the audit log), and with licenses the
+            further source licenses a run found (newLicenses), which the acknowledgement covers from then on.</description>
+        <in-parameters>
+            <parameter name="themeId" required="true"/>
+            <parameter name="licenses" type="List"><description>SPDX IDs to add to those the acknowledgement covers</description></parameter>
+        </in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/OvertureData.js').execute('acknowledgeLicense', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="OvertureRegion">
+        <description>Add or change a region: a name, its box (west less than east, south less than north, within longitude
+            and latitude, not across the antimeridian, at most maps@overture-max-area km²), the release its next import reads
+            (empty for the catalog's latest then), the profile its Buildings layer is shown in, and the themes it imports
+            (themeIds; a theme left out is not removed, Remove does that).</description>
+        <in-parameters>
+            <parameter name="regionId"/>
+            <parameter name="regionName" required="true"/>
+            <parameter name="west" type="BigDecimal" required="true"/>
+            <parameter name="south" type="BigDecimal" required="true"/>
+            <parameter name="east" type="BigDecimal" required="true"/>
+            <parameter name="north" type="BigDecimal" required="true"/>
+            <parameter name="releaseVersion"/>
+            <parameter name="profileId"/>
+            <parameter name="themeIds" type="List"/>
+        </in-parameters>
+        <out-parameters><parameter name="regionId"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/OvertureData.js').execute('storeRegion', context))</script></actions>
+    </service>
+
+    <service verb="start" noun="OvertureImport">
+        <description>Start an import of a theme of a region as a run of the OvertureImport ServiceJob, never in the request:
+            a pending run (OviPending) pinned to releaseVersion (else the region's, else the catalog's latest now). Refused,
+            with no run: no overture feature in this server (OVERTURE_NOT_BUILT), outside requests off
+            (EXTERNAL_REQUESTS_OFF), the theme's license not acknowledged (LICENSE_NOT_ACKNOWLEDGED), a region over
+            maps@overture-max-area (REGION_TOO_LARGE), a run of the region and theme in progress (RUN_IN_PROGRESS; one with no
+            word for an hour is taken as abandoned and failed). force accepts a release with far fewer rows than the active
+            one.</description>
+        <in-parameters>
+            <parameter name="regionId" required="true"/>
+            <parameter name="themeId" required="true"/>
+            <parameter name="releaseVersion"/>
+            <parameter name="force" type="Boolean" default-value="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="importId"/>
+            <parameter name="jobRunId"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/OvertureData.js').execute('startImport', context))</script></actions>
+    </service>
+
+    <service verb="run" noun="OvertureImport" transaction="ignore">
+        <description>The OvertureImport ServiceJob's run of a pending run, as the administrator who started it (their own
+            grant asked again, with the feature, outside requests and the license): read#OvertureTheme stages its rows or
+            archive; then it is checked, writing nothing in use: a run with no rows, or with fewer than half the active run's
+            rows unless forced, fails; one whose sources name a license the theme's acknowledgement does not cover waits for
+            review (OviReview: staged, not active), as one whose sources name no license (UNKNOWN); one cancelled or ended
+            as abandoned while it read is not activated. Otherwise it is activated (activate#OvertureImport's step). A run that
+            fails or is cancelled deletes its own staged rows and archive; the active run stays as it was. Its results name
+            the statusId, for the job's notification (topic OvertureImport).</description>
+        <in-parameters>
+            <parameter name="importId" required="true"/>
+            <parameter name="force" type="Boolean" default-value="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="importId"/>
+            <parameter name="statusId"/>
+            <parameter name="releaseVersion"/>
+            <parameter name="rowsKept" type="Long"/>
+            <parameter name="reason"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/OvertureData.js').execute('runImport', context))</script></actions>
+    </service>
+
+    <service verb="cancel" noun="OvertureImport">
+        <description>Ask a run in progress to stop: a pending run is cancelled at once; a reading one stops at its next row
+            group, deleting what it staged; one with no word for an hour is taken as abandoned and failed at once.</description>
+        <in-parameters><parameter name="importId" required="true"/></in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/OvertureData.js').execute('cancelImport', context))</script></actions>
+    </service>
+
+    <service verb="activate" noun="OvertureImport">
+        <description>Activate a run that waits for review (OviReview), once its theme's acknowledgement covers the licenses
+            it found (LICENSE_NOT_ACKNOWLEDGED otherwise) and it started after the active run (OLDER_THAN_ACTIVE otherwise):
+            in one transaction the region theme's active run becomes it and the
+            run active before it the previous one (kept for rollback); for Buildings, the region's layer is registered to
+            the run's archive (MapSourceServices.register#ArchiveLayer: a map drawing the old revision is refused it and
+            loads again) and added to the region's profile; the region theme's other runs waiting for review are superseded.
+            Then those and the runs older than the previous one are removed (their rows and archives).</description>
+        <in-parameters>
+            <parameter name="importId" required="true"/>
+            <parameter name="force" type="Boolean" default-value="false"/>
+        </in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/OvertureData.js').execute('activateImport', context))</script></actions>
+    </service>
+
+    <service verb="discard" noun="OvertureImport">
+        <description>Discard a run that waits for license review (OviDiscarded): its staged rows and archive are deleted, and
+            the active release stays.</description>
+        <in-parameters><parameter name="importId" required="true"/></in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/OvertureData.js').execute('discardImport', context))</script></actions>
+    </service>
+
+    <service verb="rollback" noun="OvertureTheme">
+        <description>Make a region theme's previous run active again (its rows and archive were kept; Buildings' layer is
+            registered to its archive again), and remove the run that was active (OviRolledBack). Refused when there is no
+            previous run (NOTHING_TO_ROLL_BACK) or a run is in progress.</description>
+        <in-parameters>
+            <parameter name="regionId" required="true"/>
+            <parameter name="themeId" required="true"/>
+        </in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/OvertureData.js').execute('rollbackTheme', context))</script></actions>
+    </service>
+
+    <service verb="remove" noun="OvertureTheme">
+        <description>Remove a theme of a region, or with no themeId every theme of it and the region: the rows and archives
+            of its runs, its layer (and the profiles' references to it); the run history stays (OviRemoved). Refused while a
+            run is in progress.</description>
+        <in-parameters>
+            <parameter name="regionId" required="true"/>
+            <parameter name="themeId"/>
+        </in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/OvertureData.js').execute('removeTheme', context))</script></actions>
+    </service>
+
+    <service verb="check" noun="OvertureReadiness" allow-remote="false">
+        <description>The maps.overture readiness provider, changing nothing, for a caller with ADMIN_OVERVIEW_VIEW: regions
+            are there but this server lacks the overture feature (NOT_BUILT); a run waits for license review (REVIEW); the
+            last run of a region theme failed (IMPORT_FAILED); each active run's release.</description>
+        <in-parameters><parameter name="providerKey" required="true"/></in-parameters>
+        <out-parameters><parameter name="checks" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/OvertureData.js').execute('readiness', context))</script></actions>
+    </service>
+</services>

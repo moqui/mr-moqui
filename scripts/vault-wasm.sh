@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the vault crypto's browser module (crates/moqui-vault, feature wasm; plans/Vault-Instances.md §3.2, §3.6) on
+# Build the vault crypto's browser module (crates/moqui-vault, feature wasm; plans/archive/Vault-Instances.md §3.2, §3.6) on
 # demand. It is not kept in git: `./moq build` (every package and --embed level), `./moq archive`, podman/build.sh and
 # the tasks that run moqui (test, test-client, test-framework, test-apps, test-all, accept, run, ...) run this first.
 #   scripts/vault-wasm.sh            build it when it is missing or stale, else say it is up to date
@@ -137,6 +137,7 @@ need_target() {
     local sysroot
     sysroot=$(rustc --print sysroot) || die "rustc --print sysroot failed"
     [ ! -d "$sysroot/lib/rustlib/$target" ] || return 0
+    [ "${CARGO_NET_OFFLINE:-}" != true ] || die "offline build needs the preinstalled $target Rust target"
     if command -v rustup >/dev/null 2>&1; then
         echo "vault-wasm.sh: adding the $target target to $(rustc -V) (rustup target add $target)" >&2
         rustup target add "$target" >&2 || die "rustup target add $target failed"

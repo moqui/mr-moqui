@@ -39,11 +39,11 @@ function literals(locations) {
 }
 
 // The texts that have a message in the session's locale, original to localized; empty in English.
-function islandMessages(locations) {
+function islandMessages(locations, extraTexts = []) {
     const locale = String(ec.user.locale || "")
     if (!locale || /^en(_|-|$)/.test(locale)) return {}
     const messages = {}
-    for (const text of literals(Array.from(locations || []))) {
+    for (const text of new Set([...literals(Array.from(locations || [])), ...extraTexts])) {
         const localized = ec.l10n.localize(text)
         if (localized && localized !== text) messages[text] = localized
     }

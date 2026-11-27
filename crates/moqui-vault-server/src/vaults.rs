@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Vaults of both locks (plans/Vault-Instances.md §3.1, §3.10, §3.11).
+//! Vaults of both locks (plans/archive/Vault-Instances.md §3.1, §3.10, §3.11).
 //!
 //! - A single-secret vault is personal, has one owner, its wrapped vault key on its row, and no members and no
 //!   recovery: making one with either is refused.

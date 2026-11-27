@@ -116,7 +116,7 @@ pub(crate) async fn run_as<T: Send + 'static>(
 /// The ingest source of a managed instance's key, `instance:<AppInstance id>` (moqui-instance `monitor::ingest_source`).
 const INSTANCE_SOURCE: &str = "instance:";
 /// The metrics a manager records of its managed instances itself, which the shipped instance alert rules read: never
-/// taken from a sender (plans/Vault-Instances.md §4.8).
+/// taken from a sender (plans/archive/Vault-Instances.md §4.8).
 const INSTANCE_METRICS: &str = "moqui.instance.";
 /// How long the managed instances' ids are kept before they are read again.
 const MANAGED_TTL: Duration = Duration::from_secs(30);

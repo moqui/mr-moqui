@@ -162,6 +162,7 @@ feature("the first read starts the cursor; arrivals then page in the order they 
         ids.second = makeMessage("Second")
         ids.third = makeMessage("Third")
         ids.reply = makeMessage("Re: First", ids.first)
+        setFields(ids.first, {bccAddresses: "incoming-hidden@example.org"})
         const page1 = changes(first.lastSeq, 2)
         const page2 = changes(page1.lastSeq, 2)
         const screen = request("Inbox/Mail/mailChanges", {afterSeq: String(first.lastSeq), limit: "5"}, null)
@@ -184,6 +185,8 @@ feature("the first read starts the cursor; arrivals then page in the order they 
         page2.changes.length == 1
         page2.changes[0].threadId == ids.first
         page2.changes[0].messages.map(row => row.emailMessageId).join(",") == [ids.first, ids.reply].join(",")
+        page2.changes[0].messages[0].recipientList == null
+        !JSON.stringify(page2.changes).includes("incoming-hidden@example.org")
         page2.lastSeq > page1.lastSeq
         screen.json.unsupported == undefined
         screen.json.changes.length == 3
@@ -217,6 +220,8 @@ feature("the client config names what the app's inbox source supports offline, i
         typeof features == "object"
         features.internalSendRef == (bossInstalled ? true : undefined)
         uncovered == (bossInstalled ? "internal" : "")
+        // Maps' savePlace keeps a place once by its clientRef, so the apps may queue one saved offline (plans/archive/Maps-Offline.md §2.5)
+        features.placeRef == true
     }
 })
 
@@ -359,6 +364,11 @@ feature("a caught-up cursor answers reset when its user is added to an account, 
         const start = changes(null)
         const caughtUp = changes(start.lastSeq)
         ec.user.internalLoginUser(OWNER)
+        const privateDraft = makeMessage("Private draft")
+        setFields(privateDraft, {statusId: "ES_DRAFT", bccAddresses: "private@example.org"})
+        ec.user.internalLoginUser(OTHER)
+        const privatePage = changes(caughtUp.lastSeq)
+        ec.user.internalLoginUser(OWNER)
         sys(() =>
             call(MAIL + "add#EmailAccountUser", {
                 emailAccountId: accountId,
@@ -368,19 +378,25 @@ feature("a caught-up cursor answers reset when its user is added to an account, 
         )
         ec.user.internalLoginUser(OTHER)
         const added = changes(caughtUp.lastSeq)
+        ec.user.internalLoginUser(OWNER)
+        setFields(privateDraft, {isRead: "Y"})
+        ec.user.internalLoginUser(OTHER)
         const next = changes(added.lastSeq)
         ec.user.internalLoginUser(OWNER)
         sys(() => call(MAIL + "remove#EmailAccountUser", {emailAccountId: accountId, userId: "BASIC_COMMS_SYNC_OTHER"}))
         ec.user.internalLoginUser(OTHER)
         const removed = changes(next.lastSeq)
-        return {caughtUp, added, next, removed}
+        return {caughtUp, added, next, removed, privateDraft, privatePage}
     },
-    then({caughtUp, added, next, removed}) {
+    then({caughtUp, added, next, removed, privateDraft, privatePage}) {
         caughtUp.reset == false
+        privatePage.changes.length == 0
         added.reset == true
         added.lastSeq > caughtUp.lastSeq
         next.reset == false
+        threadOf(next, privateDraft).messages[0].recipientList[0].address == "private@example.org"
         removed.reset == true
+        removed.changes.length == 0
     }
 })
 

@@ -62,12 +62,16 @@ pub fn new_dir_in(parent: &Path, prefix: &str) -> io::Result<PathBuf> {
         getrandom::fill(&mut bytes).map_err(|err| io::Error::other(err.to_string()))?;
         let suffix: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
         let dir = parent.join(format!("{prefix}-{suffix}"));
-        let mut builder = std::fs::DirBuilder::new();
+        // `mode` is the only mutation, and it is Unix. On Windows the builder is used as created.
         #[cfg(unix)]
-        {
+        let builder = {
             use std::os::unix::fs::DirBuilderExt as _;
+            let mut builder = std::fs::DirBuilder::new();
             builder.mode(0o700);
-        }
+            builder
+        };
+        #[cfg(not(unix))]
+        let builder = std::fs::DirBuilder::new();
         match builder.create(&dir) {
             Ok(()) => return Ok(dir),
             Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}

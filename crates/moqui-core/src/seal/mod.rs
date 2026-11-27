@@ -274,7 +274,7 @@ impl RootKey {
 }
 
 /// The seed of the Ed25519 key a managed instance proves with, on each link to its manager, that it holds its root key
-/// (plans/Vault-Instances.md §4.4, "Unsealed" after M6): derived from the root key, so a holder of the instance's link
+/// (plans/archive/Vault-Instances.md §4.4, "Unsealed" after M6): derived from the root key, so a holder of the instance's link
 /// key alone cannot make it, and the manager derives the same from the root key it sees at a transit unseal.
 #[must_use]
 pub fn unsealed_proof_seed(root: &RootKey) -> moqui_vault::keys::Key32 {
@@ -1312,7 +1312,7 @@ impl Keeper {
     }
 
     /// A new set of recovery shares in place of the old one, made but not yet kept: a managed instance whose recovery
-    /// holder was replaced (plans/Vault-Instances.md §4.5). The old shares open the seal until
+    /// holder was replaced (plans/archive/Vault-Instances.md §4.5). The old shares open the seal until
     /// [`Self::commit_recovery_shares`] keeps the new set, which the instance does once its manager took the new
     /// deliveries; dropped, nothing changes.
     ///
@@ -1378,7 +1378,7 @@ impl Keeper {
     }
 
     /// The seed of the unsealed proof of the root key a rotate-root of this process replaced: the instance signs its
-    /// new proof key with it, so its manager pins the new one (plans/Vault-Instances.md §4.4). None after
+    /// new proof key with it, so its manager pins the new one (plans/archive/Vault-Instances.md §4.4). None after
     /// [`Self::forget_previous_proof`], a seal, or a restart.
     #[must_use]
     pub fn previous_proof_seed(&self) -> Option<moqui_vault::keys::Key32> {

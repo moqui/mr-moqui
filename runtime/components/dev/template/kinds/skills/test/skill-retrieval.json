@@ -1,0 +1,6 @@
+{
+    "description": "Skill retrieval over @Title@'s skills (skill/), run with no model (moqui test @component@ --skills). Each case: the query (a message as a user writes it), an optional page, the skills one of which must be in the top three (expect), and skills that must not match strongly (negatives). Write the cases from what users say for each skill.",
+    "cases": [
+        {"query": "how do I do @Title@", "expect": ["@package@"]}
+    ]
+}

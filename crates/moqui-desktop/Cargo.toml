@@ -86,11 +86,23 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
 # The Credential Manager on Windows. Its default search feature (regex) stays off.
 [target.'cfg(windows)'.dependencies]
 windows-native-keyring-store = { version = "1", default-features = false }
+# The session's lock and the computer's sleep, which lock the vault (src/client/screen_lock.rs): the version Tauri
+# already builds.
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_RemoteDesktop",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 # The Secret Service on Linux, over zbus with its own executor (async-io), so it answers from any thread, the main one
 # too; no libdbus.
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 zbus-secret-service-keyring-store = { version = "1", features = ["rt-async-io-crypto-rust"] }
+# logind and the screen saver over D-Bus, which lock the vault (src/client/screen_lock.rs): the zbus the Secret Service
+# store already builds, on the same executor.
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
 
 # SIGTERM for a sidecar node that did not stop when its stdin closed (src/node/sidecar.rs).
 [target.'cfg(unix)'.dependencies]
@@ -101,13 +113,16 @@ close_fds = "0.3"
 [build-dependencies]
 tauri-build = { version = "=3.0.0-alpha.4", features = [] }
 
-# Its own workspace: not a member of the repository's.
+# Its own workspace: not a member of the repository's. The patched crates are not members.
 [workspace]
+exclude = ["patches"]
 
 # The repository's crate patches (its Cargo.toml's [patch.crates-io]), which cargo takes only from the root manifest of
 # the workspace it builds, so this one names them again: without them the node in the app builds the crates.io releases
 # they replace (plans/Security-Review.md SEC-CLI-126). crates/moqui-client/tests/app_workspaces.rs keeps the two equal.
 [patch.crates-io]
+# tauri-runtime-cef with a grant of the one desktop capture the app's own picker chose, for macOS (patches/README.md)
+tauri-runtime-cef = { path = "patches/tauri-runtime-cef" }
 stun-proto = { git = "https://github.com/moqui/stun-proto", rev = "051ca03ff92d04998cfec70a735d23369117b9c9" }
 stun-types = { git = "https://github.com/moqui/stun-proto", rev = "051ca03ff92d04998cfec70a735d23369117b9c9" }
 # yrs 0.28.2 at moqui's fork, its decode depth and reservations bounded (docs/Build-Test.md Forks; SEC-TLS-95, -117)

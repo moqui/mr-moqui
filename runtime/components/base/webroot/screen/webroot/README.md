@@ -32,14 +32,11 @@ the html render mode, comes to use another file, add the file to that list.
 | `find.xml` | not a file but the `/find/rank` transition: ranks a page's sentences against a query for `js/MoquiFind.js` ([Semantic find](../../../../../../docs/ui/Semantic-Find.md)) |
 | `ReAuth.xml` | not a file but the `/ReAuth` transitions: the recent sign-in check and the re-authentication of sensitive actions (`js/WebrootReAuth.js`, [Recent sign-in](../../../../../../docs/security/Recent-Auth.md)) |
 
-## Vendored browser libraries (`libs/`)
+## Built browser libraries (`libs/`)
 
-`libs/MANIFEST.json` lists every file with its size, sha256, source, npm tarball integrity and SPDX license. `libs/NOTICES.md`
-has each license text. `libs/refresh.mjs` rebuilds the tree from the pinned versions (`node libs/refresh.mjs` verifies against
-the manifest, `node libs/refresh.mjs --write` rewrites the tree, manifest and notices). It needs Node and npm, runs no package
-script, and is a maintainer tool: the server and the Rust build never run it. The test
-`crates/moqui-core/tests/browser_libs.rs` checks that every manifest file exists with the recorded sha256 and that nothing else
-is in `libs/`. To upgrade, change the version in `refresh.mjs`, run with `--write`, and update `plans/archive/License-Review.md`.
+`./moq build-js` installs the locked npm projects and verifies the generated assets. `libs/MANIFEST.json` records file
+hashes, licenses and package integrity. `libs/NOTICES.md` contains the notices. Update dependencies with
+`./moq update-js <package> <version>`, review the manifest, notices and license review, then run `./moq verify-js`.
 
 | Library | Version | Paths under `/libs/` | Loaded by |
 |---|---|---|---|
@@ -60,6 +57,9 @@ is in `libs/`. To upgrade, change the version in `refresh.mjs`, run with `--writ
 | DOMPurify | 3.4.17 | `dompurify/purify.min.js`, global `DOMPurify` | Assist panel |
 | highlight.js | 11.12.0 | `highlightjs/highlight.min.js` (core and 15 languages), `highlightjs/styles/github-dark.min.css`, `highlightjs/styles/github.min.css`, global `hljs` | Assist panel |
 | Tiptap, with ProseMirror and Yjs (one esbuild bundle; `refresh.mjs` lists the packages and the exports) | 3.31.4 | `tiptap/tiptap.min.js` (587 KB, 187 KB gzipped), global `Tiptap` | Lazy, once a page's first `m-rich-text` or `m-coedit` mounts |
+| OpenLayers, with ol-mapbox-style, ol-pmtiles and pmtiles, and in a lazy part geotiff.js and proj4 (one esbuild ES module build split into chunks; `refresh.mjs` lists the packages, the exports and the reviewed hosts) | 10.11.0, 13.9.0, 2.0.2, 4.5.0; geotiff 3.1.0-beta.0, proj4 2.22.0 | `openlayers/ol-map-<hash>.min.js` and its chunks (711 KB, 207 KB gzipped), `openlayers/ol-raster-<hash>.min.js` and its chunks (256 KB, 84 KB gzipped), `openlayers/ol-tiff-decoder-<hash>.min.js` (a module worker) and the decoder chunks, every file named by its hash; `openlayers/ol-map.json` names the entries; `openlayers/ol.css`; m-map sets the global `MoquiOl` | Lazy, `m-map` (`js/WebrootMap.js`, `moqui.map.loadOpenLayers`) reads `ol-map.json` (revalidated) and imports the main entry when the first map mounts, and the raster entry only for a COG layer or a registered projection (plans/archive/Maps.md §3.2, P4c) |
+| Noto Sans, the map label fonts | 5.3.0 (npm `@fontsource/noto-sans`) | `mapfonts/noto-sans/{400,400-italic,500,700}.css` and `mapfonts/noto-sans/files/*.woff2` (every subset, 0.7 MB), in the Fontsource layout | `m-map`, as ol-mapbox-style's webfonts template `/libs/mapfonts/{font-family}/{fontweight}{-fontstyle}.css`: only the faces and subsets a map draws |
+| Protomaps basemap styles and sprites (the styles generated from `@protomaps/basemaps` at build time; the sprites of protomaps/basemaps-assets, committed under `build/libs/assets/protomaps-sprites-v4`) | 5.7.2 | `protomaps/light.json`, `protomaps/dark.json`, `protomaps/sprites/v4/{light,dark}{,@2x}.{json,png}` | `m-map`, for a registered PMTiles archive of the local Protomaps profile (`LOCAL_PROTOMAPS`; docs/tools/Maps.md Archives) |
 | xterm.js, with `@xterm/addon-fit` | 6.0.0, 0.11.0 | `xterm/xterm.js`, `xterm/xterm.css`, `xterm/addon-fit.js`, globals `Terminal` and `FitAddon` | Lazy, the Terminal screen (`apps/Terminal.qvue`, the browser terminal on `/termws`) |
 | QZ Tray | 2.3.0 | `qz-tray/qz-tray.js` (LGPL-2.1, served unmodified) | Only when the user preference `qz.print.enabled` is `true`. The page needs the `qzSign` transition of `apps.xml`. |
 | matrix-sdk-crypto-wasm | 18.9.0 | `matrix-sdk-crypto/index.mjs`, `pkg/matrix_sdk_crypto_wasm_bg.js` and `.wasm` (7.8 MB; its crates in `licenses/matrix-sdk-crypto-wasm-18.9.0-crates.txt`) | `js/WebrootCrypto.js`, by a dynamic import only when a crypto device is needed ([Chat keys](../../../../../../docs/interfaces/Chat-Keys.md)) |

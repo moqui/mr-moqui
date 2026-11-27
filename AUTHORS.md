@@ -69,6 +69,7 @@ Signed by git commit adding my legal name and git username:
 - Written in 2026 by David E. Jones - jonesde
 - Written in 2026 by Hu Xinsheng - newmann
 - Written in 2026 by Michael Jones - acetousk
+- Written in 2026 by Ayman Abi Abdallah - aabiabdallah
 
 ## Grant of Patent License
 
@@ -91,3 +92,4 @@ Signed by git commit adding my legal name and git username:
 - Written in 2026 by David E. Jones - jonesde
 - Written in 2026 by Hu Xinsheng - newmann
 - Written in 2026 by Michael Jones - acetousk
+- Written in 2026 by Ayman Abi Abdallah - aabiabdallah

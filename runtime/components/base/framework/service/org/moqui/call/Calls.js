@@ -37,7 +37,7 @@ const QUEUE_ENTRY = 'moqui.call.CallQueueEntry'
 const OPEN_TRANSFER = ['CtsRinging', 'CtsConsulting']
 const TRANSFER_CODES = { CtsRinging: 'ringing', CtsConsulting: 'consulting', CtsCompleted: 'completed', CtsCanceled: 'canceled', CtsFailed: 'failed' }
 const IDENTITY_CODES = { CikLocal: 'local', CikGuest: 'guest', CikPhone: 'phone' }
-const LEG_TYPE_CODES = { CltWeb: 'web', CltGuest: 'guest', CltSipDevice: 'sipDevice', CltPstn: 'pstn' }
+const LEG_TYPE_CODES = { CltWeb: 'web', CltGuest: 'guest', CltSipDevice: 'sipDevice', CltPstn: 'pstn', CltScreen: 'screen' }
 
 /** Seconds a call rings before it is missed. */
 const ringSeconds = () => Math.max(10, Number(ec.factory.getConfValue('calls@ring-seconds') || 45))
@@ -76,8 +76,10 @@ const one = (entity, fields) => find(entity).condition(fields).one()
 const rows = (entity, fields) => Array.from(find(entity).condition(fields).list())
 /** A desk or soft phone's leg (V4), which the SIP engine rings and answers; a user's own legs in the browser are the others. */
 const isDeviceLeg = (leg) => leg.legTypeEnumId === 'CltSipDevice'
-/** A user's own leg in a browser: not a phone's (V4) nor a number dialed for them (V3). */
-const isTabLeg = (leg) => !isDeviceLeg(leg) && leg.legTypeEnumId !== 'CltPstn'
+/** A user's own leg in a browser: not a phone's (V4) nor a number dialed for them (V3), nor a native screen share's. */
+const isTabLeg = (leg) => !isDeviceLeg(leg) && leg.legTypeEnumId !== 'CltPstn' && leg.legTypeEnumId !== 'CltScreen'
+/** A native screen share's leg (add#ScreenLeg): it publishes the screen of its page leg's participant and ends with that leg. */
+const isScreenLeg = (leg) => leg.legTypeEnumId === 'CltScreen'
 /**
  * A forwarded leg (V3): a number dialed for a user (their mobile, a forward; the leg is under their participant) or for a
  * ring group's fallback (a phone participant with the role CprForward). The other phone legs are the far end's.
@@ -248,7 +250,10 @@ const stageRules = ec.resource.script('component://framework/service/org/moqui/c
 const shareModes = ['CsmAnyone', 'CsmHosts', 'CsmAsk']
 
 function stageInfo(session) {
-  return { stage: stageRules.read(session), stageRevision: Number(session.revision || 1),
+  // what each presentation request asked for (a board's id) stays with the call engine: legs, guests among them, see
+  // only who asked (requests)
+  const { requested, ...stage } = stageRules.read(session)
+  return { stage, stageRevision: Number(session.revision || 1),
     shareModeEnumId: session.shareModeEnumId || 'CsmAnyone' }
 }
 
@@ -313,11 +318,12 @@ function view(session, forUserId) {
       role: p.roleEnumId === 'CprHost' ? 'host' : p.roleEnumId === 'CprGuest' ? 'guest' : 'member',
       identity: IDENTITY_CODES[p.identityKindEnumId] || 'local',
       admission: ADMISSION_CODES[p.admissionStatusId] || null,
-      inCall: own.some((leg) => leg.statusId === 'ClsAnswered'),
+      inCall: own.some((leg) => leg.statusId === 'ClsAnswered' && !isScreenLeg(leg)),
       ringing: own.some((leg) => leg.statusId === 'ClsOffered'),
       legs: own.map((leg) => Object.assign({ callLegId: leg.callLegId, status: LEG_CODES[leg.statusId] || null,
         type: LEG_TYPE_CODES[leg.legTypeEnumId] || 'web', held: !!leg.heldDate && leg.statusId === 'ClsAnswered',
-        live: live.has(leg.callLegId), movedFromLegId: leg.movedFromLegId || null }, keyInfo(leg))),
+        live: live.has(leg.callLegId), movedFromLegId: leg.movedFromLegId || null,
+        screenOfLegId: leg.screenOfLegId || null }, keyInfo(leg))),
       onHold: own.some((leg) => leg.heldDate && leg.statusId === 'ClsAnswered'),
     }
   })
@@ -546,6 +552,8 @@ function recheckBoards(callSessionId) {
 
 /** Ends a leg; an answered leg's time goes in its user's log. */
 function closeLeg(leg, status, reason) {
+  // a screen leg its page leg's end closed already (a list of the call's legs read before is behind)
+  if (isScreenLeg(leg) && one(LEG, { callLegId: leg.callLegId })?.statusId === 'ClsLeft') return
   const now = ec.user.nowTimestamp
   const wasAnswered = leg.statusId === 'ClsAnswered'
   leg.setFields({ statusId: status, endReasonEnumId: reason || leg.endReasonEnumId || null, leftDate: now },
@@ -570,6 +578,21 @@ function closeLeg(leg, status, reason) {
     }
     recordingChange(leg.callSessionId, 'legLeft', leg.callLegId)
   }
+  if (!isScreenLeg(leg)) endScreenLegsOf(leg.callSessionId, leg.callLegId)
+}
+/**
+ * The screen legs of a page leg (add#ScreenLeg) end with it, whatever ended it (a leave, a hang-up, its socket gone, the
+ * call's end, a move); the media node drops them, and the stage that named one is cleared by the next bump.
+ */
+function endScreenLegsOf(callSessionId, legId) {
+  const screens = rows(LEG, { callSessionId, screenOfLegId: legId, statusId: 'ClsAnswered' })
+  if (!screens.length) return false
+  const session = one(SESSION, { callSessionId })
+  for (const screen of screens) {
+    closeLeg(screen, 'ClsLeft', 'CerHangup')
+    if (session) mediaControl(session, { action: 'closeLeg', callLegId: screen.callLegId })
+  }
+  return true
 }
 
 /** V5: an operation of CallQueues.js or CallTransfers.js. */
@@ -686,7 +709,9 @@ function answeredLegOfMine(session, userId, callLegId) {
 }
 
 function answeredLegCount(callSessionId) {
-  return find(LEG).condition('callSessionId', callSessionId).condition('statusId', 'ClsAnswered').count()
+  // a screen leg is its participant's share, not a way they are in the call
+  return find(LEG).condition('callSessionId', callSessionId).condition('statusId', 'ClsAnswered')
+    .condition('legTypeEnumId', 'not-equals', 'CltScreen').count()
 }
 
 // ---------- end-to-end encrypted calls (W8) ----------
@@ -1170,6 +1195,13 @@ function leave(p) {
   const session = me && p.callSessionId ? lockSession(p.callSessionId) : null
   if (!session || !canSee(session, me)) return refuse('notFound', 'Call not found')
   if (session.statusId === 'CssEnded') return { call: view(session, me), repeated: true }
+  // one of the user's screen legs (the page's Stop, the socket's leave of it): the share ends, the call goes on
+  const screen = p.callLegId ? one(LEG, { callLegId: p.callLegId }) : null
+  if (screen && isScreenLeg(screen) && screen.callSessionId === session.callSessionId) {
+    if (screen.statusId !== 'ClsAnswered') return { call: view(session, me), repeated: true }
+    if (one(PARTICIPANT, { callParticipantId: screen.callParticipantId })?.userId !== me) return refuse('notFound', 'Call not found')
+    return leaveLeg(session, screen, 'CerHangup', me)
+  }
   // the leg named (one of the user's, as two are while a move to another device goes on), else their newest
   const leg = answeredLegOfMine(session, me, p.callLegId || null)
   if (!leg) {
@@ -1186,11 +1218,18 @@ function leave(p) {
 function leaveLeg(session, leg, reason, userId) {
   closeLeg(leg, 'ClsLeft', reason)
   mediaControl(session, { action: 'closeLeg', callLegId: leg.callLegId })
+  if (isScreenLeg(leg)) {
+    // the share ends (its Stop, the phone's capture stopped, its connection lost); the call goes on
+    bump(session)
+    session.update()
+    pushState(session, 'screenEnded', { callLegId: leg.callLegId, screenOfLegId: leg.screenOfLegId || null })
+    return { call: view(session, userId) }
+  }
   const remaining = answeredLegCount(session.callSessionId)
   // a leg of the same person that is in the call: one whose media connected or that a socket holds, not a move to
   // another device that never bound (move#Call)
   const stillIn = rows(LEG, { callParticipantId: leg.callParticipantId, statusId: 'ClsAnswered' })
-    .some((other) => !!other.joinedDate || !!other.heldDate || rows(CONNECTION, { callLegId: other.callLegId, statusId: 'CcsActive' }).length > 0)
+    .filter((other) => !isScreenLeg(other)).some((other) => !!other.joinedDate || !!other.heldDate || rows(CONNECTION, { callLegId: other.callLegId, statusId: 'CcsActive' }).length > 0)
   if (session.statusId === 'CssRinging') {
     endSession(session, 'CerCanceled')
   } else if ((session.kindEnumId === 'CskDirect' && !stillIn) || (remaining === 0 && !farEndWaits(session.callSessionId)) ||
@@ -1256,6 +1295,53 @@ function move(p) {
 }
 
 /**
+ * The native screen share's leg (plans/archive/Comms-Whiteboard.md §3.6, plans/archive/MM-Spike.md): a second answered leg of the
+ * caller's own participant (CltScreen) that publishes only the screen. The caller's page relays its rtc frames on its own
+ * socket (bind#Connection checks the leg is the socket user's), and asks for the stage with it. One at a time: an older
+ * one closes. Not in an end-to-end encrypted call until the app has SFrame (bindLeg refuses it there too).
+ */
+function addScreenLeg(p) {
+  const me = currentUser()
+  const session = me && p.callSessionId ? lockSession(p.callSessionId) : null
+  if (!session || !canSee(session, me)) return refuse('notFound', 'Call not found')
+  if (session.statusId === 'CssEnded') return refuse('callEnded', 'The call has ended')
+  // an encrypted call's screen leg is sealed by the app with SFrame under its own key, which the page makes and sends
+  const sealed = isE2ee(session)
+  if (sealed && !truthy(p.sframe)) {
+    return refuse('e2eeScreen', 'Sharing the phone screen in an end-to-end encrypted call needs a newer app')
+  }
+  const participant = participantOf(session.callSessionId, me)
+  const answered = participant && participant.admissionStatusId === 'CasAdmitted'
+    ? rows(LEG, { callParticipantId: participant.callParticipantId, statusId: 'ClsAnswered' }) : []
+  // the page's own leg (named, else the newest), whose share this is: on the media server, with a connection now
+  const pages = newestFirst(answered.filter((leg) => leg.legTypeEnumId === 'CltWeb' && !leg.heldDate))
+  const page = p.callLegId ? pages.find((leg) => leg.callLegId === p.callLegId) : pages[0]
+  if (!page) return refuse('notInCall', 'Join the call before sharing your screen')
+  if (!rows(CONNECTION, { callLegId: page.callLegId, statusId: 'CcsActive' }).length) {
+    return refuse('notConnected', 'Connect to the call before sharing your screen')
+  }
+  if (sealed && !page.cryptoDeviceId) {
+    return refuse('noCryptoDevice', 'This call is end-to-end encrypted, and this page has not named its encryption device')
+  }
+  if (directPath(session, legsOf(session.callSessionId), participantsOf(session.callSessionId))) {
+    return refuse('notRelayed', 'The call moves to the media server before you share your screen')
+  }
+  for (const old of answered.filter(isScreenLeg)) {
+    closeLeg(old, 'ClsLeft', 'CerCanceled')
+    mediaControl(session, { action: 'closeLeg', callLegId: old.callLegId })
+  }
+  const leg = makeLeg(session, participant, 'ClsAnswered', 'CltScreen')
+  leg.set('screenOfLegId', page.callLegId)
+  leg.update()
+  // the page's device holds its keys: the roster names it for the screen leg too, with a key index of the leg's own
+  if (sealed) setLegDevice(session, leg, page.cryptoDeviceId)
+  bump(session)
+  session.update()
+  pushState(session, 'screenLeg', { callLegId: leg.callLegId, screenOfLegId: page.callLegId })
+  return { callLegId: leg.callLegId, screenOfLegId: page.callLegId, call: view(session, me) }
+}
+
+/**
  * The media of a leg that moves the call (move#Call) connected: the user's other browser legs in the call leave, their
  * pages hear legMoved (and the media node's ended), and the call goes on with the new one.
  */
@@ -1293,6 +1379,8 @@ function holdOwn(p) {
   if (!!leg.heldDate === held) return { callLegId: leg.callLegId, call: view(session, me), repeated: true }
   leg.set('heldDate', held ? ec.user.nowTimestamp : null)
   leg.update()
+  // a page on hold sends no media: its screen share ends
+  if (held) endScreenLegsOf(session.callSessionId, leg.callLegId)
   bump(session)
   session.update()
   pushState(session, held ? 'held' : 'resumed', { callLegId: leg.callLegId })
@@ -1365,7 +1453,7 @@ function bindLeg(session, leg, participant, signalingNodeId, forUserId, direct) 
   if (participant.admissionStatusId !== 'CasAdmitted') return refuse('notAdmitted', 'You are not in this call yet')
   if (leg.statusId !== 'ClsAnswered') return refuse('legClosed', 'You are not in this call')
   // W8: a browser's leg in an encrypted call has named its crypto device; no other leg (a guest's, a phone's) has media in it
-  if (isE2ee(session) && (leg.legTypeEnumId !== 'CltWeb' || !leg.cryptoDeviceId)) {
+  if (isE2ee(session) && (!['CltWeb', 'CltScreen'].includes(leg.legTypeEnumId) || !leg.cryptoDeviceId)) {
     return refuse('noCryptoDevice', 'This call is end-to-end encrypted, and this browser has not named its encryption device')
   }
   const node = direct ? session.mediaNodeId : bindNode(session, leg, signalingNodeId)
@@ -1407,6 +1495,7 @@ function bindLeg(session, leg, participant, signalingNodeId, forUserId, direct) 
   }
   return {
     isHost: participant.roleEnumId === 'CprHost',
+    screenLeg: isScreenLeg(leg), screenOfLegId: isScreenLeg(leg) ? leg.screenOfLegId || null : null,
     memberScreen: !!forUserId && leg.legTypeEnumId === 'CltWeb' && participant.identityKindEnumId === 'CikLocal',
     ...stageInfo(session),
     callConnectionId: conn.callConnectionId, generation, mediaNodeId: node, originNodeId: session.mediaNodeId,
@@ -2747,6 +2836,8 @@ function setHeld(p) {
   if (!!leg.heldDate === held) return { repeated: true }
   leg.set('heldDate', held ? ec.user.nowTimestamp : null)
   leg.update()
+  // a page on hold sends no media: its screen share ends
+  if (held) endScreenLegsOf(session.callSessionId, leg.callLegId)
   bump(session)
   session.update()
   pushState(session, held ? 'held' : 'resumed', { callLegId: leg.callLegId })
@@ -2895,6 +2986,7 @@ const operations = {
     const g = guestOf(p.credential)
     return g ? {callGuestId:g.guest.callGuestId,callSessionId:g.participant.callSessionId,callLinkId:g.guest.callLinkId} : {}
   },
+  addScreenLeg,
   changeStage: p => stageRules.change(p, { lockSession, guestOf, mediaControl, bump, refuse, linkOwner }),
   preferences, setPreferences, setShareMode,
   addPhoneLeg, offerUsers, closeUserLegs, closePhoneLeg, transferLeave, setHeld, setKind, mergeInto, context,

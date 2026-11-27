@@ -26,6 +26,7 @@
 //! ec.resource.getChildChanges(location)    -> [{name, isFile, size, versionName, date, userId, note}]
 //! ec.resource.getChangeLog(location, limit)-> [{versionName, previousVersionName, versionDate, userId, note, paths}]
 //! ec.resource.getTreeSize(location)        -> bytes
+//! ec.resource.getContentAddress(location)  -> {kind, id, size, tag} or null: what a pinned revision is recorded by
 //! ec.resource.makeThumbnail(source, target, maxSize) -> {width, height, contentType} or null (not an image)
 //! ec.resource.makeStickerThumbnail(source, target, maxSide, thumbSize)
 //!                                          -> {format, contentType, width, height, thumbWidth, thumbHeight} or
@@ -39,9 +40,13 @@
 //! ec.resource.extractText(location, cacheKey, maxChars, cacheOnly) -> the text of a PDF, spreadsheet or text file,
 //!                                             kept in runtime://tmp/file-text/<cacheKey>.txt; "" when it has none;
 //!                                             null with cacheOnly when it was not extracted yet
-//! ec.resource.writeZip(target, [{path, location}]) -> {count, size, failures: [{path, error}]}: built in a file, each
-//!                                             file read as a stream, never whole in memory
+//! ec.resource.writeZip(target, [{path, location, stored}]) -> {count, size, failures: [{path, error}]}: built in a
+//!                                             file, each file read as a stream, never whole in memory; an entry
+//!                                             with stored true is not compressed (a file that is already)
 //! ec.resource.makeGrant(key, subject, ttlSeconds)  -> token;  ec.resource.checkGrant(key, subject, token) -> boolean
+//! ec.resource.writePrivateFile(text, extension) -> runtime://tmp/private/<32 hex>.<extension>: a new file of the
+//!                                             server's user alone (0600, in a 0700 directory), for text a job reads
+//!                                             and deletes, never its parameters
 //! ```
 
 #[cfg(feature = "image")]
@@ -96,6 +101,7 @@ macro_rules! files_js {
     ec.resource.getChildChanges = (location) => host.filesChildChanges(String(location));
     ec.resource.getChangeLog = (location, limit) => host.filesChangeLog(String(location), limit == null ? 100 : Number(limit));
     ec.resource.getTreeSize = (location) => host.filesTreeSize(String(location));
+    ec.resource.getContentAddress = (location) => host.filesContentAddress(String(location));
     ec.resource.imageAvailable = host.filesImageAvailable();
     Object.defineProperty(ec.service, "ssoAvailable", {get: () => host.filesSsoAvailable()});
     ec.resource.makeThumbnail = (source, target, maxSize) =>
@@ -120,6 +126,8 @@ macro_rules! files_js {
         host.filesMakeGrant(String(key), String(subject), ttlSeconds == null ? 3600 : Number(ttlSeconds));
     ec.resource.checkGrant = (key, subject, token) =>
         token == null ? false : host.filesCheckGrant(String(key), String(subject), String(token));
+    ec.resource.writePrivateFile = (text, extension) =>
+        host.filesWritePrivate(text == null ? "" : String(text), String(extension == null ? "" : extension));
 })"#
     };
 }
@@ -138,6 +146,7 @@ pub(super) static METHODS: &[Method] = &[
     method!("tools", "filesChildChanges", [Text], files_child_changes),
     method!("tools", "filesChangeLog", [Text, Number], files_change_log),
     method!("tools", "filesTreeSize", [Text], files_tree_size),
+    method!("tools", "filesContentAddress", [Text], files_content_address),
     method!("tools", "filesImageAvailable", [], None, leaf, files_image_available),
     method!("tools", "filesSsoAvailable", [], None, leaf, files_sso_available),
     method!("tools", "filesThumbnail", [Text, Text, Number], files_thumbnail),
@@ -185,7 +194,50 @@ pub(super) static METHODS: &[Method] = &[
         leaf,
         files_check_grant
     ),
+    method!("tools", "filesWritePrivate", [Text, Text], files_write_private),
 ];
+
+/// `writePrivateFile(text, extension)`: `text` in a new file of `runtime/tmp/private`, made `0600` with a random name
+/// in a directory made `0700`, so no other local account reads it and no name planted there is taken; its
+/// `runtime://` location. For text a job reads and deletes, which its parameters would keep (SEC-DAT-96).
+fn files_write_private(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    use std::io::Write as _;
+    let text = call.text_or_empty(0);
+    let extension = call.text_or_empty(1);
+    if extension.is_empty()
+        || extension.len() > 8
+        || !extension
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    {
+        return Err(HostError::message(
+            "writePrivateFile needs an extension of 1 to 8 lower-case letters and digits",
+        ));
+    }
+    let dir = with_ec(|ec| ec.factory().runtime_dir().join("tmp").join("private"))?;
+    moqui_lib::private_fs::create_dir_all(&dir)
+        .map_err(|err| HostError::message(format!("the private directory could not be made: {err}")))?;
+    for _ in 0..8 {
+        let mut bytes = [0u8; 16];
+        getrandom::fill(&mut bytes).map_err(|err| HostError::message(err.to_string()))?;
+        let name: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+        let name = format!("{name}.{extension}");
+        match moqui_lib::private_fs::file_options()
+            .write(true)
+            .create_new(true)
+            .open(dir.join(&name))
+        {
+            Ok(mut file) => {
+                file.write_all(text.as_bytes())
+                    .map_err(|err| HostError::message(format!("the private file could not be written: {err}")))?;
+                return Ok(Ret::Value(Value::string(format!("runtime://tmp/private/{name}"))));
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(err) => return Err(HostError::message(format!("the private file could not be made: {err}"))),
+        }
+    }
+    Err(HostError::message("no new private file name"))
+}
 
 fn files_image_available(_call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(cfg!(feature = "image").into())
@@ -432,6 +484,25 @@ fn files_tree_size(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let location = call.text_or_empty(0);
     let size = with_resources(|resources| resources.tree_size(&location))?;
     Ok(Ret::Value(Value::I64(i64::try_from(size).unwrap_or(i64::MAX))))
+}
+
+/// `getContentAddress(location)`: what the storage names the content by, for a reader to pin
+/// (`ResourceFacade::content_address`): `{kind, id, size, tag}`, or null where it has no such address (a file on disk)
+/// or nothing is there.
+fn files_content_address(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    let Some(address) = with_resources(|resources| resources.content_address(&location))? else {
+        return Ok(Ret::Value(Value::Null));
+    };
+    let mut map = indexmap::IndexMap::default();
+    map.insert("kind".to_string(), Value::string(address.kind.name()));
+    map.insert("id".to_string(), Value::string(address.id));
+    map.insert(
+        "size".to_string(),
+        Value::I64(i64::try_from(address.size).unwrap_or(i64::MAX)),
+    );
+    map.insert("tag".to_string(), Value::string(address.tag));
+    Ok(Ret::Value(Value::Map(map)))
 }
 
 /// A PNG thumbnail of the image at `source`, no side longer than `max_size`, written to `target`. Null when the bytes
@@ -857,9 +928,12 @@ fn sheet_text(_bytes: &[u8], _max_chars: usize) -> Result<String, String> {
 /// be read is left out and reported.
 fn files_write_zip(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let target = call.text_or_empty(0);
-    let files: Vec<(String, String)> = entries_of(call.value_or_null(1))
+    let files: Vec<(String, String, bool)> = entries_of(call.value_or_null(1))
         .iter()
-        .map(|item| (text_field(item, "path"), text_field(item, "location")))
+        .map(|item| {
+            let stored = matches!(item.get("stored"), Some(Value::Bool(true))) || text_field(item, "stored") == "true";
+            (text_field(item, "path"), text_field(item, "location"), stored)
+        })
         .collect();
     // the part files' folder, through the facade's resolution of runtime://
     let building = with_resources(|resources| resources.get(BUILDING))?
@@ -947,12 +1021,13 @@ fn needs_zip64(size: u64) -> bool {
 /// A source to read into a zip: its size and bytes, `None` when nothing is at the location, or an error.
 type ZipSource = Result<Option<(u64, std::sync::Arc<dyn crate::resource::source::ByteSource>)>, String>;
 
-/// The zip of `files` (`(path in the zip, location)`) written to the file at `part`, each source `open` gives read as a
-/// stream: the entries written and the `(path, error)` of each left out (a bad or repeated path, a file that is not
-/// there or cannot be read, whole or part way, its part taken back out of the zip).
+/// The zip of `files` (`(path in the zip, location, stored)`) written to the file at `part`, each source `open` gives
+/// read as a stream, deflated or, when stored, as it is (a map archive's tiles are compressed already): the entries
+/// written and the `(path, error)` of each left out (a bad or repeated path, a file that is not there or cannot be
+/// read, whole or part way, its part taken back out of the zip).
 fn write_zip_file(
     part: &std::path::Path,
-    files: Vec<(String, String)>,
+    files: Vec<(String, String, bool)>,
     mut open: impl FnMut(&str) -> ZipSource,
 ) -> Result<(i64, Vec<(String, String)>), HostError> {
     let file = std::fs::File::create(part).map_err(|err| zip_error(&err))?;
@@ -961,7 +1036,7 @@ fn write_zip_file(
     let mut failures = Vec::new();
     let mut count = 0i64;
     let mut seen = std::collections::HashSet::new();
-    for (path, location) in files {
+    for (path, location, stored) in files {
         let path = path.trim_matches('/').to_string();
         if path.is_empty() || path.split('/').any(|part| part == ".." || part == ".") || !seen.insert(path.clone()) {
             failures.push((path, "bad or repeated path in the zip".to_string()));
@@ -979,8 +1054,16 @@ fn write_zip_file(
                 continue;
             }
         };
+        let method = if stored {
+            zip::CompressionMethod::Stored
+        } else {
+            zip::CompressionMethod::Deflated
+        };
         writer
-            .start_file(path.as_str(), options.large_file(needs_zip64(size)))
+            .start_file(
+                path.as_str(),
+                options.compression_method(method).large_file(needs_zip64(size)),
+            )
             .map_err(|err| zip_error(&err))?;
         let mut reader = crate::resource::source::SourceReader::new(source);
         match std::io::copy(&mut reader, &mut writer) {
@@ -1127,11 +1210,11 @@ mod tests {
         let dir = ScratchDir::new("mid-list");
         let part = dir.0.join("one.part");
         let files = vec![
-            ("a.txt".to_string(), "mem:a".to_string()),
-            ("b.bin".to_string(), "fail:b".to_string()),
-            ("missing.txt".to_string(), "none:c".to_string()),
-            ("c.txt".to_string(), "mem:c".to_string()),
-            ("../out.txt".to_string(), "mem:a".to_string()),
+            ("a.txt".to_string(), "mem:a".to_string(), false),
+            ("b.bin".to_string(), "fail:b".to_string(), false),
+            ("missing.txt".to_string(), "none:c".to_string(), false),
+            ("c.txt".to_string(), "mem:c".to_string(), true),
+            ("../out.txt".to_string(), "mem:a".to_string(), false),
         ];
         let (count, failures) = write_zip_file(&part, files, |location| match location {
             "mem:a" => memory(b"alpha"),
@@ -1157,6 +1240,15 @@ mod tests {
         let mut text = String::new();
         std::io::Read::read_to_string(&mut archive.by_name("c.txt").unwrap(), &mut text).unwrap();
         assert_eq!(text, "gamma");
+        // an entry asked stored is not compressed, the others are deflated
+        assert_eq!(
+            archive.by_name("c.txt").unwrap().compression(),
+            zip::CompressionMethod::Stored
+        );
+        assert_eq!(
+            archive.by_name("a.txt").unwrap().compression(),
+            zip::CompressionMethod::Deflated
+        );
     }
 
     #[test]

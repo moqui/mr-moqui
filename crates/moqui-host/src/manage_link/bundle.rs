@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The bootstrap bundle (plans/Vault-Instances.md §4.5): the secrets a new instance needs before its database opens,
+//! The bootstrap bundle (plans/archive/Vault-Instances.md §4.5): the secrets a new instance needs before its database opens,
 //! by their secret names (`entity-facade/datasource[transactional]@password`), sealed by HPKE (RFC 9180, the vault
 //! crate's) to the bundle key the instance pinned at pairing, with its instance id as associated data, so a bundle
 //! made for one instance does not open at another. The instance keeps them with the seal's bootstrap API in

@@ -475,7 +475,9 @@ fn a_cluster_with_its_password_given_keeps_no_password_file_and_a_cold_start_ope
         ..StartOptions::new(20)
     };
     // its tools put the password into a URL as it is: base64's / and + are refused before anything starts
-    let err = EmbeddedCluster::start_with(&dir, &with("a/b+c=")).map(|_| ()).unwrap_err();
+    let err = EmbeddedCluster::start_with(&dir, &with("a/b+c="))
+        .map(|_| ())
+        .unwrap_err();
     assert!(err.to_string().contains("letters, digits"), "{err}");
     let password = "the-sealed-superuser-password-7f3a";
     {
@@ -577,7 +579,29 @@ fn adopt_live_postmaster_keeps_the_same_pid() {
     let data_dir = owner.data_dir().to_path_buf();
     drop(driver);
     let pid = postmaster_pid(&data_dir);
+    // initdb's clear-text `password` on the host lines is SCRAM after a start; one put back is rewritten again, and the
+    // live postmaster adopted below is reloaded with it
+    let hba = data_dir.join("pg_hba.conf");
+    let host_methods = |text: &str| -> Vec<String> {
+        text.lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("host"))
+            .filter_map(|line| line.split_whitespace().nth(4).map(str::to_string))
+            .collect()
+    };
+    let started = std::fs::read_to_string(&hba).unwrap();
+    let methods = host_methods(&started);
+    assert!(
+        !methods.is_empty() && methods.iter().all(|method| method == "scram-sha-256"),
+        "{started}"
+    );
+    std::fs::write(&hba, started.replace("scram-sha-256", "password")).unwrap();
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    let adopted = std::fs::read_to_string(&hba).unwrap();
+    assert!(
+        host_methods(&adopted).iter().all(|method| method == "scram-sha-256"),
+        "{adopted}"
+    );
     assert_eq!(postmaster_pid(&data_dir), pid);
     let mut conn = driver.connect_postgres().unwrap();
     let rows = conn.query_once("SELECT 1", &[]).unwrap();
@@ -664,17 +688,80 @@ fn a_postmaster_whose_owner_is_gone_is_taken_over_and_stopped() {
     assert_eq!(owner_pid(&data_dir), None, "the owner file stays after the stop");
 }
 
+/// A postmaster an earlier image of this process started, as one a restart's exec leaves when its stop did not finish,
+/// is taken over by this image and stopped on drop: the process id is the same, the image is not.
+#[test]
+fn a_postmaster_of_an_earlier_image_is_taken_over_and_stopped() {
+    let dir = temp_cluster_dir();
+    let _guard = DirGuard(dir.clone());
+    let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    let data_dir = cluster.data_dir().to_path_buf();
+    drop(driver);
+    let pid = postmaster_pid(&data_dir);
+    let _kill = KillGuard(pid);
+    std::mem::forget(cluster);
+    std::fs::write(
+        data_dir.join(OWNER_FILE),
+        format!("{} before-exec\n", std::process::id()),
+    )
+    .unwrap();
+    let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    assert_eq!(postmaster_pid(&data_dir), pid, "taken over, not restarted");
+    assert_eq!(
+        owner_of(&data_dir).and_then(|owner| owner.image),
+        Some(image_token().to_string())
+    );
+    drop(driver);
+    drop(cluster);
+    assert!(!process_live(pid), "the taken-over postmaster {pid} was not stopped");
+}
+
 #[test]
 fn only_a_gone_owner_hands_its_postmaster_over() {
-    let me = 100;
-    let live = |pid: u32| pid == me || pid == 200;
-    assert!(!takes_over(None, me, live), "no owner file: adopted as before");
-    assert!(!takes_over(Some(200), me, live), "a live owner keeps its postmaster");
+    let live = |pid: u32| pid == 100 || pid == 200;
+    let owner = |pid: u32, image: Option<&str>, namespace: Option<&str>| Owner {
+        pid,
+        image: image.map(str::to_string),
+        namespace: namespace.map(str::to_string),
+    };
+    let me = owner(100, Some("a"), Some("pid:[1]"));
+    assert!(!takes_over(None, &me, live), "no owner file: adopted as before");
     assert!(
-        !takes_over(Some(me), me, live),
-        "a second handle in the owner's process"
+        !takes_over(Some(&owner(200, Some("b"), Some("pid:[1]"))), &me, live),
+        "a live owner keeps its postmaster"
     );
-    assert!(takes_over(Some(300), me, live), "the owner is gone");
+    assert!(
+        !takes_over(Some(&owner(100, Some("a"), Some("pid:[1]"))), &me, live),
+        "a second handle in the owner's image"
+    );
+    assert!(
+        takes_over(Some(&owner(300, Some("b"), Some("pid:[1]"))), &me, live),
+        "the owner is gone"
+    );
+    // an exec keeps the process id: the image that wrote the file is gone, and this one takes the postmaster over
+    assert!(
+        takes_over(Some(&owner(100, Some("before"), Some("pid:[1]"))), &me, live),
+        "an earlier image of this process"
+    );
+    assert!(
+        takes_over(Some(&owner(100, None, None)), &me, live),
+        "this process's id from an older build's file"
+    );
+    // another PID namespace (a second container on the runtime's volume, each its pid 1): another process, whose
+    // liveness this one cannot tell, whatever its id
+    let container = owner(1, Some("a"), Some("pid:[1]"));
+    assert!(
+        !takes_over(Some(&owner(1, Some("b"), Some("pid:[2]"))), &container, |_| false),
+        "the same id in another namespace"
+    );
+    assert!(
+        !takes_over(Some(&owner(7, Some("b"), Some("pid:[2]"))), &container, |_| false),
+        "another id in another namespace"
+    );
+    assert!(
+        takes_over(Some(&owner(1, Some("b"), None)), &container, |_| false),
+        "a file with no namespace counts as this one's"
+    );
 }
 
 #[test]
@@ -683,6 +770,30 @@ fn the_owner_file_round_trips() {
     let _guard = DirGuard(dir.clone());
     std::fs::create_dir_all(&dir).unwrap();
     assert_eq!(owner_pid(&dir), None);
+    write_owner(&dir);
+    assert_eq!(owner_of(&dir), Some(Owner::this_image()));
+    #[cfg(target_os = "linux")]
+    assert!(
+        Owner::this_image()
+            .namespace
+            .is_some_and(|namespace| namespace.starts_with("pid:[")),
+        "{:?}",
+        Owner::this_image()
+    );
+    // the image token: time and a random part, never empty or the clock alone
+    let token = image_token();
+    let (time, random) = token.split_once('-').unwrap_or_else(|| panic!("{token}"));
+    assert!(!time.is_empty() && random.len() == 16, "{token}");
+    // an older build's file names the process alone
+    std::fs::write(dir.join(OWNER_FILE), "1234\n").unwrap();
+    assert_eq!(
+        owner_of(&dir),
+        Some(Owner {
+            pid: 1234,
+            image: None,
+            namespace: None
+        })
+    );
     write_owner(&dir);
     assert_eq!(owner_pid(&dir), Some(std::process::id()));
     remove_owner(&dir);
@@ -934,15 +1045,28 @@ fn conn_drop_schema(driver: &PostgresDriver) {
     conn.execute("DROP SCHEMA search CASCADE", &[]).unwrap();
 }
 
+/// Stops a postmaster a test left running, as when it panics. SIGQUIT is Postgres's immediate shutdown, which still
+/// removes its SysV interlock segment; SIGKILL would strand that segment (macOS allows 32), so it is only the fallback.
 struct KillGuard(u32);
 
 impl Drop for KillGuard {
     fn drop(&mut self) {
-        if process_live(self.0) {
+        let signal = |name: &str| {
             let _ = std::process::Command::new("kill")
-                .args(["-9", &self.0.to_string()])
+                .args([name, &self.0.to_string()])
                 .status();
+        };
+        if !process_live(self.0) {
+            return;
         }
+        signal("-QUIT");
+        for _ in 0..50 {
+            if !process_live(self.0) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        signal("-9");
     }
 }
 
@@ -1484,6 +1608,7 @@ fn a_cluster_under_a_path_with_a_space_starts_with_its_socket_in_temp() {
 
 /// SEC-DAT-06: the superuser's password file is written `0600` before the setup reads it, and one already there (an
 /// older run's, made with the umask) is made so, its password kept.
+#[cfg(unix)]
 #[test]
 fn the_password_file_is_this_user_s_alone() {
     use std::os::unix::fs::PermissionsExt as _;
@@ -1502,6 +1627,7 @@ fn the_password_file_is_this_user_s_alone() {
 
 /// SEC-OUT-06: a socket directory under temp that was already there is used only when it is this user's with mode
 /// 0700; one another user could write in is refused before the server starts.
+#[cfg(unix)]
 #[test]
 fn a_socket_dir_that_is_not_this_user_s_alone_is_refused() {
     use std::os::unix::fs::PermissionsExt as _;
@@ -1529,7 +1655,6 @@ fn a_socket_dir_that_is_not_this_user_s_alone_is_refused() {
 #[test]
 fn a_sealed_dump_opens_for_a_restore_only_with_its_key_and_leaves_no_plain_file() {
     use std::io::Write as _;
-    use std::os::unix::fs::PermissionsExt as _;
 
     let runtime = temp_cluster_dir();
     let _guard = DirGuard(runtime.clone());
@@ -1558,7 +1683,11 @@ fn a_sealed_dump_opens_for_a_restore_only_with_its_key_and_leaves_no_plain_file(
     let path = opened.path().to_path_buf();
     assert!(path.starts_with(runtime.join("db")), "{}", path.display());
     assert_eq!(std::fs::read(&path).unwrap(), b"PGDMP and the rest of a dump");
-    assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+    }
     drop(opened);
     assert!(!path.exists(), "the plain file stays after the restore");
 
@@ -1577,4 +1706,29 @@ fn a_sealed_dump_opens_for_a_restore_only_with_its_key_and_leaves_no_plain_file(
         plain.as_path()
     );
     assert!(plain.exists(), "a plain dump is deleted after");
+}
+
+/// SEC-TLS-98: a restore takes beside the chosen dump only the `moqui_<name>` dumps one save wrote with it; another file
+/// that shares the suffix (a template's or the superuser database's name, one someone put in the folder) is not restored.
+#[test]
+fn a_restore_takes_only_moqui_sibling_dumps() {
+    let saves = std::env::temp_dir().join(format!("moqui-sibling-dumps-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&saves);
+    std::fs::create_dir_all(&saves).unwrap();
+    for name in [
+        "moqui.dump",
+        "moqui_content.dump",
+        "template1.dump",
+        "template0.dump",
+        "postgres.dump",
+        "planted.dump",
+        "moqui_.dump",
+    ] {
+        std::fs::write(saves.join(name), b"").unwrap();
+    }
+    assert_eq!(
+        sibling_dumps(&saves.join("moqui.dump")),
+        vec![("moqui_content".to_string(), saves.join("moqui_content.dump"))]
+    );
+    let _ = std::fs::remove_dir_all(&saves);
 }

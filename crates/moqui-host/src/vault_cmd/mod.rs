@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `moqui vault` (plans/Vault-Instances.md §3.5, §3.6; docs/security/Vaults.md): a vault client on the user's own
+//! `moqui vault` (plans/archive/Vault-Instances.md §3.5, §3.6; docs/security/Vaults.md): a vault client on the user's own
 //! machine, against a server's vault services over REST. The crypto is the vault crate's own session ([`client`]),
 //! the one the browser's worker runs, so the key passphrase, the personal key and every vault key stay in this
 //! process. Each run signs in with the password and second factor ([`remote`]), keeps nothing of the sign-in, and

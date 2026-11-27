@@ -375,7 +375,9 @@
                 else notifyFromHtml(text);
                 if (failed) { if (!json) notify(response.status + " " + response.statusText, "danger"); return; }
                 if (form.dataset.msg) notify(form.dataset.msg, "success");
-                if (form.dataset.reload) { const target = doc.getElementById(form.dataset.reload); if (target) load(target); }
+                // _screen: the page itself, as the qvt shell reloads the screen behind a dialog
+                if (form.dataset.reload === "_screen") root.location.reload();
+                else if (form.dataset.reload) { const target = doc.getElementById(form.dataset.reload); if (target) load(target); }
                 if (form.dataset.hide) { const dialog = doc.getElementById(form.dataset.hide); if (dialog && dialog.close) dialog.close(); }
             })).catch((err) => notify(String(err.message || err), "danger"));
     };

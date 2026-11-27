@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The artifact index of the development tools (plans/design-dev-aide.md 7.1, F11): every definition the components'
+<!-- The artifact index of the development tools (plans/archive/design-dev-aide.md 7.1, F11): every definition the components'
     files make, the references between them, and the calls observed on a dev instance. Kept by the framework
     (moqui_core::devtools::index) on dev instances: built in the background at startup, each file's rows replaced when
     a reload reads it again, so a restart keeps the index and a file whose hash is unchanged is not read again. -->
@@ -116,7 +116,7 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
     <entity entity-name="DevArtifactProject" package="moqui.devtools">
         <description>A Moqui project on this machine whose artifact index may be read by its id, on any instance, by a
-            user with the AIDE_READ permission (plans/design-dev-aide.md 7.4). The read services take only the id off a
+            user with the AIDE_READ permission (plans/archive/design-dev-aide.md 7.4). The read services take only the id off a
             dev instance, so no path of a request is read; a row whose allowed is not Y is refused like one that is not
             there.</description>
         <field name="projectId" type="id" is-pk="true"/>

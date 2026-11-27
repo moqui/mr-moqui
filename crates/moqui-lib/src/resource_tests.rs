@@ -63,9 +63,12 @@ fn memory_tree_finds_children_under_a_matching_directory() {
         ("clip.mp4", "video/mp4"),
         ("memo.wav", "audio/wav"),
         ("photo.webp", "image/webp"),
+        // a map archive, binary so never compressed (is_text_content_type)
+        ("us.pmtiles", "application/vnd.pmtiles"),
     ] {
         assert_eq!(content_type_for_name(name), Some(content_type), "{name}");
     }
+    assert!(!super::is_text_content_type("application/vnd.pmtiles"));
 }
 
 /// Off Windows `\` is a character of a file name: the location keeps it, and it does not split the name.

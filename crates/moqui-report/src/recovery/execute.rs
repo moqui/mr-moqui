@@ -3,7 +3,7 @@
 //! scope and a retried run reaches the controller with the same key. An in-process action is done at once and keeps
 //! what reverting it restores; a webhook posts a signed request to a deployment controller, which answers at once or
 //! reports back on `/v1/recovery` (or is polled at its `statusUrl`); a manual action waits for an operator; an instance
-//! action runs through this server's own actions on a managed instance (plans/Vault-Instances.md §4.8), and one that
+//! action runs through this server's own actions on a managed instance (plans/archive/Vault-Instances.md §4.8), and one that
 //! waits for its vault lease is followed on its `InstanceAction`. An action past its deadline is timed out and
 //! escalated.
 
@@ -806,6 +806,11 @@ pub(crate) fn advance(
     }
 }
 
+/// The answer to a controller's report that is refused: one for an unknown action, a wrong token and an action that is no
+/// longer active (SEC-TLS-19).
+pub(crate) const CALLBACK_REFUSED: &str =
+    "the recovery action is unknown, no longer active, or the callback token does not match";
+
 /// What a controller or an operator says about an action.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Report<'a> {
@@ -832,16 +837,19 @@ pub(crate) fn report(
         message,
     } = *report;
     let _authz = ec.disable_authz();
-    let mut row = entity
-        .find(ACTION)?
-        .eq("actionId", Value::string(action_id))
-        .one()?
-        .ok_or_else(|| fail(format!("no recovery action {action_id}")))?;
+    let found = entity.find(ACTION)?.eq("actionId", Value::string(action_id)).one()?;
+    // a controller gets one refusal whether the action is unknown, its token wrong or the action no longer active, so
+    // its answers tell nothing of the actions, and the hashes are compared in constant time (SEC-TLS-19)
     if let Some(token) = token {
-        if sha256(token) != field(&row, "callbackTokenHash") {
-            return Err(fail("the callback token does not match the action"));
+        let matches = found.as_ref().is_some_and(|row| {
+            moqui_lib::codec::constant_time_eq(sha256(token).as_bytes(), field(row, "callbackTokenHash").as_bytes())
+                && ACTIVE.contains(&field(row, "statusId").as_str())
+        });
+        if !matches {
+            return Err(fail(CALLBACK_REFUSED));
         }
     }
+    let mut row = found.ok_or_else(|| fail(format!("no recovery action {action_id}")))?;
     if !ACTIVE.contains(&field(&row, "statusId").as_str()) {
         return Err(fail(format!(
             "recovery action {action_id} is {}, not active",

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! SSH, the manager's other transport (plans/Vault-Instances.md §4.4): the same operator commands as the link's, run
+//! SSH, the manager's other transport (plans/archive/Vault-Instances.md §4.4): the same operator commands as the link's, run
 //! as `moqui operator …` by the instance's SSH admin shell or its host's sshd. The key it signs in with is the vault
 //! item `AppInstance:{id}:sshKey` (type ssh-key), used under a lease or the environment's machine access and written
 //! for the one call to a file of mode 0600 that is removed after; the instance's host key is pinned on its row
@@ -189,12 +189,16 @@ pub fn run(program: &str, target: &SshTarget, key: &[u8], command: &SshCommand) 
     let mut nonce = [0_u8; 8];
     moqui_vault::rng::Rng::fill(&mut moqui_vault::rng::OsRng, &mut nonce);
     let dir = std::env::temp_dir().join(format!("moqui-ssh-{}", moqui_vault::text::hex(&nonce)));
-    let mut builder = std::fs::DirBuilder::new();
+    // `mode` is the only mutation, and it is Unix. On Windows the builder is used as created.
     #[cfg(unix)]
-    {
+    let builder = {
         use std::os::unix::fs::DirBuilderExt as _;
+        let mut builder = std::fs::DirBuilder::new();
         builder.mode(0o700);
-    }
+        builder
+    };
+    #[cfg(not(unix))]
+    let builder = std::fs::DirBuilder::new();
     builder
         .create(&dir)
         .map_err(|err| fail(format!("could not make {}: {err}", dir.display())))?;

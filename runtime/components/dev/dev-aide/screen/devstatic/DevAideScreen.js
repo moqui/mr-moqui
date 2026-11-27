@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The screen view of the Dev AIDE (plans/design-dev-aide.md 11): m-dev-screen-view, a visual view of a screen or
+ * The screen view of the Dev AIDE (plans/archive/design-dev-aide.md 11): m-dev-screen-view, a visual view of a screen or
  * screen-extend file's tab. The canvas is the real render of the screen in a same-origin frame (11.2): it renders the
  * tab's buffers, not the files (put#CanvasBuffer and the frame's buffer:<id> preview token, F14), each widget stamped
  * with the file and line that wrote it (moquiAide=source, F10), under an overlay that outlines and names the element
@@ -219,6 +219,13 @@
         const next = children(outline, ["subscreens", "pre-actions", "always-actions", "actions", "widgets"])[0];
         return next ? { op: "insert", at: next.path, position: "before", xml: transitionXml } : { op: "insert", at: outline.path || [], position: "last", xml: transitionXml };
     };
+    ops.clientLibrary = (outline, id) => {
+        if (children(outline, ["client-library"]).some(item => attrOf(item, "library") === id && attrOf(item, "render-mode") === "qvt")) return [];
+        const next = (outline.children || []).find(item => !["macro-template", "web-settings", "parameter", "always-actions", "transition", "transition-include",
+            "subscreens","shell-providers","ext-action","ext-panel","client-library"].includes(item.name));
+        const body = xml("client-library", [["library", id], ["render-mode", "qvt"]]);
+        return [{op:"insert", at:next ? next.path : outline.path, position:next ? "before" : "last", xml:body}];
+    };
     // Add button as one list of operations: the transition, then its link at the place (in place the link's path moves
     // by one when the transition goes in before the element it is under).
     ops.buttonOps = (extension, outline, spec, insertAt, node) => {
@@ -337,6 +344,10 @@
             }
         },
         watch: {
+            // an edit answers a new outline: the selection follows to its element there, so the properties show the
+            // values the edit made (DEVA-UI-002)
+            editOutline(outline) { this.followSelection("edit", outline); },
+            baseOutline(outline) { this.followSelection("base", outline); },
             width() { this.$nextTick(() => this.drawHover()); },
             dark() { this.applyDark(); }
         },
@@ -349,6 +360,12 @@
         beforeUnmount() { clearTimeout(this.renderTimer); root.removeEventListener("resize", this.onScroll); if (this.offSaved) this.offSaved(); },
         methods: {
             t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
+            followSelection(which, outline) {
+                const selection = this.selection;
+                if (!selection || !selection.node || selection.which !== which || !outline) return;
+                const node = pure.sameNodeIn(outline, selection.node);
+                if (node && node !== selection.node) this.selection = Object.assign({}, selection, { node });
+            },
             load() {
                 const params = this.tab.page ? { page: this.tab.page } : { rootId: this.ctx.rootId, path: this.tab.path };
                 this.ctx.get("screenView", params).then((answer) => {
@@ -509,6 +526,10 @@
                 const buffer = this.edit;
                 return this.ctx.apply(list, buffer === this.tab ? null : buffer).then(() => this.scheduleRender(), (error) => this.ctx.fail(error));
             },
+            attachLibrary(id) {
+                if (!this.canEdit || !this.editOutline) return;
+                this.apply(ops.clientLibrary(this.editOutline, id));
+            },
             // ---- intents ----
             startField() {
                 const intents = this.intents;
@@ -656,6 +677,8 @@
   <div class="row items-center q-gutter-x-sm q-px-sm q-py-xs m-dev-screen-bar">
     <q-btn-toggle dense no-caps unelevated toggle-color="primary" :model-value="mode" @update:model-value="setMode"
         :options="[{ label: 'Design', value: 'design' }, { label: 'Preview', value: 'preview' }]" id="DevScreenMode"></q-btn-toggle>
+    <m-dev-libraries v-if="edit" :key="(edit.rootId || ctx.rootId) + edit.path" :ctx="ctx" :root-id="edit.rootId || ctx.rootId"
+        :path="edit.path" :attachable="canEdit" @attach="attachLibrary"></m-dev-libraries>
     <q-btn-toggle dense no-caps flat v-model="width" :options="widths"></q-btn-toggle>
     <q-toggle dense v-model="dark" label="Dark"></q-toggle>
     <q-input dense outlined v-model="query" placeholder="Parameters: a=1&amp;b=2" class="col" @keyup.enter="render" id="DevScreenQuery"></q-input>

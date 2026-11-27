@@ -44,10 +44,10 @@ along with this software (see the LICENSE.md file). If not, see
                 if (!ec.message.hasError()) {
                     const rows = Array.from(result?.resultList || [])
                     const refused = rows.filter(row => !row.applied)
-                    if (result?.appliedCount) ec.message.addMessage(result.appliedCount + ' rows applied', 'success')
+                    if (result?.appliedCount) ec.message.addMessage(result.appliedCount + (Number(result.appliedCount) === 1 ? ' row applied' : ' rows applied'), 'success')
                     if (!rows.length) ec.message.addMessage(result?.reason || ec.l10n.localize('Nothing was retried'), 'warning')
                     for (const row of refused.slice(0, 5)) ec.message.addMessage('Row ID ' + row.itemSeqId + ': ' + (row.reason || 'not applied'), 'warning')
-                    if (refused.length > 5) ec.message.addMessage((refused.length - 5) + ' more rows were not applied', 'warning')
+                    if (refused.length > 5) ec.message.addMessage((refused.length - 5) + (refused.length === 6 ? ' more row was not applied' : ' more rows were not applied'), 'warning')
                 }
             ]]></script>
         </actions>
@@ -93,7 +93,7 @@ along with this software (see the LICENSE.md file). If not, see
                         hashText: String(detail.fileHash || '').slice(0, 16),
                         scopeTitle: detail.scopeTitle || '',
                         stateText: stateTexts[detail.state] || detail.state || '',
-                        countText: (detail.rowCount || 0) + ' rows · ' + (detail.appliedCount || 0) + ' applied · ' + (detail.errorCount || 0) + ' need attention' + (detail.skippedCount ? ' · ' + detail.skippedCount + ' skipped' : '') + (detail.validCount ? ' · ' + detail.validCount + ' ready, not applied' : ''),
+                        countText: (detail.rowCount || 0) + (Number(detail.rowCount) === 1 ? ' row · ' : ' rows · ') + (detail.appliedCount || 0) + ' applied · ' + (detail.errorCount || 0) + ' need attention' + (detail.skippedCount ? ' · ' + detail.skippedCount + ' skipped' : '') + (detail.validCount ? ' · ' + detail.validCount + ' ready, not applied' : ''),
                         userName: detail.userName || '',
                         periodText: [when(detail.stagedDate) ? 'staged ' + when(detail.stagedDate) : '', when(detail.appliedDate) ? 'applied ' + when(detail.appliedDate) : '', when(detail.completedDate) ? 'completed ' + when(detail.completedDate) : ''].filter(Boolean).join(' · ') + ' (' + zone + ')',
                         lastError: detail.lastError || ''}

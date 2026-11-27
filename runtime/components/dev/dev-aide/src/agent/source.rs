@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `source` (plans/design-dev-aide.md 13.2, READ): a file's lines (a range, or the element of an artifact the index
+//! `source` (plans/archive/design-dev-aide.md 13.2, READ): a file's lines (a range, or the element of an artifact the index
 //! names), its outline (the elements to a depth, with their lines and naming attributes), and its git status, with
 //! whether it is the site's or upstream. Files are confined to the Workspace's roots as the editor's are.
 

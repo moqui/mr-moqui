@@ -345,3 +345,26 @@ fn require_client_takes_a_gateway_scoped_key_as_its_own_client() {
     assert_eq!((caller.user_id.as_str(), caller.client), ("GW_ANN", None));
     moqui_core::user::logout().unwrap();
 }
+
+/// SEC-AI-100: a content part's url that is not inline is found wherever it sits in the request (a chat message's
+/// image_url, a responses input's file_url), so a model server on the private network is never handed one to fetch.
+#[test]
+fn a_remote_content_url_is_found_and_an_inline_one_is_not() {
+    let fields = |value: serde_json::Value| value.as_object().unwrap().clone();
+    let inline = fields(serde_json::json!({"messages": [{"role": "user", "content": [
+        {"type": "text", "text": "see https://example.com in text"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}]}]}));
+    assert_eq!(super::remote_content_url(&inline), None);
+    let chat = fields(serde_json::json!({"messages": [{"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": "http://10.0.0.5/admin"}}]}]}));
+    assert_eq!(
+        super::remote_content_url(&chat).as_deref(),
+        Some("http://10.0.0.5/admin")
+    );
+    let responses = fields(serde_json::json!({"input": [{"role": "user", "content": [
+        {"type": "input_file", "file_url": "http://169.254.169.254/latest/meta-data"}]}]}));
+    assert_eq!(
+        super::remote_content_url(&responses).as_deref(),
+        Some("http://169.254.169.254/latest/meta-data")
+    );
+}

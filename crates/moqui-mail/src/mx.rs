@@ -60,6 +60,7 @@ use crate::relay::Relay;
 use lettre::transport::smtp::client::{SmtpConnection, TlsParameters};
 use lettre::transport::smtp::commands::{Data, Mail, Quit, Rcpt};
 use lettre::transport::smtp::extension::{ClientId, Extension, MailBodyParameter, MailParameter};
+use moqui_core::context::framework_thread;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::edge::queue::{self, NewItem};
 use moqui_core::entity::{Condition, EntityFacade, EntityValue};
@@ -344,7 +345,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) {
     let weak: Weak<ExecutionContextFactory> = Arc::downgrade(factory);
     let spawned = std::thread::Builder::new()
         .name("moqui-mx".to_string())
-        .spawn(move || run_loop(&weak));
+        .spawn(framework_thread(move || run_loop(&weak)));
     match spawned {
         Ok(_) => tracing::info!("MX delivery started (mail-delivery@mta moqui)"),
         Err(err) => tracing::error!("MX delivery did not start: {err}"),
@@ -464,7 +465,7 @@ fn round(factory: &Arc<ExecutionContextFactory>) -> Option<i64> {
         let facade = facade.clone();
         let spawned = std::thread::Builder::new()
             .name("moqui-mx-session".to_string())
-            .spawn(move || {
+            .spawn(framework_thread(move || {
                 let context = factory.new_context();
                 let _entered = context.enter();
                 let _authz = context.disable_authz();
@@ -484,7 +485,7 @@ fn round(factory: &Arc<ExecutionContextFactory>) -> Option<i64> {
                 release(&mut flight, &field_text(&row, "pairedNodeId"));
                 drop(flight);
                 wake();
-            });
+            }));
         if let Err(err) = spawned {
             tracing::error!("MX delivery {id}: no thread for it: {err}");
             let mut flight = lock(flight());

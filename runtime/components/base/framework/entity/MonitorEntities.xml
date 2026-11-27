@@ -16,7 +16,7 @@
         <field name="url" type="text-medium"><description>http or https URL of the exposition, such as http://host:9100/metrics</description></field>
         <field name="serviceName" type="text-medium"><description>service.name of the scraped metrics; the URL's host:port when empty</description></field>
         <field name="serviceInstanceId" type="text-medium"><description>service.instance.id of the scraped metrics: the
-            AppInstance a manager added the target for (plans/Vault-Instances.md §4.8); the URL's host:port when empty</description></field>
+            AppInstance a manager added the target for (plans/archive/Vault-Instances.md §4.8); the URL's host:port when empty</description></field>
         <field name="intervalSeconds" type="number-integer"/>
         <field name="timeoutSeconds" type="number-integer"/>
         <field name="bearerToken" type="text-medium" encrypt="true"/>
@@ -184,7 +184,7 @@
             isolate-instance, escalate), webhook (a signed POST to a deployment controller, which reports back on
             /v1/recovery or through statusUrl), manual (an operator does it and marks it done) or instance (restart,
             isolate, pause-rollout, promote and rollback of a managed instance through the manager's own actions, which
-            wait for their vault lease: plans/Vault-Instances.md §4.8).</description>
+            wait for their vault lease: plans/archive/Vault-Instances.md §4.8).</description>
         <field name="adapterId" type="id" is-pk="true"/>
         <field name="description" type="text-medium"/>
         <field name="adapterType" type="text-short"><description>in-process, webhook, manual or instance</description></field>

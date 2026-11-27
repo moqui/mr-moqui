@@ -36,6 +36,7 @@ use moqui_lib::object::Value;
 use moqui_lib::sync::lock;
 
 use super::sync::{account_info, connect_imap, run_sync, select, ImapConn, SyncFailure, SyncOptions, ACCOUNT};
+use moqui_core::context::framework_thread;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::entity::{Condition, EntityFacade};
 use moqui_core::service::util::field_text;
@@ -229,7 +230,9 @@ fn spawn_worker(factory: &Arc<ExecutionContextFactory>, account_id: &str, finger
     let thread_account = account_id.to_string();
     let spawned = std::thread::Builder::new()
         .name(format!("moqui-email-idle-{account_id}"))
-        .spawn(move || run_worker(&weak, &thread_account, &thread_stop, &thread_socket));
+        .spawn(framework_thread(move || {
+            run_worker(&weak, &thread_account, &thread_stop, &thread_socket)
+        }));
     match spawned {
         Ok(handle) => Some(Worker {
             fingerprint,

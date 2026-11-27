@@ -1,4 +1,4 @@
-// The artifact index on a dev instance (plans/design-dev-aide.md P3, 7.1): built from every component's files into the
+// The artifact index on a dev instance (plans/archive/design-dev-aide.md P3, 7.1): built from every component's files into the
 // moqui.devtools rows, found by name with segment and camel case matching, its references both ways, and the
 // extensions with whether their targets are there. The per-file update after a reload, the restart that keeps the rows
 // and a broken anchor are in the host's integration test (crates/moqui-host/tests/it/devaide.rs).

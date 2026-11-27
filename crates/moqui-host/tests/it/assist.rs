@@ -356,6 +356,26 @@ fn the_drawer_calls_over_http_on_postgres() {
     let (_, list) = ann.get("conversations", "");
     assert!(!list.to_string().contains(&conversation_id), "{list}");
 
+    // History's Archive: the user's own conversation archived, shown so, and restored; another user's is not theirs
+    let (status, put_away) = john.post("archive", &json!({"conversationId": conversation_id}));
+    assert_eq!(
+        (status, put_away["statusId"].as_str()),
+        (200, Some("AgcArchived")),
+        "{put_away}"
+    );
+    let (_, list) = john.get("conversations", "search=hello");
+    assert_eq!(list["conversations"][0]["statusId"], "AgcArchived", "{list}");
+    let (status, _) = ann.post(
+        "archive",
+        &json!({"conversationId": conversation_id, "archived": false}),
+    );
+    assert_eq!(status, 404);
+    let (status, back) = john.post(
+        "archive",
+        &json!({"conversationId": conversation_id, "archived": false}),
+    );
+    assert_eq!((status, back["statusId"].as_str()), (200, Some("AgcActive")), "{back}");
+
     // feedback on the assistant's message; not on another user's
     let (status, kept) = john.post(
         "feedback",
@@ -1023,6 +1043,20 @@ fn the_drawer_calls_over_http_on_postgres() {
         .len(),
         0
     );
+
+    // a turn in an archived conversation brings it back first
+    let (status, _) = john.post("archive", &json!({"conversationId": conversation_id}));
+    assert_eq!(status, 200);
+    fake::script(ENDPOINT, vec![fake::Reply::text("Back again.")]);
+    let again = json!({"text": "One more", "clientMessageId": "john-m-archived", "clientId": "tab-a",
+        "conversationId": conversation_id});
+    let (status, started) = john.post("turn", &again);
+    assert_eq!(status, 200, "{started}");
+    if let Some(run_id) = started["runId"].as_str() {
+        wait(&factory, run_id);
+    }
+    let (_, list) = john.get("conversations", "search=hello");
+    assert_eq!(list["conversations"][0]["statusId"], "AgcActive", "{list}");
 }
 
 const CANVAS_DATA: &str = r#"<entity-facade-xml type="seed">

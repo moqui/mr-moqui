@@ -1,7 +1,8 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 // The code editor's helpers in the page. editor is moqui.codeEditor from /js/WebrootCode.js.
-// CodeMirror is the vendored bundle, the same IIFE the Node file ran with vm.runInThisContext.
+// CodeMirror is the vendored bundle, the same IIFE the Node file ran with vm.runInThisContext; the legacy modes, the Vim
+// keymap, Yjs and y-codemirror.next are its side bundles, built against its global.
 "use strict";
 
 const editor = moqui.codeEditor;
@@ -16,6 +17,22 @@ test("the language of a file comes from its extension, else plain text", () => {
     assert.equal(editor.languageOf("src\\lib.rs"), "rust");
     assert.equal(editor.languageOf("notes"), "text");
     assert.equal(editor.languageOf(""), "text");
+    // the second bundle's languages, by extension or by the whole name
+    assert.equal(editor.languageOf("scripts/check-packages.sh"), "shell");
+    assert.equal(editor.languageOf("build.gradle"), "groovy");
+    assert.equal(editor.languageOf("conf/app.properties"), "properties");
+    assert.equal(editor.languageOf("Cargo.toml"), "toml");
+    assert.equal(editor.languageOf("podman/Dockerfile"), "dockerfile");
+    assert.equal(editor.languageOf("podman/Containerfile.dev"), "dockerfile");
+    assert.equal(editor.languageOf("conf/nginx.conf"), "nginx");
+});
+
+test("a failed load says why, from the answer's errors, its status or the error's message", () => {
+    assert.equal(editor.failureText({ ok: false, status: 403, statusText: "Forbidden", json: { errors: ["Not allowed to read"] } }), "Not allowed to read");
+    assert.equal(editor.failureText({ ok: false, status: 500, json: { errorMessage: "Root not found" } }), "Root not found");
+    assert.equal(editor.failureText({ ok: false, status: 404, statusText: "Not Found", json: null }), "HTTP 404 Not Found");
+    assert.equal(editor.failureText(new Error("network down")), "network down");
+    assert.equal(editor.failureText({}), "The folder could not be read");
 });
 
 test("a SQL editor takes the database's dialect and completes the schema's tables", () => {
@@ -120,11 +137,160 @@ test("the bundle has what the widgets use, and a state for every language", () =
     }
     const languages = new Set(Object.values(editor.extensions));
     for (const language of languages) {
+        // a legacy mode: a stream language of the second bundle, made once a page
+        if (editor.LEGACY_LANGUAGES[language]) {
+            const made = editor.legacyLanguage(CM, language);
+            assert.ok(made && made === editor.legacyLanguage(CM, language), language);
+            const state = CM.EditorState.create({ doc: "x = 1", extensions: [editor.languageExtension(CM, language)] });
+            assert.equal(state.doc.toString(), "x = 1", language);
+            continue;
+        }
         const factory = { xml: "xml", html: "html", vue: "vue", javascript: "javascript", json: "json", css: "css", markdown: "markdown",
             sql: "sql", yaml: "yaml", rust: "rust" }[language];
         assert.ok(factory && typeof CM[factory] === "function", language);
         const state = CM.EditorState.create({ doc: "x", extensions: [CM[factory]()] });
         assert.equal(state.doc.toString(), "x", language);
+    }
+});
+
+test("the editor settings: defaults filled in, sizes bounded, only valid keys of known commands", () => {
+    assert.deepEqual(editor.normalizeSettings(null), { fontSize: 13, tabSize: null, wrap: false, whitespace: false, keymap: "default", keys: {} });
+    const given = editor.normalizeSettings({ fontSize: "16", tabSize: 40, wrap: true, whitespace: "true", keymap: "vim",
+        keys: { toggleComment: "Mod-Shift-7", save: "Alt-s", nothing: "Mod-q", find: "Hyper-f" } });
+    assert.deepEqual(given, { fontSize: 16, tabSize: null, wrap: true, whitespace: true, keymap: "vim", keys: { toggleComment: "Mod-Shift-7", save: "Alt-s" } });
+    assert.ok(editor.validKeys("Ctrl-Space") && editor.validKeys("F2") && editor.validKeys("Mod--"));
+    assert.ok(!editor.validKeys("") && !editor.validKeys("Mod-") && !editor.validKeys("Super-x"));
+    // the bundle has each command a key rebinds
+    for (const [name, of] of Object.entries(editor.COMMANDS)) if (of) assert.equal(typeof of(CM), "function", name);
+});
+
+test("a rebound command runs on its keys, ahead of the rest, and not on its default ones", () => {
+    const comment = () => true, other = () => true;
+    const bindings = [{ key: "Mod-/", run: comment }, { key: "Mod-x", run: other }, { key: "Mod-k", run: comment }];
+    const out = editor.rebind(bindings, { toggleComment: "Alt-c", find: "Alt-f" }, { toggleComment: comment });
+    assert.deepEqual(out.map((binding) => binding.key), ["Alt-c", "Mod-x"]);
+    assert.equal(out[0].run, comment);
+    assert.deepEqual(editor.rebind(bindings, {}, { toggleComment: comment }).map((binding) => binding.key), ["Mod-/", "Mod-x", "Mod-k"]);
+    // with the bundle's keymaps: toggleComment's Mod-/ goes, its new key comes first
+    const base = [].concat(CM.defaultKeymap, CM.historyKeymap);
+    const rebound = editor.rebind(base, { toggleComment: "Alt-c", undo: "Alt-u" }, { toggleComment: CM.toggleComment, undo: CM.undo });
+    assert.deepEqual(rebound.slice(0, 2).map((binding) => binding.key), ["Alt-c", "Alt-u"]);
+    assert.ok(!rebound.slice(2).some((binding) => binding.run === CM.toggleComment || binding.run === CM.undo));
+    assert.ok(rebound.some((binding) => binding.run === CM.redo));
+});
+
+test("an editor takes the settings: font size, tab size and indent, wrap, and the keys rebound over its keymap", () => {
+    const methods = editor.components["m-code-editor"].methods;
+    const editorOf = (settings, wrap) => {
+        const vm = { settings, wrap, owner: { vm: null } };
+        vm.effectiveSettings = methods.effectiveSettings.bind(vm);
+        return methods.parts.call(vm, CM);
+    };
+    const parts = editorOf({ fontSize: 18, tabSize: 2, wrap: true, keys: { toggleComment: "Alt-c" } }, undefined);
+    const state = CM.EditorState.create({ doc: "x", extensions: [parts.settings(), parts.keys()] });
+    assert.equal(state.tabSize, 2);
+    assert.equal(state.facet(CM.indentUnit), "  ");
+    const bindings = state.facet(CM.keymap).flat();
+    assert.ok(bindings.some((binding) => binding.key === "Alt-c" && binding.run === CM.toggleComment));
+    assert.ok(!bindings.some((binding) => binding.key === "Mod-/"));
+    assert.ok(bindings.some((binding) => binding.key === "Mod-s"), "save keeps its default");
+    // wrap: the user's when the editor does not set it, else the editor's
+    assert.equal(parts.wrap(), CM.EditorView.lineWrapping);
+    assert.deepEqual(editorOf({ wrap: true }, false).wrap(), []);
+    // the page's settings when an editor has none of its own; with no tab size set, CodeMirror's tab and indent
+    const page = editor.settings;
+    try {
+        editor.setSettings({ tabSize: 8 });
+        const defaults = editorOf(undefined, undefined);
+        assert.equal(CM.EditorState.create({ doc: "", extensions: [defaults.settings()] }).tabSize, 8);
+        editor.setSettings(null);
+        const plain = CM.EditorState.create({ doc: "", extensions: [editorOf(undefined, undefined).settings()] });
+        assert.equal(plain.tabSize, 4);
+        assert.equal(plain.facet(CM.indentUnit), "  ");
+    } finally {
+        editor.setSettings(page);
+    }
+});
+
+test("the keymaps: VS Code's bindings from CodeMirror's commands, Vim on the page's CodeMirror", () => {
+    assert.deepEqual(Object.keys(editor.KEYMAPS).sort(), ["default", "vim", "vscode"]);
+    const vscode = (rebound) => CM.EditorState.create({ doc: "", extensions: editor.KEYMAPS.vscode(CM, rebound) }).facet(CM.keymap).flat();
+    const keys = vscode(new Set());
+    for (const [key, run] of [["Mod-l", CM.selectLine], ["Mod-g", CM.gotoLine], ["Mod-h", CM.openSearchPanel], ["Mod-d", CM.selectNextOccurrence],
+        ["Mod-k Mod-0", CM.foldAll], ["Mod-k Mod-j", CM.unfoldAll], ["Mod-k Mod-c", CM.lineComment], ["Shift-Alt-ArrowRight", CM.selectParentSyntax]]) {
+        assert.ok(keys.some((binding) => binding.key === key && binding.run === run), key);
+    }
+    // a command the user rebound keeps only their keys
+    assert.ok(!vscode(new Set([CM.foldAll])).some((binding) => binding.run === CM.foldAll));
+    // Mod-Shift-Enter opens a line above, indented as the line; Mod-Alt-ArrowDown adds a cursor below at the column
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    const view = new CM.EditorView({ parent, state: CM.EditorState.create({ doc: "  one\n  two\nthree",
+        selection: { anchor: 9 }, extensions: [CM.EditorState.allowMultipleSelections.of(true)] }) });
+    try {
+        assert.ok(keys.find((binding) => binding.key === "Mod-Shift-Enter").run(view));
+        assert.equal(view.state.doc.toString(), "  one\n  \n  two\nthree");
+        assert.equal(view.state.selection.main.head, 8);
+        assert.ok(keys.find((binding) => binding.key === "Mod-Alt-ArrowDown").run(view));
+        assert.deepEqual(view.state.selection.ranges.map((range) => range.head), [8, 11]);
+    } finally {
+        view.destroy();
+        parent.remove();
+    }
+    // Vim's bundle reads the page's CodeMirror: its extension goes into a state with ours (two copies of
+    // @codemirror/state would refuse it)
+    assert.ok(globalThis.CodeMirrorVim && globalThis.CodeMirrorVim.Vim);
+    const vim = editor.KEYMAPS.vim(CM);
+    const state = CM.EditorState.create({ doc: "x", extensions: [vim, CM.history()] });
+    assert.equal(state.doc.toString(), "x");
+    // a keymap with its library loads it, then the editors take it; one with none is there at once
+    return editor.loadKeymap("vim").then(() => editor.loadKeymap("vscode"));
+});
+
+test("a co-edited editor takes the shared text, its undo is Yjs', and two editors on synced documents converge", () => {
+    const methods = editor.components["m-code-editor"].methods;
+    const { Y } = globalThis.Yjs;
+    const sides = [new Y.Doc(), new Y.Doc()];
+    sides[0].getText("codemirror").insert(0, "shared\n");
+    Y.applyUpdate(sides[1], Y.encodeStateAsUpdate(sides[0]));
+    // each document's updates go to the other, as the room passes them on
+    sides.forEach((doc, index) => doc.on("update", (update, origin) => { if (origin !== "peer") Y.applyUpdate(sides[1 - index], update, "peer"); }));
+    const views = sides.map((doc) => {
+        const ytext = doc.getText("codemirror");
+        const vm = { collab: { ytext, awareness: new globalThis.Yjs.Awareness(doc), undoManager: new Y.UndoManager(ytext) }, owner: { vm: null } };
+        vm.effectiveSettings = () => editor.normalizeSettings(null);
+        const parts = methods.parts.call(vm, CM);
+        // no CodeMirror history beside Yjs', and Yjs' undo on Mod-z
+        assert.deepEqual(parts.history(), []);
+        const bindings = CM.EditorState.create({ doc: "", extensions: [parts.keys()] }).facet(CM.keymap).flat();
+        assert.ok(bindings.some((binding) => binding.key === "Mod-z" && globalThis.YCodeMirror.yUndoManagerKeymap.some((y) => y.run === binding.run)));
+        // an undo the user rebound runs Yjs' too, and not on Mod-z
+        vm.effectiveSettings = () => editor.normalizeSettings({ keys: { undo: "Alt-u" } });
+        const rebound = CM.EditorState.create({ doc: "", extensions: [methods.parts.call(vm, CM).keys()] }).facet(CM.keymap).flat();
+        assert.ok(rebound.some((binding) => binding.key === "Alt-u" && binding.run === globalThis.YCodeMirror.yUndoManagerKeymap[0].run));
+        assert.ok(!rebound.some((binding) => binding.key === "Mod-z"));
+        vm.effectiveSettings = () => editor.normalizeSettings(null);
+        const parent = document.createElement("div");
+        document.body.appendChild(parent);
+        return new CM.EditorView({ parent, state: CM.EditorState.create({ doc: ytext.toString(), extensions: [parts.collab(), parts.history(), parts.keys()] }) });
+    });
+    try {
+        views[0].dispatch({ changes: { from: 0, insert: "one " } });
+        views[1].dispatch({ changes: { from: views[1].state.doc.length, insert: "two" } });
+        assert.equal(views[0].state.doc.toString(), "one shared\ntwo");
+        assert.equal(views[1].state.doc.toString(), "one shared\ntwo");
+        // Vim's undo in a shared text's editor is Yjs': only this editor's own edit goes
+        const vim = globalThis.CodeMirrorVim;
+        editor.KEYMAPS.vim(CM);
+        let undone = 0;
+        const shared = { undoManager: { undo: () => { undone++; }, redo: () => {} } };
+        methods.markShared.call({ view: views[0], collab: shared });
+        vim.CodeMirror.commands.undo({ cm6: views[0] });
+        assert.equal(undone, 1);
+        assert.ok(editor.sharedOf(views[0]) === shared && editor.sharedOf(views[1]) === null);
+    } finally {
+        views.forEach((view) => { view.dom.parentNode.remove(); view.destroy(); });
+        sides.forEach((doc) => doc.destroy());
     }
 });
 

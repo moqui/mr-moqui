@@ -125,6 +125,8 @@
                 "onUpdate:modelValue": (open) => { if (!open) constitution.closeReference(dialog); },
                 onHide: () => constitution.restoreFocus(dialog),
                 noRefocus: true,
+                // over a floated Assist that is over a page's dialog (css/WebrootVue.qvt.css, m-float-over-modal)
+                class: "m-assist-popup",
                 // the whole screen on a phone; else 90% of the height, 1000 px wide at most (css/WebrootVue.qvt.css)
                 maximized: !!(this.$q && this.$q.screen && this.$q.screen.lt.sm),
             }, () => h(R("q-card"), { class: "m-reference-dialog column no-wrap" }, () => [

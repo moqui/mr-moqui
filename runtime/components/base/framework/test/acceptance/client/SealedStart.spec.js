@@ -6,12 +6,15 @@
 // The target is the server's URL; the host's own sshd runs the operator commands. Two runs, one each side of the
 // reboot the first one starts:
 //
-//   moqui test-client framework --acceptance --spec SealedStart https://erp.example.com:8443 \
+//   moqui test-client framework --acceptance --spec SealedStart --server https://erp.example.com:8443 \
 //     --param phase=before --param hostSsh=erp.example.com:22 --param hostUser=admin \
 //     --param hostFingerprint=SHA256:... (and MOQUI_TEST_HOST_KEY, the user's private key, PEM)
 //   (the host reboots)
 //   moqui test-client ... --param phase=after ... --param rootId=<the root_id the before run logged>
 //
+// (--insecure as well for a development certificate.) The user the moqui service runs as needs the TPM through
+// systemd-creds: on Debian and Ubuntu its libtss2 libraries (libtss2-rc among them: `systemd-analyze has-tpm2` lists
+// them) and /dev/tpmrm0, which is the tss group's.
 // hostUser runs `sudo -n /opt/moqui/moqui operator ...` and `sudo -n systemctl ...` with no password. Without hostSsh
 // every feature skips, so the framework's acceptance run on this machine passes over it.
 

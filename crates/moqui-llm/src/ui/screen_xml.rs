@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The `screen-xml` canvas dialect (plans/design-dev-aide.md 13.5, D11), offered on dev instances only: the program is
+//! The `screen-xml` canvas dialect (plans/archive/design-dev-aide.md 13.5, D11), offered on dev instances only: the program is
 //! an XML screen file or a `screen-extend` as it would be saved, its first line saying where it stands
 //! (`<!-- screen-xml at="component://..." path="/qapps/..." -->`). The server checks it as the editor does (the
 //! schema digest and the references); the canvas is the page at `path` rendered with the program standing at its

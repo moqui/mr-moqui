@@ -193,3 +193,31 @@ fn a_delete_removes_the_row_a_committed_update_had_changed() {
     let rows = check.query("SELECT \"id\", \"status\" FROM \"message\"", &[]).unwrap();
     assert!(rows.is_empty());
 }
+
+/// `SELECT DISTINCT` returns each selected value once, before the limit.
+#[test]
+fn a_distinct_select_returns_each_value_once() {
+    let driver = memory();
+    let mut connection = driver.connect().unwrap();
+    for (geo, place) in [("A", "1"), ("A", "2"), ("B", "1"), ("C", "1")] {
+        connection
+            .execute(
+                "INSERT INTO \"place\" (\"geo_id\", \"name\") VALUES (?, ?)",
+                &[Value::string(geo), Value::string(place)],
+            )
+            .unwrap();
+    }
+    let rows = connection
+        .query(
+            "SELECT DISTINCT \"geo_id\" AS \"geoId\" FROM \"place\" ORDER BY \"geo_id\" ASC LIMIT ?",
+            &[Value::I64(2)],
+        )
+        .unwrap();
+    let found: Vec<String> = rows.iter().map(|row| cell(row, "geoId")).collect();
+    assert_eq!(found, vec!["A".to_string(), "B".to_string()]);
+    // ordered by a column it does not select: refused, as Postgres refuses it
+    let refused = connection
+        .query("SELECT DISTINCT \"geo_id\" FROM \"place\" ORDER BY \"name\" ASC", &[])
+        .unwrap_err();
+    assert!(refused.message().contains("ORDER BY"), "{}", refused.message());
+}

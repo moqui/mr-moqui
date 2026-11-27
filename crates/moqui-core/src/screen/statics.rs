@@ -279,11 +279,12 @@ fn read_compiler_source(factory: &ExecutionContextFactory) -> Result<String, Err
     if found.is_err() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../runtime/components/base/webroot/screen/webroot/libs/vue/compiler-dom.cjs.js");
-        return std::fs::read_to_string(path).map_err(|err| Error::new(err.to_string()));
+        return std::fs::read_to_string(path)
+            .map_err(|err| Error::new(format!("Vue compiler unavailable: {err}; run ./moq build-js")));
     }
     found.map_err(|err| {
         Error::new(format!(
-            "the Vue compiler is not available at {COMPILER_LOCATION}: {err}"
+            "the Vue compiler is not available at {COMPILER_LOCATION}: {err}; run ./moq build-js"
         ))
     })
 }
@@ -490,9 +491,7 @@ fn package_template(state: &RenderState, path: &str) -> Result<Option<Arc<Static
 pub(crate) fn serve_template(state: &RenderState, request: &WebRequest, path: &str) -> Result<bool, Error> {
     let info = &state.url_info;
     // a preview (an overlay) renders merged, where its encode="false" text is encoded (SEC-AI-82)
-    if state.render_mode != "qvt"
-        || info.render_path_difference + 1 != info.path_defs.len()
-        || super::overlay::active()
+    if state.render_mode != "qvt" || info.render_path_difference + 1 != info.path_defs.len() || super::overlay::active()
     {
         return Ok(false);
     }

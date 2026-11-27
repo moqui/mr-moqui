@@ -56,8 +56,14 @@ along with this software (see the LICENSE.md file). If not, see
             const nameOf = (entry) => entry ? (entry.name || String(entry.address || '').split('@')[0] || entry.partyId || '') : ''
             threadList = ec.message.hasError() ? [] : Array.from(out.threadList || []).map((row) => {
                 const people = Array.from(row.participantList || [])
-                const fromText = toView ? ec.l10n.localize('To') + ': ' + people.slice(0, 3).map(nameOf).filter((name) => name).join(', ')
-                    : (row.fromName || row.fromAddress || nameOf(people[0]) || '')
+                let fromText = row.fromName || row.fromAddress || nameOf(people[0]) || ''
+                if (row.store === 'email' && Array.isArray(row.recipientList)) {
+                    const recipients = row.recipientList.map(nameOf).filter(Boolean)
+                    fromText = recipients.length ? ec.l10n.localize('To') + ': ' + recipients.slice(0, 3).join(', ')
+                            + (recipients.length > 3 ? ' +' + (recipients.length - 3) : '') : ec.l10n.localize('No recipients')
+                } else if (row.store === 'email' && (['ES_DRAFT', 'ES_READY', 'ES_SCHEDULED', 'ES_SENT'].includes(row.statusId)
+                        || (!row.statusId && (toView || ['EfkDrafts', 'EfkSent'].includes(row.folderKindEnumId))))) fromText = ec.l10n.localize('Recipients unavailable')
+                else if (toView && row.store !== 'email') fromText = ec.l10n.localize('To') + ': ' + people.slice(0, 3).map(nameOf).filter(Boolean).join(', ')
                 const marks = [row.isFlagged ? '*' : '', row.hasAttachment ? '@' : '', Number(row.messageCount || 0) > 1 ? '(' + row.messageCount + ')' : ''].filter((mark) => mark).join(' ')
                 return {store: row.store, threadId: row.threadId, isUnread: row.isUnread === true,
                     fromText: (row.isUnread ? '● ' : '') + fromText + (marks ? ' ' + marks : ''),

@@ -157,12 +157,22 @@ deny-apps|Run||Check the dependencies of the apps against the RustSec advisories
 accept|Run|[component...] [--spec Name] [--junit dir] [opts]|Run the acceptance suite (test/acceptance/) of the components, or of all
 accept-all|Run|[--junit dir] [opts]|Run every acceptance test: the specs of test/acceptance/ and the Rust opt-in and ignored tests
 autodoc|Run|[--out dir] [--kinds k,...] [opts]|Markdown docs of the artifacts with Mermaid diagrams, into ./autodoc (moqui autodoc)
-load-save|Run|[-n name] [load args...]|clean-all, load, then save-db
+load-save|Run|[-n name] [load args...]|Reset the instance data, load, then save-db
 save-db|Database|[name]|Save the embedded database and OpenSearch data to runtime/save/<name>
 reload-save|Database|[name]|clean-db, then restore a save-db copy
 clean-db|Database||Delete the embedded database, txlog, and OpenSearch data
 clean-log|Database||Delete the files in runtime/log
-clean-all|Database||clean-db, clean-log, runtime/tmp, and tidy-cargo (old artifacts; the latest build stays)
+build-js|JavaScript|[--force] [--offline] [component...]|Build verified component JavaScript libraries
+verify-js|JavaScript|[component...]|Rebuild from the locks and compare to the manifest
+add-js|JavaScript|list, search, versions, prepare or apply|Review and install a component library
+update-js|JavaScript|[--component name] <lib> <version> or --all|Update reviewed npm dependencies
+outdated-js|JavaScript|[component...]|Check available package updates
+audit-js|JavaScript|[component...]|Audit locks and bundled libraries
+fonts-download|JavaScript|[pack...] [--list] [--remove pack]|Select optional font packs
+clean-js|JavaScript||Remove the generated JavaScript libraries of every component
+clean|Database||Tidy old cargo artifacts, keeping the current build
+clean-dev|Database||Reset the local instance data and tidy old cargo artifacts, keeping the current build
+clean-all|Database|[--yes]|Reset instance data and remove build output after confirmation
 tidy-cargo|Database||Delete old cargo artifacts in target/, keeping the latest build
 opensearch-download|OpenSearch|[version] [-f] [--cache-only]|Download OpenSearch into runtime/opensearch and the embed cache
 opensearch-start|OpenSearch||Start runtime/opensearch as a daemon with a pid file
@@ -173,8 +183,9 @@ git-status|Git|[-s]|Branch, tracking, ahead/behind, and changes in each repo
 git-pull|Git|[git pull args...]|Pull each repo and list the new commits
 component-get|Components|[name...] [-t type] [-r repo]|Get components or component-sets and the components they depend on
 component-depends|Components|[-t type] [-r repo]|Get missing depends-on components for runtime/components/addon
-component-create|Components|<name> [opts]|Create a component from the component template
+component-create|Components|<name> [--kind kind] [opts]|Create an app, data, native, theme, skills or dev-tool component from the template
 component-zip|Components|[name...]|Zip components in runtime/components/addon
+source-archive|Package|[file]|Package clean sources with offline build inputs
 archive|Package|[file] [opts]|Zip (or --tgz) runtime with the binary and MoquiConf.xml, or --binary: the binary alone with the runtime built in
 desktop|Package|[dev or build] [--release] [cargo args...]|Run or bundle the desktop app: the node in a Tauri window (crates/moqui-desktop)
 android|Package|[emulator, init, dev or build] [--release] [--window] [args...]|Run or build the Android app, or start its emulator (crates/moqui-mobile)
@@ -217,7 +228,7 @@ zip-components|component-zip
 add-runtime|archive'
 
 # The tasks, one file an area, in scripts/moq/ (each with its tasks, their help and their helpers).
-for moq_part in core build run test desktop database opensearch chromium git components archive trust completion harness; do
+for moq_part in core js source build run test desktop database opensearch chromium git components archive trust completion harness; do
     # shellcheck source=/dev/null
     . "$ROOT/scripts/moq/$moq_part.sh" || { printf 'moq: could not read scripts/moq/%s.sh\n' "$moq_part" >&2; exit 1; }
 done
@@ -277,6 +288,7 @@ main() {
         exit 0
     fi
     cd "$ROOT" || die "could not cd to $ROOT"
+    if [ -f "$ROOT/vendor/cargo-config.toml" ]; then enable_offline_build || return 1; fi
     # Alias arguments are fixed words from ALIASES, so splitting them is safe.
     # shellcheck disable=SC2086
     "task_${RESOLVED_TASK//-/_}" $RESOLVED_ARGS "$@"

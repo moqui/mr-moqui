@@ -84,7 +84,9 @@ What other systems, devices and clients reach, and what Moqui calls.
 | [Comms.md](tools/Comms.md) | BasicComms: the Inbox, Compose, chat and the mail settings, and how an app adds to them |
 | [Component-Deploy.md](tools/Component-Deploy.md) | Viewing the merged conf with each value's file and editing a conf file (System › Conf), reloading the conf on a running server (SIGHUP, the dev watcher), what changes live and what waits for a restart, and loading or deploying a component from git without a restart (System › Components) |
 | [Database.md](tools/Database.md) | The Tools app's Data, SQL, Schema, ETL and Database sections: the data grid, SQL runs, schema plans and jobs, ETL mappings, external databases, the conf settings and the permissions |
+| [Dev-AIDE.md](tools/Dev-AIDE.md) | The Dev AIDE on a dev instance: the tiers and the site component, the guided tools and the Workspace with git, live reload and Rebuild, the artifact index and Customizations, the entity modeler and the three-way data load, the service writer with Try in sim and ECA rules, the screen builder, new components, Dev Assist's change sets and worktrees, tasks and group servers, hosted roots, the terminal twins, and `moqui check`, `refs` and `lsp` |
 | [Load-Runner.md](tools/Load-Runner.md) | Load scripts of virtual users over HTTP or this server's services: writing one, running it from Tools › Load or `moqui test-load`, reading and comparing results, and what a run may reach |
+| [Maps.md](tools/Maps.md) | The Maps app: Browse, saved views, preferences and Configuration (providers, profiles, layers, outside requests), and the local-map dialog an app opens beside an address, with its record adapters and the thin-wrapper rule |
 | [Monitoring.md](tools/Monitoring.md) | Telemetry, OTLP in and out, Monitor (a section of System) and the Dashboards app, and reports |
 
 ## security

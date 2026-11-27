@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Where the framework reaches the vault server (crates/moqui-vault-server, plans/Vault-Instances.md §3.7): that crate
+//! Where the framework reaches the vault server (crates/moqui-vault-server, plans/archive/Vault-Instances.md §3.7): that crate
 //! sits on top of this one and submits one [`VaultHooks`]. A host built without it has none: `ec.vault.leased` throws
 //! that the vault is not built in, and nothing is leased, so [`refuse_leased`] passes every call.
 //!
@@ -222,7 +222,7 @@ pub fn refuse_leased(what: &str, parameters: &BTreeMap<String, Value>) -> Result
         if (hooks.holds_leased)(name) || holds(hooks, value) {
             return Err(LibError::new(format!(
                 "{what}: the parameter {name} holds a value leased from a vault, which never goes into a queued or \
-                 scheduled call (plans/Vault-Instances.md §3.7)"
+                 scheduled call (plans/archive/Vault-Instances.md §3.7)"
             )));
         }
     }

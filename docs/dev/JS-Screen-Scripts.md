@@ -78,6 +78,13 @@ For a request to a screen path (`render.rs` `render_screens`):
   `fail-widgets`, the condition only chooses between `widgets` and `fail-widgets`, and the screen is always offered.
 - A widget that fails does not fail the page: "Error rendering ..." is written where its output would have been. A
   security error (not logged in, not authorized, a tarpit) does stop the render.
+- A screen of the path that fails (its actions or its widgets, other than a section's or an included screen's) is
+  written in place the same way, inside the shell above it, but in an html or text render the page then answers the
+  error's status, 500 (503 when the database was unavailable), with `Cache-Control: no-store`: the screen the request
+  addresses is that screen or under it, so the page lost its own content. An error with a status of its own (a
+  `NotFound` thrown in a path screen's `actions`) answers with its error page instead. A qvt or tui subscreen's error is
+  shown inside the parents the client keeps, with the request's status as it was. The first screen's failure is the
+  render's: its error page.
 - `sri.sendRedirectAndStopRender(url)` in `pre-actions` or `always-actions` answers with a redirect and renders
   nothing.
 
@@ -419,6 +426,9 @@ The XML screen beside it declares the mode and the file:
 </screen>
 ```
 
+Such a screen has no html mode. Asked for in html under Standard's `/apps` (its menu, a link, a bookmark), it answers a
+redirect to the same path and query under `/qapps`, where Material renders it; elsewhere an html request is a 404.
+
 ## `moqui lint --screens`
 
 `moqui lint --screens [report-file]` checks every screen and form XML file under the runtime's components
@@ -465,3 +475,17 @@ does something other than the Groovy it came from.
   package.
 - A `.qvue` reads its query from `mScreen.parameters`, not from the page's URL: it may be loaded in a dialog or a
   tray.
+
+## Component libraries
+
+A service or screen action can use `ec.resource.script("component://my-app/script/libs/round.js").default(value)`.
+The properties of the returned object are the exports of the selected npm entry point.
+
+A screen (or its site's `screen-extend`) selects a client library with
+`<client-library library="my-app/round" render-mode="qvt"/>` alongside its extension declarations before the
+screen's actions and widgets. Qvt waits for each declared bundle before using the screen. Its client JavaScript
+can then call `moqui.libraries["my-app/round"].default(value)`. The same declaration works with server-static
+templates and a qvue served as its bundle (`?_qvt=bundle`), whose registration names the libraries. For such a qvue,
+put markup in the file's template or a literal component template: the compiler can then generate render functions
+without running the library on the server. The desktop shell's bundled screens (`precompiled_qvue`) do not load client
+libraries. See [component build and review](../Build-Test.md#add-a-component-library).

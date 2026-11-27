@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The vault crypto (plans/Vault-Instances.md §3.2): no I/O and no framework dependency, so the browser module builds
+//! The vault crypto (plans/archive/Vault-Instances.md §3.2): no I/O and no framework dependency, so the browser module builds
 //! from this crate alone. Randomness comes in through [`rng::Rng`], never from a global source, so the wasm build
 //! takes it from the page and the known-answer vectors from a fixed generator.
 //!

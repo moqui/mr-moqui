@@ -1,6 +1,12 @@
 # MR Moqui — UI review: Dev AIDE artifact authoring
 
-**Status — 2026-11-16:** planned; every activity pending. Source inspection only; no review or test results claimed.
+**Active pass · November 26.** [DEVA-B03](#deva-b03--november-26-change-led-review) records the selected branches and their outcomes. Earlier batches retain their dated evidence.
+
+**Review update — 2026-11-25.** DEVA-B02 records the latest live evidence. The activity ledger identifies the branches still open.
+
+**Status — 2026-11-25, refinement.** Both DEVA-B01 findings are fixed (DEVA-UI-001/002).
+
+**Previous status — 2026-11-25.** First live review, DEVA-B01. All fourteen activities have branch-level outcomes. A saved entity field propagated through service inputs to a persisted row in Tools Grid. Two P2 findings remain open.
 
 Contents: [scope](#1-purpose-scope-and-sources) · [method](#2-review-method-and-refinement-criteria) ·
 [inventory](#3-screen-and-surface-inventory) · [activities](#4-end-to-end-activities) ·
@@ -13,7 +19,7 @@ Review the guided development loop from a discovered artifact to a deliberate, r
 references and ownership, edit the model/service/screen, inspect the generated result, simulate or preview, save and
 verify the consuming behavior. Browser canvases and actual terminal editors are distinct interaction surfaces.
 
-Sources: [Dev AIDE README](../runtime/components/dev/dev-aide/README.md), [design](design-dev-aide.md),
+Sources: [Dev AIDE README](../runtime/components/dev/dev-aide/README.md), [design](archive/design-dev-aide.md),
 [Autodoc](../docs/dev/Autodoc.md), [TUI](../docs/ui/TUI.md),
 [application practices](../docs/dev/Practices-App-Dev.md), current Artifacts/Entities/Services/Screens/Eca/Data screens,
 `GuidedEdit.qvue`, `Artifacts/Browse.qvue`, `devstatic` editor modules, `GuidedOps.js` and corresponding service/spec
@@ -399,20 +405,20 @@ execution records it; “exercised” never implies that all modes and recovery 
 
 | Activity | Status | Outcome / remaining branches | Evidence / findings |
 | --- | --- | --- | --- |
-| DEVA-01 — Find an artifact and follow its references | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-02 — Explore the graph and export useful documentation | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-03 — Understand what the site customizes | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-04 — Add and revise entity fields in the owning layer | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-05 — Model relationships, indexes and a view | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-06 — Plan a table change and apply it deliberately | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-07 — Edit seed records and verify loaded data | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-08 — Define service inputs and outputs | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-09 — Compose logic and connect an ECA rule | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-10 — Simulate a service and retain a runnable fixture spec | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-11 — Arrange the actual screen tree | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-12 — Design and preview a screen before saving | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-13 — Resolve buffered edits and a competing disk change | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-14 — Verify the changed artifact through its consumer | pending | All steps, modes and recovery branches pending. | — |
+| DEVA-01 — Find an artifact and follow its references | exercised · partial | Found RoundReviewAppItem by name, followed its reference list (12 incoming edges) and opened Workspace with the generated artifact selected. Keyboard palette and role variants pending. | B01 |
+| DEVA-02 — Explore the graph and export useful documentation | exercised · partial | Opened graph and rendered documentation with a field table. Exported Entities for round-review-app into devw-git/review-docs. Verified the manifest and generated entity Markdown containing reviewNote. Diagram and alternate renderer checks remain open. | B01 |
+| DEVA-03 — Understand what the site customizes | exercised · partial | Customizations reported zero site extensions and zero broken. A broken-extension repair and a populated extension comparison remain pending. | B01 |
+| DEVA-04 — Add and revise entity fields in the owning layer | exercised · partial | Added reviewNote (text-medium) to the generated app, saved and reopened five fields. Disk XML confirmed the owner. Phone 390×844 explicitly displayed Read only below 1024 px; dialog localization and upstream extension branches pending. | entity-table.jpg; phone-readonly.jpg |
+| DEVA-05 — Model relationships, indexes and a view | exercised · partial | Compared empty relationship and index lists, added ReviewNoteIdx on reviewNote, saved and verified an index in XML. View members, relationship creation and recovery pending. | B01 |
+| DEVA-06 — Plan a table change and apply it deliberately | exercised · partial | Table initially showed four columns, then review_note text after Save reported one DDL statement. Verified the column in the generated table. Explicit type conversion and destructive rebuild confirmation pending. | entity-table.jpg |
+| DEVA-07 — Edit seed records and verify loaded data | exercised · partial | Opened Seed data twice with a site seed file present. No rows, explanation or actions appeared. Data inventory exposed the site seed file. Via Data → Workspace → Entity, edited a populated seed fixture, saved and loaded one record. Tools Grid reopened DEVA_SEED_01 with the edited value. Starting directly from the empty guided tab remains blocked by DEVA-UI-001. Populated guided seed tab, keyboard edit, Save/load and independent Grid readback passed. | seed.jpg; DEVA-B02 |
+| DEVA-08 — Define service inputs and outputs | exercised · partial | Filtered services by component, opened create#Item and inspected its four inputs and one output. The generated entity supplied reviewNote(auto) and the Try input. Editing nested Map/List and output changes pending. | B01 |
+| DEVA-09 — Compose logic and connect an ECA rule | exercised · partial | Implementation displayed the create entity service call with context in/out. SECA rules showed zero and the Add a SECA rule in the site action. Logic composition and rule persistence pending. | B01 |
+| DEVA-10 — Simulate a service and retain a runnable fixture spec | exercised · partial | Try accepted itemName and reviewNote. Initial Run in sim hit a PostgreSQL Unix socket path limit. After shortening the runtime path, simulation returned virtual ID -1 and a proposed create row. Confirmed Run for real in the scratch DB and inspected itemId 100000. A reusable simulation spec remains pending. | sim.jpg |
+| DEVA-11 — Arrange the actual screen tree | exercised · partial | From /qapps opened the generated app tree. Items was the default, Item hidden, and both named their parent file and mount. New/move/remove and broken-reference recovery pending. | B01 |
+| DEVA-12 — Design and preview a screen before saving | exercised · partial | Opened FindItem designer, switched Text → Screen → Preview and selected 390px, then 1280px and Dark. Preview reported denied access for FindItem. After its grant propagated the preview contained the generated consumer row. Selecting NewItemDialog in Outline exposed its properties. Replacing button-text failed to update the preview or source (DEVA-UI-002). QVue companion and terminal preview remain pending. Original button-text edit passed through enabled Save, unsaved canvas, disk, reopen and consumer. | screen-preview.jpg; DEVA-B02 |
+| DEVA-13 — Resolve buffered edits and a competing disk change | exercised · partial | Staged conflictDemo via the guided field editor; changed the disposable XML on disk before Save. Compared both versions, took disk and reopened the five retained fields. Multi-file, terminal buffer expiry and overwrite branches pending. | guided-conflict.jpg |
+| DEVA-14 — Verify the changed artifact through its consumer | exercised · partial | Confirmed the changed entity field reached the generated service and Tools Grid. Reopened the grid and read item 100000, Review fixture, Round 20261125. Material Open in Workspace preserved entity, root and file. After the seeded grants took effect, the generated FindItem screen showed both 100000 and DEVA_SEED_01. Verified the edited seed row through Grid and the edited dialog label through FindItem. | consumer-grid.jpg; DEVA-B02 |
 
 ### Findings register
 
@@ -421,7 +427,8 @@ presentation; P3 is a localized refinement. Label evidence as observed behavior,
 
 | ID / severity | Actor, activity step, route, mode / viewport | Reproduction and impact | Evidence / owning layer | State / correction / retest |
 | --- | --- | --- | --- | --- |
-| — | — | No findings recorded. | — | — |
+| DEVA-UI-001 · P2 | ADMIN, DEVA-07, Material Entities/Edit, 1280×720 | Open RoundReviewAppItem in the modeler with the site seed file present. Choose Seed data. Its selected tab shows an empty pane. Returning after reload has the same outcome. Explain which file or records apply and how to start when the file has no applicable rows. | Observed, seed.jpg. Entity modeler seed panel. | **Fixed and checked 2026-11-25.** The tab showed when the seed file existed, but its pane waited for the file to be read on an edit. It is now read when the tab is chosen, with a reading state and an error. The pane shows only this entity's records, always with its fields as columns. With no records it says so and offers Add row. Live: moqui.example.Example over my-site's empty seed file showed the empty state; Add row made a row with all nine field cells. Nothing was saved. DevAideEntity page test. |
+| DEVA-UI-002 · P2 | ADMIN, DEVA-12, Material Screens/Design, generated FindItem | Choose Screen → Design → Outline → NewItemDialog. Replace “New item” in the button-text property, then leave the field with Tab. The field retains the new label, Save stays disabled, the canvas button keeps “New item”, and Text still shows the original XML. Repeated with a keyboard-typed replacement. Stage the property edit in the XML buffer, or explain why the change cannot be applied. | Observed, designer-property.jpg. Screen designer outline/property editor. | **Fixed and checked 2026-11-25.** Reproduced on a generated app's FindItem. The `xmlOp` edit applied to the buffer and Save was enabled, but the Properties panel kept reading the selected element from the outline as it was before the edit, so it showed the old value. The selection now follows to the element at its path in the new outline. Live: button-text "Add item" stayed in Properties and in the text after Tab, with Save enabled. The canvas preview was refused for lack of a grant on the recheck runtime, so the canvas was not rechecked. The reviewer's disabled Save was not reproduced. DevAide page test. |
 
 ### Bounded batch record
 
@@ -433,7 +440,54 @@ For each later batch record:
 - In refinement only: decisions, owning files/components, correction, focused verification commands/results and retest.
 - Temporary settings/grants/files/jobs restored, remaining cleanup and companion handoffs.
 
-No execution batches have been started.
+#### DEVA-B01 — 2026-11-25, generated app and site
+
+Reviewed at checkout 6d8bb49f8a7c on the isolated dev runtime, port 18765, Chicago. DEVW-B01 supplied round-review-app and round-review-site. After the dependency correction, the site loaded. It remained the first authoring target, with the scratch Git and app repositories configured as additional site roots. John Doe (ADMIN) used the built-in browser at measured 1280×720 and a second editor at measured 390×844. The latter displayed an explicit read-only width boundary. Designer preview sizes and theme choices are distinct from the outer viewport.
+
+The modeler saved reviewNote and ReviewNoteIdx to entity/RoundReviewAppEntities.xml. Its Table tab showed review_note text. The generated create service exposed reviewNote without a separate input definition. Simulation failed because its Unix socket path was 113 bytes; the service reported the required limit of 108. On explicit confirmation the real fixture write returned itemId 100000. Tools Grid reopened that row with the submitted field. After coordinating a shorter runtime path and restart, Run in sim showed its proposed row with virtual ID -1, and the generated FindItem consumer listed 100000 and DEVA_SEED_01. The real item and new field were independently visible in Tools. Extra evidence includes sim-short.jpg, seed-grid.jpg, generated-consumer.jpg and export.jpg. No product source changed and no automated suites ran.
+
+Local evidence is under `plans/ui-refinement-evidence/deva-20261125/`. The original generated source, reviewed writes and short conflict marker are confined to the disposable repositories. Actor variations, full guided terminal operations and recovery branches beyond the recorded steps remain pending.
+
+### DEVA-B02 — November 25 continuation
+
+The authoring runtime marked the two copied components as site-owned. As John Doe, the entity modeler opened the existing DEVA_SEED_01 in the guided Seed data tab. After resolving a draft-recovery prompt, a keyboard edit changed reviewNote. Save reported one loaded record and Tools Grid showed “Seed via original guided tab” on the same ID. See `seed-inputs.json`, `seed-staged.json`, `seed-save-feedback.json` and `seed-final-grid.json`.
+
+FindItem’s designer opened the generated consumer in its canvas with the fixture grant. Editing NewItemDialog’s button-text to “New review item” enabled Save, and the unsaved canvas displayed it. The saved XML, reopened Properties and the consumer all carried that value. The disabled Save symptom did not recur. See `designer-staged.json`, `canvas-before-save.json`, `property-reopened.json` and `designer-consumer.jpg`. Both original findings now have live evidence on the populated fixture.
+
+Eight guided/TUI assertions failed with the fixtures under target. Workspace reported that the target directory was build output. With the copied components outside target, all eight passed (area-checks.txt and area-retry.txt). **Fixed 2026-11-25:** the guard now exempts the loaded runtime and the loaded components when they sit in a root's `target` (a test run links the components into a scratch runtime elsewhere, so the components are what it sees), with their own `target/` and the root's other build output still refused (dev-aide `confine_tests.rs`: `a_runtime_under_a_root_s_target_is_not_build_output`, `a_component_loaded_from_under_a_root_s_target_is_not_build_output`, `build_output_beside_or_inside_that_runtime_stays_refused` and `a_symlink_from_that_runtime_into_build_output_is_refused`). Checked by running the four specs (EntityEditTui, ScreenDesignTui, ServiceEditTui, WorkspaceTui) on a disposable runtime under the repository's `target` with the base and dev components copied in: with a guard that exempted only the runtime, they failed at the review's eight lines ("is a build output (target)"); with the final guard they passed 18 of 18. A root added in Settings in another root's build output is refused too (`a_root_in_another_root_s_build_output_is_refused`). The guided walk was not rechecked live.
+
+Local evidence is under `plans/ui-refinement-evidence/closeout-d10e22f/`.
+
+#### Remaining branches
+
+The ledger records the strongest observed outcome. The remaining steps, recovery paths and modes in each section 4 activity are deferred to the fixture and next check below. An explicitly blocked or failed result keeps that status.
+
+| Activity | Required setup and next observation |
+|---|---|
+| DEVA-01 | Use the keyboard palette under View and Edit tiers and return from a cross-reference. |
+| DEVA-02 | Export a graph with related artifacts and compare its diagram and alternate rendering. |
+| DEVA-03 | Change an extension independently of its upstream artifact and inspect the composed consumer. |
+| DEVA-04 | Save a field change in a site extension and verify the merged model as a lower-tier reader. |
+| DEVA-05 | Create a related view with a unique index and query it against seeded rows after reload. |
+| DEVA-06 | Apply a deliberate schema change to an isolated database and inspect the retry and data outcome. |
+| DEVA-07 | With file and database now deliberately out of step, retry a guided load and inspect the rejected row. |
+| DEVA-08 | Evolve a service contract and call it with a valid and invalid input from its consuming screen. |
+| DEVA-09 | Trigger the authored ECA rule from its real operation and verify its single side effect. |
+| DEVA-10 | Persist a simulated service fixture, rerun its saved spec and compare the failure path. |
+| DEVA-11 | Move or remove a node in a copied screen tree and verify navigation and undo after reload. |
+| DEVA-12 | Repeat the original canvas action without preview permission and restore the grant for the same actor. |
+| DEVA-13 | Use two writers on one saved artifact and reconcile the retained buffer with reopened disk state. |
+| DEVA-14 | Follow the generated component through reload with a scoped non-author consumer. |
+
+### DEVA-B03 · November 26 change-led review
+
+These activities extend existing authoring screens and their terminal companions. Workspace owns the shared editor session and Git transport.
+
+| New activity | Observed path and result | Evidence and next check |
+|---|---|---|
+| DEVA-15 · Three-way load (DEVA-07/13) | DataLoad established the file baseline, compared file and database changes and required a conflict choice. The browser editor walk verified selected writes and the retained row after an unselected removal. Changed plan hashes were refused. | rules.txt and gates.txt. Retry from a separately edited database row after a browser session expires. |
+| DEVA-16 · Try, trace and saved rule fixtures (DEVA-08/09/10) | The service writer ran unsaved text without publishing it, traced the actions and identified a failed element. The lower tier was refused. Chromium composed a service, tried it and saved a fixture spec. On the local site, a saved SECA fixture ran its trigger, reported its executed source line, and generated test/MySiteSecas.spec.js. The check reopened the file, inspected the saved fixture reference, and ran the generated spec successfully. | rules.txt, gates.txt and rule-consumer.txt. |
+| DEVA-17 · Guided changes and consumers (DEVA-01/04/11/12/14) | Chromium extended an upstream list from the screen builder and exercised the authoring consumer. EntityEditTui, ServiceEditTui and ScreenDesignTui covered their staged edits, saves and conflict handling. ArtifactIndex, DbFormConvert and Rebuild checked the changed index, form conversion and rebuild rules. | rules.txt, gates.txt, extra-guided.txt and rule-consumer.txt. A disposable site’s entity save reloaded the model, added the expected database column and loaded its seed. A restart after changing compiled code belongs to the earlier DEVA-14 lifecycle branch. |
 
 ## 7. Decisions
 
@@ -449,3 +503,31 @@ No execution batches have been started.
   are not inherited. Preserve routes, stored preferences and public contracts in any later refinement.
 - Finish a review with explicit branch outcomes and a candid unresolved ledger; missing prerequisites do not become
   passes. Building absent features is outside this review.
+
+### DEVA-B04 · November 27, 2026 · Guided authoring and stored consumers
+
+John Doe used a private embedded PostgreSQL database with WalkEntry, WalkKind, their relation and the WalkJoined view. The extend-entity was saved via the guided XML operation and Workspace Save, copied into the disposable component, then loaded at restart. The SEC_VIEW_GROUP user read the field and original row through Tools Grid. The original fixture definition's SHA-256 was identical before and after the extension edit. Build `23204bf61`. Chrome measured Material light and dark at 1920×1080, 1280×720 and 390×844 while sampling layout. [Viewport receipts](ui-refinement-evidence/pass-2320/B/layout.json) · [Build receipt](ui-refinement-evidence/pass-2320/binary.sha256).
+
+| Activity | Disposition | Last observed result or applicable prior evidence | Remaining prerequisite and next check | Receipt |
+|---|---|---|---|---|
+| DEVA-01 | partial | ArtifactIndex exercised catalog and reference reads. The original generated artifact remains the keyboard role-pair fixture. | Open the same reference with the keyboard palette as both View and Edit and return to its originating outline row. | [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) |
+| DEVA-02 | partial | Export Docs wrote the three linked entity Markdown files and package indexes. WalkEntry contained both E-R and flow diagrams with its WalkKind foreign key. ArtifactDocs rendered the page and export form in both supported modes. | Use the native Miller-column keys and exercise partial export failure in a writable root with one conflicting output. | [extension-docs.json](ui-refinement-evidence/pass-2320/B/extension-docs.json) · [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) |
+| DEVA-03 | partial | Guided XML added extraNote in a standalone extend-entity file. Save bytes matched and the upstream SHA stayed identical. Restart exposed Extra Note beside E1 in both consumer sessions. | Create a broken reference in a separate fixture overlay and verify Customizations diagnostics and repair. | [extension-docs.json](ui-refinement-evidence/pass-2320/B/extension-docs.json) · [reload.json](ui-refinement-evidence/pass-2320/B/reload.json) |
+| DEVA-04 | partial | The extend-entity file was reopened from disk. Dev AIDE's field location and the scoped Tools reader showed the added field and preserved entry. | Use a distinct configured site component to check site/upstream provenance labels and localized dialog edits. | [extension-docs.json](ui-refinement-evidence/pass-2320/B/extension-docs.json) · [reload.json](ui-refinement-evidence/pass-2320/B/reload.json) |
+| DEVA-05 | partial | The joined model returned E1, Seed entry, Review kind. The database index catalog showed the unique index; SQL independently read the same join and the exported graph named the relationship. | Create/edit/remove the relationship entirely in the guided editor. Try a duplicate alias/index and verify recovery before saving. | [author.json](ui-refinement-evidence/pass-2320/B/author.json) · [extension-docs.json](ui-refinement-evidence/pass-2320/B/extension-docs.json) |
+| DEVA-06 | failed | On the private embedded PostgreSQL table, the wrong typed table name retained urb_retired. The matching name executed the shown DROP COLUMN. A retry refused. Copy and Recreate ran their shown SQL; the original fixture row was restored. Selecting label in Change a column’s type displayed “no SQL type for text-short on postgres”. | DEVA-UI-003 fixed 2026-11-27; awaits recheck. Repeat Change a column’s type on a mismatched text-short field, inspect valid planned PostgreSQL, run it and compare the original row. | [type-ui.json](ui-refinement-evidence/pass-2320/B/type-ui.json) · [table-rebuild.json](ui-refinement-evidence/pass-2320/B/table-rebuild.json) · [author.json](ui-refinement-evidence/pass-2320/B/author.json) · [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) |
+| DEVA-07 | partial | DataLoad checked three-way decisions, stale hash refusal, selected loads and omitted rows. The original Seed data fix stays closed. | Retry a guided load with a rejected row visible in the editor and compare the unaffected saved rows. | [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) |
+| DEVA-08 | partial | ServiceWriter and the service composer verified unsaved Try, trace and input edits. | Change a nested input/output contract in a disposable site and call valid and invalid requests through its consuming screen. | [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) · [editor-vectors.txt](ui-refinement-evidence/pass-2320/B/editor-vectors.txt) |
+| DEVA-09 | partial | GuidedOps exercised SECA authoring. Prior saved rule fixture reached its trigger and reported the executed source line. | Trigger the authored ECA from the ordinary consumer and independently count its single stored side effect. | [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) · [editor-vectors.txt](ui-refinement-evidence/pass-2320/B/editor-vectors.txt) |
+| DEVA-10 | partial | Service simulation and saving a reusable spec were exercised. The previous site's generated test was reopened. | Replay the same saved spec with its expected failure changed, then compare the generated assertion and actual failure. | [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) · [editor-vectors.txt](ui-refinement-evidence/pass-2320/B/editor-vectors.txt) |
+| DEVA-11 | partial | ScreenDesignTui and the screen builder exercised staged operations, saves and conflicts. | Move/remove a node in a disposable mounted screen tree, reload, inspect navigation, then undo a broken reference. | [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) · [editor-vectors.txt](ui-refinement-evidence/pass-2320/B/editor-vectors.txt) |
+| DEVA-12 | partial | The screen builder checks passed and the previous saved/reopened label verification remains applicable. | Revoke preview for that same designer actor, repeat the original canvas action, restore its grant and inspect the saved source. | [editor-vectors.txt](ui-refinement-evidence/pass-2320/B/editor-vectors.txt) |
+| DEVA-13 | partial | WorkspaceTui retained both conflicting file versions and verified the bytes after choosing Save mine. | Expire a multi-file terminal buffer and resolve a new intervening write before rereading each stored file. | [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) |
+| DEVA-14 | partial | After restart, the scoped SEC_VIEW_GROUP Tools reader and owner both saw Extra Note and E1. | Repeat on the generated site's own consumer after a compiled change/restart with its scoped non-author. | [reload.json](ui-refinement-evidence/pass-2320/B/reload.json) |
+| DEVA-15 | partial | Three-way comparison, stale baseline rejection and unselected removal are covered by current rules and the prior editor walk. | Expire the editing session after an independent DB edit; reopen the browser load plan and verify the retained row. | [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) |
+| DEVA-16 | complete | Unsaved Try and trace checks passed. The prior receipt shows the saved SECA ran its trigger and generated a reopened visible fixture spec. | — | [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) · [editor-vectors.txt](ui-refinement-evidence/pass-2320/B/editor-vectors.txt) |
+| DEVA-17 | complete | The saved extend-entity field reached both Tools readers after restart. Terminal companions checked edit/save/recovery in the earlier generated site and current focused checks. | — | [extension-docs.json](ui-refinement-evidence/pass-2320/B/extension-docs.json) · [reload.json](ui-refinement-evidence/pass-2320/B/reload.json) · [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) |
+
+**DEVA-UI-003 · P2 · Table type-change planning.** The full-tier developer selected label under Change a column’s type on review.urb.WalkEntry. The dropdown offered the field, but the PostgreSQL plan returned HTTP 500 for its standard text-short type and left the data intact. The separate Copy, Drop and Recreate actions ran their shown SQL. [Browser control and warning](ui-refinement-evidence/pass-2320/B/type-ui.json) · [SQL and row checks](ui-refinement-evidence/pass-2320/B/table-rebuild.json). **Fixed 2026-11-27.** The plan's type change read the SQL type only from the database's own `database-type` entries, and PostgreSQL has none for `text-short`, so the plan had no type and failed. Create table, add column and the schema compare take the dictionary's `default-sql-type` (`VARCHAR(63)`) for such a type. The plan now resolves the type the same way (`field_sql_type`), and so does the entity view's SQL type of each field (the dialog's menu), which showed none for such a field. Tests: moqui-entity `a_type_without_a_database_override_takes_the_dictionary_default` plans the change of `moqui.basic.Geo.geoCodeAlpha2` on PostgreSQL (`ALTER … TYPE VARCHAR(63) USING …`) and reads the field's SQL type in the entity detail. It fails on the old code. Not rechecked live.
+
+The initial offline browser run lacked the two repository-relative shared vectors in the disposable runtime. Repeating both affected specs against the same checkout's read-only vector files passed 25/25. The guided browser receipts identify the two attempts.

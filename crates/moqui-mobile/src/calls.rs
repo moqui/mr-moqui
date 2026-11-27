@@ -228,6 +228,8 @@ pub(crate) fn tell_script(what: &str, json: &str) -> Option<String> {
         "mute" if value.is_boolean() => ("setHostMute", value.to_string()),
         // picture-in-picture's Mute: the page's microphone on or off
         "muteToggle" if value.is_boolean() => ("toggleMute", String::new()),
+        // the native screen share's leg ended (its connection lost, the capture stopped): the page lets its leg go
+        "screen" if value.is_object() => ("nativeScreen", value.to_string()),
         "hold" => {
             let id = call_id(value["callSessionId"].as_str()?)?;
             let hold = value["hold"].as_bool()?;

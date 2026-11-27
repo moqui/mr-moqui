@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Machine access (plans/Vault-Instances.md §3.8): an environment that needs unattended work holds the item keys of
+//! Machine access (plans/archive/Vault-Instances.md §3.8): an environment that needs unattended work holds the item keys of
 //! the items its operations need, sealed by the vault crate's AEAD under the server's machine key with the environment,
 //! vault and item ids as associated data, so a row moved to another environment or item does not open.
 //!
@@ -39,6 +39,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use moqui_core::context::framework_thread;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::entity::EntityFacade;
 use moqui_core::extension::RustServiceFn;
@@ -355,7 +356,7 @@ fn ask_vault_machine_access(params: &Params, facade: &EntityFacade) -> Out {
     // wakes it at its approval, or its poll finds it)
     let spawned = std::thread::Builder::new()
         .name(format!("vault-grant-{lease_id}"))
-        .spawn(move || {
+        .spawn(framework_thread(move || {
             let context = factory.new_context();
             let _entered = context.enter();
             let Some(facade) = factory.entity() else {
@@ -369,7 +370,7 @@ fn ask_vault_machine_access(params: &Params, facade: &EntityFacade) -> Out {
                 Ok(Err(err)) => tracing::warn!("Vault: machine access under lease {lease_id} was not given: {err}"),
                 Err(_) => tracing::error!("Vault: machine access under lease {lease_id} failed"),
             }
-        });
+        }));
     if let Err(err) = spawned {
         return Err(fail(format!("The grant could not wait for its approval: {err}")));
     }

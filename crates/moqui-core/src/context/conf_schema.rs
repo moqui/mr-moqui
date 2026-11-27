@@ -377,6 +377,12 @@ pub static CATALOG: &[Unit] = &[
         .secrets(&[("store-key-secret", Secret::Generated)])
         .children(&[single("stickers", Class::Live)]),
     single("load-runner", Class::Live),
+    // Maps (plans/archive/Maps.md §4.2): read on each request, import and viewport query; the offline packages' caps and
+    // how long their files are kept (package-max-bytes, package-user-max-bytes, package-concurrent-builds,
+    // package-keep-days: plans/archive/Maps-Offline.md)
+    single("maps", Class::Live),
+    // shared live location (plans/archive/Location-Sharing.md §3.1): read at each share, report and clean
+    single("location", Class::Live),
     single("media-server", LISTENER)
         .children(&[single("turn-server", LISTENER).secrets(&[("auth-secret", Secret::Generated)])]),
     single("calls", Class::Live).children(&[
@@ -430,7 +436,8 @@ pub static CATALOG: &[Unit] = &[
     ),
     single("report", Class::Live),
     single("resource-watch", Class::Live),
-    single("dev-reload", Class::Restart("the file watcher starts at boot")),
+    // the artifact index reads index-writers at each write
+    single("dev-reload", Class::Restart("the file watcher starts at boot")).attrs(&[("index-writers", Class::Live)]),
     single("dev-aide", Class::Live).attrs(&[("shared", BOOT)]),
     // the gate is read once at start, so a conf editor of a running server does not turn it off or point it at another
     // secret or repository (docs/tools/Component-Deploy.md "The gate")
@@ -439,9 +446,9 @@ pub static CATALOG: &[Unit] = &[
         Class::Restart("the gate, its secret and its allow entries are read once at start"),
     )
     .secrets(&[("attestation-secret", Secret::Kept)]),
-    // vaults (plans/Vault-Instances.md §3): read at each call of the vault services
+    // vaults (plans/archive/Vault-Instances.md §3): read at each call of the vault services
     single("vault", Class::Live).secrets(&[("lease-key", Secret::Generated)]),
-    // the manager link (plans/Vault-Instances.md §4.4): read at start, by the sealed gate's dialer and the listener
+    // the manager link (plans/archive/Vault-Instances.md §4.4): read at start, by the sealed gate's dialer and the listener
     single(
         "manage",
         Class::Restart("the manager link is dialed and taken from the start"),

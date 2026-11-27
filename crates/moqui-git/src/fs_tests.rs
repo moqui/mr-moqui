@@ -118,3 +118,22 @@ fn under_the_guard_only_a_network_address_is_fetched() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// SEC-GIT-87: gitoxide's text of a failed fetch has no password of a URL in it, nor the token, when it is stored or
+/// answered; a URL with no user is left as it is.
+#[test]
+fn a_fetch_errors_text_has_no_password() {
+    let text = "Credentials provided for \"https://deploy:hunter2secret@git.example.com/own.git\" were not accepted; \
+                token TOKEN_77X at https://git.example.com/x and Basic ZGVwbG95Omh1bnRlcjI=";
+    let redacted = super::redact_error(text, Some("TOKEN_77X"));
+    assert!(
+        !redacted.contains("hunter2secret") && !redacted.contains("deploy:"),
+        "{redacted}"
+    );
+    assert!(
+        !redacted.contains("TOKEN_77X") && !redacted.contains("ZGVwbG95"),
+        "{redacted}"
+    );
+    assert!(redacted.contains("https://***@git.example.com/own.git"), "{redacted}");
+    assert!(redacted.contains("https://git.example.com/x"), "{redacted}");
+}

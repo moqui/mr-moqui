@@ -12,9 +12,11 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The artifacts that are rows of the database (plans/design-dev-aide.md 7.1): service jobs and the service each runs,
+//! The artifacts that are rows of the database (plans/archive/design-dev-aide.md 7.1): service jobs and the service each runs,
 //! data documents and their primary entity, email templates and their body screen, and DbForm forms with the screen
-//! form each modifies (configuration a site changes in production, shown beside the site component's extensions).
+//! form each modifies (configuration a site changes in production, shown beside the site component's extensions), and
+//! artifact groups with their members (each a reference to the screen, service, entity or REST resource it names; one
+//! whose name is a pattern to each artifact it matches, [`ARTIFACT_GROUP_MEMBER`]).
 //! Each source is one pseudo file, `db:<entity>`, read again at each build when its rows changed. The screen mounts
 //! are sources too: the `SubscreensItem` rows ([`SUBSCREENS_ITEM`], read again when one is written), and the merged
 //! conf's `screen-facade` mounts ([`conf_mounts`], the pseudo file [`CONF_PATH`], read again after each conf reload),
@@ -25,7 +27,9 @@ use moqui_lib::error::Error;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use super::extract::{ArtifactRow, FileIndex, RefRow, ToKind, CONF_ITEM, CONF_PATH, NO_SUB_PATH_MARK, ROW_ITEM};
+use super::extract::{
+    join_marks, ArtifactRow, FileIndex, RefRow, ToKind, CONF_ITEM, CONF_PATH, NO_SUB_PATH_MARK, PATTERN_SCOPE, ROW_ITEM,
+};
 use moqui_core::entity::{EntityFacade, EntityValue};
 use moqui_core::screen::{ConfScreen, ScreenConf};
 use moqui_lib::node::MNode;
@@ -89,13 +93,19 @@ type Reader = fn(&[EntityValue], &str) -> FileIndex;
 /// The entity of the `SubscreensItem` rows, a source of its own the index reads again when they change.
 pub const SUBSCREENS_ITEM: &str = "moqui.screen.SubscreensItem";
 
+/// The entity of the artifact groups' members: a source whose patterns are resolved to the artifacts they match when
+/// it is written ([`super::resolve::Resolver::expand_patterns`]), and read again when an update adds an artifact one of
+/// them matches.
+pub const ARTIFACT_GROUP_MEMBER: &str = "moqui.security.ArtifactGroupMember";
+
 /// Each source's entity and its reader.
-const READERS: [(&str, Reader); 5] = [
+const READERS: [(&str, Reader); 6] = [
     ("moqui.service.job.ServiceJob", jobs),
     ("moqui.entity.document.DataDocument", documents),
     ("moqui.basic.email.EmailTemplate", email_templates),
     ("moqui.screen.form.DbForm", db_forms),
     (SUBSCREENS_ITEM, subscreen_items),
+    (ARTIFACT_GROUP_MEMBER, group_members),
 ];
 
 /// The sources' rows now. A source whose entity cannot be read is logged and left out.
@@ -126,13 +136,27 @@ pub fn read_entity(facade: &EntityFacade, entity: &str) -> Result<RowSource, Err
     Ok(source(path, index))
 }
 
+/// `source` hashed again by what it holds now: its patterns resolved to the artifacts they match, so the same rows that
+/// match other artifacts are written again.
+#[must_use]
+pub fn rehash(source: RowSource) -> RowSource {
+    self::source(source.path, source.index)
+}
+
 /// A source of `index`, hashed by what it holds.
 fn source(path: String, mut index: FileIndex) -> RowSource {
     let fingerprint: String = index
         .artifacts
         .iter()
-        .map(|artifact| format!("{}|{}|", artifact.id, artifact.summary))
-        .chain(index.refs.iter().map(|row| format!("{}>{}|", row.from, row.to_name)))
+        .map(|artifact| format!("{}|{}|{}|", artifact.id, artifact.summary, artifact.marks))
+        .chain(index.refs.iter().map(|row| {
+            format!(
+                "{}>{}>{}|",
+                row.from,
+                row.to_name,
+                row.to_id.as_deref().unwrap_or_default()
+            )
+        }))
         .collect();
     let hash = super::hash_of(&fingerprint);
     for row in &mut index.refs {
@@ -359,6 +383,73 @@ fn db_forms(rows: &[EntityValue], path: &str) -> FileIndex {
         if let Some((screen, form)) = text(row, "modifyXmlScreenForm").split_once('#') {
             index.refs.push(reference(&id, ToKind::Anchor, form, screen, "extend"));
         }
+    }
+    index
+}
+
+/// What an artifact group member of the type `type_enum` names: a screen by its location, a service, an entity or a
+/// REST resource by its path; none for the other types (a transition, a screen's content, other artifacts).
+fn member_kind(type_enum: &str) -> Option<ToKind> {
+    Some(match type_enum {
+        "AT_XML_SCREEN" => ToKind::Screen,
+        "AT_SERVICE" => ToKind::Service,
+        "AT_ENTITY" => ToKind::Entity,
+        "AT_REST_PATH" => ToKind::Rest,
+        _ => return None,
+    })
+}
+
+/// The artifact groups of the members' rows (`artifact-group:<artifactGroupId>`, its members counted in its summary),
+/// each member a reference from its group to what it names (`artifact-group`), one whose name is a pattern in the
+/// [`PATTERN_SCOPE`] and in its group's marks (`pattern <kind> <pattern>`), which the resolver keeps. A member of a type
+/// the index has no artifacts of counts, and refers to nothing.
+fn group_members(rows: &[EntityValue], path: &str) -> FileIndex {
+    let mut index = FileIndex::default();
+    let mut groups: BTreeMap<String, (usize, Vec<String>)> = BTreeMap::new();
+    for row in rows {
+        let group = text(row, "artifactGroupId");
+        let name = text(row, "artifactName");
+        if group.is_empty() || name.is_empty() {
+            continue;
+        }
+        let id = format!("artifact-group:{group}");
+        let (count, patterns) = groups.entry(group).or_default();
+        *count += 1;
+        let Some(kind) = member_kind(&text(row, "artifactTypeEnumId")) else {
+            continue;
+        };
+        let pattern = text(row, "nameIsPattern") == "Y";
+        if pattern {
+            // a mark is words separated by spaces, the marks by `; `: a pattern with either is not kept
+            if name.contains(' ') || name.contains(';') {
+                tracing::warn!("Artifact index: the pattern {name} of the artifact group {id} is not matched");
+                continue;
+            }
+            patterns.push(format!("pattern {} {name}", kind.as_str()));
+        }
+        let scope = if pattern { PATTERN_SCOPE } else { "" };
+        // what a member does to what it names: authorizes it, and with inheritAuthz what runs under it on the artifact
+        // stack too, of any kind, as `moqui_core::user::authz` lets an inheritable frame's children run
+        let operation = if text(row, "inheritAuthz") == "Y" {
+            "authz-inherit"
+        } else {
+            "authz"
+        };
+        index
+            .refs
+            .push(doing(reference(&id, kind, &name, scope, "artifact-group"), operation));
+    }
+    for (group, (count, patterns)) in groups {
+        let id = format!("artifact-group:{group}");
+        let mut row = artifact(
+            path,
+            id,
+            "artifact-group",
+            &group,
+            format!("{count} member{}", if count == 1 { "" } else { "s" }),
+        );
+        row.marks = join_marks(&patterns);
+        index.artifacts.push(row);
     }
     index
 }

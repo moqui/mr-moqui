@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Worktrees for agents' sessions (plans/design-dev-aide.md 21.8, question 19), implemented in the dev-aide crate
+<!-- Worktrees for agents' sessions (plans/archive/design-dev-aide.md 21.8, question 19), implemented in the dev-aide crate
     (src/worktree.rs): a git worktree of a working tree under the runtime's worktrees directory, on a branch of its own,
     kept as a temporary root bound to an Assist conversation, whose file and git tools are rooted in it. Not loaded: its
     files are checked and committed, not run live. -->
@@ -57,5 +57,28 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="branch"/>
             <parameter name="message"/>
         </out-parameters>
+    </service>
+    <service verb="end" noun="ConversationWorktrees" type="rust" location="dev_aide::worktree::end_conversation_worktrees"
+            authenticate="false" allow-remote="false">
+        <description>The worktrees of an Assist conversation that ended (archived, or deleted), called once the write that
+            ended it commits (entity/DevAide.eecas.xml): each clean one removed as remove#Worktree removes it (its branch
+            stays), each with uncommitted changes kept and its user told once (a DevAideWorktreeKept notification). A
+            conversation that is there and not archived ends nothing, and its worktrees' notice is cleared, so a later end
+            tells again. While a run of the conversation is still at work its worktrees stay (waitingForRun), and
+            sweep#ConversationWorktrees ends them once it has ended. Only a worktree under the runtime's worktrees
+            directory is removed.</description>
+        <in-parameters><parameter name="conversationId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="waitingForRun" type="Boolean"/>
+            <parameter name="removedRootIds" type="List"/>
+            <parameter name="keptRootIds" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="sweep" noun="ConversationWorktrees" type="rust" location="dev_aide::worktree::sweep_conversation_worktrees"
+            authenticate="false" allow-remote="false">
+        <description>The ServiceJob of DevAideJobData.xml: every session's worktree whose conversation ended while a run
+            of it was still at work, or while this server was down, ended as end#ConversationWorktrees ends it. One
+            conversation that fails is logged and the others go on.</description>
+        <out-parameters><parameter name="conversationCount" type="Integer"/></out-parameters>
     </service>
 </services>

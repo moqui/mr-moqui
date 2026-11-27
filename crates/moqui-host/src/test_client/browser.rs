@@ -345,7 +345,8 @@ impl At<'_> {
         let status = self.driver.document_status(&loader);
         self.settle(self.page.timeout)?;
         let now = self.eval("location.href").unwrap_or(Value::Null);
-        Ok(json!({ "status": status.map(|(status, _)| status), "url": now }))
+        let (status, headers) = status.map_or((None, json!({})), |(status, _, headers)| (Some(status), headers));
+        Ok(json!({ "status": status, "url": now, "headers": headers }))
     }
 
     /// `page.setContent(html)`: navigate to the offline origin and fulfill that document with `html`.

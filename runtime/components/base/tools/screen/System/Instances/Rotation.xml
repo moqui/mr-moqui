@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Rotation (plans/Vault-Instances.md §4.7, M5; docs/Run-Deploy.md "Rotation"): an environment's operational items with
+<!-- Rotation (plans/archive/Vault-Instances.md §4.7, M5; docs/Run-Deploy.md "Rotation"): an environment's operational items with
     their age, rotation age and whether each is due (get#InstanceRotations: rows only, no value). The manager rotates an
     item whose kind has a rotate service; another shows what to do by hand. Rotate due and Rotate all (after an incident,
     Sealed-Secrets §3.12) post request#InstanceRotation: under the environment's machine access it runs now, else it asks

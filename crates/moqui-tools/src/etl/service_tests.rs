@@ -328,3 +328,24 @@ fn a_mapping_saved_by_another_user_becomes_that_users() {
     assert_eq!(owner_of(), "ETL_EDITOR");
     moqui_core::user::logout().unwrap();
 }
+
+/// SEC-TLS-115: the `DbaEtlRun` audit row's detail is JSON that parses, each value under its own key, a target name with
+/// quotes and braces included.
+#[test]
+fn the_run_audit_detail_is_json_with_each_value_under_its_key() {
+    let text = super::run_detail_json(&super::RunDetail {
+        run_id: "R1",
+        mapping_id: "M1",
+        target: r#"Target","admin":true,"x":"{"#,
+        job_name: None,
+        check: true,
+        loaded: 3,
+        errors: 1,
+    });
+    let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(parsed["target"], r#"Target","admin":true,"x":"{"#);
+    assert_eq!(parsed["jobName"], serde_json::Value::Null);
+    assert_eq!(parsed["mappingId"], "M1");
+    assert_eq!(parsed["loaded"], 3);
+    assert!(parsed.get("admin").is_none(), "{text}");
+}

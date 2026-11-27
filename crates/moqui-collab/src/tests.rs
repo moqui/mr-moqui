@@ -361,6 +361,92 @@ fn an_update_lost_between_servers_is_merged_from_the_stored_state_and_saved() {
     let _ = super::take_events();
 }
 
+/// SEC-TLS-118: a state stored before updates were checked, with shared types nested past the bound, is not opened: the
+/// join reads the page's text again, and the next tick does not merge the row back in.
+#[test]
+fn a_stored_state_nested_past_the_bound_is_not_opened() {
+    let _serial = serial();
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    user(&facade, "dave");
+    login("dave");
+    call(
+        "org.moqui.resource.WikiServices.create#WikiSpace",
+        &[
+            ("wikiSpaceId", Value::string("DEEP")),
+            ("description", Value::string("Deep")),
+        ],
+    );
+    let page = call(
+        "org.moqui.resource.WikiServices.update#WikiPage",
+        &[
+            ("wikiSpaceId", Value::string("DEEP")),
+            ("pageName", Value::string("Plan")),
+            ("pageText", Value::string("# Plan\n\nStart.\n")),
+        ],
+    );
+    let key = format!("WikiPage:{}", to_plain_string(page.get("wikiPageId").unwrap()));
+    super::join(&key, "dave", &[]).unwrap();
+    super::leave(&key);
+    super::tick();
+    let depth = |doc: &Doc| {
+        let fragment = doc.get_or_insert_xml_fragment(super::markdown::FRAGMENT);
+        let txn = doc.transact();
+        let mut levels = 0;
+        let mut next = fragment.get(&txn, fragment.len(&txn).saturating_sub(1));
+        while let Some(yrs::XmlOut::Element(element)) = next {
+            levels += 1;
+            next = element.get(&txn, 0);
+        }
+        levels
+    };
+    {
+        // as an older build would have stored it: 300 quotes, each in the one before
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let mut row = facade
+            .find(super::COLLAB_DOCUMENT)
+            .unwrap()
+            .eq("documentKey", Value::string(&key))
+            .one()
+            .unwrap()
+            .unwrap();
+        let doc = Doc::new();
+        doc.transact_mut()
+            .apply_update(Update::decode_v1(&super::bytes_of(&row, "stateData")).unwrap())
+            .unwrap();
+        let fragment = doc.get_or_insert_xml_fragment(super::markdown::FRAGMENT);
+        {
+            let mut txn = doc.transact_mut();
+            let mut parent = fragment.push_back(&mut txn, XmlElementPrelim::empty("blockquote"));
+            for _ in 1..300 {
+                parent = parent.push_back(&mut txn, XmlElementPrelim::empty("blockquote"));
+            }
+        }
+        assert_eq!(depth(&doc), 300);
+        row.set(
+            "stateData",
+            Value::Bytes(doc.transact().encode_state_as_update_v1(&StateVector::default())),
+        );
+        row.update(&facade).unwrap();
+    }
+    let joined = super::join(&key, "dave", &[]).unwrap();
+    assert!(
+        depth(&client(&joined)) <= super::nesting::MAX_TYPE_DEPTH,
+        "the deep state is not opened"
+    );
+    super::tick();
+    assert!(updates_for(&key).iter().all(|update| {
+        let doc = client(&joined);
+        doc.transact_mut()
+            .apply_update(Update::decode_v1(update).unwrap())
+            .unwrap();
+        depth(&doc) <= super::nesting::MAX_TYPE_DEPTH
+    }));
+    super::leave(&key);
+    super::tick();
+    let _ = super::take_events();
+}
+
 /// The Rust services register at the `moqui_collab::` locations the service file names, and at no other.
 #[test]
 fn the_services_register_at_the_locations_the_service_file_names() {
@@ -1035,6 +1121,64 @@ fn a_closed_board_is_seeded_again_from_its_saved_scene() {
     super::apply(&key, "compactor", &everything).unwrap();
     assert_eq!(super::snapshot(&key).unwrap(), "Kept");
     super::leave_as(&key, Some("compactor"));
+    super::tick();
+    let _ = super::take_events();
+}
+
+/// A room's space changed (a member left its chat room, the room was archived): the editors of its boards open here are
+/// asked again at the next tick, not a minute later (`recheck_space`). A board whose last editor can no longer save it
+/// still closes when its last member leaves, its state kept in the row for the next save.
+#[test]
+fn a_space_recheck_asks_its_editors_again_and_a_board_closes_when_no_editor_can_save_it() {
+    use serde_json::json;
+    let _serial = serial();
+    let (context, facade) = setup_with_conf(BOARD_CONF);
+    let _entered = context.enter();
+    user(&facade, "roomowner");
+    login("roomowner");
+    let scene = json!({"type":"excalidraw","elements":[{"id":"a","type":"text","text":"Start","index":"a0","version":1}],"files":{}});
+    let key = board_page("ROOMBRD", &scene);
+    struct Answer;
+    impl Drop for Answer {
+        fn drop(&mut self) {
+            *super::lock(&super::ACCESS_FOR_TEST) = None;
+        }
+    }
+    let _answer = Answer;
+    let set = |answer: Option<Result<(bool, bool), u16>>| *super::lock(&super::ACCESS_FOR_TEST) = answer;
+    set(Some(Ok((true, true))));
+    // an editor with no account here: no version can be saved as them
+    let joined = super::join(&key, "departed", &[]).unwrap();
+    let doc = client(&joined);
+    let mut edit = scene.clone();
+    edit["elements"][0]["version"] = json!(2);
+    edit["elements"][0]["text"] = json!("Changed");
+    super::apply(&key, "departed", &board_edit(&doc, &edit)).unwrap();
+    super::tick();
+    let _ = super::take_events();
+
+    // another space's change asks nothing; this one's tells the lost edit right at once
+    set(Some(Ok((true, false))));
+    super::recheck_space("OTHERBRD");
+    super::tick();
+    assert!(!super::take_events()
+        .iter()
+        .any(|event| matches!(event, super::Event::CanEdit { .. })));
+    super::recheck_space("ROOMBRD");
+    super::tick();
+    assert!(super::take_events().iter().any(|event| matches!(event,
+        super::Event::CanEdit { user_id, can_edit: false, .. } if user_id == "departed")));
+
+    // the last member leaves: the save as them fails, the room closes anyway, and the change waits in the row
+    super::leave_as(&key, Some("departed"));
+    super::tick();
+    assert!(super::room_of(&key).is_none(), "a room no editor can save still closes");
+    let row = super::stored(&key).unwrap().expect("the state is kept");
+    assert!(to_plain_string(row.get("editorUserIds").unwrap()).contains("departed"));
+    set(None);
+    super::join(&key, "roomowner", &[]).unwrap();
+    assert!(room_render(&key).contains("Changed"), "the next join has the change");
+    super::leave(&key);
     super::tick();
     let _ = super::take_events();
 }

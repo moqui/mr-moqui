@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Vaults (framework/entity/VaultEntities.xml, plans/Vault-Instances.md §3): the kinds, locks, roles, wraps and events,
+<!-- Vaults (framework/entity/VaultEntities.xml, plans/archive/Vault-Instances.md §3): the kinds, locks, roles, wraps and events,
     the statuses of personal keys and leases, the framework's item types with their fields (§3.4), and the grant of the
     vault services and their REST paths to every signed-in user. Each service decides who may do what itself (a member's
     role, a delivery's recipient, a personal key's own user), so the grant adds no right to a vault. -->
@@ -84,7 +84,7 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.Enumeration enumId="VeRecoveryCancelled" enumTypeId="VaultEventType" description="Recovery cancelled" sequenceNum="30"/>
     <moqui.basic.Enumeration enumId="VeSecretRewrapped" enumTypeId="VaultEventType" description="Single-secret vault wrapped again" sequenceNum="31"/>
     <moqui.basic.Enumeration enumId="VeHeaderChanged" enumTypeId="VaultEventType" description="Vault renamed" sequenceNum="32"/>
-    <!-- a rotation's new revision of an item, deposited by the manager (plans/Vault-Instances.md §4.7) -->
+    <!-- a rotation's new revision of an item, deposited by the manager (plans/archive/Vault-Instances.md §4.7) -->
     <moqui.basic.Enumeration enumId="VeItemRotated" enumTypeId="VaultEventType" description="Item rotated at its source" sequenceNum="33"/>
 
     <moqui.basic.StatusType statusTypeId="VaultRecoverySession" description="Vault recovery"/>
@@ -104,14 +104,14 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.StatusItem statusId="VlsEnded" statusTypeId="VaultLease" description="Ended" sequenceNum="3"/>
     <moqui.basic.StatusItem statusId="VlsRevoked" statusTypeId="VaultLease" description="Revoked" sequenceNum="4"/>
 
-    <!-- A lease waiting for an approver (plans/Vault-Instances.md §3.7): kept in the approvers' notifications, its link the
+    <!-- A lease waiting for an approver (plans/archive/Vault-Instances.md §3.7): kept in the approvers' notifications, its link the
         lease dialog (System › Vaults › Lease) -->
     <moqui.security.user.NotificationTopic topic="VaultLeaseWaiting" inboxEnumId="NinNotifications" description="Vault lease waiting for approval"
             typeString="warning" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" titleTemplate="${title || 'A vault lease waits for your approval'}"/>
 
     <!-- The framework's item types (§3.4); the body is {"v": 1, "type": <vaultItemTypeId>, "name", "fields", "notes",
         "tags", "uris"}. rotationDays is the age past which an operational item of the type is due for rotation
-        (plans/Vault-Instances.md §4.7), unless its binding sets its own; it means nothing in a personal vault. -->
+        (plans/archive/Vault-Instances.md §4.7), unless its binding sets its own; it means nothing in a personal vault. -->
     <moqui.security.vault.VaultItemType vaultItemTypeId="login" description="Login" sequenceNum="1" rotationDays="90">
         <fields fieldName="username" label="Username" fieldKindEnumId="VfText" masked="N" sequenceNum="1"/>
         <fields fieldName="password" label="Password" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="2"/>
@@ -193,7 +193,7 @@ along with this software (see the LICENSE.md file). If not, see
             artifactName="org\.moqui\.security\.VaultServices\..*"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="VaultServices" artifactTypeEnumId="AT_REST_PATH" inheritAuthz="Y"
             artifactName="/vault"/>
-    <!-- a managed instance's recovery holder's services (plans/Vault-Instances.md §4.5): each checks that the caller holds
+    <!-- a managed instance's recovery holder's services (plans/archive/Vault-Instances.md §4.5): each checks that the caller holds
         a share of the instance -->
     <moqui.security.ArtifactGroupMember artifactGroupId="VaultServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
             artifactName="org\.moqui\.dev\.InstanceLinkServices\.(get#InstanceUnsealKey|send#InstanceSealedShare|confirm#InstanceRecoveryShare)"/>

@@ -133,3 +133,17 @@ test("a filter, a section, a button and a row action as written", () => {
     assert.equal(ops.textAttribute(el("label", [0])), "text");
     assert.equal(ops.textAttribute(el("form-list", [0])), null);
 });
+
+
+test("Use on this screen inserts one declaration into the active screen or extension outline", () => {
+    const attach = moqui.devAide.screenOps.clientLibrary;
+    for (const name of ["screen", "screen-extend"]) {
+        const later = {name: name === "screen" ? "widgets" : "actions-extend", path: [0]};
+        const outline = {name, path: [], children: [later]};
+        const added = attach(outline, "site/math");
+        assert.equal(added.length, 1);
+        assert.deepEqual(added[0], {op:"insert", at:[0], position:"before", xml:'<client-library library="site/math" render-mode="qvt"/>'});
+        outline.children.unshift({name:"client-library", attrs:[["library","site/math"],["render-mode","qvt"]]});
+        assert.deepEqual(attach(outline, "site/math"), []);
+    }
+});

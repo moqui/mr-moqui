@@ -22,7 +22,7 @@ use super::*;
 fn compiler() -> String {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../runtime/components/base/webroot/screen/webroot/libs/vue/compiler-dom.cjs.js");
-    std::fs::read_to_string(path).unwrap()
+    std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("{}: {err}; run ./moq build-js", path.display()))
 }
 
 const GOOD: &str = r#"<template>

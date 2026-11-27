@@ -35,12 +35,12 @@ feature("a Tom Select drop-down takes the typed match on a quick ENTER or TAB, a
         focusField(page, "state")
         page.keyboard.type("Ariz")
         page.keyboard.press("Enter")
-        sleep(1000)
+        page.waitFor(() => document.getElementById("state").value === "AZ")
         const afterEnter = page.evaluate(() => ({ value: document.getElementById("state").value, prevented: window.lastKey && window.lastKey.prevented }))
         focusField(page, "state2")
         page.keyboard.type("Alas")
         page.keyboard.press("Tab")
-        sleep(1000)
+        page.waitFor(() => document.activeElement.id === "next")
         const after = page.evaluate(() => ({ value: document.getElementById("state2").value, focus: document.activeElement.id }))
         assert.equal(afterEnter.value, "AZ")
         assert.equal(afterEnter.prevented, true)
@@ -65,7 +65,7 @@ feature("a drop-down with the style submit-on-close submits its form", {
         focusField(page, "ts")
         page.keyboard.type("Alab")
         page.keyboard.press("Enter")
-        sleep(1000)
+        page.waitFor(() => window.submits.length === 1)
         const changed = page.evaluate(() => {
             const plain = document.getElementById("plain")
             plain.value = "AK"
@@ -73,7 +73,7 @@ feature("a drop-down with the style submit-on-close submits its form", {
             return true
         })
         assert.ok(changed)
-        sleep(100)
+        page.waitFor(() => window.submits.length === 2)
         const submits = page.evaluate(() => window.submits)
         assert.deepEqual(submits, ["AL/", "AL/AK"])
     },
@@ -86,7 +86,7 @@ feature("date keys step a native date input and a text date field, and leave the
             <input type="text" id="text" name="text" value="25/10/2026" data-format="dd/MM/yyyy"><input type="text" id="plain" value="x"></form>`)
         const watching = page.evaluate(() => { window.changes = 0; document.addEventListener("change", () => window.changes++); return true })
         assert.ok(watching)
-        const press = (id, key) => { focusField(page, id); page.keyboard.press(key); sleep(50) }
+        const press = (id, key) => { focusField(page, id); page.keyboard.press(key) }
         press("date", "d")
         const d = page.evaluate(() => document.getElementById("date").value)
         press("date", "Shift+W")

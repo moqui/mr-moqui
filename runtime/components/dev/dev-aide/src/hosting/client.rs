@@ -12,10 +12,12 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A connection to a group server (plans/design-dev-aide.md 21.2): its `DevAideServer` row, the user's token there (a
+//! A connection to a group server (plans/archive/design-dev-aide.md 21.2): its `DevAideServer` row, the user's token there (a
 //! `DevAideCredential` of its `serverId`, sent only to the server's own address), and its REST as that user: the
 //! framework's (`/rest/s1/moqui/git`, `/rest/s1/moqui/hosting`) and, where the server offers one, the application's
-//! (Smithy's, under the offer's `application.restBase`).
+//! (Smithy's, under the offer's `application.restBase`). After an app sign-in the token is a key for git alone, the
+//! task panel's reads go with a key for tasks alone, and an application's REST with the installed app's key, which is
+//! all it takes (question 18); a pasted token goes everywhere, as before.
 
 use moqui_core::entity::{EntityFacade, EntityValue};
 use moqui_lib::error::Error as LibError;
@@ -61,8 +63,20 @@ pub(crate) fn on_server(server: &Server, url: &str) -> Result<String, LibError> 
     Ok(url.trim().to_string())
 }
 
-/// `value` encoded for a URL's query.
+/// A path segment of a server's URL, or `None` for one that is empty or all dots (`.`, `..`), which a URL would take
+/// as a step up or none: a repository's or an issue's id from a server never walks its path.
+#[must_use]
+pub fn path_segment(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty() && !value.bytes().all(|byte| byte == b'.')).then(|| query_text(value))
+}
+
+/// `value` encoded for a URL's query or as one part of its path: a part that is `.` or `..` is encoded too, so it never
+/// names the part above it.
 pub(crate) fn query_text(value: &str) -> String {
+    if value == "." || value == ".." {
+        return value.replace('.', "%2E");
+    }
     value
         .bytes()
         .map(|byte| {
@@ -115,7 +129,17 @@ pub(crate) struct Server {
     pub user_id: String,
     pub username: String,
     pub offer: Json,
+    /// The user's token: after an app sign-in a key for git alone (git, the framework's git and hosting REST).
     pub token: Option<String>,
+    /// The key for tasks alone (`DevAideServer.tasksKey`): the task source's reads and an issue's.
+    pub tasks_token: Option<String>,
+    /// The installed app's key (`DevAideServer.appKey`), for the application's REST alone, where the offer names one.
+    pub app_token: Option<String>,
+}
+
+/// A key field of a server's row, when it is set.
+fn key_field(row: &EntityValue, name: &str) -> Option<String> {
+    Some(field(row, name)).filter(|key| !key.is_empty())
 }
 
 impl Server {
@@ -124,6 +148,8 @@ impl Server {
         let user_id = field(row, "userId");
         Self {
             token: token_of(facade, &id, &user_id),
+            tasks_token: key_field(row, "tasksKey"),
+            app_token: key_field(row, "appKey"),
             offer: serde_json::from_str(&field(row, "offerJson")).unwrap_or(Json::Null),
             label: field(row, "label"),
             base: field(row, "baseUrl"),
@@ -227,6 +253,48 @@ impl Server {
         }
     }
 
+    /// This server as `token` alone: a call made with one key, such as a key ending itself.
+    pub(crate) fn with_token(&self, token: &str) -> Self {
+        Self {
+            token: Some(token.to_string()),
+            tasks_token: None,
+            app_token: None,
+            ..self.clone()
+        }
+    }
+
+    /// This server with no key: a call of what it shows anyone (its sign-in's providers).
+    pub(crate) fn anonymous(&self) -> Self {
+        Self {
+            token: None,
+            tasks_token: None,
+            app_token: None,
+            ..self.clone()
+        }
+    }
+
+    /// Whether `url` (on this server) is under the application's REST.
+    fn on_application(&self, url: &str) -> bool {
+        let Some(application) = self.application() else {
+            return false;
+        };
+        let origin = crate::vcs::url_prefix(&self.base).unwrap_or_else(|| self.base.clone());
+        let path = url.strip_prefix(&origin).unwrap_or(url);
+        let path = path.split(['?', '#']).next().unwrap_or_default();
+        path == application.rest_base || path.starts_with(&format!("{}/", application.rest_base))
+    }
+
+    /// The key a call of `url` goes with: the installed app's under the application's REST, where it is kept, else the
+    /// user's token.
+    fn key_for(&self, url: &str) -> Option<&String> {
+        if self.on_application(url) {
+            if let Some(app) = &self.app_token {
+                return Some(app);
+            }
+        }
+        self.token.as_ref()
+    }
+
     /// A call of the server's REST as the user (with the token when there is one): its JSON answer, or the error the
     /// server said.
     pub(crate) fn request(
@@ -236,7 +304,51 @@ impl Server {
         query: &[(&str, &str)],
         body: Option<&Json>,
     ) -> Result<Json, LibError> {
-        let mut url = self.url(path)?;
+        let url = self.url(path)?;
+        let token = self.key_for(&url).cloned();
+        self.request_as(token.as_deref(), method, url, query, body)
+    }
+
+    /// A read of the task panel's (the user's tasks, a repository's issues, one issue): [`Self::tasks_request`].
+    pub(crate) fn tasks_get(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        kept_by_application: bool,
+    ) -> Result<Json, LibError> {
+        self.tasks_request(moqui_core::outbound::Method::Get, path, query, None, kept_by_application)
+    }
+
+    /// A call of the task panel's (the user's tasks, a repository's issues read or filed, one issue): with the key for
+    /// tasks alone, or for the issues of a repository an application keeps (`kept_by_application`) the installed app's,
+    /// which is all the application takes; else the user's token.
+    pub(crate) fn tasks_request(
+        &self,
+        method: moqui_core::outbound::Method,
+        path: &str,
+        query: &[(&str, &str)],
+        body: Option<&Json>,
+        kept_by_application: bool,
+    ) -> Result<Json, LibError> {
+        let url = self.url(path)?;
+        let token = if kept_by_application {
+            self.app_token.as_ref().or(self.tasks_token.as_ref())
+        } else {
+            self.tasks_token.as_ref()
+        }
+        .or(self.token.as_ref())
+        .cloned();
+        self.request_as(token.as_deref(), method, url, query, body)
+    }
+
+    fn request_as(
+        &self,
+        token: Option<&str>,
+        method: moqui_core::outbound::Method,
+        mut url: String,
+        query: &[(&str, &str)],
+        body: Option<&Json>,
+    ) -> Result<Json, LibError> {
         let query: Vec<String> = query
             .iter()
             .filter(|(_, value)| !value.is_empty())
@@ -247,8 +359,8 @@ impl Server {
             url.push_str(&query.join("&"));
         }
         let mut headers = vec![("accept".to_string(), "application/json".to_string())];
-        if let Some(token) = &self.token {
-            headers.push(("api_key".into(), token.clone()));
+        if let Some(token) = token {
+            headers.push(("api_key".into(), token.to_string()));
         }
         if body.is_some() {
             headers.push(("content-type".into(), "application/json".into()));

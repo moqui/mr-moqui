@@ -12,13 +12,15 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A worktree for an agent's session (plans/design-dev-aide.md 21.8, question 19): `git worktree add` of a working
+//! A worktree for an agent's session (plans/archive/design-dev-aide.md 21.8, question 19): `git worktree add` of a working
 //! tree, on a branch of its own, under the runtime's `worktrees` directory, kept as a temporary root ("worktree of X")
 //! bound to an Assist conversation. The file and git tools of that conversation are rooted in it in place of X
 //! (`agent::session_context`), so two sessions edit two worktrees of one repository and share no uncommitted change. A
 //! worktree is not loaded (question 19, as proposed): its files are checked and committed, and merged or proposed from
 //! there, but not run live; a session that needs the running server works in the main tree. Removing one refuses while
-//! it has uncommitted changes, unless they are to be discarded; its branch stays.
+//! it has uncommitted changes, unless they are to be discarded; its branch stays. When its conversation ends (it is
+//! archived or deleted: the component's `DevAide.eecas.xml` hears it), a clean worktree is removed the same way and one
+//! with uncommitted changes is kept, its user told once.
 
 use std::path::{Path, PathBuf};
 
@@ -49,7 +51,37 @@ pub const NOT_LOADED: &str = "A worktree is not loaded: its files are checked an
 pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     registry.service_function(moqui_core::service_location!(get_worktrees), get_worktrees)?;
     registry.service_function(moqui_core::service_location!(create_worktree), create_worktree)?;
-    registry.service_function(moqui_core::service_location!(remove_worktree), remove_worktree)
+    registry.service_function(moqui_core::service_location!(remove_worktree), remove_worktree)?;
+    registry.service_function(
+        moqui_core::service_location!(end_conversation_worktrees),
+        end_conversation_worktrees,
+    )?;
+    registry.service_function(
+        moqui_core::service_location!(sweep_conversation_worktrees),
+        sweep_conversation_worktrees,
+    )
+}
+
+/// The status of an Assist conversation that has ended (`AgentConversation` status, framework `AgentTypeData.xml`).
+const ARCHIVED: &str = "AgcArchived";
+
+/// What becomes of a session's worktree when its conversation ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ending {
+    /// It is removed: nothing in it is uncommitted.
+    Remove,
+    /// It stays, with its changes, and its user is told (once: `already_told`).
+    Keep { tell: bool },
+}
+
+/// What becomes of a worktree whose conversation ended, by its `git status --porcelain` (`None` when it could not be
+/// read, which keeps it: nothing is removed that was not seen clean) and whether its user was told already.
+#[must_use]
+pub fn ending(porcelain: Option<&str>, already_told: bool) -> Ending {
+    match porcelain {
+        Some(porcelain) if removal_refusal("", porcelain, false).is_none() => Ending::Remove,
+        _ => Ending::Keep { tell: !already_told },
+    }
 }
 
 /// A name part from a conversation's id or a label: letters, digits and `-`, at most 24.
@@ -359,6 +391,210 @@ fn remove_worktree(
         )),
     );
     Ok(out)
+}
+
+/// Tell a worktree's user it was kept when its conversation ended, as a notification that stays until read.
+fn tell_kept(root: &Root, main: &Root, changes: usize) {
+    let Some(user) = root.worktree_user_id.as_deref().filter(|user| !user.is_empty()) else {
+        return;
+    };
+    let message = json!({
+        "rootId": root.id, "mainRootId": main.id, "location": root.path.display().to_string(), "changes": changes,
+    });
+    let sent = moqui_core::notify::NotificationMessage::new()
+        .topic("DevAideWorktreeKept")
+        .user_id(user)
+        .title(format!(
+            "The Assist session of {} ended: its worktree is kept, with uncommitted changes in {changes} files",
+            root.label
+        ))
+        .link(format!("/qapps/dev/Workspace?rootId={}", root.id))
+        .message_json(message.to_string())
+        .persist(true)
+        .show_alert(true)
+        .send();
+    if let Err(err) = sent {
+        tracing::warn!("Dev AIDE: the user of {} was not told it was kept: {err}", root.label);
+    }
+}
+
+/// `end#ConversationWorktrees`: the worktrees of a conversation that ended (`AgcArchived`, or deleted), after the write
+/// that ended it commits (`DevAide.eecas.xml`): [`end_for`].
+fn end_conversation_worktrees(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let conversation = text(parameters, "conversationId");
+    if conversation.is_empty() {
+        return Ok(Parameters::new());
+    }
+    let context = Context::of_rule(ec)?;
+    let _authz = ec.disable_authz();
+    end_for(&context, &conversation)
+}
+
+/// `sweep#ConversationWorktrees` (a ServiceJob, `data/DevAideJobData.xml`): every session's worktree whose
+/// conversation ended while a run of it was still at work, or while this server was down, ended as [`end_for`] ends
+/// it. A conversation that fails is logged, and the others go on. Out: `conversationCount`.
+fn sweep_conversation_worktrees(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    _parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of_rule(ec)?;
+    let _authz = ec.disable_authz();
+    let mut conversations: Vec<String> = context
+        .roots
+        .iter()
+        .filter(|root| root.worktree_of.is_some())
+        .filter_map(|root| root.conversation_id.clone())
+        .collect();
+    conversations.sort();
+    conversations.dedup();
+    for conversation in &conversations {
+        if let Err(err) = end_for(&context, conversation) {
+            tracing::error!("Dev AIDE: the worktrees of conversation {conversation} were not swept: {err}");
+        }
+    }
+    let mut out = Parameters::new();
+    out.insert(
+        "conversationCount".into(),
+        Value::I64(i64::try_from(conversations.len()).unwrap_or(0)),
+    );
+    Ok(out)
+}
+
+/// The worktrees of `conversation`, when it ended (archived, or deleted): each clean one removed as `remove#Worktree`
+/// removes it (its branch stays), each with uncommitted changes kept and its user told once. A conversation that is
+/// there and has not ended ends nothing, and its worktrees' end notice is cleared (restored, a later end tells again).
+/// While a run of it is still at work its worktrees stay (`waitingForRun`): the sweep job ends them once the run has
+/// ended. One worktree that fails is logged, and the others go on.
+fn end_for(context: &Context, conversation: &str) -> Result<Parameters, LibError> {
+    let mut out = Parameters::new();
+    let ended = context
+        .facade
+        .find(CONVERSATION)?
+        .eq("conversationId", Value::string(conversation))
+        .one()?
+        .is_none_or(|row| row.get("statusId").map(moqui_lib::object::to_plain_string).as_deref() == Some(ARCHIVED));
+    let worktrees: Vec<&Root> = context
+        .roots
+        .iter()
+        .filter(|root| root.worktree_of.is_some() && root.conversation_id.as_deref() == Some(conversation))
+        .collect();
+    if !ended {
+        // restored: a later end tells its user again
+        for root in &worktrees {
+            if let Some(mut row) = crate::roots::root_row(&context.facade, &root.path) {
+                moqui_lib::sync::lock(told()).remove(&root.path.display().to_string());
+                if row
+                    .get("worktreeEndedDate")
+                    .is_some_and(|date| !moqui_lib::object::is_empty(date))
+                {
+                    row.set("worktreeEndedDate", Value::Null);
+                    row.update(&context.facade)?;
+                }
+            }
+        }
+        return Ok(out);
+    }
+    // a run still at work in the session keeps its worktree until it ends: the sweep job asks again
+    if !worktrees.is_empty() && run_active(&context.facade, conversation)? {
+        out.insert("waitingForRun".into(), Value::Bool(true));
+        return Ok(out);
+    }
+    let mut removed = Vec::new();
+    let mut kept = Vec::new();
+    for root in worktrees {
+        match end_one(context, root) {
+            Ok(true) => removed.push(Value::string(&root.id)),
+            Ok(false) => kept.push(Value::string(&root.id)),
+            Err(err) => {
+                tracing::error!(
+                    "Dev AIDE: the worktree {} of ended conversation {conversation}: {err}",
+                    root.label
+                );
+                kept.push(Value::string(&root.id));
+            }
+        }
+    }
+    out.insert("removedRootIds".into(), Value::List(removed));
+    out.insert("keptRootIds".into(), Value::List(kept));
+    Ok(out)
+}
+
+/// The worktrees whose user this server told of their end, by location: what the stored `worktreeEndedDate` says,
+/// before its write commits.
+fn told() -> &'static std::sync::Mutex<std::collections::BTreeSet<String>> {
+    static TOLD: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeSet<String>>> = std::sync::OnceLock::new();
+    TOLD.get_or_init(Default::default)
+}
+
+/// The states of a run still at work (`AgentRun` status: submitted, working, or paused for its user).
+const ACTIVE_RUN: [&str; 4] = ["AgrSubmitted", "AgrWorking", "AgrInputRequired", "AgrAuthRequired"];
+
+/// Whether a run of `conversation` is still at work.
+fn run_active(facade: &moqui_core::entity::EntityFacade, conversation: &str) -> Result<bool, LibError> {
+    let active = facade
+        .find("moqui.agent.AgentRun")?
+        .eq("conversationId", Value::string(conversation))
+        .condition(moqui_core::entity::Condition::is_in(
+            "statusId",
+            ACTIVE_RUN.iter().map(|status| Value::string(*status)).collect(),
+        ))
+        .count()?;
+    Ok(active > 0)
+}
+
+/// End one worktree of a conversation that ended: whether it was removed.
+fn end_one(context: &Context, root: &Root) -> Result<bool, LibError> {
+    let main_id = root.worktree_of.as_deref().unwrap_or_default();
+    let main = context.root(main_id)?;
+    // only a session's worktree under runtime/worktrees, as remove#Worktree
+    if !in_worktrees(context.factory.runtime_dir(), &root.path) {
+        return Err(LibError::new(format!("{} is not in runtime/{DIR}", root.label)));
+    }
+    let porcelain = context.git().read(&root.path, &["status", "--porcelain"]).ok();
+    let row = crate::roots::root_row(&context.facade, &root.path);
+    let already_told = row.as_ref().is_some_and(|row| {
+        row.get("worktreeEndedDate")
+            .is_some_and(|date| !moqui_lib::object::is_empty(date))
+    });
+    match ending(porcelain.as_deref(), already_told) {
+        Ending::Remove => {
+            let location = root.path.display().to_string();
+            context
+                .git()
+                .run(&main.path, Mode::Write, &["worktree", "remove", &location], &[], None)?
+                .checked("worktree remove")?;
+            if let Some(row) = row {
+                row.delete(&context.facade)?;
+            }
+            audit_git(
+                context,
+                main,
+                "worktree-remove",
+                json!({ "location": location, "conversationEnded": root.conversation_id }),
+            );
+            Ok(true)
+        }
+        Ending::Keep { tell } => {
+            // two ends heard at once (the rule's and one asked again) tell its user once: the first here marks it
+            let marked = tell && moqui_lib::sync::lock(told()).insert(root.path.display().to_string());
+            if marked {
+                if let Some(mut row) = row {
+                    row.set("worktreeEndedDate", moqui_core::user::now_value());
+                    row.update(&context.facade)?;
+                }
+                let changes = porcelain
+                    .as_deref()
+                    .map_or(0, |text| text.lines().filter(|line| !line.trim().is_empty()).count());
+                tell_kept(root, main, changes);
+            }
+            Ok(false)
+        }
+    }
 }
 
 #[cfg(test)]

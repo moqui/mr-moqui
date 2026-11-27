@@ -1,4 +1,4 @@
-// The service writer and the ECA rules on a dev instance (plans/design-dev-aide.md P7, 9, 10): a service's view with its
+// The service writer and the ECA rules on a dev instance (plans/archive/design-dev-aide.md P7, 9, 10): a service's view with its
 // parameters nested and implied ones marked, Try in sim with the rows it would write and nothing kept, a snippet run in
 // sim, the generated JavaScript of an actions block, and the ECA rules as the framework holds them. Save as spec, Run
 // spec and a site SECA's save are in the host's integration test (crates/moqui-host/tests/it/devaide.rs), which has a
@@ -142,3 +142,176 @@ feature("a Try's log lines come back with it", {
         result.log.some((line) => line.includes("the snippet wrote this line"))
     },
 })
+
+// F14 for services: a Try over an unsaved buffer of ExampleServices.xml that changes greet#WithTool and adds a service
+// that calls it and creates a record
+const EXAMPLE_SERVICES = "component://example/service/example/ExampleServices.xml"
+const bufferedExample = () => {
+    const view = svc("get#ServiceView", { serviceName: "example.ExampleServices.greet#WithTool" }).view
+    const text = ec.resource.getLocationText(EXAMPLE_SERVICES)
+    const buffered = text
+        .replace("<set field=\"text\" from=\"tool.greet(name)\"/>", "<set field=\"text\" from=\"'from the buffer, ' + name\"/>")
+        .replace("</services>", `    <service verb="make" noun="BufferedExample">
+        <in-parameters><parameter name="name"/></in-parameters>
+        <out-parameters><parameter name="text"/><parameter name="exampleId"/></out-parameters>
+        <actions>
+            <service-call name="example.ExampleServices.greet#WithTool" in-map="({ name: name })" out-map="greeted"/>
+            <set field="text" from="greeted.text"/>
+            <service-call name="create#moqui.example.Example" in-map="({ exampleName: text, exampleTypeEnumId: 'EXT_MADE_UP' })" out-map="made"/>
+            <set field="exampleId" from="made.exampleId"/>
+        </actions>
+    </service>
+</services>`)
+    return { text, files: JSON.stringify([{ rootId: view.artifact.rootId, path: view.artifact.relativePath, text: buffered }]) }
+}
+const bufferedRows = () => {
+    ec.artifactExecution.disableAuthz()
+    try {
+        return ec.entity.find("moqui.example.Example").condition("exampleName", "from the buffer, Ann").count()
+    } finally {
+        ec.artifactExecution.enableAuthz()
+    }
+}
+const tryBuffered = (files, trace) => svc("try#Service", { serviceName: "example.ExampleServices.make#BufferedExample",
+    parameters: JSON.stringify({ name: "Ann" }), files, trace }).result
+
+feature("a Try runs a service as its unsaved buffer defines it, and nothing else sees the buffer", {
+    when() {
+        const { text, files } = bufferedExample()
+        const result = tryBuffered(files, true)
+        const view = svc("get#ServiceView", { serviceName: "example.ExampleServices.make#BufferedExample", files }).view
+        ec.artifactExecution.disableAuthz()
+        let normal
+        try {
+            normal = ec.service.sync().name("example.ExampleServices.greet#WithTool").parameters({ name: "Ann" }).call()
+        } finally {
+            ec.artifactExecution.enableAuthz()
+        }
+        return { result, view, normal, defined: ec.service.getServiceDefinition("example.ExampleServices.make#BufferedExample"),
+            kept: bufferedRows(), unchanged: ec.resource.getLocationText(EXAMPLE_SERVICES) == text }
+    },
+    then({ result, view, normal, defined, kept, unchanged }) {
+        !result.failed
+        // the service the buffer defines anew, and the one it changes, which the new one calls in the same file
+        result.out.text == "from the buffer, Ann"
+        result.overlay.services.includes("example.ExampleServices.make#BufferedExample")
+        result.rows.some((row) => row.entity == "moqui.example.Example" && row.action == "create")
+        view.service.inParameters.map((parameter) => parameter.name).join(",") == "name"
+        // a normal call has the file on the disk, the new service is not defined, and the sim kept nothing
+        normal.text != "from the buffer, Ann"
+        defined == null
+        kept == 0
+        unchanged
+    },
+})
+
+feature("a Try's trace answers each element's count and values, and the element that failed", {
+    when() {
+        const { files } = bufferedExample()
+        const failing = JSON.parse(files)
+        failing[0].text = failing[0].text.replace("<set field=\"exampleId\" from=\"made.exampleId\"/>",
+            "<set field=\"exampleId\" from=\"made.exampleId\"/><script>throw new Error('stopped in the buffer')</script>")
+        const ran = tryBuffered(files, true)
+        const failed = tryBuffered(JSON.stringify(failing), true)
+        const untraced = tryBuffered(files, false)
+        // the block of make#BufferedExample's actions: the one with a fourth element
+        const block = (result) => result.trace.blocks.find((block) => String(block.path).endsWith("ExampleServices.xml") && block.elements["3"])
+        return { ran: block(ran), failedBlock: block(failed), failedAt: failed.trace.failed, failure: failed.failed, untraced }
+    },
+    then({ ran, failedBlock, failedAt, failure, untraced }) {
+        ran.elements["0"].count == 1
+        ran.elements["1"].values.text == "from the buffer, Ann"
+        ran.elements["3"].count == 1
+        failedBlock.elements["4"].failed.includes("stopped in the buffer")
+        failedAt.element == "4"
+        failure.includes("stopped in the buffer")
+        untraced.trace == null
+    },
+})
+
+// what a viewer asks of a Try, as the view tier: its refusal, or its result
+const asViewer = (parameters) => {
+    ec.user.internalLoginUser("spec.dev.viewer")
+    try {
+        const answer = svc("try#Service", parameters)
+        return { result: answer?.result, refusal: String(ec.message.getErrorsString() || "") }
+    } catch (error) {
+        return { refusal: String(error) }
+    } finally {
+        ec.message.clearAll()
+        ec.user.internalLoginUser("john.doe")
+    }
+}
+
+feature("a Try over unsaved text, or traced, needs the extend tier", {
+    when() {
+        const { files } = bufferedExample()
+        const name = "example.ExampleServices.greet#WithTool"
+        return { over: asViewer({ serviceName: name, parameters: "{}", files }), traced: asViewer({ serviceName: name, parameters: "{}", trace: true }) }
+    },
+    then({ over, traced }) {
+        over.result == null
+        over.refusal.includes("extend tier")
+        traced.result == null
+        traced.refusal.includes("extend tier")
+    },
+})
+
+feature("a real run over unsaved text is refused", {
+    when() {
+        const { files } = bufferedExample()
+        try {
+            const answer = svc("try#Service", { serviceName: "example.ExampleServices.greet#WithTool", parameters: "{}", files, real: true, confirm: true })
+            return { result: answer?.result, refusal: String(ec.message.getErrorsString() || "") }
+        } catch (error) {
+            return { refusal: String(error) }
+        } finally {
+            ec.message.clearAll()
+        }
+    },
+    then({ result, refusal }) {
+        result == null
+        refusal.includes("runs in the sim only")
+    },
+})
+
+feature("a SECA rule's trigger is not one of Dev AIDE's own writes", {
+    when() {
+        try {
+            const answer = svc("try#Rule", { kind: "seca", target: "org.moqui.devaide.WorkspaceServices.save#File", context: "{}" })
+            return { result: answer?.result, refusal: String(ec.message.getErrorsString() || "") }
+        } catch (error) {
+            return { refusal: String(error) }
+        } finally {
+            ec.message.clearAll()
+        }
+    },
+    then({ result, refusal }) {
+        result == null
+        refusal.includes("the sim cannot hold that")
+    },
+})
+
+// SEC-DEV-81: a development tool that writes the server's files or restarts it never runs in the sim, where no fence
+// would hold it; its reads still do
+feature("a framework development tool that writes or restarts is refused in the sim", {
+    when() {
+        const ask = (serviceName) => {
+            try {
+                const answer = svc("try#Service", { serviceName, parameters: "{}" })
+                return { result: answer?.result, refusal: String(ec.message.getErrorsString() || "") }
+            } catch (error) {
+                return { refusal: String(error) }
+            } finally {
+                ec.message.clearAll()
+            }
+        }
+        return { restart: ask("org.moqui.dev.DevToolsServices.restart#Server"), save: ask("org.moqui.dev.ComponentServices.save#ConfFile") }
+    },
+    then({ restart, save }) {
+        restart.result == null
+        restart.refusal.includes("the sim cannot hold that")
+        save.result == null
+    },
+})
+

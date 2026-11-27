@@ -91,7 +91,9 @@
         //   gatherLabel: an Arrange item that docks every window of the kind (§10.4's Gather);
         //   home(key, float): where the content docks, measured when a drag starts: {rect, edge}, or null for nowhere now. A
         //     window dragged to that edge of the area (left, right, top or bottom; outside the corners), or with no edge onto
-        //     the rect, shows the rect as a Dock outline and docks at the drop, in place of that edge's snap (§15).
+        //     the rect, shows the rect as a Dock outline and docks at the drop, in place of that edge's snap (§15);
+        //   overModal(): true while the kind's window is to be used over a modal dialog (Assist beside a page's dialog): the layer
+        //     goes over the dialogs and the other windows are hidden until it answers false (overKind).
         // Registering again replaces the definition. A kind asks wasFloated(kind, key) and opens itself when it was.
         register(kind, def) {
             floats.load();
@@ -220,6 +222,11 @@
         minimize(id) { const f = floats.get(id); if (!f) return false; f.minimized = true; floats.save(); return true; },
         // whether a window is shown: not hidden and not minimized
         shown(f) { return !!f && !f.hidden && !f.minimized; },
+        // the kind whose window is over the modal dialogs now (its overModal), else null
+        overKind() {
+            if (!floats.state.floats.length) return null;
+            return Object.keys(floats.kinds).find((kind) => typeof floats.kinds[kind].overModal === "function" && floats.kinds[kind].overModal()) || null;
+        },
         topZ() { return floats.state.floats.reduce((top, f) => Math.max(top, f.z || 0), 0); },
         isTop(f) {
             const shown = floats.state.floats.filter((one) => floats.shown(one));
@@ -599,9 +606,14 @@
                 return Object.keys(floats.kinds).filter((kind) => floats.kinds[kind].gatherLabel && this.s.floats.some((f) => f.kind === kind))
                     .map((kind) => ({ kind, label: valueOf(floats.kinds[kind].gatherLabel) }));
             },
-            handheld() { return !!(this.$root && this.$root.handheld); }
+            handheld() { return !!(this.$root && this.$root.handheld); },
+            // a kind's window over a modal dialog (overModal): the layer above the dialogs, and the menus above the layer
+            over() { return floats.overKind(); }
         },
-        watch: { handheld: { immediate: true, handler(on) { floats.setHandheld(on); } } },
+        watch: {
+            handheld: { immediate: true, handler(on) { floats.setHandheld(on); } },
+            over: { immediate: true, handler(kind) { if (root.document && root.document.body) root.document.body.classList.toggle("m-float-over-modal", !!kind); } }
+        },
         methods: {
             arrange(mode, kind) { floats.arrange(mode, kind); },
             restore(id) { floats.focus(id); },
@@ -627,12 +639,13 @@
             }));
         },
         unmounted() {
+            if (root.document && root.document.body) root.document.body.classList.remove("m-float-over-modal");
             root.removeEventListener("resize", this.onResize);
             clearTimeout(this.resizeTimer);
             if (this.keysOff) this.keysOff();
         },
         template:
-            '<div v-if="s.floats.length" class="m-float-layer" data-float-layer>' +
+            '<div v-if="s.floats.length" class="m-float-layer" :class="{\'m-float-layer--over-modal\': !!over}" data-float-layer :data-float-over="over || undefined">' +
                 '<m-float v-for="f in s.floats" :key="f.id" :float="f"></m-float>' +
                 '<div v-if="s.snap" class="m-float-snap" :class="{\'m-float-snap--home\': s.snap.zone === \'home\'}" :style="rectStyle(s.snap.rect)" aria-hidden="true" data-float-snap :data-float-snap-zone="s.snap.zone">' +
                     '<span v-if="s.snap.zone === \'home\'" class="m-float-snap-label">{{labels.dock}}</span></div>' +
@@ -671,8 +684,9 @@
             domId() { return floats.domId(this.float.id); },
             bodyId() { return floats.bodyId(this.float.id); },
             top() { return floats.isTop(this.float); },
-            // hidden or minimized: kept laid out but invisible (visibility, not display), so the content keeps its scroll
-            shown() { return floats.shown(this.float); },
+            // hidden or minimized: kept laid out but invisible (visibility, not display), so the content keeps its scroll; a
+            // window of another kind than the one over a modal dialog waits hidden the same way (its place unchanged)
+            shown() { const over = floats.overKind(); return floats.shown(this.float) && (!over || over === this.float.kind); },
             frame() {
                 const f = this.float;
                 const rect = f.maximized ? this.s.area : f;

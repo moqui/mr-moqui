@@ -117,7 +117,7 @@ fn program_of(command: &str) -> Result<String, Error> {
 }
 
 /// `data` as a credential named `name`, encrypted by `systemd-creds` with the host's TPM2: for a key that must open
-/// while the server is sealed and only on this host (the manager link's key, plans/Vault-Instances.md §4.4).
+/// while the server is sealed and only on this host (the manager link's key, plans/archive/Vault-Instances.md §4.4).
 ///
 /// # Errors
 ///

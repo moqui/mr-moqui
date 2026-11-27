@@ -518,7 +518,7 @@ too (2026-11-17).
 | Web Push | Title, link, topic and tag, encrypted to the browser (RFC 8291). Never the body, but Mantle's `ChatMention` title holds up to 120 characters of the message for a user with previews on (since phase 2 that topic is not pushed by `send#WebPush`). Disabled after 404, 410 or 5 failures in a row. A chat push to a browser is the encrypted chat payload, with TTL, `Urgency` and a `Topic` per room, and retries |
 | FCM | Data messages of kind `ring`, `ringEnded` and `notification`, and since phase 2 `chat` and `clear`. Since phase 2 a device gives its push keys at `register#PushDevice` and a `notification` or chat push carries only `{kind, pushId, enc}` (encrypted, COM-UI-031); a device with no keys gets no text. `send#WebPush` tries three times in the request; the chat outbox retries 429 and 5xx with backoff, jitter and `Retry-After`, at most an hour a wait, 12 tries or the 4-week TTL, and deletes a registration FCM says is gone. Since 2e a ring to a keyed device is sealed too, and the app opens `enc` in Rust (`Native.openPush`) and shows a chat push, a `clear` and a test in Kotlin with no WebView (`ChatNotifications.kt`), then acknowledges it. The registration is tied to the device key |
 | UnifiedPush | Since phase 2: `register#PushDevice` with `provider=unifiedpush` keeps a distributor's endpoint (`PushUnified`, keys required); the worker and `send#WebPush` post the same encrypted payload to it as Web Push. The Android app registers an endpoint per account with its distributor (`org.unifiedpush.android:connector`) and opens its messages with that account's own keys |
-| Order | Since phase 2 the push of a message and the call's ring and its end go after the commit (`registerOnCommit`, COM-UI-032); the mention notification is still stored in the transaction (force-cache), but not pushed |
+| Order | Message pushes, call rings and call-end signals wait for commit. A send or edit that adds a mention also schedules its stored and live ChatMention after commit, for its named recipients (COM-UI-032). |
 | Settings | Room level `CnlAll`, `CnlMentions`, `CnlNone`; `CHAT_NOTIFY_DEFAULT`; `CHAT_NOTIFY_PREVIEW`. A muted room counts and notifies as Mentions (`ChatEntities.xml:107`) |
 | Do not disturb | A server job sets and clears the `dnd` status by the user's hours every 5 minutes (`apply#DndHours`). Since phase 2 the push worker holds a user's chat pushes while the status is `dnd` and sends one summary per room and device when it ends, and a call rings the devices only from a person on the user's allowed list (`CHAT_DND_ALLOWED`, Settings, Chat) or as the same person's or number's second call within 3 minutes, on the apps and the desk and soft phones alike (`filter#RingUsers`). The client still silences toasts and sounds itself (COM-UI-015) |
 | Health | Since phase 2: each device keeps sent, acknowledged and failed counts and its last registration, push and acknowledgement (`ack#Push`, `/qapps/ackClientPush`); System, Push Health lists them, the devices with unacknowledged pushes of the last day first |
@@ -643,7 +643,7 @@ and they keep going when the network gets bad or changes.
 | Media server | `crates/moqui-rtc` on str0m: ICE-lite, DTLS-SRTP, three simulcast layers, TWCC bandwidth estimate, audio before video, audio only below a floor ([WebRTC](../docs/interfaces/WebRTC.md)) |
 | Codecs | Opus with in-band FEC; RED is off (`enable_opus(true, false)`, `sfu/mod.rs:542`) and DTX is not set. VP8 with RTX by str0m's default. Phase 5: RED on, DTX asked by the page (§8.3 item 8) |
 | E2EE | SFrame, per room or per call link, set at the start and never lowered |
-| Start from a chat | One call button in the room header; it rings everyone in the room and always starts with video (`Chat.qvue:807`, `1418`). Phase 4: Voice call and Video call (§8.3 item 1) |
+| Start from a chat | The room header and the compact menu offer Voice call and Video call. A direct call invites the other person. A group call invites eligible members on this server, subject to their call and notification settings (§8.3 item 1). |
 | Ring on Android | FCM high-priority `ring` to `CallManager`; self-managed Android Telecom call (`CallConnectionService`), incoming only; CallStyle notification; full-screen ring over the lock screen; Decline with no WebView ([Mobile-Client](../docs/ui/Mobile-Client.md)). This is MT2 of [Mobile-Desktop](Mobile-Desktop.md), built |
 | Media on Android | The WebView's WebRTC (`WebrootCall.js`). A native audio client is a later item (Mobile-Desktop, MT3's record) |
 | Reconnect | A closed socket keeps its leg for 30 s (`RECONNECT_GRACE_MS`, `Calls.js:45`). When the connection fails the page joins again (`WebrootCall.js:613`); it does not restart ICE. The media server takes a leg's new offer. Phase 5: 60 s, and an ICE restart before a join (§8.3 items 10, 11) |
@@ -1055,7 +1055,7 @@ that adds it. "New" means this plan adds it (§17).
 | Edit and unsend within minutes | Edit, redact | Built |
 | Send later | Scheduled send (§14.2); in an encrypted room by the sender's own device | Designed: phase 15 (§18.3) |
 | Message effects, stickers, GIFs | Sticker packs, local: the server's (an administrator's) and each user's own; PNG, WebP or GIF, animated too; a picker beside the emoji picker; a sticker shows large, and goes to bridges as its picture or as text. GIF search waits for a provider; effects: no | Stickers built: phase 20 (§18.3); GIFs later |
-| Share location, live location | A location message with no map: coordinates or an address, a label, "Open in maps" (`geo:` in the Android app, OpenStreetMap on the web) and Copy; the device's position or a typed place, no geocoding. Bridges get the text with the link; Sinch RCS its location message. Live location waits for the Maps app ([Maps](Maps.md)) | Location built: phase 20 (§18.3); live location after Maps |
+| Share location, live location | A location message with no map: coordinates or an address, a label, "Open in maps" (`geo:` in the Android app, OpenStreetMap on the web) and Copy; the device's position or a typed place, no geocoding. Bridges get the text with the link; Sinch RCS its location message. Live location is [Location-Sharing](archive/Location-Sharing.md) (LL4 for chat), on the Maps app | Location built: phase 20 (§18.3); live location after Maps |
 | Check In (tell a contact you arrived) | Later, on live location | Later |
 | FaceTime audio and video, group FaceTime | WebRTC calls | Built; §8 |
 | Handoff of a call between devices | "Move to this device" | §8 |
@@ -1460,9 +1460,9 @@ cannot make one that shows as another account's; Rust opens `enc` and Kotlin sho
 a ring to a keyed device is sealed too. UnifiedPush is in the app (`org.unifiedpush.android:connector`, an instance per
 account, its messages opened in Rust with the account's same keys, `UnifiedPushService.kt`; Firebase stays unless
 the user switches in the check screen). Left: the battery check finds Android's own optimization
-only, not a maker's task killer; a chat push has no sender avatar; the desktop counts a thread reply at the mentions
-level only when the event names the thread's starter, which the server's events do not yet; UnifiedPush with a real
-distributor on a phone is not tried yet.
+only, not a maker's task killer; a chat push has no sender avatar; UnifiedPush with a real distributor on a phone is
+not tried yet. The desktop's reply notifications, including replies in a thread the user started or wrote in, are
+covered in [the BasicComms P1/P2 dispositions](ui-review-basic-comms.md#com-r02--p1-and-p2-dispositions).
 
 | Step | Work | Files |
 |---|---|---|

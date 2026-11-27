@@ -239,6 +239,8 @@ pub fn media_type(name: &str) -> &'static str {
         "webm" => "video/webm",
         "zip" => "application/zip",
         "gz" => "application/gzip",
+        // a map tile archive, read by range: never compressed, which would lose its byte offsets
+        "pmtiles" => "application/vnd.pmtiles",
         _ => "application/octet-stream",
     }
 }
@@ -259,12 +261,22 @@ fn file_tag(modified: Option<i64>, size: Option<u64>, bytes: Option<&[u8]>) -> S
     }
 }
 
+/// `If-None-Match` by weak comparison (RFC 9110 §8.8.3.2): a list of tags, `*`, a weak tag naming a strong one.
 pub(crate) fn matches_tag(header: &str, tag: &str) -> bool {
     let strip = |text: &str| text.trim().trim_start_matches("W/").to_string();
     let ours = strip(tag);
     header
         .split(',')
         .any(|candidate| candidate.trim() == "*" || strip(candidate) == ours)
+}
+
+/// `If-Range` with an entity tag by strong comparison (RFC 9110 §13.1.5): both tags strong and the same. A weak tag on
+/// either side never matches, nor a date (no `Last-Modified` is sent), so the whole file is sent: a range of another
+/// version is never joined to bytes the client has.
+pub(crate) fn if_range_holds(presented: &str, tag: &str) -> bool {
+    let presented = presented.trim();
+    let strong = |text: &str| text.len() >= 2 && text.starts_with('"') && text.ends_with('"');
+    strong(presented) && strong(tag) && presented == tag
 }
 
 /// The PWA's service worker (`webroot/screen/webroot/sw.js`), served uncached and allowed the site's root scope.
@@ -283,6 +295,11 @@ pub struct Conditional {
 }
 
 impl Conditional {
+    /// Whether the method reads a file: GET or HEAD (none, outside a request, reads).
+    pub(crate) fn is_read(&self) -> bool {
+        matches!(self.method.as_str(), "GET" | "HEAD" | "")
+    }
+
     pub fn of(request: &WebRequest) -> Self {
         Self {
             method: request.method.to_ascii_uppercase(),
@@ -390,18 +407,30 @@ pub fn respond(
 }
 
 /// The response for an opened file, with `headers` (its type and caching): an `ETag` (the content's own tag, else one
-/// from its size and modification time), a 304 for a matching `If-None-Match`, one byte range for `Range` (unless
-/// `If-Range` names another version), no body for `HEAD`. A body over [`INLINE_BODY`] streams.
+/// from its size and modification time), a 304 for a matching `If-None-Match`, one byte range for a GET's `Range`
+/// (unless `If-Range` does not name this version by a strong tag), no body for `HEAD`. A body over [`INLINE_BODY`]
+/// streams.
 pub(crate) fn respond_opened(
+    request: &Conditional,
+    headers: Vec<(String, String)>,
+    opened: &crate::context::Opened,
+) -> Result<(), Error> {
+    respond_tagged(request, headers, opened, None)
+}
+
+/// [`respond_opened`] with `strong_tag` (an `ETag` with its quotes) in place of the source's own: a checksum the caller
+/// recorded for this content ([`crate::web::send_pinned_response`]).
+pub(crate) fn respond_tagged(
     request: &Conditional,
     mut headers: Vec<(String, String)>,
     opened: &crate::context::Opened,
+    strong_tag: Option<String>,
 ) -> Result<(), Error> {
     let source = &opened.source;
     let total = source.len();
     headers.push(("Accept-Ranges".to_string(), "bytes".to_string()));
-    let tag = match source.tag() {
-        Some(tag) => Some(format!("\"{tag}\"")),
+    let tag = match strong_tag.or_else(|| source.tag().map(|tag| format!("\"{tag}\""))) {
+        Some(tag) => Some(tag),
         None if opened.stat.last_modified.is_some() => Some(file_tag(opened.stat.last_modified, Some(total), None)),
         // no version to name, so a small file's content names it
         None if total <= INLINE_BODY => {
@@ -421,14 +450,18 @@ pub(crate) fn respond_opened(
             return Ok(());
         }
     }
-    // One byte range, unless `If-Range` names another version of the file: then the whole file, as for a request
-    // without a range.
-    let range = request.range.as_deref().filter(|_| {
-        request
-            .if_range
-            .as_deref()
-            .is_none_or(|presented| tag.as_deref().is_some_and(|tag| presented.trim() == tag))
-    });
+    // One byte range, unless `If-Range` does not name this version by a strong tag: then the whole file, as for a
+    // request without a range. Only a GET has a range (RFC 9110 §14.2): a HEAD's is ignored, as an unknown method's.
+    let range = request
+        .range
+        .as_deref()
+        .filter(|_| request.method == "GET")
+        .filter(|_| {
+            request
+                .if_range
+                .as_deref()
+                .is_none_or(|presented| tag.as_deref().is_some_and(|tag| if_range_holds(presented, tag)))
+        });
     let (status, start, length) = match range.map(|range| byte_range(range, total)) {
         None | Some(ByteRange::Whole) => (200, 0, total),
         Some(ByteRange::Unsatisfiable) => {
@@ -543,94 +576,5 @@ pub fn respond_bytes(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{is_blocked, matches_tag, media_type, safe_segments};
-
-    fn names(parts: &[&str]) -> Vec<String> {
-        parts.iter().map(|part| (*part).to_string()).collect()
-    }
-
-    #[test]
-    fn traversal_hidden_and_odd_names_are_refused() {
-        assert!(safe_segments(&names(&["css", "moqui-html.css"])));
-        for bad in [
-            &["..", "etc", "passwd"][..],
-            &["css", "..", "..", "x"],
-            &["."],
-            &[".hidden"],
-            &["css", ".git", "config"],
-            &["%2e%2e", "x"],
-            &["css", "%2E%2e", "x"],
-            &["a%2Fb"],
-            &["a%5Cb"],
-            &["a\\b"],
-            &["a%00b"],
-            &[""],
-            &["c:", "x"],
-            &["a%0Ab"],
-        ] {
-            assert!(!safe_segments(&names(bad)), "{bad:?}");
-        }
-        assert!(!safe_segments(&[]));
-    }
-
-    #[test]
-    fn sources_are_blocked_and_assets_are_not() {
-        for name in [
-            "a/Login.xml",
-            "a/x.ftl",
-            "a/Y.html.fancy",
-            "a/z.groovy",
-            "a/CONF.XML",
-            "a/b.properties",
-        ] {
-            assert!(is_blocked(name), "{name}");
-        }
-        for name in ["a/x.css", "a/x.min.js", "a/readme", "a/xml", "a/font.woff2"] {
-            assert!(!is_blocked(name), "{name}");
-        }
-    }
-
-    #[test]
-    fn media_types_name_a_charset_for_text() {
-        assert_eq!(media_type("a.css"), "text/css; charset=UTF-8");
-        assert_eq!(media_type("a.min.js"), "text/javascript; charset=UTF-8");
-        assert_eq!(media_type("a.WOFF2"), "font/woff2");
-        assert_eq!(media_type("favicon.ico"), "image/x-icon");
-        assert_eq!(media_type("noext"), "application/octet-stream");
-    }
-
-    #[test]
-    fn a_range_header_picks_one_span_and_ignores_what_it_cannot_answer() {
-        use super::{byte_range, ByteRange};
-        assert_eq!(byte_range("bytes=0-99", 1000), ByteRange::Span(0, 99));
-        assert_eq!(byte_range("bytes=900-", 1000), ByteRange::Span(900, 999));
-        assert_eq!(byte_range("bytes=990-2000", 1000), ByteRange::Span(990, 999));
-        assert_eq!(byte_range("bytes=-100", 1000), ByteRange::Span(900, 999));
-        assert_eq!(byte_range("bytes=-5000", 1000), ByteRange::Span(0, 999));
-        assert_eq!(byte_range("Bytes = 5-5", 1000), ByteRange::Span(5, 5));
-        assert_eq!(byte_range("bytes=1000-", 1000), ByteRange::Unsatisfiable);
-        assert_eq!(byte_range("bytes=-0", 1000), ByteRange::Unsatisfiable);
-        assert_eq!(byte_range("bytes=0-", 0), ByteRange::Unsatisfiable);
-        for ignored in [
-            "bytes=5-1",
-            "bytes=0-1,5-9",
-            "items=0-1",
-            "bytes=a-b",
-            "bytes=-",
-            "bytes=1",
-            "0-1",
-        ] {
-            assert_eq!(byte_range(ignored, 1000), ByteRange::Whole, "{ignored}");
-        }
-    }
-
-    #[test]
-    fn if_none_match_compares_weakly_and_takes_a_list() {
-        assert!(matches_tag("W/\"a-1\"", "W/\"a-1\""));
-        assert!(matches_tag("\"a-1\"", "W/\"a-1\""));
-        assert!(matches_tag("\"x\", W/\"a-1\"", "W/\"a-1\""));
-        assert!(matches_tag("*", "W/\"a-1\""));
-        assert!(!matches_tag("\"b\"", "W/\"a-1\""));
-    }
-}
+#[path = "static_files_tests.rs"]
+mod tests;

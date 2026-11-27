@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The manager link (plans/Vault-Instances.md §4.4, M2): a managed instance dials its manager's HTTPS port and keeps one
+//! The manager link (plans/archive/Vault-Instances.md §4.4, M2): a managed instance dials its manager's HTTPS port and keeps one
 //! connection open, gRPC on HTTP/2, as the edge link does (`crate::link` has what the two share).
 //!
 //! - **TLS.** ALPN [`ALPN`] (`moqui-manage/1`) on the manager's HTTPS listener ([`accept::Acceptor`]), on a self-signed

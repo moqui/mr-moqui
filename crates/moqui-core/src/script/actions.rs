@@ -85,6 +85,10 @@ impl PreparedActions {
         actions: impl FnOnce() -> std::borrow::Cow<'a, str>,
         source: Option<&moqui_lib::error::SourceLocation>,
     ) -> Result<(), Error> {
+        // a Try's trace runs the traced script, and leaves this cell to the script the text always has
+        if super::trace::active() {
+            return run_traced(&actions(), source);
+        }
         let prepared = match self.0.get() {
             Some(prepared) => prepared,
             None => {
@@ -132,6 +136,13 @@ pub(crate) fn run_actions_at(actions: &str, source: Option<&moqui_lib::error::So
         return Err(Error::new("script source contains a null byte"));
     }
     let _profile = crate::telemetry::profile::span("phase", "actions");
+    if super::trace::active() {
+        if crate::script::preview::skipped() {
+            return Ok(());
+        }
+        let _preview = crate::script::preview::enter_entry()?;
+        return run_traced(actions, source);
+    }
     let mut prepared = generated(actions)?;
     if let Some(file_name) = file_name_of(source) {
         prepared.script = prepared.script.with_file_name(&file_name);
@@ -144,6 +155,40 @@ pub(crate) fn run_actions_at(actions: &str, source: Option<&moqui_lib::error::So
     }
     let _preview = crate::script::preview::enter_entry()?;
     run_prepared(&prepared)
+}
+
+/// A traced run of `actions` (`super::trace`): its script generated with the trace calls, kept apart from the scripts
+/// of normal runs, and no set plan, so every element is counted.
+fn run_traced(actions: &str, source: Option<&moqui_lib::error::SourceLocation>) -> Result<(), Error> {
+    if actions.as_bytes().contains(&0) {
+        return Err(Error::new("script source contains a null byte"));
+    }
+    let mut script = traced_script(actions)?;
+    if let Some(file_name) = file_name_of(source) {
+        script = script.with_file_name(&file_name);
+    }
+    let block = super::trace::Block::enter(source, actions);
+    let _unchecked = super::runtime::WidgetWrap::set(false);
+    let result = super::runtime::eval_script_text(&script)
+        .map_err(|err| with_source_line(err, script.text(), script.file_name()));
+    block.finish(&result);
+    result
+}
+
+/// The traced scripts, by action text: few texts are traced, for a while.
+fn traced_scripts() -> &'static Mutex<super::bounded::BoundedMap<String, ScriptText>> {
+    static SCRIPTS: OnceLock<Mutex<super::bounded::BoundedMap<String, ScriptText>>> = OnceLock::new();
+    SCRIPTS.get_or_init(|| Mutex::new(super::bounded::BoundedMap::with_bytes(256, 8 * 1024 * 1024)))
+}
+
+fn traced_script(xml: &str) -> Result<ScriptText, Error> {
+    if let Some(script) = lock(traced_scripts()).get(xml) {
+        return Ok(script);
+    }
+    let script = ScriptText::new(generated_source_with(xml, false, true)?);
+    let bytes = xml.len() + script.text().len();
+    lock(traced_scripts()).insert_sized(xml.to_string(), script.clone(), bytes);
+    Ok(script)
 }
 
 /// Evaluate a `<condition>` element as `<if>` does. Its children are xml-actions conditions
@@ -169,6 +214,32 @@ pub fn eval_condition_element(xml: &str) -> Result<bool, Error> {
     let script = generated(&combined)?.script;
     // Only the root `actions` macro strips the raw-region marks of multi-line user code.
     super::runtime::eval_condition(&script.text().replace(['\u{1}', '\u{2}'], ""))
+}
+
+/// The JavaScript expression a `<condition>` element (`xml`) is, as [`eval_condition_element`] evaluates it: a rule's
+/// condition written into a spec as `ec.resource.condition(...)` (the Dev AIDE's Save as spec of a gitECA rule).
+///
+/// # Errors
+///
+/// As [`eval_condition_element`], without running anything.
+pub fn condition_source(xml: &str) -> Result<String, Error> {
+    if xml.as_bytes().contains(&0) {
+        return Err(Error::new("script source contains a null byte"));
+    }
+    let root = MNode::parse_text("condition", xml)?;
+    if !root.has_name("condition") {
+        return Err(Error::new(format!(
+            "expected a condition element, found {}",
+            root.name()
+        )));
+    }
+    let mut combined = String::from("<and>");
+    for child in root.child_iter() {
+        combined.push_str(&child.write_string());
+    }
+    combined.push_str("</and>");
+    let source = generated_source_with(&combined, false, false)?;
+    Ok(source.replace(['\u{1}', '\u{2}'], "").trim().to_string())
 }
 
 /// [`eval_condition_element`] for a condition group made once: `<and>` holding the condition macros.
@@ -222,17 +293,28 @@ pub fn check_actions(xml: &str) -> Result<(), Error> {
 }
 
 /// The JavaScript the framework runs for an `<actions>` XML text, as the service writer's Generated view shows it
-/// (plans/design-dev-aide.md 9.2): with `debug`, each statement after a comment naming its element, as
+/// (plans/archive/design-dev-aide.md 9.2): with `debug`, each statement after a comment naming its element, as
 /// `MOQUI_ACTIONS_DEBUG` writes it. Not cached, and not the cache's.
 ///
 /// # Errors
 ///
 /// Returns an error when the XML does not parse or does not generate.
 pub fn generated_source(xml: &str, debug: bool) -> Result<String, Error> {
+    generated_source_with(xml, debug, false)
+}
+
+/// [`generated_source`], and with `trace` the script a traced run runs (`super::trace`): each statement element between
+/// a `__moquiTrace` call that counts it and one that reads the names it set, by its path under the `actions` element.
+/// Without `trace` it is the script a run runs.
+///
+/// # Errors
+///
+/// As [`generated_source`].
+pub fn generated_source_with(xml: &str, debug: bool, trace: bool) -> Result<String, Error> {
     if super::run::in_script() {
-        generate_apart(xml, debug)
+        generate_apart_on(xml, debug, trace)
     } else {
-        generate_with(xml, debug)
+        generate_on(xml, debug, trace)
     }
 }
 
@@ -257,9 +339,9 @@ fn generated(xml: &str) -> Result<Prepared, Error> {
 fn generate(xml: &str) -> Result<String, Error> {
     let debug = std::env::var_os(DEBUG_ENV);
     let source = if super::run::in_script() {
-        generate_apart(xml, debug.is_some())?
+        generate_apart_on(xml, debug.is_some(), false)?
     } else {
-        generate_with(xml, debug.is_some())?
+        generate_on(xml, debug.is_some(), false)?
     };
     if debug.is_some_and(|value| value == "dump") {
         eprintln!("---- generated action script ----");
@@ -270,10 +352,22 @@ fn generate(xml: &str) -> Result<String, Error> {
     Ok(source)
 }
 
-fn generate_with(xml: &str, debug: bool) -> Result<String, Error> {
+fn generate_on(xml: &str, debug: bool, trace: bool) -> Result<String, Error> {
     let root = MNode::parse_text("actions", xml)?;
     reject(&root)?;
-    super::oxide::walker::generate_actions(&root, TEMPLATE_SUPPORT, XML_ACTIONS, debug)
+    super::oxide::walker::generate_actions(&root, TEMPLATE_SUPPORT, XML_ACTIONS, debug, trace)
+}
+
+/// The script of `xml` as a run runs it, untraced.
+#[cfg(test)]
+fn generate_with(xml: &str, debug: bool) -> Result<String, Error> {
+    generate_on(xml, debug, false)
+}
+
+/// [`generate_with`] on the generator thread.
+#[cfg(test)]
+fn generate_apart(xml: &str, debug: bool) -> Result<String, Error> {
+    generate_apart_on(xml, debug, false)
 }
 
 /// The stack of the thread that generates for a running script, as much as the outermost script on a worker has.
@@ -283,6 +377,7 @@ const GENERATOR_STACK: usize = 2 * 1024 * 1024;
 struct Job {
     xml: String,
     debug: bool,
+    trace: bool,
     /// The caller's script deadline, which bounds the generation as it would on the caller's thread.
     deadline: Option<Instant>,
     reply: mpsc::Sender<Result<String, Error>>,
@@ -291,7 +386,7 @@ struct Job {
 /// Generate on a thread of its own. Text first generated inside a script, as the actions of a screen whose definition
 /// loads while a template renders a link to it, would otherwise get only what is left of that script's stack, and the
 /// macros recurse over the XML. Generation is a function of the text alone, so where it runs does not matter.
-fn generate_apart(xml: &str, debug: bool) -> Result<String, Error> {
+fn generate_apart_on(xml: &str, debug: bool, trace: bool) -> Result<String, Error> {
     static GENERATOR: OnceLock<Mutex<mpsc::Sender<Job>>> = OnceLock::new();
     let sender = GENERATOR.get_or_init(|| {
         let (sender, jobs) = mpsc::channel::<Job>();
@@ -303,7 +398,7 @@ fn generate_apart(xml: &str, debug: bool) -> Result<String, Error> {
                     let _deadline = job
                         .deadline
                         .map(|at| DeadlineGuard::new(Some(at.saturating_duration_since(Instant::now()))));
-                    let generated = generate_with(&job.xml, job.debug);
+                    let generated = generate_on(&job.xml, job.debug, job.trace);
                     let _ = job.reply.send(generated);
                 }
             });
@@ -316,6 +411,7 @@ fn generate_apart(xml: &str, debug: bool) -> Result<String, Error> {
     let job = Job {
         xml: xml.to_string(),
         debug,
+        trace,
         deadline: DEADLINE.with(std::cell::Cell::get),
         reply,
     };
@@ -324,7 +420,7 @@ fn generate_apart(xml: &str, debug: bool) -> Result<String, Error> {
         Ok(()) => result
             .recv()
             .unwrap_or_else(|_| Err(Error::new("the XML actions generator thread stopped"))),
-        Err(_) => generate_with(xml, debug),
+        Err(_) => generate_on(xml, debug, trace),
     }
 }
 

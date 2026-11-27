@@ -444,7 +444,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="token" allow-html="any"><description>Refused: a target's token is an item of the environment's
                 vault, never a parameter (kept so a caller that sends one is told, not ignored)</description></parameter>
             <parameter name="instanceEnvironmentId"><description>The managed instances' environment it deploys to, over the
-                manager link (plans/Vault-Instances.md §4.6); an INSTANCE_ADMIN's to name</description></parameter>
+                manager link (plans/archive/Vault-Instances.md §4.6); an INSTANCE_ADMIN's to name</description></parameter>
             <parameter name="vaultId"><description>A target not managed here: the operational vault holding its token
                 item, named by a current member of it (any role) or a VAULT_ADMIN; one the caller is not in is refused as
                 one that does not exist</description></parameter>
@@ -487,7 +487,7 @@ along with this software (see the LICENSE.md file). If not, see
             with the deploy event, so the run check decides as for any run; when it passes the deployment waits for
             decide#GitDeployment if the environment requires approval or no branch rule protects the branch (an
             approval of the run does not count), then the deploy step deploys it: over the manager link to the managed
-            instances of the InstanceEnvironment the environment names (plans/Vault-Instances.md §4.6), else an
+            instances of the InstanceEnvironment the environment names (plans/archive/Vault-Instances.md §4.6), else an
             attestation of the passed run posted to the target's Component-Deploy REST, signed with the token item of
             the environment's vault. A deploy that opens vault items waits for approval unless it has machine access,
             and approving it opens its lease. The branch must be protected or named by the environment's

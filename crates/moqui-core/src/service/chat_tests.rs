@@ -116,6 +116,13 @@ fn row(facade: &EntityFacade, entity: &str, fields: &[(&str, Value)]) {
     row.create(facade).unwrap();
 }
 
+/// Load the framework's own mention topic and search document, as an installation without any add-ons does.
+fn load_chat_setup(facade: &EntityFacade) {
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let data = std::fs::read_to_string(crate::context::framework_dir().join("data/ChatSetupData.xml")).unwrap();
+    crate::entity::load_feed::load_entity_xml_text(facade, "ChatSetupData.xml", &data, &Default::default()).unwrap();
+}
+
 /// Users with these ids, each named by the id with a capital letter.
 fn users(facade: &EntityFacade, ids: &[&str]) {
     for id in ids {
@@ -905,7 +912,7 @@ fn the_timeline_pages_and_applies_edits_redactions_reactions_threads_and_pins() 
 /// a mention's notification leaves out the message text for a user whose CHAT_NOTIFY_PREVIEW is N.
 #[test]
 fn a_member_starts_at_their_default_level_and_a_mention_may_leave_out_the_text() {
-    let (ctx, facade, dir) = setup("defaults", crate::service::ServicePools::idle());
+    let (ctx, facade, dir) = setup("defaults", crate::service::ServicePools::inline());
     let _entered = ctx.enter();
     install(&dir);
     users(&facade, &["dla", "dlb", "dlc", "dld"]);
@@ -925,18 +932,7 @@ fn a_member_starts_at_their_default_level_and_a_mention_may_leave_out_the_text()
             ],
         );
     }
-    row(
-        &facade,
-        "moqui.security.user.NotificationTopic",
-        &[
-            ("topic", text("ChatMention")),
-            ("persistOnSend", text("Y")),
-            (
-                "titleTemplate",
-                text("${authorName} mentioned you in ${roomName}: ${summary}"),
-            ),
-        ],
-    );
+    load_chat_setup(&facade);
     let level = |room: &str, user: &str| {
         let _authz = ctx.disable_authz();
         facade
@@ -969,6 +965,7 @@ fn a_member_starts_at_their_default_level_and_a_mention_may_leave_out_the_text()
         &team,
         r#"<p>secret plan <span data-mention-id="dlc">@Dlc</span> <span data-mention-id="dld">@Dld</span></p>"#,
     );
+    ctx.factory().run_pending();
     let _authz = ctx.disable_authz();
     let title_of = |user: &str| {
         let users = facade
@@ -1000,27 +997,171 @@ fn a_member_starts_at_their_default_level_and_a_mention_may_leave_out_the_text()
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A send or an edit adding a mention notifies only its recipients, and only after its own transaction commits.
+#[test]
+fn mentions_wait_for_the_send_or_edit_to_commit() {
+    let (ctx, facade, dir) = setup("mention-commit", crate::service::ServicePools::inline());
+    let _entered = ctx.enter();
+    install(&dir);
+    // The process-wide socket bus deduplicates persisted messages by id, across the tests’ isolated databases.
+    facade.temp_set_sequenced_id_primary("moqui.security.user.NotificationMessage", 3_200_000, 10);
+    let ids = ["mt-author", "mt-preview", "mt-private", "mt-added", "mt-outside"];
+    users(&facade, &ids);
+    load_chat_setup(&facade);
+    preference(&facade, "mt-private", "CHAT_NOTIFY_PREVIEW", "N");
+    for subscriber in ["mt-private", "mt-outside"] {
+        row(
+            &facade,
+            "moqui.security.user.NotificationTopicUser",
+            &[
+                ("topic", text("ChatMention")),
+                ("userId", text(subscriber)),
+                ("allNotifications", text("Y")),
+            ],
+        );
+    }
+    login("mt-author");
+    let chat = room("private", "Mention commit", &ids[1..4]);
+    let tape = Tape::start(&ids);
+    let tx = facade.default_transactions().unwrap();
+    let stored = || {
+        let _authz = ctx.disable_authz();
+        let rows = facade
+            .find("moqui.security.user.NotificationMessageUser")
+            .unwrap()
+            .list()
+            .unwrap();
+        sorted(
+            rows.iter()
+                .map(|row| to_plain_string(row.get("userId").unwrap()))
+                .collect(),
+        )
+    };
+    let notice_count = || {
+        let _authz = ctx.disable_authz();
+        facade
+            .find("moqui.security.user.NotificationMessage")
+            .unwrap()
+            .eq("topic", text("ChatMention"))
+            .count()
+            .unwrap()
+    };
+    let original = r#"<p>private text <span data-mention-id="mt-preview">@Preview</span> <span data-mention-id="mt-private">@Private</span></p>"#;
+    let update = r#"<p>edited text <span data-mention-id="mt-preview">@Preview</span> <span data-mention-id="mt-private">@Private</span> <span data-mention-id="mt-added">@Added</span></p>"#;
+    let mut seq = 0;
+    for (editing, commit) in [(false, false), (false, true), (true, false), (true, true)] {
+        let before = stored();
+        let previous_notices = notice_count();
+        let result = tx.run(crate::transaction::TransactionAttribute::UseOrBegin, None, || {
+            if editing {
+                ok(
+                    "edit#Message",
+                    &[
+                        ("chatRoomId", text(&chat)),
+                        ("eventSeq", int(seq)),
+                        ("body", text(update)),
+                    ],
+                );
+            } else {
+                seq = send(&chat, original);
+            }
+            assert!(tape.take("ChatMention").is_empty(), "no live notice before commit");
+            if commit {
+                Ok(())
+            } else {
+                Err(moqui_lib::error::Error::new("roll back the mention"))
+            }
+        });
+        assert_eq!(result.is_ok(), commit);
+        ctx.factory().run_pending();
+        let notices = tape.take("ChatMention");
+        assert_eq!(notice_count(), previous_notices + notices.len() as i64);
+        if !commit {
+            assert!(notices.is_empty(), "{notices:?}");
+            assert_eq!(stored(), before);
+        } else if editing {
+            assert_eq!(stored(), ["mt-added", "mt-preview", "mt-private"]);
+            assert_eq!(notices.len(), 1, "{notices:?}");
+            assert_eq!(notices[0].1, ["mt-added"]);
+            assert_eq!(notices[0].2["eventSeq"], seq);
+            assert!(notices[0].2["summary"].as_str().unwrap().contains("edited text"));
+        } else {
+            assert_eq!(stored(), ["mt-preview", "mt-private"]);
+            assert_eq!(notices.len(), 2, "{notices:?}");
+            assert!(notices
+                .iter()
+                .any(|(_, to, body)| to == &["mt-private"] && body.get("summary").is_none()));
+            assert!(notices.iter().any(
+                |(_, to, body)| to == &["mt-preview"] && body["summary"].as_str().unwrap().contains("private text")
+            ));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The original message's timer protects its edited text even after the room turns the timer off.
+#[test]
+fn a_disappearing_messages_edit_keeps_its_text_out_of_mentions() {
+    let (ctx, facade, dir) = setup("mention-expiry", crate::service::ServicePools::inline());
+    let _entered = ctx.enter();
+    facade.temp_set_sequenced_id_primary("moqui.security.user.NotificationMessage", 3_200_100, 10);
+    users(&facade, &["expiry-author", "expiry-reader"]);
+    load_chat_setup(&facade);
+    login("expiry-author");
+    let chat = room("private", "Timer", &["expiry-reader"]);
+    let timer = |seconds| {
+        ok(
+            "org.moqui.chat.ChatExpiryServices.set#RoomTimer",
+            &[("chatRoomId", text(&chat)), ("seconds", int(seconds))],
+        )
+    };
+    timer(300);
+    let seq = send(&chat, "<p>Temporary</p>");
+    timer(0);
+    let tape = Tape::start(&["expiry-reader"]);
+    ok(
+        "edit#Message",
+        &[
+            ("chatRoomId", text(&chat)),
+            ("eventSeq", int(seq)),
+            (
+                "body",
+                text(r#"<p>Temporary secret <span data-mention-id="expiry-reader">@Reader</span></p>"#),
+            ),
+        ],
+    );
+    ctx.factory().run_pending();
+    let live = tape.take("ChatMention");
+    assert_eq!(live.len(), 1);
+    assert_eq!(live[0].2["eventSeq"], seq);
+    assert!(live[0].2.get("summary").is_none());
+    let _authz = ctx.disable_authz();
+    let stored = facade
+        .find("moqui.security.user.NotificationMessage")
+        .unwrap()
+        .eq("topic", text("ChatMention"))
+        .one()
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored.get("titleText").unwrap().as_str(),
+        Some("Expiry-author mentioned you in Timer")
+    );
+    let payload: serde_json::Value =
+        serde_json::from_str(stored.get("messageJson").unwrap().as_str().unwrap()).unwrap();
+    assert_eq!(payload, live[0].2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Unread and mention counts: messages from others after the read marker, mentions among them, by notification level;
 /// a mention is notified on ChatMention unless the level is none; a redaction takes its mention back.
 #[test]
 fn unread_and_mention_counts_follow_the_read_marker_and_the_notification_level() {
-    let (ctx, facade, dir) = setup("unread", crate::service::ServicePools::idle());
+    let (ctx, facade, dir) = setup("unread", crate::service::ServicePools::inline());
     let _entered = ctx.enter();
     install(&dir);
     users(&facade, &["una", "unb", "unc", "und"]);
-    row(
-        &facade,
-        "moqui.security.user.NotificationTopic",
-        &[
-            ("topic", text("ChatMention")),
-            ("persistOnSend", text("Y")),
-            ("showAlert", text("Y")),
-            (
-                "titleTemplate",
-                text("${authorName} mentioned you in ${roomName}: ${summary}"),
-            ),
-        ],
-    );
+    load_chat_setup(&facade);
     login("una");
     let chat = room("private", "Counts", &["unb", "unc"]);
     send(&chat, "<p>one</p>");
@@ -1039,6 +1180,7 @@ fn unread_and_mention_counts_follow_the_read_marker_and_the_notification_level()
     // und is not a member of the private room: not mentioned there
     assert_eq!(out_number(&counts("und"), "mentions"), 0);
     let notified = |user: &str| {
+        ctx.factory().run_pending();
         let _authz = ctx.disable_authz();
         facade
             .find("moqui.security.user.NotificationMessageUser")
@@ -1222,6 +1364,25 @@ fn pushes_go_only_to_the_room_members_and_only_after_the_commit() {
         && message["action"] == "joined"));
     tape.clear();
 
+    // A topic subscriber outside the room must receive none of its signals. A member subscribed to the whole
+    // topic still receives only their own copy when the server splits a personal reply from the ordinary event.
+    let room_topic = format!("chatRoom:{chat}");
+    row(
+        &facade,
+        "moqui.security.user.NotificationTopic",
+        &[("topic", text(&room_topic)), ("receiveNotifications", text("Y"))],
+    );
+    for subscriber in ["psb", "psc"] {
+        row(
+            &facade,
+            "moqui.security.user.NotificationTopicUser",
+            &[
+                ("topic", text(&room_topic)),
+                ("userId", text(subscriber)),
+                ("allNotifications", text("Y")),
+            ],
+        );
+    }
     let seq = send(&chat, "<p>for members</p>");
     let pushed = tape.take("chatRoom:");
     assert_eq!(pushed.len(), 1, "{pushed:?}");
@@ -1263,6 +1424,24 @@ fn pushes_go_only_to_the_room_members_and_only_after_the_commit() {
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0].1, ["psa"]);
     assert_eq!(receipts[0].2["userId"], "psb");
+
+    ok(
+        "send#Message",
+        &[
+            ("chatRoomId", text(&chat)),
+            ("body", text("<p>reply</p>")),
+            ("replyToEventSeq", int(seq)),
+        ],
+    );
+    let replies = tape.take("chatRoom:");
+    assert_eq!(replies.len(), 2, "{replies:?}");
+    let personal_replies = replies.iter().filter(|(_, _, message)| message["event"]["replyForViewer"] == true);
+    assert_eq!(personal_replies.count(), 1);
+    for (sub_topic, routed, message) in replies {
+        assert_eq!(sub_topic, room_topic);
+        let for_viewer = message["event"]["replyForViewer"].as_bool().unwrap();
+        assert_eq!(routed, [if for_viewer { "psa" } else { "psb" }]);
+    }
 
     // a stranger gets none of it
     assert!(tape
@@ -1360,7 +1539,7 @@ fn a_user_that_fails_the_presence_batch_leaves_the_others_published() {
 
 #[test]
 fn presence_follows_the_heartbeat_the_status_and_its_clear_at_time() {
-    let (ctx, facade, dir) = setup("presence", crate::service::ServicePools::idle());
+    let (ctx, facade, dir) = setup("presence", crate::service::ServicePools::inline());
     let _entered = ctx.enter();
     install(&dir);
     users(&facade, &["pra", "prb"]);
@@ -1465,6 +1644,7 @@ fn presence_follows_the_heartbeat_the_status_and_its_clear_at_time() {
     login("prb");
     let pair = room("direct", "", &["pra"]);
     send(&pair, r#"<p>ping <span data-mention-id="pra">@Pra</span></p>"#);
+    ctx.factory().run_pending();
     {
         let _authz = ctx.disable_authz();
         let rows = facade
@@ -1543,12 +1723,7 @@ fn the_search_document_and_the_search_by_membership() {
     let (ctx, facade, dir) = setup("search", crate::service::ServicePools::idle());
     let _entered = ctx.enter();
     install(&dir);
-    {
-        let _authz = ctx.disable_authz();
-        let data = std::fs::read_to_string(crate::context::framework_dir().join("data/ChatSetupData.xml")).unwrap();
-        crate::entity::load_feed::load_entity_xml_text(&facade, "ChatSetupData.xml", &data, &Default::default())
-            .unwrap();
-    }
+    load_chat_setup(&facade);
     users(&facade, &["sea", "seb", "sec", "sed"]);
     login("sea");
     let team = room("private", "Team", &["seb"]);
@@ -2839,7 +3014,7 @@ fn retention_deletes_each_rooms_old_events() {
 /// that user: notified, with no room count. One who may not see it is not mentioned.
 #[test]
 fn a_record_rooms_mention_reaches_a_non_member_who_may_see_the_record() {
-    let (ctx, facade, dir) = setup("record-mention", crate::service::ServicePools::idle());
+    let (ctx, facade, dir) = setup("record-mention", crate::service::ServicePools::inline());
     let _entered = ctx.enter();
     install(&dir);
     users(&facade, &["rma", "rmseer", "rmblind"]);
@@ -2925,6 +3100,7 @@ fn a_record_rooms_mention_reaches_a_non_member_who_may_see_the_record() {
     };
     assert_eq!(mentions(&sent), ["rmseer"]);
     let notified = |user: &str| {
+        ctx.factory().run_pending();
         let _authz = ctx.disable_authz();
         facade
             .find("moqui.security.user.NotificationMessageUser")

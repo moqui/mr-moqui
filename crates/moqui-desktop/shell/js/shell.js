@@ -14,6 +14,12 @@
     "use strict";
     const host = window.moquiDesktop;
     const qvt = moqui.qvt;
+    fetch("/libs/fonts-extra/installed.json").then(response => response.json()).then(packs => {
+        for (const pack of packs) {
+            if (pack !== "excalidraw-cjk" && /^[a-z0-9-]+$/.test(pack))
+                moqui.loadStylesheet("/libs/fonts-extra/" + pack + "/" + pack + ".css");
+        }
+    }).catch(error => console.warn("Could not load installed font packs", error));
 
     // the config until the server's: the runtime build, so loadComponent asks for nothing it cannot make
     moqui.config = { qvt: { build: "runtime", handles: ["static-template"] } };

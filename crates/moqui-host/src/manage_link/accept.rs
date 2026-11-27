@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The manager's end of the manager link (plans/Vault-Instances.md §4.4), with the `instances` feature: the HTTPS
+//! The manager's end of the manager link (plans/archive/Vault-Instances.md §4.4), with the `instances` feature: the HTTPS
 //! listener's hand-off of ALPN `moqui-manage/1` ([`Acceptor`]), and the registry of linked instances by `AppInstance`,
 //! with each one's generation, last status and Serve stream, through which [`ManagerServer::call`] runs a command on
 //! it. The rules on the rows are `moqui_instance::link`'s.
@@ -209,6 +209,24 @@ impl std::fmt::Debug for ManagerServer {
 #[derive(Default)]
 struct Kept(Mutex<Option<Arc<ManagerServer>>>);
 
+/// The manager's acceptor on a factory, for a link that reaches it other than on the HTTPS listener: a passthrough
+/// tunnel its edge node sends down the edge link ([`acceptor_of`]).
+#[derive(Default)]
+struct KeptAcceptor(Mutex<Option<Arc<Acceptor>>>);
+
+/// The manager's acceptor of `factory`, when its HTTPS listener takes manager links: for a manager behind a firewall,
+/// which its instances reach at a passthrough host name of its edge node (plans/archive/Vault-Instances.md §4.4).
+#[cfg_attr(not(feature = "edge"), allow(dead_code))]
+pub(crate) fn acceptor_of(factory: &ExecutionContextFactory) -> Option<Arc<Acceptor>> {
+    lock(&factory.extension(|_| KeptAcceptor::default()).0).clone()
+}
+
+/// The bytes under a link connection's TLS: a TCP connection to the HTTPS listener, or a passthrough tunnel the
+/// manager's edge node sent down its edge link.
+pub(crate) trait ManageStream: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static {}
+
+impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> ManageStream for S {}
+
 /// The manager's server of `factory`, when its HTTPS listener takes manager links.
 pub(crate) fn server_of(factory: &ExecutionContextFactory) -> Option<Arc<ManagerServer>> {
     lock(&factory.extension(|_| Kept::default()).0).clone()
@@ -313,10 +331,12 @@ pub(crate) fn acceptor(
         shutdown,
     });
     *lock(&factory.extension(|_| Kept::default()).0) = Some(Arc::clone(&server));
-    Some(Arc::new(Acceptor {
+    let acceptor = Arc::new(Acceptor {
         tls: Arc::new(tls),
         server,
-    }))
+    });
+    *lock(&factory.extension(|_| KeptAcceptor::default()).0) = Some(Arc::clone(&acceptor));
+    Some(acceptor)
 }
 
 impl Acceptor {
@@ -350,8 +370,27 @@ impl Acceptor {
     }
 
     /// Serve a link connection until it closes.
-    pub(crate) async fn serve(&self, stream: TlsStream<TcpStream>, remote: SocketAddr) {
+    pub(crate) async fn serve<S: ManageStream>(&self, stream: TlsStream<S>, remote: SocketAddr) {
         Arc::clone(&self.server).serve(stream, remote).await;
+    }
+
+    /// A link connection that came down a passthrough tunnel, its ClientHello read (`accepted`, which offered
+    /// `moqui-manage/1`): the link's handshake, then served as on the listener, from `remote`, the instance's address
+    /// the tunnel's PROXY header named. `limit` bounds the handshake.
+    #[cfg_attr(not(feature = "edge"), allow(dead_code))]
+    pub(crate) async fn serve_passthrough<S: ManageStream>(
+        &self,
+        accepted: rustls::server::Accepted,
+        stream: S,
+        remote: SocketAddr,
+        limit: Duration,
+    ) {
+        let start = tokio_rustls::StartHandshake::from_parts(accepted, stream);
+        match tokio::time::timeout(limit, start.into_stream(Arc::clone(&self.tls))).await {
+            Ok(Ok(stream)) => self.serve(stream, remote).await,
+            Ok(Err(err)) => tracing::debug!("manager link through the edge node from {remote}: TLS failed: {err}"),
+            Err(_) => tracing::debug!("manager link through the edge node from {remote}: TLS timed out"),
+        }
     }
 }
 
@@ -449,7 +488,7 @@ impl ManagerServer {
         true
     }
 
-    async fn serve(self: Arc<Self>, mut stream: TlsStream<TcpStream>, remote: SocketAddr) {
+    async fn serve<S: ManageStream>(self: Arc<Self>, mut stream: TlsStream<S>, remote: SocketAddr) {
         let fingerprint = stream
             .get_ref()
             .1
@@ -500,7 +539,12 @@ impl ManagerServer {
         }
     }
 
-    async fn serve_up(self: Arc<Self>, mut stream: TlsStream<TcpStream>, remote: SocketAddr, fingerprint: String) {
+    async fn serve_up<S: ManageStream>(
+        self: Arc<Self>,
+        mut stream: TlsStream<S>,
+        remote: SocketAddr,
+        fingerprint: String,
+    ) {
         let lookup = fingerprint.clone();
         let linked = self
             .on_pool(move |facade| moqui_instance::link::linked(facade, &lookup))
@@ -577,9 +621,9 @@ impl ManagerServer {
 
     /// Serve the `Manager` service on a connection until it ends, `closed` signals (with the time its Hello must come
     /// in), the listener stops, or a pairing connection's time is up.
-    async fn serve_h2(
+    async fn serve_h2<S: ManageStream>(
         self: Arc<Self>,
-        stream: TlsStream<TcpStream>,
+        stream: TlsStream<S>,
         conn: Arc<Conn>,
         closed: Option<(watch::Receiver<bool>, Duration)>,
         lifetime: Option<Duration>,
@@ -802,7 +846,7 @@ impl ManagerServer {
     }
 
     /// The instance's recovery bundle over its link, deposited as an operational item when it is not the one deposited
-    /// last (the first time, and after a rekey or rotate-root; plans/Vault-Instances.md §4.5): in the background, once
+    /// last (the first time, and after a rekey or rotate-root; plans/archive/Vault-Instances.md §4.5): in the background, once
     /// its Serve stream is up; a failure is logged.
     fn deposit_bundle(self: Arc<Self>, instance: &str) {
         let instance = instance.to_string();
@@ -908,7 +952,7 @@ impl ManagerServer {
         }
         if kind.needs_verified_unseal() && !verified {
             return Err(format!(
-                "AppInstance {instance} says it is unsealed, and this manager neither unsealed it on this link nor had it prove it holds its root key: {} waits, taken as sealed (plans/Vault-Instances.md §4.4)",
+                "AppInstance {instance} says it is unsealed, and this manager neither unsealed it on this link nor had it prove it holds its root key: {} waits, taken as sealed (plans/archive/Vault-Instances.md §4.4)",
                 kind.name()
             ));
         }
@@ -1036,7 +1080,7 @@ impl Manager for Service {
         let schema_hash = status.schema_hash.clone();
         self.server
             .on_pool(move |facade| {
-                // its cluster's live members, which Monitor compares (plans/Vault-Instances.md §4.8)
+                // its cluster's live members, which Monitor compares (plans/archive/Vault-Instances.md §4.8)
                 moqui_instance::monitor::note_members(facade, &instance, &members);
                 // the schema a deploy records before it and a rollback compares (M3)
                 moqui_instance::link::note_schema(facade, &instance, &schema_hash);

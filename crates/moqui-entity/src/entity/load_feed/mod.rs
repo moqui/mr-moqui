@@ -46,11 +46,14 @@ pub use check::{
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use eca::add_eca_rules;
-pub use eca::{eca_rule_count, eca_rules, first_condition, is_security_check, match_rules, reload_eca_rules, EcaRule};
+pub use eca::{
+    eca_rule_count, eca_rules, first_condition, is_security_check, match_rules, reload_eca_rules,
+    reload_eca_rules_with, EcaRule,
+};
 pub(crate) use eca::{match_rules_with, EcaIndex};
 pub(super) use feed::clear_frame_touches;
 pub use feed::register_feed_insert;
-pub(crate) use feed::{feed_keeps_values, feed_wants_old, note_touch};
+pub(crate) use feed::{feed_keeps_values, feed_wants_old, note_creates, note_touch};
 pub use loader::{
     convert_entity_fields, is_restricted_entity, load_entity_data, load_entity_text, load_entity_xml_text,
     location_in_components, seed_load_running,
@@ -113,14 +116,26 @@ pub struct LoadOptions {
     pub csv_quote_char: Option<char>,
     /// Java `messageNoActionFiles(false)`: a check names only the files that gave messages.
     pub hide_no_action_files: bool,
+    /// Each write waits for its result instead of being pipelined, so a record the database refuses (a foreign key
+    /// it does not find) fails at that record, which the error names: for a request-sized text (Tools' Data Load),
+    /// not a large file (TOOL-UI-005).
+    pub wait_each_write: bool,
 }
 
 /// How many entity records were written. Data-file service calls are not included.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LoadResult {
     pub records: u64,
-    /// Files of a directory location that failed, were logged and skipped.
-    pub failed_files: u64,
+    /// Files of a directory location that failed, were logged and skipped, each with its reason, so a caller can name
+    /// them to whoever asked for the load (TOOL-UI-006).
+    pub failures: Vec<LoadFailure>,
+}
+
+/// A file or location that failed to load: where it is and why, as [`error_chain`] gives it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoadFailure {
+    pub location: String,
+    pub reason: String,
 }
 
 /// The error and its sources, as Java logs `t` and `t.getCause()`.
@@ -155,7 +170,31 @@ fn with_load_slot_read<R>(facade: &EntityFacade, body: impl FnOnce(&LoadSlot) ->
     facade.with_slot_read(LoadSlot::default, body)
 }
 
-/// Service elements the loader has read, in order. They were called as they were read.
+/// The most service elements [`data_file_services`] keeps: the last ones read.
+const KEPT_SERVICES: usize = 256;
+
+/// Keep a service element as [`data_file_services`] answers it: the newest [`KEPT_SERVICES`] only, so the list does not
+/// grow with every load for the life of the process, and a parameter named like a secret (a seed call's password) as
+/// `***` (SEC-DAT-96).
+pub(super) fn keep_service(kept: &mut Vec<DataFileService>, service: &DataFileService) {
+    let mut service = service.clone();
+    for (name, value) in &mut service.parameters {
+        let lower = name.to_ascii_lowercase();
+        let secret = ["password", "secret", "token", "credential"]
+            .iter()
+            .any(|word| lower.contains(word))
+            || lower.ends_with("key");
+        if secret {
+            *value = "***".to_string();
+        }
+    }
+    if kept.len() >= KEPT_SERVICES {
+        kept.drain(..=kept.len() - KEPT_SERVICES);
+    }
+    kept.push(service);
+}
+
+/// Service elements the loader has read, in order, the newest [`KEPT_SERVICES`]. They were called as they were read.
 pub fn data_file_services(facade: &EntityFacade) -> Vec<DataFileService> {
     with_load_slot(facade, |slot| slot.services.clone())
 }
@@ -179,4 +218,36 @@ pub fn conf_data_locations(facade: &EntityFacade) -> Result<Vec<String>, Error> 
         }
     }
     Ok(locations)
+}
+
+#[cfg(test)]
+mod kept_services_tests {
+    /// SEC-DAT-96: the service elements kept are the newest few, a secret-named parameter as `***`.
+    #[test]
+    fn service_elements_are_kept_bounded_and_without_secrets() {
+        let mut kept = Vec::new();
+        for at in 0..super::KEPT_SERVICES + 10 {
+            let service = super::DataFileService {
+                name: format!("create#Thing{at}"),
+                location: "seed.xml".to_string(),
+                parameters: [
+                    ("thingId".to_string(), at.to_string()),
+                    ("newPassword".to_string(), "hunter2".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+            };
+            super::keep_service(&mut kept, &service);
+        }
+        assert_eq!(kept.len(), super::KEPT_SERVICES);
+        assert_eq!(
+            kept.last().unwrap().name,
+            format!("create#Thing{}", super::KEPT_SERVICES + 9)
+        );
+        assert!(kept.iter().all(|service| service.parameters["newPassword"] == "***"));
+        assert_eq!(
+            kept.last().unwrap().parameters["thingId"],
+            (super::KEPT_SERVICES + 9).to_string()
+        );
+    }
 }

@@ -1,0 +1,11 @@
+[
+  {
+    "t": "component",
+    "id": "MapsBrowseMap",
+    "name": "map",
+    "props": {
+      "source": "terminalMap"
+    }
+  },
+  {"t": "dynamicContainer", "id": "MapsLocationShares", "url": ${JSON.stringify(sri.buildUrl('../LocationSharesTui').getUrlWithParams())}}
+]

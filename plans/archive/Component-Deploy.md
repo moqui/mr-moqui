@@ -374,7 +374,7 @@ lands.
   screen, service, SIGHUP), and the table of conf units by class.
 - **Updates:**
   - `docs/Run-Deploy.md:1263` (component set) and its conf section;
-  - `plans/design-dev-aide.md` §4.7 and §6.5 (restart banner);
+  - `plans/archive/design-dev-aide.md` §4.7 and §6.5 (restart banner);
   - `docs/security/Attack-Surface.md` (the deploy surface);
   - the stale relink note in the `reload.rs` module doc.
 

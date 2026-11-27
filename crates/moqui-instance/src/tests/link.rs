@@ -12,12 +12,10 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! M2's rules on the manager's rows (plans/Vault-Instances.md §6): a pairing token or code works once, in time, for its
+//! M2's rules on the manager's rows (plans/archive/Vault-Instances.md §6): a pairing token or code works once, in time, for its
 //! instance only, and pins the instance's link key and its environment's approvers; a key not pinned is not linked; a
 //! code is made only for INSTANCE_ADMIN; and SSH, the other transport, runs only operator commands with the key in a
 //! file of its own and the value on standard input.
-
-use std::os::unix::fs::PermissionsExt as _;
 
 use serde_json::json;
 use sha2::Digest as _;
@@ -161,7 +159,9 @@ fn a_pairing_code_is_made_for_instance_admin_only_and_pairs_once() {
 
 #[test]
 fn ssh_runs_only_operator_commands_with_its_key_in_a_file_of_its_own_and_the_value_on_stdin() {
-    use crate::ssh::{remote_command, run, SshCommand, SshTarget};
+    #[cfg(unix)]
+    use crate::ssh::run;
+    use crate::ssh::{remote_command, SshCommand, SshTarget};
     assert_eq!(
         remote_command(&SshCommand::Status).unwrap(),
         "'moqui' 'operator' 'status'"
@@ -185,84 +185,89 @@ fn ssh_runs_only_operator_commands_with_its_key_in_a_file_of_its_own_and_the_val
         assert!(remote_command(&bad).is_err(), "{name:?}");
     }
 
-    // a stub ssh records its arguments, the key file's mode and its standard input
-    let dir = std::env::temp_dir().join(format!("moqui-ssh-test-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let stub = dir.join("ssh");
-    std::fs::write(
-        &stub,
-        format!(
-            "#!/bin/sh\nout='{}'\necho \"$@\" > \"$out/args\"\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = -i ]; then \
+    // a stub ssh records its arguments, the key file's mode and its standard input; it is a shell script
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = std::env::temp_dir().join(format!("moqui-ssh-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let stub = dir.join("ssh");
+        std::fs::write(
+            &stub,
+            format!(
+                "#!/bin/sh\nout='{}'\necho \"$@\" > \"$out/args\"\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = -i ]; then \
              ls -l \"$2\" > \"$out/key\"; echo \"$2\" > \"$out/keypath\"; fi\n  shift\ndone\ncat > \"$out/stdin\"\n\
              echo ok\n",
-            dir.display()
-        ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let target = SshTarget {
-        host: "box.example".to_string(),
-        port: 2222,
-        user: "moqui".to_string(),
-        host_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample".to_string(),
-    };
-    let printed = run(&stub.display().to_string(), &target, b"PRIVATE KEY", &put).unwrap();
-    assert_eq!(printed.trim(), "ok");
-    let args = std::fs::read_to_string(dir.join("args")).unwrap();
-    // no conf file and no known host but the pinned one; the user by -l, and the host after `--`
-    for expected in [
-        "-F /dev/null",
-        "StrictHostKeyChecking=yes",
-        "GlobalKnownHostsFile=/dev/null",
-        "-l moqui -- box.example 'moqui'",
-    ] {
-        assert!(args.contains(expected), "{expected}: {args}");
-    }
-    assert!(!args.contains("the value") && !args.contains("PRIVATE KEY"), "{args}");
-    assert!(std::fs::read_to_string(dir.join("key"))
-        .unwrap()
-        .starts_with("-rw-------"));
-    assert_eq!(std::fs::read_to_string(dir.join("stdin")).unwrap(), "the value\n");
-    let key_path = std::fs::read_to_string(dir.join("keypath")).unwrap();
-    assert!(
-        !std::path::Path::new(key_path.trim()).exists(),
-        "the key file outlived the call"
-    );
-
-    // what ssh would read as an option, or what would add a line to the pinned known_hosts file, is refused before ssh
-    // runs
-    let calls = std::fs::read_to_string(dir.join("args")).unwrap();
-    for (host, user, key) in [
-        ("-oProxyCommand=touch /tmp/x", "moqui", "ssh-ed25519 AAAA"),
-        ("box.example", "-oProxyCommand=x", "ssh-ed25519 AAAA"),
-        ("box example", "moqui", "ssh-ed25519 AAAA"),
-        ("box.example\nother", "moqui", "ssh-ed25519 AAAA"),
-        ("box.example", "mo qui", "ssh-ed25519 AAAA"),
-        (
-            "box.example",
-            "moqui",
-            "ssh-ed25519 AAAA\nevil.example ssh-ed25519 BBBB",
-        ),
-        ("box.example", "moqui", "ssh-ed25519 AAAA comment"),
-        ("box.example", "moqui", "not-a-key AAAA"),
-    ] {
-        let bad = SshTarget {
-            host: host.to_string(),
-            port: 22,
-            user: user.to_string(),
-            host_key: key.to_string(),
+                dir.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let target = SshTarget {
+            host: "box.example".to_string(),
+            port: 2222,
+            user: "moqui".to_string(),
+            host_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample".to_string(),
         };
+        let printed = run(&stub.display().to_string(), &target, b"PRIVATE KEY", &put).unwrap();
+        assert_eq!(printed.trim(), "ok");
+        let args = std::fs::read_to_string(dir.join("args")).unwrap();
+        // no conf file and no known host but the pinned one; the user by -l, and the host after `--`
+        for expected in [
+            "-F /dev/null",
+            "StrictHostKeyChecking=yes",
+            "GlobalKnownHostsFile=/dev/null",
+            "-l moqui -- box.example 'moqui'",
+        ] {
+            assert!(args.contains(expected), "{expected}: {args}");
+        }
+        assert!(!args.contains("the value") && !args.contains("PRIVATE KEY"), "{args}");
+        assert!(std::fs::read_to_string(dir.join("key"))
+            .unwrap()
+            .starts_with("-rw-------"));
+        assert_eq!(std::fs::read_to_string(dir.join("stdin")).unwrap(), "the value\n");
+        let key_path = std::fs::read_to_string(dir.join("keypath")).unwrap();
         assert!(
-            run(&stub.display().to_string(), &bad, b"K", &put).is_err(),
-            "{host:?} {user:?} {key:?}"
+            !std::path::Path::new(key_path.trim()).exists(),
+            "the key file outlived the call"
         );
+
+        // what ssh would read as an option, or what would add a line to the pinned known_hosts file, is refused before ssh
+        // runs
+        let calls = std::fs::read_to_string(dir.join("args")).unwrap();
+        for (host, user, key) in [
+            ("-oProxyCommand=touch /tmp/x", "moqui", "ssh-ed25519 AAAA"),
+            ("box.example", "-oProxyCommand=x", "ssh-ed25519 AAAA"),
+            ("box example", "moqui", "ssh-ed25519 AAAA"),
+            ("box.example\nother", "moqui", "ssh-ed25519 AAAA"),
+            ("box.example", "mo qui", "ssh-ed25519 AAAA"),
+            (
+                "box.example",
+                "moqui",
+                "ssh-ed25519 AAAA\nevil.example ssh-ed25519 BBBB",
+            ),
+            ("box.example", "moqui", "ssh-ed25519 AAAA comment"),
+            ("box.example", "moqui", "not-a-key AAAA"),
+        ] {
+            let bad = SshTarget {
+                host: host.to_string(),
+                port: 22,
+                user: user.to_string(),
+                host_key: key.to_string(),
+            };
+            assert!(
+                run(&stub.display().to_string(), &bad, b"K", &put).is_err(),
+                "{host:?} {user:?} {key:?}"
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(dir.join("args")).unwrap(),
+            calls,
+            "ssh ran for a refused target"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
-    assert_eq!(
-        std::fs::read_to_string(dir.join("args")).unwrap(),
-        calls,
-        "ssh ran for a refused target"
-    );
     let ip = SshTarget {
         host: "2001:db8::1".to_string(),
         port: 22,
@@ -270,7 +275,6 @@ fn ssh_runs_only_operator_commands_with_its_key_in_a_file_of_its_own_and_the_val
         host_key: "ecdsa-sha2-nistp256 AAAA+/=".to_string(),
     };
     assert!(ip.check().is_ok());
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

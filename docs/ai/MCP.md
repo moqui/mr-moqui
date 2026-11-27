@@ -98,7 +98,7 @@ Every result has `resultType` and `_meta["io.modelcontextprotocol/serverInfo"]`.
   `DEV_AIDE_EXTEND` or `DEV_AIDE`), the dev tools a component registers for MCP (`ToolSpec.mcp`, the `dev.aide`
   capability): `artifact` (find, describe, refs and at over the artifact index), `source` (a file's lines or an
   artifact's element, its outline and git status) and `check` (the checks of a file or of proposed text, each problem
-  with its rule and skill section; plans/design-dev-aide.md 13.6);
+  with its rule and skill section; [Dev-AIDE](../tools/Dev-AIDE.md#the-command-line));
 - each exposed service the MCP agent's policy and role group and the caller's own permissions let run, by its tool name
   made safe for MCP (characters outside `[A-Za-z0-9_.-]` become `_`); its schema is the exposure's override or the
   service's parameters; a write says it waits for approval. Past `max-direct-tools` services, `find_tools`,
@@ -170,8 +170,8 @@ canonical JSON), the approval's expiry and a nonce. On the retry (the same name 
 
 A decision does not run the write by itself: the run engine never steps an MCP run (one taken over after its node
 stopped fails as `mcp_interrupted`), so an approved write the client never retries expires with its run's pause. Each
-authenticated request counts against the AT_LLM tarpit before anything is built (`mcp:tools/list`, `mcp:<tool>`
-for a call, an unknown name too; 120 a minute by default); a caller over it gets 429 with
+authenticated request counts against the AT_LLM tarpit before anything is built (`mcp:tools/list`, and
+`mcp:tools/call` for every call whatever tool it names; 120 a minute by default); a caller over it gets 429 with
 `Retry-After` and `-31429`. A retry's wait counts with the user's A2A waits and streams (16 at once).
 
 ## The documents

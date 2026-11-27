@@ -1212,7 +1212,7 @@ fn auto_parameters_are_expanded_once_per_entity_facade() {
     assert!(first.iter().any(|param| param.name == "testId"), "{first:?}");
     let again = super::validate::declared_in(&def, Some(&facade)).unwrap();
     assert!(Arc::ptr_eq(&first, &again), "kept on the definition");
-    // a relink swaps the model behind the same facade and drops what was read from it (plans/design-dev-aide.md F5)
+    // a relink swaps the model behind the same facade and drops what was read from it (plans/archive/design-dev-aide.md F5)
     crate::entity::derived::clear(&facade);
     let relinked = super::validate::declared_in(&def, Some(&facade)).unwrap();
     assert!(!Arc::ptr_eq(&first, &relinked), "expanded again from the new model");
@@ -1270,6 +1270,137 @@ fn auto_parameters_of_a_view_entity_use_its_aliases() {
         "{out:?}"
     );
     assert!(!out.contains_key("notDeclared"), "{out:?}");
+}
+
+/// Java's `ServiceDefinition` merge in the order written: a parameter of an implementing service written after its
+/// `auto-parameters` merges after the auto fields, so its type wins over the field's of its name, though the
+/// implemented service declares it too.
+#[test]
+fn a_parameter_after_auto_parameters_wins_over_the_field_with_implements() {
+    let path = write_fixture(
+        "merge-order",
+        r#"<services>
+                <service verb="define" noun="Medium" type="interface">
+                    <in-parameters><parameter name="testMedium"/></in-parameters>
+                </service>
+                <service verb="save" noun="Medium">
+                    <implements service="define#Medium"/>
+                    <in-parameters>
+                        <auto-parameters entity-name="moqui.test.TestEntity" include="nonpk"/>
+                        <parameter name="testMedium" type="Long"/>
+                    </in-parameters>
+                    <actions><set field="x" value="1"/></actions>
+                </service>
+            </services>"#,
+    );
+    let (facade, ctx) = seeded_context(&[]);
+    let _entered = ctx.enter();
+    let failures = crate::service::lint(std::slice::from_ref(&path)).unwrap();
+    assert!(failures.is_empty(), "{failures:?}");
+    let def = crate::service::define::find("save#Medium").expect("registered");
+    let declared = super::validate::declared_in(&def, Some(&facade)).unwrap();
+    let medium: Vec<&str> = declared
+        .iter()
+        .filter(|param| param.name == "testMedium")
+        .map(|param| param.java_type.as_str())
+        .collect();
+    assert_eq!(medium, ["Long"]);
+}
+
+/// Through a chain of implements (S implements T, T implements X) the parameter T writes after its auto-parameters
+/// reaches S as T merged it, as Java copies T's merged parameters; an implemented service's auto-parameters with no
+/// entity-name read that service's noun, not the implementing one's; and the client validation of a parameter reads it
+/// merged (an auto field's too).
+#[test]
+fn implements_chains_keep_the_merge_and_the_implemented_noun() {
+    let path = write_fixture(
+        "merge-chain",
+        r#"<services>
+                <service verb="define" noun="Medium" type="interface">
+                    <in-parameters><parameter name="testMedium"/></in-parameters>
+                </service>
+                <service verb="shape" noun="Medium" type="interface">
+                    <implements service="define#Medium"/>
+                    <in-parameters>
+                        <auto-parameters entity-name="moqui.test.TestEntity" include="nonpk" required="true"/>
+                        <parameter name="testMedium" type="Long" required="true"/>
+                    </in-parameters>
+                </service>
+                <service verb="save" noun="Medium">
+                    <implements service="shape#Medium"/>
+                    <actions><set field="x" value="1"/></actions>
+                </service>
+                <service verb="define" noun="moqui.test.TestEntity" type="interface">
+                    <in-parameters><auto-parameters include="pk"/></in-parameters>
+                </service>
+                <service verb="save" noun="Other">
+                    <implements service="define#moqui.test.TestEntity"/>
+                    <actions><set field="x" value="1"/></actions>
+                </service>
+            </services>"#,
+    );
+    let (facade, ctx) = seeded_context(&[]);
+    let _entered = ctx.enter();
+    let failures = crate::service::lint(std::slice::from_ref(&path)).unwrap();
+    assert!(failures.is_empty(), "{failures:?}");
+    let declared = |name: &str| {
+        let def = crate::service::define::find(name).expect("registered");
+        super::validate::declared_in(&def, Some(&facade)).unwrap()
+    };
+    let saved = declared("save#Medium");
+    let medium: Vec<&str> = saved
+        .iter()
+        .filter(|param| param.name == "testMedium")
+        .map(|param| param.java_type.as_str())
+        .collect();
+    assert_eq!(medium, ["Long"]);
+    // the interface's auto-parameters read its own noun, the entity
+    let other = declared("save#Other");
+    assert!(other.iter().any(|param| param.name == "testId"), "{other:?}");
+    // the client validation of the merged parameter, and of an auto field
+    let hints = super::super::define::input_hints("save#Medium", "testMedium").expect("hints");
+    assert!(hints.classes.contains(&"required"), "{:?}", hints.classes);
+    let auto = super::super::define::input_hints("save#Medium", "testDateTime").expect("an auto field's hints");
+    assert!(auto.classes.contains(&"required"), "{:?}", auto.classes);
+}
+
+/// A service's own parameter over an implemented service whose auto-parameters cover it wins, as Java merges the
+/// service's parameters onto the implemented service's merged ones: S's `required="false"` stays though T's auto field
+/// says required.
+#[test]
+fn an_own_parameter_wins_over_an_implemented_services_auto_field() {
+    let path = write_fixture(
+        "merge-override",
+        r#"<services>
+                <service verb="define" noun="Medium" type="interface">
+                    <in-parameters><parameter name="testMedium"/></in-parameters>
+                </service>
+                <service verb="shape" noun="Medium" type="interface">
+                    <implements service="define#Medium"/>
+                    <in-parameters><auto-parameters entity-name="moqui.test.TestEntity" include="nonpk" required="true"/></in-parameters>
+                </service>
+                <service verb="save" noun="Medium">
+                    <implements service="shape#Medium"/>
+                    <in-parameters><parameter name="testMedium" required="false"/></in-parameters>
+                    <actions><set field="x" value="1"/></actions>
+                </service>
+            </services>"#,
+    );
+    let (facade, ctx) = seeded_context(&[]);
+    let _entered = ctx.enter();
+    let failures = crate::service::lint(std::slice::from_ref(&path)).unwrap();
+    assert!(failures.is_empty(), "{failures:?}");
+    let def = crate::service::define::find("save#Medium").expect("registered");
+    let declared = super::validate::declared_in(&def, Some(&facade)).unwrap();
+    let medium: Vec<super::super::define::Required> = declared
+        .iter()
+        .filter(|param| param.name == "testMedium")
+        .map(|param| param.required)
+        .collect();
+    assert_eq!(medium, [super::super::define::Required::False]);
+    // an auto field it does not write keeps the implemented required
+    let stamp = declared.iter().find(|param| param.name == "testDateTime").unwrap();
+    assert_eq!(stamp.required, super::super::define::Required::True);
 }
 
 /// Java's `ServiceDefinition` merge: the implemented service's parameters first, then the service's own merged

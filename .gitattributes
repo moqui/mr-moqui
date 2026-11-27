@@ -1,0 +1,11 @@
+# Reviewed browser-library text is hashed as LF. Batch and PowerShell files stay CRLF.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+# Kept byte for byte: CRLF that a format requires (iCalendar, vCard, the X12 fixtures), and the generated
+# browser-library files that MANIFEST.json hashes.
+*.ics -text
+*.vcf -text
+crates/moqui-core/src/edi/testdata/** -text
+runtime/components/base/webroot/screen/webroot/libs/** -text

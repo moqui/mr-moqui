@@ -290,6 +290,7 @@ fn send_push(
         crate::notify::NotificationMessage::new()
             .topic(topic)
             .user_ids(users.iter().cloned())
+            .direct_only(true)
             .message_map(message)
             .persist(false)
             .show_alert(false)

@@ -387,7 +387,50 @@ fn preview_cell(cell: &Data, zone: &jiff::tz::TimeZone) -> Value {
     }
 }
 
+/// The most a zipped workbook (xlsx, xlsb, ods) may expand to, all its parts together, before a reader builds it in
+/// memory: deflate expands about a thousand times, so a file within the upload limits could otherwise ask for tens of
+/// gigabytes (SEC-TLS-114). The readers build each part's XML as a tree, several times its size, so the limit is 64 MiB
+/// of parts: a sheet of hundreds of thousands of cells.
+pub const MAX_EXPANDED_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Refuse a zipped workbook whose parts expand past `limit` bytes together, by inflating each (the sizes a zip
+/// declares may be false), before a reader parses it. Whatever the zip reader opens is checked, and one with bytes in
+/// front of it (which the readers open too) is refused; a file it does not open passes, for its reader to judge.
+///
+/// # Errors
+///
+/// When the parts expand past `limit`, the zip has bytes in front of it, or a part does not read.
+pub fn check_expanded_size(bytes: &[u8], limit: u64) -> Result<(), LibError> {
+    use std::io::Read as _;
+    let Ok(mut archive) = zip::ZipArchive::new(Cursor::new(bytes)) else {
+        return Ok(());
+    };
+    if archive.offset() > 0 || !bytes.starts_with(b"PK") {
+        return Err(LibError::new(
+            "Could not read spreadsheet: the zip has bytes in front of it",
+        ));
+    }
+    let mut total: u64 = 0;
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index(index)
+            .map_err(|err| LibError::new(format!("Could not read spreadsheet: {err}")))?;
+        let room = limit.saturating_sub(total);
+        let read = std::io::copy(&mut entry.take(room.saturating_add(1)), &mut std::io::sink())
+            .map_err(|err| LibError::new(format!("Could not read spreadsheet: {err}")))?;
+        total = total.saturating_add(read);
+        if total > limit {
+            return Err(LibError::new(format!(
+                "The spreadsheet expands to more than {} MiB",
+                limit / (1024 * 1024)
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn open_book(bytes: &[u8]) -> Result<Sheets<Cursor<Vec<u8>>>, LibError> {
+    check_expanded_size(bytes, MAX_EXPANDED_BYTES)?;
     calamine::open_workbook_auto_from_rs(Cursor::new(bytes.to_vec()))
         .map_err(|err| LibError::new(format!("Could not read spreadsheet: {err}")))
 }
@@ -619,6 +662,34 @@ fn load_spreadsheet_entity(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// SEC-TLS-114: a zipped workbook is inflated, part by part, against a limit before a reader parses it; one past it
+    /// is refused whatever sizes it declares, and a file that is not a zip passes to its reader.
+    #[test]
+    fn a_workbook_that_expands_past_the_limit_is_refused() {
+        use std::io::Write as _;
+        let mut zipped = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut zipped);
+            let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            for part in ["xl/worksheets/sheet1.xml", "xl/sharedStrings.xml"] {
+                writer.start_file(part, options).unwrap();
+                writer.write_all(&vec![b' '; 2 * 1024 * 1024]).unwrap();
+            }
+            writer.finish().unwrap();
+        }
+        let bytes = zipped.into_inner();
+        assert!(bytes.len() < 64 * 1024, "{}", bytes.len());
+        let refused = super::check_expanded_size(&bytes, 3 * 1024 * 1024).unwrap_err();
+        assert!(refused.to_string().contains("expands to more than 3 MiB"), "{refused}");
+        super::check_expanded_size(&bytes, 4 * 1024 * 1024).unwrap();
+        super::check_expanded_size(b"a,b\n1,2\n", 1).unwrap();
+        // one byte in front, which the zip reader skips: refused, never passed unchecked
+        let mut prefixed = b"X".to_vec();
+        prefixed.extend_from_slice(&bytes);
+        let refused = super::check_expanded_size(&prefixed, 4 * 1024 * 1024).unwrap_err();
+        assert!(refused.to_string().contains("bytes in front"), "{refused}");
+    }
 
     #[test]
     fn whole_numbers_are_longs_and_dates_are_time_stamps() {

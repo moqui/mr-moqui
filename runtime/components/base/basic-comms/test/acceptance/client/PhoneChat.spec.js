@@ -2,7 +2,7 @@
 // (pages/PhoneChat.page.js, whose server answers Chat's transitions as BasicComms does and textRoom as the SMS pair room
 // does for a user with a number that texts). The room list fills the screen and Start chat opens the full-screen picker;
 // a direct chat with one person, a named group with two and a text to a number start from it; bubbles put the user's own
-// messages on the right; attach offers the camera, the gallery and a file; and Back (moqui.back.pop, which Android's back gesture asks) closes the menu, a sheet, the thread
+// messages on the right; attach offers the camera, the gallery, a file and a location; and Back (moqui.back.pop, which Android's back gesture asks) closes the menu, a sheet, the thread
 // pane and then the room, and at the home closes nothing, so the app leaves. An acceptance test (a phone-width walk):
 // ./moq accept basic-comms --spec PhoneChat
 spec({
@@ -13,7 +13,7 @@ spec({
         page.setContent("<!doctype html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'></head><body></body></html>")
         for (const style of ["/libs/material-symbols/outlined.css", "/libs/quasar/quasar.prod.css", "/css/WebrootVue.qvt.css", "/files/crates/moqui-desktop/shell/shell.css"]) page.addStyle(style)
         for (const script of ["/libs/vue/vue.runtime.global.prod.js", "/libs/quasar/quasar.umd.prod.js", "/libs/quasar/lang/en-US.umd.prod.js",
-            "/js/MoquiLib.js", "/js/MoquiL10n.js", "/js/WebrootChat.js", "/js/WebrootExt.js", "/js/WebrootCrypto.js", "/js/WebrootVue.qvt.render.js",
+            "/js/MoquiLib.js", "/js/MoquiL10n.js", "/js/WebrootChat.js", "/js/WebrootChatExpiry.js", "/js/WebrootExt.js", "/js/WebrootCrypto.js", "/js/WebrootVue.qvt.render.js",
             "/js/WebrootVue.qvt.js", "/files/crates/moqui-desktop/shell/js/bundled-screens.js",
             "/files/component/basic-comms/test/acceptance/client/pages/PhoneChat.page.js"]) page.addScript(script)
         page.evaluate("window.phone.start()")
@@ -74,10 +74,10 @@ feature("a phone number typed in the picker opens the number's room, from the us
     }
 })
 
-feature("bubbles: the user's own message on the right, the other person's on the left; attach offers the camera, the gallery and a file", {
+feature("bubbles: the user's own message on the right, the other person's on the left; attach offers the camera, the gallery, a file and a location", {
     when() { return page.evaluate("window.phone.bubbles()") },
     then({ mine, theirs, mineClass, width, attach, camera, gallery }) {
-        attach.join(",") == "camera,gallery,file"
+        attach.join(",") == "camera,gallery,file,location"
         camera == "image/* environment"
         gallery == "image/*,video/* multiple"
         mineClass

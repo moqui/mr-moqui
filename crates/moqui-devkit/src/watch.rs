@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The dev file watcher (plans/design-dev-aide.md 6.3, F6): on a dev instance of a package with `devtools`, with
+//! The dev file watcher (plans/archive/design-dev-aide.md 6.3, F6): on a dev instance of a package with `devtools`, with
 //! `dev-reload` on (it is unless `enabled="false"`), every component directory is watched, and a change reloads what
 //! the file defines through [`crate::reload_paths`], so an editor or an agent in a terminal gets live reload without
 //! the dev-aide. Events are gathered until `debounce-ms` (300) pass without one, so an editor's write and rename is one
@@ -30,6 +30,7 @@ use std::time::{Duration, Instant};
 
 use notify::{EventKind, RecursiveMode, Watcher as _};
 
+use moqui_core::context::framework_thread;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_lib::sync::lock;
 
@@ -126,7 +127,7 @@ pub(crate) fn watch(factory: &Arc<ExecutionContextFactory>, debounce: Duration) 
     let weak = Arc::downgrade(factory);
     let spawned = std::thread::Builder::new()
         .name("dev-reload".into())
-        .spawn(move || run(&weak, &dev, &events, debounce));
+        .spawn(framework_thread(move || run(&weak, &dev, &events, debounce)));
     if let Err(err) = spawned {
         tracing::error!(error = %err, "Could not start the dev reload thread");
         return false;

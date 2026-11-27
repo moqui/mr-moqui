@@ -21,6 +21,8 @@
 pub(crate) mod aggregate;
 mod cache;
 pub(crate) mod db_form;
+// the form a DbForm makes, for the Dev AIDE's "Convert to site extension" (plans/archive/design-dev-aide.md 7.2)
+pub use db_form::{db_form_xml, AsOf as DbFormAsOf};
 mod definition;
 mod dispatch;
 pub mod ext;
@@ -584,6 +586,18 @@ fn serve_servlet(
     flags: (bool, bool),
 ) -> Result<WebResponse, Error> {
     use crate::web::servlet::Handler;
+    // `tokenRoute` is the token route's own ([`token_route::dispatch`], which calls the screens without this): one a
+    // request sends (a JSON object parameter) never reaches a screen as the route's, `/PublicShell`'s base path and
+    // context among them (SEC-RTE-18)
+    let unbound;
+    let parameters = if parameters.contains_key(token_route::ROUTE_PARAMETER) {
+        let mut without = parameters.clone();
+        without.remove(token_route::ROUTE_PARAMETER);
+        unbound = without;
+        &unbound
+    } else {
+        parameters
+    };
     match &found.servlet.handler {
         Handler::Screen => dispatch_request(factory, request, root, parameters, json_list, login_error, flags, None),
         Handler::Fop => {
@@ -649,7 +663,8 @@ fn stamp_http_log(response: &mut WebResponse) {
         visit_id: user::visit_id().ok().flatten(),
         session,
         visitor_id,
-        remote_user,
+        // a scoped key's request whose session was not kept is still its user's
+        remote_user: remote_user.or_else(|| user::current_username().ok().flatten()),
     };
 }
 
@@ -1033,7 +1048,12 @@ struct SessionChoice {
 /// The choice for a request whose response is `public` ([`is_public`]), as the request stands now.
 fn session_choice(new_session: bool, public: bool) -> Result<SessionChoice, Error> {
     let declined = user::session::session_declined();
-    let anonymous = user::session::current_user_id()?.is_none();
+    // a scoped key's request runs as its user, whom the session never holds: what the session itself has decides
+    let anonymous = if user::session::scoped_login_noted() {
+        user::session::stored_user_id().is_none()
+    } else {
+        user::session::current_user_id()?.is_none()
+    };
     Ok(SessionChoice {
         declined,
         discard: anonymous && new_session && (declined || public),
@@ -1128,8 +1148,9 @@ fn authenticate(request: &WebRequest, parameters: &BTreeMap<String, Value>) -> R
     // With nobody signed in, a rejected key leaves the request anonymous with the login error, as in Java Moqui.
     let signed_in = user::current_user_id()?.is_some_and(|id| !id.is_empty());
     // a key made for one service alone (an access token, git's) is taken only on that service's paths
-    let scope = user::request_key_scope(&request.path);
-    match user::apply_header_keys(request.header("api_key"), request.header("login_key"), scope) {
+    let scopes = user::request_key_scopes(&request.path);
+    let scopes: Vec<&str> = scopes.iter().map(String::as_str).collect();
+    match user::apply_header_keys_scoped(request.header("api_key"), request.header("login_key"), &scopes) {
         Ok(false) => {}
         Ok(true) => {
             user::note_header_login();

@@ -45,6 +45,7 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use moqui_core::context::framework_thread;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::entity::{Condition, EntityFacade};
 use moqui_core::service::chat_bridge::{note_status, BridgeInfo};
@@ -694,7 +695,7 @@ impl Coordinator {
         let factory_weak = weak.clone();
         let handle = std::thread::Builder::new()
             .name("moqui-groupme".to_string())
-            .spawn(move || running.run(&inner_weak, &factory_weak))
+            .spawn(framework_thread(move || running.run(&inner_weak, &factory_weak)))
             .map_err(|error| format!("noThread: the GroupMe coordinator did not start: {error}"))?;
         *lock(&coordinator.thread) = Some(handle);
         *slot = Some(Arc::clone(&coordinator));
@@ -906,7 +907,7 @@ impl Coordinator {
                 let (inner, weak, flag) = (Arc::downgrade(inner), weak.clone(), Arc::clone(&stop));
                 match std::thread::Builder::new()
                     .name(format!("moqui-groupme-{id}"))
-                    .spawn(move || work(&inner, &weak, &slot, &flag))
+                    .spawn(framework_thread(move || work(&inner, &weak, &slot, &flag)))
                 {
                     Ok(handle) => known.worker = Some((stop, handle)),
                     Err(error) => tracing::error!("GroupMe bridge {id}: its session did not start: {error}"),

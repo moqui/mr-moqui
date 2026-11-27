@@ -48,9 +48,10 @@ mod cluster {
         adopted: bool,
     }
 
-    /// The file beside `postmaster.pid` that names the process owning the postmaster: the one that started it, or took
-    /// over one whose owner was gone. A postmaster outlives a node that was killed, and the next node takes it over
-    /// rather than leaving it running for good (plans/Mobile-Desktop.md, configuration 1).
+    /// The file beside `postmaster.pid` that names the process owning the postmaster, and the image of it ([`Owner`]):
+    /// the one that started it, or took over one whose owner was gone. A postmaster outlives a node that was killed,
+    /// and the next node takes it over rather than leaving it running for good (plans/Mobile-Desktop.md, configuration
+    /// 1); so does the image a restart's exec starts in the same process.
     const OWNER_FILE: &str = "moqui-owner.pid";
 
     struct PostmasterLock {
@@ -120,7 +121,8 @@ mod cluster {
         ///
         /// On Unix the socket directory is the data directory and `listen_addresses` is empty.
         /// On Windows `listen_addresses` is `127.0.0.1` and the postmaster binds an ephemeral port.
-        /// The client uses `NoTls` either way.
+        /// The client uses `NoTls` either way. On every platform each `host` rule of method `password`
+        /// is `scram-sha-256` before the client connects.
         ///
         /// A live postmaster is adopted when `PG_VERSION` matches this theseus major, and refused
         /// with that pid when it does not. An adopted postmaster keeps running after this handle,
@@ -558,7 +560,10 @@ mod cluster {
     }
 
     /// The dumps of the other databases beside `dump` that one save wrote with it ([`database_dump_path`]), by
-    /// database name.
+    /// database name: only `moqui_<name>` ones, the names the framework gives a datasource group's database. A file
+    /// beside the chosen dump is restored by the cluster's superuser into the database its name names, so another name
+    /// that shares the suffix (`template1.dump`, a file someone put in a shared backup folder) is left out with a
+    /// warning, never restored (SEC-TLS-98); a group whose conf names a database of its own is restored by hand.
     pub fn sibling_dumps(dump: &Path) -> Vec<(String, PathBuf)> {
         let Some(dir) = dump.parent() else {
             return Vec::new();
@@ -575,7 +580,22 @@ mod cluster {
                 let name = path.file_name()?.to_str()?;
                 let database = name.strip_suffix(suffix.as_str())?.to_string();
                 let plain = !database.is_empty() && database.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
-                (plain && database != DATABASE && database != "postgres").then_some((database, path))
+                if !plain || database == DATABASE {
+                    return None;
+                }
+                let named = database
+                    .strip_prefix(DATABASE)
+                    .and_then(|rest| rest.strip_prefix('_'))
+                    .is_some_and(|rest| !rest.is_empty());
+                if !named {
+                    tracing::warn!(
+                        "{} is beside the dump restored but names the database {database}, not a {DATABASE}_<name> \
+                         one: it is not restored",
+                        path.display()
+                    );
+                    return None;
+                }
+                Some((database, path))
             })
             .collect();
         found.sort();
@@ -699,13 +719,18 @@ mod cluster {
             )));
         }
         let (mut cluster, driver) = launch(dir, data_dir, options, Some(lock.port))?;
-        let owner = owner_pid(data_dir);
-        if takes_over(owner, std::process::id(), process_live) {
+        let owner = owner_of(data_dir);
+        if takes_over(owner.as_ref(), &Owner::this_image(), process_live) {
             tracing::warn!(
-                "Postmaster {} of {} was started by process {}, which is gone; this process takes it over and stops it",
+                "Postmaster {} of {} was started by process {} (image {}), which is gone; this process takes it over \
+                 and stops it",
                 lock.pid,
                 data_dir.display(),
-                owner.unwrap_or(0)
+                owner.as_ref().map_or(0, |owner| owner.pid),
+                owner
+                    .as_ref()
+                    .and_then(|owner| owner.image.as_deref())
+                    .unwrap_or("unknown")
             );
             cluster.adopted = false;
             write_owner(&cluster.data_dir);
@@ -713,27 +738,115 @@ mod cluster {
         Ok((cluster, driver))
     }
 
-    /// Whether a live postmaster whose owner file names `owner` is taken over by process `me`: only when that owner is
-    /// gone. A postmaster with no owner file, or whose owner still runs, is only adopted and keeps running: a server
-    /// whose cluster `save-db` reaches, and a second handle in the owner's own process (a backup run in the server).
-    pub(crate) fn takes_over(owner: Option<u32>, me: u32, live: impl Fn(u32) -> bool) -> bool {
-        owner.is_some_and(|owner| owner != me && !live(owner))
+    /// What the owner file records: the process that owns the postmaster, the image of it that does, and (on Linux) its
+    /// PID namespace. An exec (a restart from the app, `run_again` in the host) keeps the process id and starts a new
+    /// image, which must take the postmaster over to stop it, so the id alone does not name the owner; and the same id
+    /// in another namespace (two containers sharing a runtime volume, each its pid 1) is another process.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub(crate) struct Owner {
+        pub pid: u32,
+        /// [`image_token`] of the image that wrote the file; none in a file of an older build.
+        pub image: Option<String>,
+        /// The `/proc/self/ns/pid` link of the writer (`pid:[4026531836]`); none off Linux or from an older build.
+        pub namespace: Option<String>,
     }
 
-    /// The owner process named in `data_dir`'s owner file, if there is one that reads.
+    impl Owner {
+        /// This image of this process.
+        pub(crate) fn this_image() -> Self {
+            Self {
+                pid: std::process::id(),
+                image: Some(image_token().to_string()),
+                namespace: pid_namespace(),
+            }
+        }
+    }
+
+    /// A value this image of the process makes once, when it first names an owner, and an exec does not keep: the time
+    /// it was made, in nanoseconds, with a random part, so a clock before the epoch or one that stands still still
+    /// tells two images apart.
+    pub(crate) fn image_token() -> &'static str {
+        static TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        TOKEN.get_or_init(|| {
+            use std::hash::{BuildHasher as _, Hasher as _};
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| since.as_nanos());
+            // the standard library seeds RandomState from the system's randomness, once per image
+            let random = std::collections::hash_map::RandomState::new().build_hasher().finish();
+            format!("{nanos:x}-{random:016x}")
+        })
+    }
+
+    /// This process's PID namespace, as `/proc/self/ns/pid` names it; none where there is no such link.
+    pub(crate) fn pid_namespace() -> Option<String> {
+        #[cfg(target_os = "linux")]
+        {
+            std::fs::read_link("/proc/self/ns/pid")
+                .ok()
+                .map(|link| link.to_string_lossy().into_owned())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    }
+
+    /// Whether a live postmaster whose owner file names `owner` is taken over by `me` (this image of this process):
+    /// only when that owner is gone, another process that no longer runs or an earlier image of this one (replaced by
+    /// exec, so it can stop nothing). A postmaster with no owner file, or whose owner still runs, is only adopted and
+    /// keeps running: a server whose cluster `save-db` reaches, and a second handle in the owner's own image (a backup
+    /// run in the server). An owner in another PID namespace is another process whose liveness cannot be told from
+    /// here, whatever its id: adopted only.
+    pub(crate) fn takes_over(owner: Option<&Owner>, me: &Owner, live: impl Fn(u32) -> bool) -> bool {
+        let Some(owner) = owner else {
+            return false;
+        };
+        if let (Some(theirs), Some(mine)) = (&owner.namespace, &me.namespace) {
+            if theirs != mine {
+                return false;
+            }
+        }
+        if owner.pid != me.pid {
+            return !live(owner.pid);
+        }
+        owner.image != me.image
+    }
+
+    /// The owner named in `data_dir`'s owner file (`<pid> <image> [<namespace>]`, or `<pid>` from an older build), if
+    /// it reads.
+    pub(crate) fn owner_of(data_dir: &Path) -> Option<Owner> {
+        let text = std::fs::read_to_string(data_dir.join(OWNER_FILE)).ok()?;
+        let mut fields = text.split_whitespace();
+        let pid = fields.next()?.parse().ok()?;
+        Some(Owner {
+            pid,
+            image: fields.next().map(str::to_string),
+            namespace: fields.next().map(str::to_string),
+        })
+    }
+
+    /// The owner process named in `data_dir`'s owner file, for the cluster's tests (Unix only).
+    #[cfg(all(test, unix))]
     pub(crate) fn owner_pid(data_dir: &Path) -> Option<u32> {
-        std::fs::read_to_string(data_dir.join(OWNER_FILE))
-            .ok()?
-            .trim()
-            .parse()
-            .ok()
+        owner_of(data_dir).map(|owner| owner.pid)
     }
 
-    /// Name this process the owner of the postmaster of `data_dir`. Without the file a postmaster this process leaves
-    /// behind is only adopted by the next start, so a failure is logged and the start goes on.
+    /// Name this image of this process the owner of the postmaster of `data_dir`. Without the file a postmaster this
+    /// process leaves behind is only adopted by the next start, so a failure is logged and the start goes on.
     pub(crate) fn write_owner(data_dir: &Path) {
         let path = data_dir.join(OWNER_FILE);
-        if let Err(err) = std::fs::write(&path, format!("{}\n", std::process::id())) {
+        let me = Owner::this_image();
+        let mut line = format!("{} {}", me.pid, me.image.unwrap_or_default());
+        if let Some(namespace) = me
+            .namespace
+            .filter(|namespace| !namespace.contains(char::is_whitespace))
+        {
+            line.push(' ');
+            line.push_str(&namespace);
+        }
+        line.push('\n');
+        if let Err(err) = std::fs::write(&path, line) {
             tracing::error!("could not write {}: {err}", path.display());
         }
     }
@@ -827,6 +940,17 @@ mod cluster {
         let set_up = server.setup();
         drop(initdb_guard);
         set_up.map_err(|err| embedded("setup embedded postgres", data_dir, err))?;
+        // A TCP connection has no TLS (Windows reaches the cluster that way; Unix has no TCP listener). initdb's host
+        // method `password` asks for the password in clear text, which this client refuses over TCP. The file is SCRAM
+        // before start on every platform, and a postmaster already live is reloaded: that needs no connection, which
+        // could not be made until the rules change.
+        {
+            let data = server.settings().data_dir.clone();
+            if scram_host_auth_file(&data.join("pg_hba.conf"))? && postmaster_live(&data) {
+                let bin = server.settings().binary_dir();
+                reload_postmaster(&data, &bin)?;
+            }
+        }
         if adopt_port.is_none() {
             // The postmaster outlives a host that is killed, and keeps what it inherited: a program that hosts the node
             // opens descriptors without close-on-exec (the desktop app's CEF, its DevTools listening socket among them),
@@ -1219,6 +1343,117 @@ mod cluster {
         }))
     }
 
+    /// `initdb --auth password` asks for the password in clear text. Over TCP this client refuses that, so a
+    /// `host` line's method `password` becomes `scram-sha-256`. A `local` line stays: clear text on this machine's
+    /// Unix socket is still answered. A comment is left as written, including the word password in the header.
+    /// The second value is whether a line changed.
+    fn scram_host_auth(text: &str) -> (String, bool) {
+        let mut changed = false;
+        let mut out = String::with_capacity(text.len() + 16);
+        for line in text.split_inclusive('\n') {
+            let (body, newline) = match line.strip_suffix('\n') {
+                Some(body) => (body, "\n"),
+                None => (line, ""),
+            };
+            let (rule, cr) = match body.strip_suffix('\r') {
+                Some(rule) => (rule, "\r"),
+                None => (body, ""),
+            };
+            if let Some(rewritten) = rewrite_host_password_line(rule) {
+                changed = true;
+                out.push_str(&rewritten);
+            } else {
+                out.push_str(rule);
+            }
+            out.push_str(cr);
+            out.push_str(newline);
+        }
+        (out, changed)
+    }
+
+    /// The method field of a TCP rule, when it is `password`. `None` leaves the line as it is.
+    fn rewrite_host_password_line(line: &str) -> Option<String> {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            return None;
+        }
+        let kind = trimmed.split_whitespace().next().unwrap_or("");
+        if !kind.starts_with("host") {
+            return None;
+        }
+        let method = field_range(line, 4)?;
+        if &line[method.start..method.end] != "password" {
+            return None;
+        }
+        let mut rewritten = String::with_capacity(line.len() + 8);
+        rewritten.push_str(&line[..method.start]);
+        rewritten.push_str("scram-sha-256");
+        rewritten.push_str(&line[method.end..]);
+        Some(rewritten)
+    }
+
+    /// Byte range of whitespace-separated field `index` in `line`.
+    fn field_range(line: &str, index: usize) -> Option<std::ops::Range<usize>> {
+        let bytes = line.as_bytes();
+        let mut seen = 0;
+        let mut i = 0;
+        while i < bytes.len() {
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i >= bytes.len() {
+                break;
+            }
+            let start = i;
+            while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if seen == index {
+                return Some(start..i);
+            }
+            seen += 1;
+        }
+        None
+    }
+
+    /// Rewrite `path` as [`scram_host_auth`]. A missing file is left missing. True when the file changed.
+    fn scram_host_auth_file(path: &Path) -> Result<bool, Error> {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(err) => return Err(Error::new(format!("read {}", path.display())).with_source(err)),
+        };
+        let (rewritten, changed) = scram_host_auth(&text);
+        if !changed {
+            return Ok(false);
+        }
+        std::fs::write(path, rewritten)
+            .map_err(|err| Error::new(format!("write {}", path.display())).with_source(err))?;
+        Ok(true)
+    }
+
+    /// `pg_ctl reload` so a postmaster that is already up reads `pg_hba.conf`. No SQL connection can do it:
+    /// until the reload, that postmaster still asks for the password in clear text.
+    fn reload_postmaster(data_dir: &Path, bin_dir: &Path) -> Result<(), Error> {
+        let pg_ctl = tool_bin(bin_dir, "pg_ctl");
+        let mut command = std::process::Command::new(&pg_ctl);
+        command.args(["reload", "-D"]).arg(data_dir);
+        #[cfg(windows)]
+        shield_from_ctrl_c(&mut command);
+        let output = command
+            .output()
+            .map_err(|err| Error::new(format!("run {}", pg_ctl.display())).with_source(err))?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let detail = String::from_utf8_lossy(&output.stderr);
+        Err(Error::new(format!(
+            "pg_ctl reload for {} exited {}: {detail}",
+            data_dir.display(),
+            output.status
+        )))
+    }
+
     /// True when `data_dir/postmaster.pid` names a live process.
     pub(crate) fn postmaster_live(data_dir: &Path) -> bool {
         matches!(postmaster_lock(data_dir), Ok(Some(lock)) if process_live(lock.pid))
@@ -1389,18 +1624,34 @@ mod cluster {
         !state.is_empty() && state != "Z"
     }
 
-    /// `tasklist` is the process probe that does not add a Windows crate. This host is Linux, so
-    /// the TCP start path is not executed here.
+    /// Whether a `tasklist /FI "PID eq <pid>"` probe says `pid` is live.
+    ///
+    /// `ran` is false when `tasklist` did not start; `success` is a zero exit. A probe that did not
+    /// run, or that exited without success, counts as live: a sweep must not stop another run's
+    /// database because it could not tell. A successful listing is live when it names `pid` and is
+    /// not the English "no tasks" line. A successful listing that does not name `pid` (a localized
+    /// absence line included) is not live. Only the Windows probe and its test call it.
+    #[cfg(any(windows, test))]
+    fn tasklist_probe_live(ran: bool, success: bool, stdout: &str, pid: u32) -> bool {
+        if !ran || !success {
+            return true;
+        }
+        stdout.contains(&pid.to_string()) && !stdout.to_ascii_lowercase().contains("no tasks")
+    }
+
+    /// `tasklist` is the process probe that does not add a Windows crate.
     #[cfg(windows)]
     fn windows_process_live(pid: u32) -> bool {
-        let Ok(output) = std::process::Command::new("tasklist")
+        match std::process::Command::new("tasklist")
             .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
             .output()
-        else {
-            return false;
-        };
-        let text = String::from_utf8_lossy(&output.stdout);
-        text.contains(&pid.to_string()) && !text.to_ascii_lowercase().contains("no tasks")
+        {
+            Ok(output) => {
+                let text = String::from_utf8_lossy(&output.stdout);
+                tasklist_probe_live(true, output.status.success(), &text, pid)
+            }
+            Err(_) => tasklist_probe_live(false, false, "", pid),
+        }
     }
 
     fn old_install_present(cluster_dir: &Path, install_root: &Path) -> bool {
@@ -1520,8 +1771,13 @@ mod cluster {
     }
 
     // Inline `mod cluster` loads children from embedded/cluster/, not from beside embedded.rs.
+    // The rewriter test is its own module: `tests` is Unix-only, and this one runs on every platform.
+    #[cfg(test)]
+    mod hba_tests;
     #[cfg(all(test, windows))]
     mod stop_tests;
+    #[cfg(test)]
+    mod tasklist_tests;
     #[cfg(all(test, unix))]
     mod tests;
 }
@@ -1568,7 +1824,7 @@ fn plain_path(path: std::path::PathBuf) -> std::path::PathBuf {
         if plain.encode_utf16().count() >= 260 {
             return path;
         }
-        return std::path::PathBuf::from(plain);
+        std::path::PathBuf::from(plain)
     }
     #[cfg(not(windows))]
     path

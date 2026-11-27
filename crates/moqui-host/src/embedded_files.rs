@@ -211,13 +211,19 @@ fn factory_dirs(factory: &moqui_core::context::ExecutionContextFactory) -> Vec<(
 /// `background`, so the server's startup does not wait for it.
 pub(crate) fn check(factory: &moqui_core::context::ExecutionContextFactory, background: bool) {
     let dirs = factory_dirs(factory);
+    // The JavaScript libraries are checked in the components the factory loaded, wherever each was loaded from.
+    let loaded: Vec<PathBuf> = factory
+        .components()
+        .iter()
+        .map(|component| component.location.clone())
+        .collect();
     if !background {
-        log_differences(&dirs);
+        log_differences(&dirs, &loaded);
         return;
     }
     let spawned = std::thread::Builder::new()
         .name("embedded-check".into())
-        .spawn(move || log_differences(&dirs));
+        .spawn(move || log_differences(&dirs, &loaded));
     if let Err(err) = spawned {
         tracing::warn!("Could not start the comparison of the framework files with the built-in ones: {err}");
     }
@@ -243,7 +249,15 @@ fn names(dirs: &[(Set, PathBuf)]) -> String {
     }
 }
 
-fn log_differences(dirs: &[(Set, PathBuf)]) {
+fn log_differences(dirs: &[(Set, PathBuf)], loaded: &[PathBuf]) {
+    // The loaded components with JavaScript libraries (`build/js-build.json`): the webroot and any other.
+    let missing: Vec<String> = loaded.iter().flat_map(|root| missing_browser_libs(root)).collect();
+    if !missing.is_empty() {
+        tracing::error!(
+            "Missing JavaScript libraries: {}. Run ./moq build-js",
+            missing.join(", ")
+        );
+    }
     let differences = match compare(dirs) {
         Ok(differences) => differences,
         Err(err) => {
@@ -260,6 +274,74 @@ fn log_differences(dirs: &[(Set, PathBuf)]) {
     if !moqui_embedded::components().is_empty() {
         log_set_differences(&other_dirs, others, tracing::Level::INFO);
     }
+}
+
+/// The libraries of the component at `root` whose files its manifest lists and the runtime lacks, each as
+/// `component/library`; none when the component has no `build/js-build.json`. A file of an optional font pack counts
+/// only when `fonts-extra/installed.json` says the pack is installed.
+fn missing_browser_libs(root: &Path) -> Vec<String> {
+    let Ok(config) = moqui_lib::vfs::read(root.join("build/js-build.json")) else {
+        return Vec::new();
+    };
+    let name = root
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let Some(output) = serde_json::from_slice::<serde_json::Value>(&config)
+        .ok()
+        .and_then(|config| config["output"].as_str().map(str::to_owned))
+    else {
+        return vec![format!("{name} (unreadable build/js-build.json)")];
+    };
+    let libs = root.join(output);
+    let Some(manifest) = moqui_lib::vfs::read(libs.join("MANIFEST.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+    else {
+        return vec![format!("{name}/MANIFEST.json")];
+    };
+    let libraries: Vec<&serde_json::Value> = manifest["libraries"].as_array().into_iter().flatten().collect();
+    let mut missing = Vec::new();
+    let packs = libraries
+        .iter()
+        .flat_map(|library| library["files"].as_array().into_iter().flatten())
+        .any(|file| file["pack"].is_string());
+    let installed = if packs {
+        let installed = moqui_lib::vfs::read(libs.join("fonts-extra/installed.json"))
+            .ok()
+            .and_then(|data| serde_json::from_slice::<Vec<String>>(&data).ok());
+        if installed.is_none() {
+            missing.push(format!("{name}/fonts-extra/installed.json"));
+        }
+        installed.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    for library in libraries {
+        if library["files"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|f| {
+                f["pack"]
+                    .as_str()
+                    .is_none_or(|pack| installed.iter().any(|name| name == pack))
+            })
+            .any(|f| {
+                let base = if f["target"] == "server" {
+                    root.join("script/libs")
+                } else {
+                    libs.clone()
+                };
+                f["path"]
+                    .as_str()
+                    .is_none_or(|path| !moqui_lib::vfs::is_file(base.join(path)))
+            })
+        {
+            missing.push(format!("{name}/{}", library["id"].as_str().unwrap_or("unknown")));
+        }
+    }
+    missing
 }
 
 /// Reconcile the two physical layers before reporting the embedded fallback.

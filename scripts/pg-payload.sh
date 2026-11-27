@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # The theseus Postgres archive that the embedded-postgres feature embeds (plans/archive/License-Review.md,
 # plans/archive/EmbeddedPostgres.md, docs/Build-Test.md).
-#   scripts/pg-payload.sh strip [target]    download the archive into ~/.theseus/postgresql when it is not there (sha256
-#                                           checked), and repack it without bin/psql (the original stays as .orig)
+#   scripts/pg-payload.sh strip [target]    download the archive into ~/.theseus/postgresql when it is not there (its
+#                                           sha256 checked against the published one and the pin in
+#                                           scripts/pg-payload.sha256), and repack it without bin/psql (the original
+#                                           stays as .orig)
 #   scripts/pg-payload.sh check [archive...] fail on bin/psql, a readline library, or an ELF that NEEDs readline
 #   scripts/pg-payload.sh path [target]     print where the archive is kept
 # crates/moqui-drivers/build.rs embeds ~/.theseus/postgresql/postgresql-<version>-<target>.tar.gz (or MOQUI_PG_ARCHIVE) and
@@ -54,6 +56,25 @@ verify_sha256() {
     fi
 }
 
+# The archive $1 against the SHA-256 the repository pins for its name $2 (scripts/pg-payload.sha256), besides the sum
+# published beside it at the same address (plans/Security-Review-Low.md SEC-OUT-91). A name with no pin stops the
+# download: on a POSTGRESQL_VERSION bump, add the new archives' sums there once they are checked.
+verify_pinned() {
+    local file=$1 name=$2 pins=$root/scripts/pg-payload.sha256 pinned actual
+    pinned=$(awk -v name="$name" '$2 == name {print $1; exit}' "$pins" 2>/dev/null)
+    actual=$(sha256sum "$file" | awk '{print $1}')
+    if [ -z "$pinned" ]; then
+        echo "$name has no SHA-256 pinned in $pins; add \"$actual  $name\" there once it is checked" >&2
+        return 1
+    fi
+    if [ "$actual" != "$pinned" ]; then
+        echo "$name does not match the SHA-256 pinned in $pins" >&2
+        echo "pinned $pinned" >&2
+        echo "actual $actual" >&2
+        return 1
+    fi
+}
+
 strip_archive() {
     local target=${1:-$host_target}
     local archive name url
@@ -78,6 +99,7 @@ strip_archive() {
             curl -fsSL -o "$work/$name.tar.gz.sha256" "$url.sha256"
         fi
         verify_sha256 "$work/$name.tar.gz" "$work/$name.tar.gz.sha256"
+        verify_pinned "$work/$name.tar.gz" "$name.tar.gz"
         mv "$work/$name.tar.gz" "$archive"
     fi
     mkdir "$work/unpack"

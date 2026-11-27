@@ -1,11 +1,14 @@
 # MR Moqui. One image for every compose file: the Maximal package, which includes embedded
-# Postgres and the MySQL driver. The binary needs glibc 2.38 or newer (Debian 13, Ubuntu 24.04).
+# Postgres and the MySQL driver. The binary needs glibc 2.38 or newer, and no newer than this base's (2.41): one built
+# on a newer host (Ubuntu 26.04's 2.43) does not start here, so build.sh refuses it; --in-build-image builds it here.
 # Debian 12 and Ubuntu 22.04 are too old.
 #
 # Embedded Postgres also loads libssl.so.3, libcrypto.so.3, libzstd.so.1, liblz4.so.1, libz.so.1,
-# libgssapi_krb5.so.2, and libxml2.so.2. Debian 13's libxml2 package still provides that soname.
+# libgssapi_krb5.so.2, and libxml2.so.2. Its streaming standby loads libpq.so.5.
 # A newer host that only has libxml2.so.16 is handled by the server's shim; this image does not
 # need the compiler. Chromium is not installed; PDF stays unavailable until screen-facade/pdf@chromium-path is set.
+# Time zones are read from the system's zoneinfo: tzdata-legacy holds the old IANA names (US/Central and the like) that
+# a user's or an organization's time zone may be stored as, which Debian 13 moved out of tzdata.
 
 FROM docker.io/library/debian:13-slim
 
@@ -16,9 +19,12 @@ RUN apt-get update \
         libgcc-s1 \
         libgssapi-krb5-2 \
         liblz4-1 \
+        libpq5 \
         libssl3t64 \
         libxml2 \
         libzstd1 \
+        tzdata \
+        tzdata-legacy \
         zlib1g \
     && rm -rf /var/lib/apt/lists/*
 

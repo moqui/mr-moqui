@@ -185,3 +185,63 @@ fn a_joining_leg_gets_the_stage_once() {
     assert_eq!(to(&sent, 3, "stage").len(), 1);
     assert!(to(&sent, 1, "stage").is_empty());
 }
+
+fn screen_stage(revision: u64, leg: &str, ink_mode: &str) -> Json {
+    json!({"rtc":"stage","revision":revision,"stage":{"kind":"screen","callLegId":leg,"inkMode":ink_mode,
+        "inkEmbedded":true,"inkEpoch":4,"requests":[]}})
+}
+
+/// A snapshot puts a board on the stage in place of the share, so it is asked only by one who may draw on the share:
+/// the presenter whatever the ink mode, a host under Hosts, anyone under Everyone, never a guest. It goes to the
+/// presenter's page alone, which asks its user when another asked.
+#[test]
+fn a_snapshot_is_asked_only_by_one_who_may_draw_and_goes_to_the_presenter() {
+    let ctx = ExecutionContextFactory::test_context();
+    let mut d = driver(ctx.factory());
+    add_leg(&mut d, "P", 1, true, false);
+    add_leg(&mut d, "M", 2, true, false);
+    add_leg(&mut d, "H", 3, true, false);
+    add_leg(&mut d, "G", 4, false, true);
+    d.routes.get_mut(&LegKey::new(ROOM, "H")).expect("the host's leg").host = true;
+    let snapshot = json!({"rtc":"ink","action":"snapshot","id":1});
+    let asked = |d: &mut Driver<'_>, socket: u64, leg: &str| {
+        d.frame(route(socket), ROOM, leg, 1, "", &snapshot);
+        let sent = take_sent();
+        let to_presenter = to(&sent, 1, "ink");
+        let refused = to(&sent, socket, "error").first().map(|f| f["code"].clone());
+        (to_presenter.first().map(|f| f["from"].clone()), refused)
+    };
+
+    d.stage(ROOM, &screen_stage(2, "P", "off"));
+    take_sent();
+    assert_eq!(
+        asked(&mut d, 2, "M"),
+        (None, Some(json!("notAllowed"))),
+        "a member, annotation off"
+    );
+    assert_eq!(
+        asked(&mut d, 3, "H"),
+        (None, Some(json!("notAllowed"))),
+        "a host, annotation off"
+    );
+    assert_eq!(asked(&mut d, 4, "G"), (None, Some(json!("notAllowed"))), "a guest");
+    let (from, refused) = asked(&mut d, 1, "P");
+    assert_eq!(
+        (from, refused),
+        (Some(json!("P")), None),
+        "the presenter, whatever the mode"
+    );
+
+    d.stage(ROOM, &screen_stage(3, "P", "hosts"));
+    take_sent();
+    assert_eq!(asked(&mut d, 2, "M").1, Some(json!("notAllowed")));
+    assert_eq!(asked(&mut d, 3, "H"), (Some(json!("H")), None));
+
+    d.stage(ROOM, &screen_stage(4, "P", "everyone"));
+    take_sent();
+    d.frame(route(2), ROOM, "M", 1, "", &snapshot);
+    let sent = take_sent();
+    assert_eq!(to(&sent, 1, "ink").len(), 1, "the presenter's page is asked");
+    assert_eq!(to(&sent, 1, "ink")[0]["inkEpoch"], 4);
+    assert_eq!(asked(&mut d, 4, "G").1, Some(json!("notAllowed")), "never a guest");
+}

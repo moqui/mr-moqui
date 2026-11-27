@@ -72,13 +72,15 @@ spec({
     setupSpec() {
         makeUser(USER, "basic.comms.inbox", null)
         makeUser(CLIENT, "basic.comms.inbox.client", "BOSS_PROJECT_CLIENT")
-        // a mail account delivered here (no server), its Inbox and one message in it
+        // A local-only SMTP endpoint for MailCapture, its account, Inbox and one received message.
+        store("moqui.basic.email.EmailServer", {emailServerId: ACCOUNT + "_SMTP", smtpHost: "127.0.0.1", smtpPort: "1", smtpStartTls: "N"})
         store("moqui.basic.email.EmailAccount", {
             emailAccountId: ACCOUNT,
             ownerUserId: USER,
             accountKindEnumId: "EakHosted",
             emailAddress: "inbox.spec@example.com",
             accountName: "Spec mail",
+            emailServerId: ACCOUNT + "_SMTP",
             statusId: "EasActive"
         })
         store("moqui.basic.email.EmailFolder", {
@@ -163,6 +165,31 @@ feature("an action on the thread, and Home counts the account", {
     }
 })
 
+feature("applying a filtered view in message mode changes just its matching reply", {
+    when() {
+        ec.user.internalLoginUser("basic.comms.inbox")
+        const root = MESSAGE + "_ROOT", reply = MESSAGE + "_REPLY"
+        const fields = {rootEmailMessageId: root, emailAccountId: ACCOUNT, emailFolderId: FOLDER,
+            statusId: "ES_RECEIVED", messageDate: ec.user.nowTimestamp, isRead: "N"}
+        store("moqui.basic.email.EmailMessage", Object.assign({}, fields, {emailMessageId: root, subject: "Root"}))
+        store("moqui.basic.email.EmailMessage", Object.assign({}, fields, {emailMessageId: reply, subject: "Matchingreplyonly"}))
+        const old = ec.user.getPreference("MAIL_CONVERSATION")
+        try {
+            ec.user.setPreference("MAIL_CONVERSATION", "messages")
+            const action = inbox("apply#ViewAction", {emailAccountId: ACCOUNT, searchText: "subject:Matchingreplyonly", action: "read"})
+            const isRead = (id) => sys(() => ec.entity.find("moqui.basic.email.EmailMessage").condition("emailMessageId", id).one().isRead)
+            return {action, rootRead: isRead(root), replyRead: isRead(reply)}
+        } finally {
+            ec.user.setPreference("MAIL_CONVERSATION", old || "threads")
+            sys(() => ec.entity.find("moqui.basic.email.EmailMessage").condition("rootEmailMessageId", root).deleteAll())
+        }
+    },
+    then({action, rootRead, replyRead}) {
+        action.errors == "" && action.updatedCount == 1 && action.failedList.length == 0
+        replyRead == "Y" && rootRead == "N"
+    }
+})
+
 feature("Needs reply keeps the mail a day old or more that is not answered and has no reply sent after it, on Home and as an Inbox filter; the terminal Inbox opens the thread its link names", {
     when() {
         const daysAgo = (days) => new Date(Date.now() - days * 86400000)
@@ -178,13 +205,15 @@ feature("Needs reply keeps the mail a day old or more that is not answered and h
         message("BCI_NR_REPLY", {rootEmailMessageId: "BCI_NR_REPLIED", parentEmailMessageId: "BCI_NR_REPLIED", statusId: "ES_SENT",
             fromAddress: "inbox.spec@example.com", toAddresses: "lee@example.org", subject: "Re: Replied in thread", body: "y",
             messageDate: daysAgo(2), sentDate: daysAgo(2), emailFolderId: null})
+        message("BCI_EMPTY_DRAFT", {statusId: "ES_DRAFT", fromAddress: "inbox.spec@example.com", toAddresses: null,
+            subject: "Draft with no address", messageDate: daysAgo(0)})
         ec.user.internalLoginUser("basic.comms.inbox")
         const rows = inbox("find#InboxRows", {view: "inbox", needsReply: true, pageSize: 10})
         const home = attempt("org.moqui.comms.CommsHomeServices.get#CommsHome")
         const shown = sys(() => ec.screen.makeTest().rootScreen("component://basic-comms/screen/BasicComms.xml").renderMode("tui").render("Home", {}, null))
         // the terminal Inbox opens the thread Home links to (thread=store:threadId), above the list, and marks its row
         const mail = sys(() => ec.screen.makeTest().rootScreen("component://basic-comms/screen/BasicComms.xml").renderMode("tui")
-            .render("Inbox/MailTui", {thread: "email:BCI_NR_REPLIED"}, null))
+            .render("Inbox/MailTui", {view: "all", thread: "email:BCI_NR_REPLIED"}, null))
         const nodes = (value, out = []) => {
             if (Array.isArray(value)) value.forEach((item) => nodes(item, out))
             else if (value && typeof value === "object") {
@@ -201,6 +230,8 @@ feature("Needs reply keeps the mail a day old or more that is not answered and h
         opened.rows.length == 2
         mailText.includes("Re: Replied in thread")
         mailText.includes("▸ ")
+        mailText.includes("No recipients")
+        mailText.includes("To: lee")
         !mailText.includes("That thread is not found")
         rows.errors == ""
         rows.threadList.map(row => row.rowKey).join() == "email:BCI_NR_WAIT"
@@ -251,39 +282,78 @@ feature("a refused recipient is said once, and a From the user may only read say
     when() {
         ec.user.internalLoginUser("basic.comms.inbox")
         const fromValue = compose("get#ComposeData", {}).compose.fromValue
-        // the check runs once and its error is not added again by the strict save (COM-UI-017): the error list itself
-        try { sys(() => call("org.moqui.comms.ComposeServices.send#Compose", {fromValue, toJson: JSON.stringify([{value: "invalid-recipient"}]), subject: "x", body: "<p>x</p>"})) }
-        catch (err) { /* the errors are read below */ }
-        const invalid = Array.from(ec.message.errors || [])
-        ec.message.clearErrors()
+        const chips = (...values) => JSON.stringify(values.map((value) => ({value})))
+        const subject = "BasicCommsInbox recipient correction " + Date.now()
+        const fieldsWithErrors = {fromValue, toJson: chips("invalid-recipient", "pat@example.org", "bad-to"),
+            ccJson: chips("bad-cc"), bccJson: chips("invalid-recipient"), subject, body: "<p>Still here</p>"}
+        const original = compose("save#ComposeDraft", fieldsWithErrors)
+        const draftFields = Object.assign({}, fieldsWithErrors, {emailMessageId: original.emailMessageId})
+        const capture = ec.factory.getTool("MailCapture")
+        const wasEnabled = capture.isEnabled()
+        if (!wasEnabled) capture.enable()
+        const matching = () => Array.from(capture.getMessages()).filter((mail) => mail.subject === subject)
+        let invalid, refusedRow, beforeCorrection, corrected, delivered
+        try {
+            try { sys(() => call("org.moqui.comms.ComposeServices.send#Compose", draftFields)) } catch (err) { /* read the facade below */ }
+            invalid = Array.from(ec.message.errors || [])
+            ec.message.clearErrors()
+            refusedRow = sys(() => ec.entity.find("moqui.basic.email.EmailMessage").condition("emailMessageId", original.emailMessageId).one())
+            beforeCorrection = matching().length
+            corrected = compose("send#Compose", Object.assign({}, draftFields, {toJson: chips("pat@example.org"), ccJson: "[]", bccJson: "[]", holdSeconds: 0}))
+            if (!ec.factory.waitWorkerPoolEmpty(30)) throw new Error("The corrected send did not finish")
+            delivered = matching()
+        } finally {
+            if (!wasEnabled) {
+                capture.reset()
+                if (capture.isEnabled()) capture.disable()
+            }
+        }
         // a shared account the client user may read but not send from (a right lowered while a composer is open, COM-UI-021)
         store("moqui.basic.email.EmailAccount", {emailAccountId: ACCOUNT + "_SH", ownerUserId: USER, accountKindEnumId: "EakShared",
             emailAddress: "shared.spec@example.com", accountName: "Spec shared", statusId: "EasActive"})
-        store("moqui.basic.email.EmailAccountUser", {emailAccountId: ACCOUNT + "_SH", userId: CLIENT, fromDate: ec.user.nowTimestamp, permissionEnumId: "EapRead"})
+        const membership = {emailAccountId: ACCOUNT + "_SH", userId: CLIENT, fromDate: ec.user.nowTimestamp}
+        store("moqui.basic.email.EmailAccountUser", Object.assign({}, membership, {permissionEnumId: "EapSend"}))
         ec.user.internalLoginUser("basic.comms.inbox.client")
-        const readOnly = compose("save#ComposeDraft", {fromValue: "account:" + ACCOUNT + "_SH", toJson: JSON.stringify([{value: "pat@example.org"}]), body: "<p>x</p>"})
+        const fields = {fromValue: "account:" + ACCOUNT + "_SH", toJson: JSON.stringify([{value: "pat@example.org"}]), subject: "Shared draft", body: "<p>Retain this draft.</p>"}
+        const saved = compose("save#ComposeDraft", fields)
+        store("moqui.basic.email.EmailAccountUser", Object.assign({}, membership, {permissionEnumId: "EapRead"}))
+        const readOnly = compose("send#Compose", Object.assign({}, fields, {emailMessageId: saved.emailMessageId}))
+        const kept = saved.emailMessageId ? sys(() => ec.entity.find("moqui.basic.email.EmailMessage").condition("emailMessageId", saved.emailMessageId).one()) : null
         const stranger = compose("save#ComposeDraft", {fromValue: "account:" + ACCOUNT, toJson: JSON.stringify([{value: "pat@example.org"}]), body: "<p>x</p>"})
         ec.user.internalLoginUser("basic.comms.inbox")
         sys(() => ec.entity.find("moqui.basic.email.EmailAccountUser").condition("emailAccountId", ACCOUNT + "_SH").deleteAll())
-        return {invalid, readOnly, stranger}
+        return {invalid, subject, refusedRow, beforeCorrection, corrected, delivered, saved, readOnly, kept, stranger}
     },
-    then({invalid, readOnly, stranger}) {
-        invalid.length == 1 && String(invalid[0]).includes("Not an email address: invalid-recipient")
+    then({invalid, subject, refusedRow, beforeCorrection, corrected, delivered, saved, readOnly, kept, stranger}) {
+        invalid.join("|") == "Not an email address: invalid-recipient|Not an email address: bad-to|Not an email address: bad-cc"
+        beforeCorrection == 0 && refusedRow.statusId == "ES_DRAFT" && refusedRow.toAddresses == "pat@example.org"
+        refusedRow.subject == subject && refusedRow.body == "<p>Still here</p>"
+        corrected.errors == "" && corrected.emailMessageId == refusedRow.emailMessageId && delivered.length == 1
+        delivered[0].toList.join(",") == "pat@example.org"
+        saved.errors == "" && saved.emailMessageId != null
         readOnly.errors.includes("You can no longer send from Spec shared")
+        kept.statusId == "ES_DRAFT" && kept.emailAccountId == ACCOUNT + "_SH"
+        kept.subject == "Shared draft" && kept.body == "<p>Retain this draft.</p>"
         // an account the user does not reach is not named
         stranger.errors.includes("Choose a mail account to send from")
         !stranger.errors.includes("Spec mail")
     }
 })
 
-feature("Mail offers only what an account allows and asks before deleting forever; a label row is a checkbox; MessageDetail links stay under its app; Compose's text blocks keep the focus", {
+feature("Mail offers only what an account allows and asks before deleting forever; a label row is a checkbox; an empty folder names itself; MessageDetail links stay under its app and its print shows the message; Compose's text blocks keep the focus", {
     when() {
         const source = ec.resource.getLocationText("component://basic-comms/screen/BasicComms/Inbox/Mail.qvue", false)
         const detail = ec.resource.getLocationText("component://basic-comms/screen/BasicComms/Inbox/MessageDetail.xml", false)
         const composer = ec.resource.getLocationText("component://basic-comms/screen/BasicComms/Inbox/Compose.qvue", false)
-        return {source, detail, composer}
+        // COM-UI-038: the print, as its link opens it (/apps, html-print), shows the message itself
+        ec.user.internalLoginUser("basic.comms.inbox")
+        const printed = sys(() => ec.screen.makeTest().rootScreen("component://webroot/screen/webroot.xml").renderMode("html-print")
+            .render("apps/BasicComms/Inbox/MessageDetail", {emailMessageId: MESSAGE}, null))
+        const print = {output: String(printed.output || ""), errors: Array.from(printed.errorMessages || []).join(" | ")}
+        ec.message.clearErrors()
+        return {source, detail, composer, print}
     },
-    then({source, detail, composer}) {
+    then({source, detail, composer, print}) {
         // COM-UI-021: the mutations are gated on the account's send right, and applyAction refuses the rest
         source.includes('v-if="selectionCanChange"') && source.includes('v-if="rowCanChange(row)"') && source.includes('v-if="threadCanChange"')
         source.includes("You may read this account but not change its mail")
@@ -293,13 +363,20 @@ feature("Mail offers only what an account allows and asks before deleting foreve
         source.includes("rowAction(row, 'unsnooze')") && source.includes("threadAction('unsnooze')")
         /applySnooze\(at\) \{[\s\S]*?at <= Date\.now\(\)[\s\S]*?\.then\(\(json\) => \{[\s\S]*?this\.snooze\.open = false/.test(source)
         // COM-UI-027: Spam's name follows its action; Trash says Delete forever and asks first
-        source.includes(":aria-label=\"thread.folderKindEnumId === 'EfkJunk' ? t('Not spam') : t('Report spam')\"")
-        source.includes(":aria-label=\"threadInTrash ? t('Delete forever') : t('Delete')\"")
+        source.includes(":aria-label=\"threadActionFolder === 'EfkJunk' ? t('Not spam') : t('Report spam')\"")
+        source.includes(":aria-label=\"threadActionFolder === 'EfkTrash' ? t('Delete forever') : t('Delete')\"")
         /action === 'deleteForever' && !confirmed\) \{\s*return this\.confirmDeleteForever/.test(source)
         // COM-UI-028: an outgoing row names its own recipients, or none
         source.includes("row.recipientList") && source.includes("t('No recipients')")
+        // COM-UI-039: an account folder, label or mailbox opens with no view; its empty state names it, Spam and Trash their own
+        /emptyText\(\) \{[\s\S]*?EfkJunk: 'junk', EfkTrash: 'trash'[\s\S]*?t\('No conversations in'\) \+ ' ' \+ folder\.folderName/.test(source)
+        /emptyText\(\) \{[\s\S]*?t\('Nothing labelled'\) \+ ' ' \+ label\.labelName[\s\S]*?p\.mailbox\) return/.test(source)
         // COM-UI-016: no fixed /apps/Comms path
         !detail.includes("/apps/Comms/") && detail.includes('url="downloadEml"')
+        // COM-UI-038: the print goes through /apps (qapps renders only html, so an html-print there is the wrapper alone)
+        detail.includes("printUrl = detail ? '/apps/' + (appRoot || 'BasicComms') + '/Inbox/MessageDetail?'") && detail.includes('url="${printUrl}" url-type="plain"')
+        print.errors == ""
+        print.output.includes("Lunch on Friday") && print.output.includes("Pat Sender") && print.output.includes("Are you free for lunch on Friday?")
         // COM-UI-023: the text blocks' search has the focus when the menu opens, and the block goes where the "/" was
         composer.includes('@show="focusBlockSearch"') && composer.includes("this.slashAt = at")
         /insertBlock\(block\) \{[\s\S]*?editor\.chain\(\)\.focus\(slashAt\)/.test(composer)

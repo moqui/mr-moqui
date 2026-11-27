@@ -306,7 +306,10 @@ as end to end, never as plain.
 The call's view (`get#Call` and every push) carries `encryptionMode` and `e2ee`, and for each leg of an encrypted call
 its `deviceId`, `keyIndex` (the leg's number in the call, given when it names its device) and `keyGeneration` (its
 connection generation). A device named, a leg bound again (a reconnect or a reload) or a leg gone pushes the new view
-(`{kind: 'call', action: 'rekey'}`, or the action of the change). The roster is the answered browser legs with a device.
+(`{kind: 'call', action: 'rekey'}`, or the action of the change). The roster is the answered browser legs with a device,
+and the mobile app's screen legs (`CltScreen`), which are their page's device's with a key index of their own: the page
+makes and sends their keys as it does its own (`moqui.callKeys.addSender`) and hands them to the app, which seals the
+frames in the same layout (docs/ui/Mobile-Client.md, Sharing the screen in a call).
 
 1. **A key per sender.** Each page makes a random 16-byte SFrame base key for its leg, per call and epoch. Its KID is
    `keyIndex * 65536 + epoch`; the counter is one per sender across its tracks and layers. The cipher suite is
@@ -555,5 +558,28 @@ Two layers (plans/Comms-Messaging.md §8.4, where the results are kept):
 One participant holds the presentation stage. Hosts choose Anyone, Hosts, or Ask in the call controls. In Ask mode a host approves a request. Taking over prompts the new presenter and stops the previous capture. Hosts can stop a presentation, and leaving releases the stage.
 
 The browser's picker controls the tab, window or display that is captured. Tab audio, surface switching and cropping appear where the browser supports them. Viewers can pan, zoom or enter fullscreen. The media server checks stage ownership before forwarding screen video or mixing share audio into a phone leg.
+
+The stage's frames, on the notification socket (or a guest's `/callws`):
+
+| Frame | From | What |
+|---|---|---|
+| `rtc: "stage"`, `action` `ask`, `take`, `approve`, `lower`, `stop` | a page | Ask for, take or give up the stage (`kind` `screen`, `board` with `wikiPageId`, or `follow`); `take` and `stop` carry `previousLegId`, the presenter they act on, so a stop never lands on a newer presenter. `approve` is a host's, in Ask mode |
+| `rtc: "stage"`, `action` `inkMode`, `inkSurface` | the presenter | Who may draw (`off`, `hosts`, `everyone`); whether the strokes are drawn into the capture (this tab shared) |
+| `rtc: "stage"` with `stage`, `revision` | the call | The current stage to every leg: its kind, presenter leg, ink mode and epoch, the legs that asked (`requests`); what a request asked for stays with the call engine |
+| `rtc: "ink"`, `action` `stroke`, `pin`, `clear`, `snapshot` | a page, relayed | A stroke in fractions of the shared picture (at most 512 points, 128 kept), pinned or fading; `clear` is a host's or the presenter's; `snapshot` asks the presenter's page for a board and is sent only by one who may draw |
+| `rtc: "follow"`, `action` `navigate`, `locate`, `catchUp` | the presenter, relayed | The screen path and declared parameters, the section, dialog and pointer; to member pages only |
+
+The mobile app shares the phone's screen as a **screen leg** (`CltScreen`), since Android's WebView cannot capture
+it: `add#ScreenLeg` makes a leg of the caller's own participant for the page's leg (`screenOfLegId`), refused until that
+leg is connected (`notConnected`), while the call is on the direct path (`notRelayed`: the page moves it to the media
+server first) and, in an end-to-end encrypted call, from an app that does not seal its frames (`e2eeScreen`; with
+`sframe` the leg is the page device's, with a key index of its own: see [The roster and the keys](#the-roster-and-the-keys)).
+The page relays the leg's rtc frames on its own
+socket (`join`, the media node's `joined` and `offer`, the leg's `answer`, `stage` with the leg as `callLegId`,
+`publish`, `leave`), and the app's Rust sends its media. At the media node the leg is publish-only: it is offered no
+tracks, its video is the screen from its first packet so the stage gates it, and its page leg is not sent it back.
+The stage names the screen leg, which the pages show as its participant's share. It never keeps its participant in
+the call, and it ends with its page leg (leave, hold, the socket gone, the call's end), or by `leave#Call` naming it,
+which ends only the share. See [Mobile-Client, Sharing the screen](../ui/Mobile-Client.md#sharing-the-screen-in-a-call).
 
 **Present this screen** lets signed-in participants follow the presenter's application screens. Each follower loads the screen with their own account. If the account cannot read a record, the call shows an access message without its parameters. **Stop following** lets the viewer browse independently. **Follow again** opens the current presentation. A guest can watch only when the presenter shares this tab through the browser picker. Phone legs receive no screen-navigation messages.

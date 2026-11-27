@@ -570,6 +570,20 @@ impl Sfu {
 
     /// A leg joins (or rejoins with a newer generation) with its offer; the answer goes back on its signaling connection.
     pub fn join(&mut self, now: Instant, key: &LegKey, generation: u64, offer: &str) -> Result<String, SfuError> {
+        self.join_as(now, key, generation, offer, None)
+    }
+
+    /// [`Sfu::join`], with `screen_of` for a native screen share's leg (`CltScreen`) and the page leg it shares for:
+    /// it is offered no other leg's tracks, its tracks are the screen (video) and its audio from the start, so the
+    /// stage gates them at once, and the page leg is not sent them.
+    pub fn join_as(
+        &mut self,
+        now: Instant,
+        key: &LegKey,
+        generation: u64,
+        offer: &str,
+        screen_of: Option<&str>,
+    ) -> Result<String, SfuError> {
         if let Some(old) = self.by_leg.get(key).and_then(|id| self.peers.get(id)) {
             if old.generation >= generation {
                 return Err(SfuError::StaleGeneration);
@@ -617,6 +631,7 @@ impl Sfu {
         let id = self.next_id;
         self.next_id += 1;
         let mut peer = Peer::new(id, key.clone(), generation, rtc, now);
+        peer.screen_of = screen_of.map(Arc::from);
         let room = self.rooms.entry(key.room.clone()).or_default();
         peer.guest_screen_only = room.guest_screen_only;
         peer.screen_leg.clone_from(&room.screen_leg);

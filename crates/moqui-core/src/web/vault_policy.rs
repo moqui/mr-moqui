@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The vault screens' Content-Security-Policy (plans/Vault-Instances.md §3.6, docs/security/Vaults.md "The vault
+//! The vault screens' Content-Security-Policy (plans/archive/Vault-Instances.md §3.6, docs/security/Vaults.md "The vault
 //! screens' policy"). The vault worker runs in the page's document, and the `/qapps` shell loads every screen into the
 //! one document it was served as, so the policy has to be on that document: a request whose path resolves to a vault
 //! screen (one of `vault@screen-names` among the screens the path names, never an extra-path name or a path parameter)

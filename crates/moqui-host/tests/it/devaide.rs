@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The dev-aide's services on a dev instance (plans/design-dev-aide.md P2): a site component and an upstream app, each its
+//! The dev-aide's services on a dev instance (plans/archive/design-dev-aide.md P2): a site component and an upstream app, each its
 //! own scratch git repository with a bare remote, and git isolated from the desktop (no global or system config, no
 //! askpass, no credential helper). Saves reload and check, a save over a changed file is refused with the disk's text,
 //! the upstream lock and the tiers hold, paths stay in their roots, writes are audited, commits name the user as author
@@ -39,6 +39,11 @@ const SITE_SERVICES: &str = r#"<services>
     </service>
 </services>
 "#;
+const SITE_LIBRARIES: &str = r#"{"output": "screen/my-site/libs", "projects": ["libraries"], "libraries": [
+    {"id": "note", "entry": "note", "targets": ["client", "server"]}, {"id": "secret", "entry": "secret", "targets": ["server"]}]}"#;
+const SITE_LIBRARY_MANIFEST: &str = r#"{"libraries": [
+    {"id": "note", "files": [{"target": "client", "path": "note.js"}, {"target": "server", "path": "note.js"}]},
+    {"id": "secret", "files": [{"target": "server", "path": "secret.js"}]}]}"#;
 const UPSTREAM_COMPONENT: &str = r#"<component name="upstream-app"/>"#;
 const UPSTREAM_SERVICES: &str = "<services>\n    <service verb=\"run\" noun=\"Up\"/>\n</services>\n";
 
@@ -145,6 +150,24 @@ fn the_workspace_saves_checks_commits_and_publishes() {
     let files = [
         ("components/addon/my-site/component.xml", SITE_COMPONENT),
         ("components/addon/my-site/service/mysite/Things.xml", SITE_SERVICES),
+        // a component library, built: a client and a server file of `note`, and a server-only `secret`
+        ("components/addon/my-site/build/js-build.json", SITE_LIBRARIES),
+        (
+            "components/addon/my-site/screen/my-site/libs/MANIFEST.json",
+            SITE_LIBRARY_MANIFEST,
+        ),
+        (
+            "components/addon/my-site/screen/my-site/libs/note.js",
+            "/* the note client bundle */",
+        ),
+        (
+            "components/addon/my-site/screen/my-site/libs/secret.js",
+            "/* not a client file */",
+        ),
+        (
+            "components/addon/my-site/script/libs/note.js",
+            "/* the note server module */",
+        ),
         ("components/addon/upstream-app/component.xml", UPSTREAM_COMPONENT),
         ("components/addon/upstream-app/service/upapp/Up.xml", UPSTREAM_SERVICES),
     ];
@@ -185,6 +208,70 @@ fn the_workspace_saves_checks_commits_and_publishes() {
 
     // a save of a service file: written, reloaded, checked; the new service runs at once
     let path = "service/mysite/Things.xml";
+    let library_service = "org.moqui.devaide.LibraryServices.";
+    let library_params = [("rootId", "my-site"), ("path", path), ("operation", "prepare")];
+    let list = call(
+        &factory,
+        "john.doe",
+        &format!("{library_service}get#Libraries"),
+        &library_params,
+    )
+    .unwrap();
+    let catalog = moqui_lib::json::to_json(&list["result"]);
+    assert_eq!(catalog["component"], "my-site");
+    assert_eq!(catalog["canManage"], true);
+    let manage = format!("{library_service}manage#Library");
+    assert!(call(&factory, "ext.user", &manage, &library_params)
+        .unwrap_err()
+        .contains("full tier"));
+    assert!(call(&factory, "john.doe", &manage, &library_params)
+        .unwrap_err()
+        .contains("session"));
+    // A signed-in browser reaches prepare's argument check, without a package download in the regression suite.
+    let address = gate.server.address();
+    let cookie = crate::common::sign_in(address, "john.doe", "moqui");
+    let (_, headers, html) = crate::common::exchange(
+        address,
+        &crate::common::http_request("GET", "/qapps", &[("Cookie", &cookie)], ""),
+    );
+    let token = crate::common::session_token(&html)
+        .or_else(|| crate::common::header(&headers, "moquiSessionToken"))
+        .unwrap();
+    let (_, _, answer) = crate::common::exchange(
+        address,
+        &crate::common::http_request(
+            "POST",
+            "/apps/dev/Workspace/manageLibrary",
+            &[
+                ("Cookie", &cookie),
+                ("X-CSRF-Token", &token),
+                ("Content-Type", "application/x-www-form-urlencoded"),
+            ],
+            "rootId=my-site&path=service%2Fmysite%2FThings.xml&operation=prepare",
+        ),
+    );
+    assert!(answer.contains("Invalid library argument"), "{answer}");
+    // /clientLibrary serves only a client file the component's manifest lists, to anyone
+    let client_library =
+        |path: &str| crate::common::exchange(address, &crate::common::http_request("GET", path, &[], ""));
+    let (status, _, body) = client_library("/clientLibrary/my-site/note");
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("the note client bundle"), "{body}");
+    for refused in [
+        "/clientLibrary/my-site/secret",
+        "/clientLibrary/my-site/nope",
+        "/clientLibrary/upstream-app/note",
+        "/clientLibrary/no-such/note",
+        "/clientLibrary/my-site/note.js",
+        "/clientLibrary/..%2Fmy-site/note",
+    ] {
+        let (status, _, body) = client_library(refused);
+        assert_eq!(status, 404, "{refused}: {body}");
+        assert!(
+            !body.contains("client bundle") && !body.contains("client file"),
+            "{refused}: {body}"
+        );
+    }
     let file = call(
         &factory,
         "john.doe",
@@ -631,7 +718,7 @@ const SITE_CALLS: &str = r#"<services>
 </services>
 "#;
 
-/// The artifact index on a dev instance (plans/design-dev-aide.md P3): built into its rows, kept per file by each reload,
+/// The artifact index on a dev instance (plans/archive/design-dev-aide.md P3): built into its rows, kept per file by each reload,
 /// an unchanged file not read again (as after a restart, which reads the ids back from the rows), the site's
 /// extensions with their state, a renamed anchor in an upstream screen showing its extension broken after the reload,
 /// and a call observed on the artifact stack joining the references.
@@ -1150,18 +1237,23 @@ const AUTO_DEFINED: &str = r#"<services>
 
 /// The rows of the derived entity-auto services in the database index: written for a call to an entity-auto name, with
 /// the binding into its parameter; derived again when the entity's fields change; dropped while a file defines the id,
-/// and derived again when that file goes; and derived for a call indexed before its entity, once the entity comes.
+/// and derived again when that file goes; and derived for a call indexed before its entity, once the entity comes. A
+/// view entity's `alias-all` of the entity has the new field too, in the view's file.
 #[test]
 fn the_index_rows_derive_entity_auto_services() {
     if !crate::common::own_process() {
         return;
     }
+    let views = r#"<entities><view-entity entity-name="WidgetView" package="acme">
+        <member-entity entity-alias="W" entity-name="acme.Widget"/><alias-all entity-alias="W"/>
+    </view-entity></entities>"#;
     let files = [
         (
             "components/addon/acme-site/component.xml",
             r#"<component name="acme-site"/>"#,
         ),
         ("components/addon/acme-site/entity/AcmeEntities.xml", AUTO_ENTITIES),
+        ("components/addon/acme-site/entity/AcmeViews.xml", views),
         ("components/addon/acme-site/service/acme/WidgetServices.xml", AUTO_CALLS),
         ("components/addon/acme-site/service/acme/SaveServices.xml", AUTO_SAVE),
         ("components/addon/acme-site/screen/Widgets.xml", AUTO_SCREEN),
@@ -1272,6 +1364,19 @@ fn the_index_rows_derive_entity_auto_services() {
     assert_eq!(
         form_bound(&factory),
         [format!("{save_param}color"), format!("{save_param}widgetName")]
+    );
+    let view_field = index::describe(&factory, "field:acme.WidgetView.color")
+        .unwrap()
+        .map(|row| {
+            (
+                row.origin,
+                row.summary,
+                row.path.rsplit('/').next().unwrap_or_default().to_string(),
+            )
+        });
+    assert_eq!(
+        view_field,
+        Some(("alias-all".to_string(), "id".to_string(), "AcmeViews.xml".to_string()))
     );
 
     // a file defining the id: its service and parameters answer, the derived rows are gone
@@ -1385,7 +1490,7 @@ fn the_index_writes_nothing_once_the_shutdown_began() {
     );
 }
 
-/// The index's scale (plans/design-dev-aide.md 7.1, question 11): this repository's components (components/base and
+/// The index's scale (plans/archive/design-dev-aide.md 7.1, question 11): this repository's components (components/base and
 /// component) and a synthetic corpus ten times their size, each built into the rows, with a per-file update and a find
 /// timed. Run once by hand and the numbers recorded in the design:
 /// `cargo test -p moqui-host --features dev --test it devaide::the_index_scales -- --ignored --nocapture`.
@@ -1478,7 +1583,7 @@ fn the_index_scales() {
     measure("synthetic x10", synthetic);
 }
 
-/// F14 (plans/design-dev-aide.md 13.3, 13.5): a screen renders with proposed text standing at a location for the renders
+/// F14 (plans/archive/design-dev-aide.md 13.3, 13.5): a screen renders with proposed text standing at a location for the renders
 /// in the overlay, a new `screen-extend` file merged into its base screen; outside the overlay the screen is as saved,
 /// and the cached definition is not the overlaid one.
 #[test]
@@ -1570,7 +1675,7 @@ fn a_proposed_screen_previews_in_the_real_shell(factory: &Arc<ExecutionContextFa
     assert!(!data.contains("<i>PWNEDMENU"), "{data}");
 }
 
-/// Source stamps (plans/design-dev-aide.md P6, F10): a render that asks for them (`X-Moqui-Aide: source`, a Dev AIDE
+/// Source stamps (plans/archive/design-dev-aide.md P6, F10): a render that asks for them (`X-Moqui-Aide: source`, a Dev AIDE
 /// user on a dev instance) writes each widget's file, line and column as `data-m-src`, a field a site's `screen-extend`
 /// merges naming the screen-extend file; a render that does not ask has none.
 #[test]
@@ -1647,9 +1752,218 @@ fn a_stamped_render_names_each_widgets_file() {
     assert!(!plain.contains("dbform:"));
 }
 
+/// Convert to site extension (plans/archive/design-dev-aide.md 7.2, question 16): a DbForm that changes an upstream form (a
+/// required text field with a tooltip, a drop-down with options and a widget attribute, a dependency, a base field
+/// retitled and one made hidden) becomes the form merge of the site's screen-extend, after the field the site's merge has
+/// already; a dated DbForm is refused; a review's digest that no longer holds is refused and keeps the rows, and so does
+/// an accept whose file write fails after the rows were deleted (the transaction rolls them back); the accepted one
+/// deletes them and writes the file, and the form renders as it did.
+#[test]
+fn a_db_form_converts_to_a_site_extension() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let screen = "<screen require-authentication=\"false\">\n    <widgets>\n        <form-single name=\"Facts\"><field name=\"upId\"><default-field title=\"Up Id\"><display/></default-field></field><field name=\"upNote\"><default-field title=\"Up Note\"><display/></default-field></field></form-single>\n    </widgets>\n</screen>\n";
+    let extend = "<screen-extend>\n    <form-single name=\"Facts\"><field name=\"extraNote\" after=\"upId\"><default-field title=\"Extra Note\"><display/></default-field></field></form-single>\n</screen-extend>\n";
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/components/dev/dev-aide"
+    ))
+    .unwrap();
+    let extend_path = "screen-extend/upstream-app/screen/UpApp/Detail.xml";
+    let files = [
+        ("components/addon/my-site/component.xml", SITE_COMPONENT),
+        (
+            "components/addon/my-site/screen-extend/upstream-app/screen/UpApp/Detail.xml",
+            extend,
+        ),
+        ("components/addon/upstream-app/component.xml", UPSTREAM_COMPONENT),
+        ("components/addon/upstream-app/screen/UpApp/Detail.xml", screen),
+    ];
+    let gate = start_with_files_and_links(
+        "dev-aide-dbform",
+        Some(&include_str!("../../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml").replace(
+            "</entity-facade-xml>",
+            r#"    <moqui.screen.form.DbForm formId="DBF_CONVERT" description="Facts for the office" modifyXmlScreenForm="component://upstream-app/screen/UpApp/Detail.xml#Facts"/>
+    <moqui.screen.form.DbFormField formId="DBF_CONVERT" fieldName="dbNote" title="Db Note" tooltip="What the office notes" isRequired="Y" fieldTypeEnumId="DBFFT_text-line" layoutSequenceNum="1"/>
+    <moqui.screen.form.DbFormField formId="DBF_CONVERT" fieldName="dbKind" title="Db Kind" fieldTypeEnumId="DBFFT_drop-down" layoutSequenceNum="2"/>
+    <moqui.screen.form.DbFormFieldAttribute formId="DBF_CONVERT" fieldName="dbKind" attributeName="allow-empty" value="true"/>
+    <moqui.screen.form.DbFormFieldOption formId="DBF_CONVERT" fieldName="dbKind" sequenceNum="1" keyValue="A" text="Alpha Kind"/>
+    <moqui.screen.form.DbFormFieldOption formId="DBF_CONVERT" fieldName="dbKind" sequenceNum="2" keyValue="B" text="Beta Kind"/>
+    <moqui.screen.form.DbFormFieldDependency formId="DBF_CONVERT" dependencySeqId="01" sourceFieldName="dbNote" operator="not-empty" targetFieldName="dbKind" effect="show"/>
+    <moqui.screen.form.DbFormField formId="DBF_CONVERT" fieldName="upId" title="Up Number" fieldTypeEnumId="DBFFT_display" layoutSequenceNum="3"/>
+    <moqui.screen.form.DbFormField formId="DBF_CONVERT" fieldName="upNote" fieldTypeEnumId="DBFFT_hidden" layoutSequenceNum="4"/>
+    <moqui.screen.form.DbFormUserGroup formId="DBF_CONVERT" userGroupId="ADMIN"/>
+    <moqui.screen.form.DbForm formId="DBF_DATED" isDated="Y" modifyXmlScreenForm="component://upstream-app/screen/UpApp/Detail.xml#Facts"/>
+    <moqui.screen.form.DbFormField formId="DBF_DATED" fieldName="datedNote" title="Dated Note" fieldTypeEnumId="DBFFT_display"/>
+</entity-facade-xml>"#,
+        )),
+        &[("moqui_conf__instance__purpose", "dev"), ("moqui_conf__dev_aide__site_component", "my-site")],
+        &files,
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
+    );
+    let factory = Arc::clone(gate.server.factory());
+    let site = gate.runtime.join("components/addon/my-site");
+    let render = || {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        moqui_core::screen::ScreenTest::new(&factory)
+            .root_screen("component://upstream-app/screen/UpApp/Detail.xml")
+            .render_mode("qvt")
+            .render("", BTreeMap::new())
+            .unwrap()
+            .text()
+    };
+    let rows = |entity: &str| {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        factory
+            .entity()
+            .unwrap()
+            .find(entity)
+            .unwrap()
+            .disable_authz()
+            .eq("formId", Value::string("DBF_CONVERT"))
+            .count()
+            .unwrap()
+    };
+    let before = render();
+    assert!(before.contains("Db Note") && before.contains("Beta Kind"), "{before}");
+    assert!(before.contains("Up Number") && !before.contains("Up Id"), "{before}");
+    let dated = call(
+        &factory,
+        "john.doe",
+        "org.moqui.devaide.ArtifactServices.get#DbFormConversion",
+        &[("formId", "DBF_DATED")],
+    )
+    .unwrap_err();
+    assert!(dated.contains("is dated"), "{dated}");
+
+    let changes = call(
+        &factory,
+        "john.doe",
+        "org.moqui.devaide.ArtifactServices.get#DbFormChanges",
+        &[],
+    )
+    .unwrap();
+    let listed = moqui_lib::json::to_json(&changes["dbForms"]);
+    assert!(
+        listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["formId"] == "DBF_CONVERT" && row["formName"] == "Facts"),
+        "{listed}"
+    );
+    let review = call(
+        &factory,
+        "john.doe",
+        "org.moqui.devaide.ArtifactServices.get#DbFormConversion",
+        &[("formId", "DBF_CONVERT")],
+    )
+    .unwrap();
+    assert_eq!(text(&review, "path"), extend_path);
+    let proposed = text(&review, "proposedText");
+    assert!(
+        proposed.contains(r#"title="Db Note" tooltip="What the office notes" required="true""#),
+        "{proposed}"
+    );
+    assert!(proposed.contains(r#"<option key="B" text="Beta Kind"/>"#), "{proposed}");
+    assert!(proposed.contains(r#"<drop-down allow-empty="true">"#), "{proposed}");
+    assert!(
+        proposed.contains(r#"<visible-when field="dbNote" value="" operator="not-empty"/>"#),
+        "{proposed}"
+    );
+    assert!(!proposed.contains("layoutSequenceNum"), "{proposed}");
+    // the base's fields as the DbForm changed them: retitled, and hidden
+    assert!(
+        proposed.contains(r#"<field name="upId">"#) && proposed.contains(r#"title="Up Number""#),
+        "{proposed}"
+    );
+    assert!(
+        proposed.contains(r#"<field name="upNote">"#) && proposed.contains("<hidden/>"),
+        "{proposed}"
+    );
+    // one merge, the site's field first and the DbForm's after it
+    assert_eq!(
+        proposed.matches("<form-single name=\"Facts\">").count(),
+        1,
+        "{proposed}"
+    );
+    assert!(proposed.find("extraNote").unwrap() < proposed.find("dbNote").unwrap());
+    let notes = moqui_lib::json::to_json(&review["notes"]).to_string();
+    assert!(notes.contains("ADMIN"), "the groups it applied to: {notes}");
+    assert!(
+        notes.contains("the one loaded last decides"),
+        "the merge order: {notes}"
+    );
+    assert!(text(&review, "diff").contains("+"), "{}", text(&review, "diff"));
+
+    // a review that no longer holds is refused and changes nothing
+    let convert = |digest: &str| {
+        call(
+            &factory,
+            "john.doe",
+            "org.moqui.devaide.ArtifactServices.convert#DbForm",
+            &[("formId", "DBF_CONVERT"), ("digest", digest)],
+        )
+    };
+    let stale = convert("0123").unwrap_err();
+    assert!(stale.contains("review the conversion again"), "{stale}");
+    assert_eq!(rows("moqui.screen.form.DbForm"), 1);
+    assert_eq!(std::fs::read_to_string(site.join(extend_path)).unwrap(), extend);
+
+    // a write that fails after the rows were deleted rolls the deletes back: the directory made read only
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = site.join(extend_path).parent().unwrap().to_path_buf();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        // a user the mode does not stop (root) cannot see this case
+        let probe = dir.join(".probe");
+        if std::fs::write(&probe, "").is_ok() {
+            let _ = std::fs::remove_file(&probe);
+            eprintln!("skipped the failed write: the directory's mode does not stop this user");
+        } else {
+            let failed = convert(&text(&review, "digest")).unwrap_err();
+            assert!(!failed.contains("review the conversion again"), "{failed}");
+            assert_eq!(rows("moqui.screen.form.DbForm"), 1, "{failed}");
+            assert_eq!(rows("moqui.screen.form.DbFormField"), 4, "{failed}");
+            assert_eq!(rows("moqui.screen.form.DbFormFieldOption"), 2, "{failed}");
+            assert_eq!(std::fs::read_to_string(site.join(extend_path)).unwrap(), extend);
+        }
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let converted = convert(&text(&review, "digest")).unwrap();
+    assert_eq!(text(&converted, "path"), extend_path);
+    for entity in [
+        "moqui.screen.form.DbForm",
+        "moqui.screen.form.DbFormField",
+        "moqui.screen.form.DbFormFieldAttribute",
+        "moqui.screen.form.DbFormFieldOption",
+        "moqui.screen.form.DbFormFieldDependency",
+        "moqui.screen.form.DbFormUserGroup",
+    ] {
+        assert_eq!(rows(entity), 0, "{entity}");
+    }
+    assert_eq!(std::fs::read_to_string(site.join(extend_path)).unwrap(), proposed);
+    let after = render();
+    assert!(after.contains("Db Note") && after.contains("Beta Kind"), "{after}");
+    assert_eq!(before, after, "the form renders as the DbForm made it");
+    // nothing is left to convert
+    assert!(call(
+        &factory,
+        "john.doe",
+        "org.moqui.devaide.ArtifactServices.get#DbFormConversion",
+        &[("formId", "DBF_CONVERT")]
+    )
+    .is_err());
+}
+
 const SCREENS: &str = "org.moqui.devaide.ScreenServices.";
 
-/// The screen tree's actions (plans/design-dev-aide.md 11.1): Set default and a menu index in the parent's file; Move
+/// The screen tree's actions (plans/archive/design-dev-aide.md 11.1): Set default and a menu index in the parent's file; Move
 /// with the references to the old location updated; Remove refused while something references the screen, then
 /// confirmed; and for an upstream parent the default goes in the site's screen-extend of it.
 #[test]
@@ -1857,7 +2171,7 @@ fn writer_gate(label: &str) -> crate::common::Gate {
     )
 }
 
-/// Try in sim and Save as spec (plans/design-dev-aide.md P7, 9.4): a Try lists the rows the service would write and
+/// Try in sim and Save as spec (plans/archive/design-dev-aide.md P7, 9.4): a Try lists the rows the service would write and
 /// keeps none; Save as spec writes its feature into the site's spec file, as the service is upstream; Run spec runs it in
 /// the sim, and it passes.
 #[test]
@@ -1927,7 +2241,7 @@ fn a_try_saved_as_a_spec_passes() {
         "{spec}"
     );
     assert!(
-        spec.contains("<upapp.Widget widgetId=\"W-TRY\" widgetName=\"From a try\"/>"),
+        spec.contains(r#"<upapp.Widget widgetId=\"W-TRY\" widgetName=\"From a try\"/>"#),
         "{spec}"
     );
     let ran = call(
@@ -1949,7 +2263,7 @@ fn a_try_saved_as_a_spec_passes() {
     );
 }
 
-/// A new SECA rule in the site component runs after its save (plans/design-dev-aide.md P7, 10): the rule set is built
+/// A new SECA rule in the site component runs after its save (plans/archive/design-dev-aide.md P7, 10): the rule set is built
 /// again from the files, no restart.
 #[test]
 fn a_site_seca_runs_after_its_save() {
@@ -1998,10 +2312,230 @@ fn a_site_seca_runs_after_its_save() {
     assert_eq!(rules[0]["site"], true, "{rules}");
 }
 
-/// New component (`create#Component`, plans/design-dev-aide.md 12): a component from the component template
-/// (`runtime/components/dev/template`) in runtime/components/addon, or with dev in runtime/components/dev, of the part asked for,
-/// with a git repository of its own; a name taken, a name that is not one or an unknown part is refused, and the extend
-/// tier may not make one.
+/// ECA rules against recorded contexts (plans/archive/design-dev-aide.md 10): a context saved as a named fixture of the site's
+/// rules file and listed; Save as spec on a SECA rule writes a feature that calls its service with the fixture and
+/// checks what the rule did, on an EECA rule one that makes its entity operation, on a gitECA rule one of its condition
+/// alone (a spec does not replay a push), saying so; the sim keeps nothing of the Tries, and Run spec runs each in the
+/// sim, and they pass. An EmECA rule has no spec.
+#[test]
+fn a_rules_fixture_becomes_a_spec_that_passes() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let gate = writer_gate("dev-aide-rule-spec");
+    let factory = Arc::clone(gate.server.factory());
+    let site = gate.runtime.join("components/addon/my-site");
+    let save = |path: &str, text: &str| {
+        call(
+            &factory,
+            "john.doe",
+            &format!("{WS}save#File"),
+            &[("rootId", "my-site"), ("path", path), ("text", text), ("baseHash", "")],
+        )
+        .unwrap()
+    };
+    save(
+        "service/MySite.secas.xml",
+        "<secas>\n    <seca service=\"upapp.WidgetServices.make#Widget\" when=\"post-service\">\n        <actions><message>the site rule ran for ${widgetId}</message></actions>\n    </seca>\n</secas>\n",
+    );
+    let eecas = save(
+        "entity/MySite.eecas.xml",
+        "<eecas>\n    <eeca entity=\"upapp.Widget\" on-create=\"true\">\n        <actions><message>a widget was made: ${widgetName}</message></actions>\n    </eeca>\n</eecas>\n",
+    );
+    let rules = call(
+        &factory,
+        "john.doe",
+        &format!("{WRITER}list#EcaRules"),
+        &[("kind", "eeca"), ("target", "upapp.Widget")],
+    )
+    .unwrap();
+    assert_eq!(
+        moqui_lib::json::to_json(&rules["rules"]).as_array().map(Vec::len),
+        Some(1),
+        "{eecas:?} {rules:?}"
+    );
+
+    let fixture = call(
+        &factory,
+        "john.doe",
+        &format!("{WRITER}save#RuleFixture"),
+        &[
+            ("rootId", "my-site"),
+            ("path", "service/MySite.secas.xml"),
+            ("name", "widget-one"),
+            ("context", r#"{"widgetId": "W-F1", "widgetName": "From a fixture"}"#),
+        ],
+    )
+    .unwrap();
+    let fixture = moqui_lib::json::to_json(&fixture["fixture"]);
+    assert_eq!(fixture["path"], "test/fixtures/widget-one.json", "{fixture}");
+    assert_eq!(
+        fixture["location"], "component://my-site/test/fixtures/widget-one.json",
+        "{fixture}"
+    );
+    assert!(std::fs::read_to_string(site.join("test/fixtures/widget-one.json"))
+        .unwrap()
+        .contains("\"widgetId\": \"W-F1\""));
+    let listed = call(
+        &factory,
+        "john.doe",
+        &format!("{WRITER}list#RuleFixtures"),
+        &[("rootId", "my-site"), ("path", "service/MySite.secas.xml")],
+    )
+    .unwrap();
+    let listed = moqui_lib::json::to_json(&listed["fixtures"]);
+    assert_eq!(listed[0]["name"], "widget-one", "{listed}");
+    assert_eq!(listed[0]["context"]["widgetName"], "From a fixture", "{listed}");
+    // a fixture that is a link out of the root is not read
+    #[cfg(unix)]
+    {
+        std::fs::write(gate.runtime.join("outside.json"), r#"{"secret": "outside the root"}"#).unwrap();
+        std::os::unix::fs::symlink(gate.runtime.join("outside.json"), site.join("test/fixtures/leak.json")).unwrap();
+        let listed = call(
+            &factory,
+            "john.doe",
+            &format!("{WRITER}list#RuleFixtures"),
+            &[("rootId", "my-site"), ("path", "service/MySite.secas.xml")],
+        )
+        .unwrap();
+        let listed = moqui_lib::json::to_json(&listed["fixtures"]).to_string();
+        assert!(
+            !listed.contains("outside the root") && !listed.contains("leak"),
+            "{listed}"
+        );
+        std::fs::remove_file(site.join("test/fixtures/leak.json")).unwrap();
+    }
+
+    // the rule's trigger in the sim, traced: the rule's own actions are a block of the trace, by its rules file
+    let tried = call(
+        &factory,
+        "john.doe",
+        &format!("{WRITER}try#Rule"),
+        &[
+            ("kind", "seca"),
+            ("target", "upapp.WidgetServices.make#Widget"),
+            ("context", r#"{"widgetId": "W-T1"}"#),
+        ],
+    )
+    .unwrap();
+    let tried = moqui_lib::json::to_json(&tried["result"]);
+    assert!(
+        tried["messages"].to_string().contains("the site rule ran for W-T1"),
+        "{tried}"
+    );
+    let rule_block = tried["trace"]["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|block| block["path"] == "service/MySite.secas.xml")
+        .cloned()
+        .unwrap_or_else(|| panic!("no block of the rule: {tried}"));
+    assert_eq!(rule_block["line"], 3, "{rule_block}");
+    assert_eq!(rule_block["elements"]["0"]["count"], 1, "{rule_block}");
+
+    let spec = |rules: &str, parameters: &[(&str, &str)]| {
+        let mut all = vec![("rootId", "my-site"), ("path", rules)];
+        all.extend_from_slice(parameters);
+        call(&factory, "john.doe", &format!("{WRITER}save#RuleSpec"), &all)
+    };
+    let run = |path: &str| {
+        let ran = call(
+            &factory,
+            "john.doe",
+            &format!("{WRITER}run#Spec"),
+            &[("rootId", "my-site"), ("path", path)],
+        )
+        .unwrap();
+        assert_eq!(
+            ran["passed"],
+            Value::Bool(true),
+            "{path}: {:?} {:?}",
+            moqui_lib::json::to_json(&ran["cases"]),
+            ran.get("setupFailure")
+        );
+    };
+    let widgets = || {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        factory.entity().unwrap().find("upapp.Widget").unwrap().count().unwrap()
+    };
+
+    let seca = spec(
+        "service/MySite.secas.xml",
+        &[
+            ("kind", "seca"),
+            ("target", "upapp.WidgetServices.make#Widget"),
+            ("fixture", "widget-one"),
+            ("context", r#"{"widgetId": "W-F1", "widgetName": "From a fixture"}"#),
+        ],
+    )
+    .unwrap();
+    assert_eq!(text(&seca, "path"), "test/MySiteSecas.spec.js");
+    let written = std::fs::read_to_string(site.join("test/MySiteSecas.spec.js")).unwrap();
+    for expected in [
+        "spec({})",
+        "ec.resource.getLocationText(\"component://my-site/test/fixtures/widget-one.json\")",
+        "const out = call(\"upapp.WidgetServices.make#Widget\", fixture)",
+        "messages.includes(\"the site rule ran for W-F1\")",
+        r#"<upapp.Widget widgetId=\"W-F1\" widgetName=\"From a fixture\"/>"#,
+    ] {
+        assert!(written.contains(expected), "{expected}: {written}");
+    }
+    assert_eq!(widgets(), 0, "the Try of the trigger kept nothing");
+    run("test/MySiteSecas.spec.js");
+
+    let eeca = spec(
+        "entity/MySite.eecas.xml",
+        &[
+            ("kind", "eeca"),
+            ("target", "upapp.Widget"),
+            ("operation", "create"),
+            ("fixture", "widget-two"),
+            ("context", r#"{"widgetId": "W-F2", "widgetName": "Made"}"#),
+        ],
+    )
+    .unwrap();
+    assert_eq!(text(&eeca, "path"), "test/MySiteEecas.spec.js");
+    let written = std::fs::read_to_string(site.join("test/MySiteEecas.spec.js")).unwrap();
+    assert!(
+        written.contains("ec.entity.makeValue(\"upapp.Widget\").setAll(fixture).create()")
+            && written.contains("messages.includes(\"a widget was made: Made\")"),
+        "{written}"
+    );
+    run("test/MySiteEecas.spec.js");
+
+    let giteca = spec(
+        "service/MySite.gitecas.xml",
+        &[
+            ("kind", "giteca"),
+            ("condition", "refName == 'refs/heads/main'"),
+            ("fixture", "push-main"),
+            ("context", r#"{"refName": "refs/heads/main", "source": "push"}"#),
+        ],
+    )
+    .unwrap();
+    assert!(text(&giteca, "note").contains("does not replay a push"), "{giteca:?}");
+    let written = std::fs::read_to_string(site.join("test/MySiteGitecas.spec.js")).unwrap();
+    assert!(
+        written.contains("ec.resource.condition(\"refName == 'refs/heads/main'\", null, fixture) == true"),
+        "{written}"
+    );
+    run("test/MySiteGitecas.spec.js");
+    assert_eq!(widgets(), 0, "the spec runs kept nothing");
+
+    let emeca = spec(
+        "service/MySite.emecas.xml",
+        &[("kind", "emeca"), ("fixture", "mail"), ("context", "{}")],
+    );
+    assert!(emeca.unwrap_err().contains("received message"));
+}
+
+/// New component (`create#Component`, plans/archive/design-dev-aide.md 12): a component from the component template
+/// (`runtime/components/dev/template`) in runtime/components/addon, or with dev in runtime/components/dev, of the part or
+/// kind asked for (a dev tool in runtime/components/dev unasked), with a git repository of its own and the remote asked for
+/// as its origin; a name taken, a name that is not one, an unknown part or kind, or a remote with a credential or a
+/// command in it is refused, and the extend tier may not make one.
 #[test]
 fn new_components_come_from_the_component_template() {
     if !crate::common::own_process() {
@@ -2064,10 +2598,51 @@ fn new_components_come_from_the_component_template() {
     assert!(api.join("service/demo-api.rest.xml").is_file());
     assert!(!api.join("screen").exists() && !api.join("MoquiConf.xml").exists());
 
+    // another kind, with a remote the repository starts with as origin; a dev tool goes in the dev set unasked
+    let native = create(
+        "john.doe",
+        &[
+            ("componentName", "demo-rates"),
+            ("kind", "native"),
+            ("gitRemote", "git@git.example.com:me/demo-rates.git"),
+        ],
+    )
+    .unwrap();
+    assert_eq!(text(&native, "rebuild"), "true");
+    assert_eq!(text(&native, "remoteAdded"), "true");
+    let rates = gate.runtime.join("components/addon/demo-rates");
+    assert!(rates.join("Cargo.toml").is_file() && rates.join("src/lib.rs").is_file());
+    let origin = std::process::Command::new("git")
+        .args(["-C", &rates.display().to_string(), "config", "remote.origin.url"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&origin.stdout).trim(),
+        "git@git.example.com:me/demo-rates.git"
+    );
+    create("john.doe", &[("componentName", "demo-mocks"), ("kind", "dev-tool")]).unwrap();
+    let mocks = gate.runtime.join("components/dev/demo-mocks");
+    assert!(std::fs::read_to_string(mocks.join("component.xml"))
+        .unwrap()
+        .contains(r#"purpose="dev""#));
+    assert!(!gate.runtime.join("components/addon/demo-mocks").exists());
+    // a remote with a credential in it, or that runs a command, is refused before anything is made
+    for remote in ["https://ann:token@git.example.com/x.git", "ext::sh -c id"] {
+        let refused = create(
+            "john.doe",
+            &[("componentName", "demo-bad"), ("kind", "data"), ("gitRemote", remote)],
+        );
+        assert!(refused.is_err(), "{remote}");
+        assert!(!gate.runtime.join("components/addon/demo-bad").exists(), "{remote}");
+    }
+
     let taken = create("john.doe", &[("componentName", "demo-shop")]).unwrap_err();
     assert!(taken.contains("is there already"), "{taken}");
     assert!(create("john.doe", &[("componentName", "9lives")]).is_err());
     assert!(create("john.doe", &[("componentName", "other"), ("part", "both")]).is_err());
+    assert!(create("john.doe", &[("componentName", "other"), ("kind", "plugin")]).is_err());
     assert!(create("ext.user", &[("componentName", "ext-shop")]).is_err());
     assert!(!gate.runtime.join("components/addon/ext-shop").exists());
     // the template stays a template
@@ -2077,7 +2652,7 @@ fn new_components_come_from_the_component_template() {
 
 const ENTITY: &str = "org.moqui.devaide.EntityServices.";
 
-/// The entity modeler's save (plans/design-dev-aide.md P5, F5): the entity view of an upstream entity names the site's
+/// The entity modeler's save (plans/archive/design-dev-aide.md P5, F5): the entity view of an upstream entity names the site's
 /// entity file as where its edits go; a save of the site's `extend-entity` relinks the model at once and adds the
 /// column, no restart; a file that does not parse keeps the model there was, with "restart to apply" and the problem;
 /// a site's seed data file loads.
@@ -2275,7 +2850,8 @@ fn an_entity_save_relinks_and_adds_its_column() {
         .unwrap()
         .is_some());
 
-    // Load the changed records: only those added or changed since the last commit
+    // Load the changed records: with no load of it yet, compared with the last commit and the database (three ways,
+    // dev-aide data_load.rs): the changed record the database still has as committed, and the added one
     isolate_git(&gate.runtime);
     let site = gate.runtime.join("components/addon/my-site");
     git(&site, &["init", "-q", "-b", "main"]);
@@ -2307,14 +2883,27 @@ fn an_entity_save_relinks_and_adds_its_column() {
         ],
     )
     .unwrap();
+    let planned = call(
+        &factory,
+        "john.doe",
+        &format!("{ENTITY}plan#DataLoad"),
+        &[("rootId", "my-site"), ("path", "data/MySiteSeedData.xml")],
+    )
+    .unwrap();
     let loaded = call(
         &factory,
         "john.doe",
         &format!("{ENTITY}load#ChangedRecords"),
-        &[("rootId", "my-site"), ("path", "data/MySiteSeedData.xml")],
+        &[
+            ("rootId", "my-site"),
+            ("path", "data/MySiteSeedData.xml"),
+            ("baseHash", &text(&planned, "baseHash")),
+            ("fileHash", &text(&planned, "fileHash")),
+        ],
     )
     .unwrap();
-    assert_eq!(text(&loaded, "changed"), "2");
+    assert_eq!(text(&loaded, "written"), "2", "{loaded:?}");
+    assert_eq!(text(&loaded, "conflicts"), "0");
     let low = facade
         .find("moqui.basic.Enumeration")
         .unwrap()
@@ -2326,7 +2915,7 @@ fn an_entity_save_relinks_and_adds_its_column() {
 
 const NOTES: &str = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n";
 
-/// Git depth (plans/design-dev-aide.md P8) on a scratch repository with git isolated from the desktop: hunks staged,
+/// Git depth (plans/archive/design-dev-aide.md P8) on a scratch repository with git isolated from the desktop: hunks staged,
 /// unstaged and discarded one at a time; a branch made, renamed and deleted; a merge that stops at a conflict, aborted,
 /// then resolved; a tag pushed; a stash popped; a revert and a cherry-pick; a commit's tree, a file at it and blame;
 /// remotes; a force push refused until it is confirmed and for the extend tier; and a clone into the component directory.
@@ -2753,7 +3342,7 @@ const TASK_SERVICES: &str = r#"<services>
 </services>
 "#;
 
-/// The task panel (plans/design-dev-aide.md P8, 14): this instance's tasks assigned to the user, open ones only, with
+/// The task panel (plans/archive/design-dev-aide.md P8, 14): this instance's tasks assigned to the user, open ones only, with
 /// their project's name and the link in the chosen app; Quick create; another instance's tasks over its entity REST
 /// API with the user's own token (here the same server); a source that cannot be reached answers its error; and a
 /// branch named for a task becomes the root's current task.
@@ -2941,6 +3530,31 @@ fn tasks_from_mantle_and_rest() {
         .to_string()
         .contains(&token));
 
+    // SEC-DEV-87: a source moved to another address keeps no token not given again, and sends none in the clear to
+    // another machine
+    let moved = call(
+        &factory,
+        "john.doe",
+        &format!("{TASKS}store#TaskSource"),
+        &[
+            ("taskSourceId", &source),
+            ("baseUrl", "http://127.0.0.1:9"),
+            ("username", "john.doe"),
+        ],
+    );
+    assert!(moved.is_err(), "{moved:?}");
+    let plain = call(
+        &factory,
+        "john.doe",
+        &format!("{TASKS}store#TaskSource"),
+        &[
+            ("taskSourceId", &source),
+            ("baseUrl", "http://tasks.example.net"),
+            ("username", "john.doe"),
+            ("token", &token),
+        ],
+    );
+    assert!(plain.is_err(), "{plain:?}");
     // a source that cannot be reached: its error, no tasks
     call(
         &factory,
@@ -2950,6 +3564,7 @@ fn tasks_from_mantle_and_rest() {
             ("taskSourceId", &source),
             ("baseUrl", "http://127.0.0.1:9"),
             ("username", "john.doe"),
+            ("token", &token),
         ],
     )
     .unwrap();
@@ -2979,7 +3594,7 @@ fn tasks_from_mantle_and_rest() {
     assert_eq!(text(&status, "currentTask"), "PROJ-1");
 }
 
-/// A `.qvue` screen in the screen builder (plans/design-dev-aide.md P9, 11.4): its text renders from the canvas's
+/// A `.qvue` screen in the screen builder (plans/archive/design-dev-aide.md P9, 11.4): its text renders from the canvas's
 /// overlay (F14 for a `<text location>`), and a stamped render marks its template's elements with their lines (F10).
 #[test]
 fn a_qvue_screen_renders_from_its_buffer() {
@@ -3075,7 +3690,7 @@ fn aide_project(name: &str) -> std::path::PathBuf {
     std::fs::canonicalize(root).unwrap()
 }
 
-/// The index's reads on an instance that is not dev (plans/design-dev-aide.md 7.4): an `AIDE_READERS` user reads an
+/// The index's reads on an instance that is not dev (plans/archive/design-dev-aide.md 7.4): an `AIDE_READERS` user reads an
 /// allowed project by its id, as a service and over REST with an API key, each answer with the index's stamp; a project
 /// not allowed, a directory, the server's own index, a user without the permission and the rebuild are refused, and a
 /// name only the server has is a miss in the project, not the server's answer.

@@ -761,7 +761,7 @@ pub(super) fn merge_field_node(base: &MNode, over: &MNode, deep_copy: bool) {
 }
 
 /// A new field's `field-ref` in the form's `field-layout`: after the `field-ref` of the field its `after` names, in
-/// whatever row or group that one is (plans/design-dev-aide.md F16), else at the end of the layout.
+/// whatever row or group that one is (plans/archive/design-dev-aide.md F16), else at the end of the layout.
 fn add_field_to_layout(form: &MNode, field: &MNode) {
     let Some(layout) = form.first_named("field-layout") else {
         return;
@@ -777,7 +777,7 @@ fn add_field_to_layout(form: &MNode, field: &MNode) {
 }
 
 /// A new field of a form-list with `form-list-column`s gets a column of its own: after the column that holds the
-/// field its `after` names, else last (plans/design-dev-aide.md F16).
+/// field its `after` names, else last (plans/archive/design-dev-aide.md F16).
 fn add_field_column(form: &MNode, field: &MNode) {
     let column = MNode::new("form-list-column");
     let reference = column.append("field-ref");
@@ -972,6 +972,9 @@ pub(super) struct EntityShape {
     pub alias_function: HashMap<String, String>,
     /// The view's `pq-expression` aliases with `default-display="true"`, which the auto fields show after the others.
     pub pq_display: Vec<String>,
+    /// The fields the auto fields leave out: the encrypted ones and the password fields (by name, on any entity), which a
+    /// screen's own find would show decrypted or as the stored hash, as generic access never answers them (SEC-DAT-92).
+    pub hidden: Vec<String>,
 }
 
 /// The shapes made so far, by entity name, for the model they were read from. A form-list row and an option item ask
@@ -1086,6 +1089,16 @@ fn entity_shape_of(entity: &EntityDefinition) -> EntityShape {
         .filter(|alias| alias.default_display)
         .map(|alias| alias.name.clone())
         .collect();
+    let hidden = fields
+        .iter()
+        .map(|(name, _, _)| name)
+        .filter(|name| {
+            crate::entity::sensitive::USER_ACCOUNT_SECRET_FIELDS.contains(&name.as_str())
+                || entity.fields.iter().any(|field| field.encrypt && &field.name == *name)
+                || entity.aliases.iter().any(|alias| alias.encrypt && &alias.name == *name)
+        })
+        .cloned()
+        .collect();
     EntityShape {
         full_name: entity.full_name.clone(),
         entity_name: entity.entity_name.clone(),
@@ -1100,6 +1113,7 @@ fn entity_shape_of(entity: &EntityDefinition) -> EntityShape {
         default_display,
         alias_function,
         pq_display,
+        hidden,
     }
 }
 
@@ -1118,7 +1132,7 @@ fn add_entity_fields(
         if (*is_pk && !want_pk) || (!*is_pk && !want_non_pk) {
             continue;
         }
-        if excludes.contains(name) || name == "lastUpdatedStamp" {
+        if excludes.contains(name) || name == "lastUpdatedStamp" || shape.hidden.contains(name) {
             continue;
         }
         let mut make_default = true;

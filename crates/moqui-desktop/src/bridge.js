@@ -164,6 +164,18 @@
     if (screenProtection) {
         pageCommands.secureScreen = (reason, on) => invoke("secure_screen", { reason: String(reason || ""), on: on === true }).then((held) => held === true, () => false);
     }
+    // sharing a screen on macOS (capture.rs): the webview has no picker of its own, so the page shows the app's list of
+    // displays and windows, and asks for the one picked by its desktop media id (WebrootCall.js shareScreen)
+    // and on every desktop the annotation overlay over a shared window or screen (capture.rs capture_overlay)
+    const capture = Object.assign({
+        captureOverlay: (bounds) => invoke("capture_overlay", { bounds: bounds || {} }).then((shown) => shown === true),
+        captureInk: (strokes) => invoke("capture_ink", { strokes: Array.isArray(strokes) ? strokes : [] }),
+        captureOverlayClose: () => invoke("capture_overlay_close")
+    }, /\bMac OS X\b|\bMacintosh\b/.test(navigator.userAgent || "") ? {
+        captureSources: () => ask("capture_sources"),
+        captureChoose: (id) => ask("capture_choose", { id: String(id || "") })
+    } : {});
+    Object.assign(pageCommands, capture);
     if (node) {
         // in process the node's sockets are the host's too, which has the window's cookies (moqui.openSocket); the
         // Comms app the OS's links open is the node's conf's, which the host reads, never a page's (SEC-CLI-05)
@@ -255,7 +267,7 @@
         // a File or Blob kept by the host for a draft or a send: resolves to its name in the store
         saveFile: (file, name) => base64Of(file).then((data) => ask("file_save", { name: String(name || (file && file.name) || "file"), data }))
     });
-    // The vault module the app runs natively for the window's account (moqui_client_tauri::vault, plans/Vault-Instances.md
+    // The vault module the app runs natively for the window's account (moqui_client_tauri::vault, plans/archive/Vault-Instances.md
     // V5): VaultClient.js calls it in place of its wasm worker, with the same ops; memory is device memory (state,
     // remember, restore, forget). The keys stay in the app.
     // the page's user activation (a click), read with the getter and navigator taken before any page script ran, so a
@@ -297,8 +309,8 @@
         }
         // a server's page: its sockets, the storage scope of its account (MoquiLib scopedKey), and a comms screen of the
         // main window shown there (an encrypted room: the shell owns the chat crypto device, window.__moquiCryptoInShell)
-        window.moquiDesktop = Object.freeze({ socket, outbox, drafts, vault, storageScope: String(window.__moquiStorageScope || ""),
-            openInShell: (path) => ask("open_in_shell", { path: String(path || "") }) });
+        window.moquiDesktop = Object.freeze(Object.assign({ socket, outbox, drafts, vault, storageScope: String(window.__moquiStorageScope || ""),
+            openInShell: (path) => ask("open_in_shell", { path: String(path || "") }) }, capture));
         return;
     }
     window.moquiDesktop = Object.freeze(Object.assign({}, pageCommands, {
@@ -331,6 +343,21 @@
         ssoProviders: (server) => shellAsk("client_sso_providers", { server: String(server || "") }),
         ssoStart: (server, authFlowId, deviceMode) => shellAsk("client_sso_start", { server: String(server || ""), authFlowId: String(authFlowId || ""),
             deviceMode: deviceMode ? String(deviceMode) : null }),
-        ssoCancel: () => shellAsk("client_sso_cancel")
+        ssoCancel: () => shellAsk("client_sso_cancel"),
+        // the offline map packages on this computer (plans/archive/Maps-Offline.md §2.4): the server's list and this computer's,
+        // a download (a task of the host), its cancel, a delete and the states; never a path. A package's files are read
+        // at /__moqui-app/maps/<packageId>/<path> on the shell's origin.
+        packages: Object.freeze({
+            list: () => shellAsk("packages_list"),
+            download: (packageId, revision) => shellAsk("packages_download", { packageId: String(packageId || ""),
+                revision: Number(revision) }),
+            cancel: (packageId) => shellAsk("packages_cancel", { packageId: String(packageId || "") }),
+            remove: (packageId) => shellAsk("packages_delete", { packageId: String(packageId || "") }),
+            status: () => shellAsk("packages_status"),
+            // a package's Overture addresses searched by the server's matching (plans/archive/Maps-Offline.md §2.5)
+            addresses: (packageId, text, options) => shellAsk("packages_addresses", { packageId: String(packageId || ""), text: String(text || ""),
+                country: options && options.country ? String(options.country) : null, near: options && Array.isArray(options.near) ? options.near.map(Number) : null,
+                limit: options && options.limit ? Number(options.limit) : null })
+        })
     }));
 })();

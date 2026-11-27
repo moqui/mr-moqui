@@ -39,9 +39,9 @@ use serde_json::Value;
 
 use super::{Client, APP_ORIGIN, SHELL_ORIGIN};
 
-/// The shell's commands, as `allow-<command>` (build.rs), the sockets, the node page bridge's, and the notification
-/// plugin's check its `window.Notification` makes.
-const SHELL_PERMISSIONS: [&str; 35] = [
+/// The shell's commands, as `allow-<command>` (build.rs), the sockets, the node page bridge's, the offline map
+/// packages' (plans/archive/Maps-Offline.md §2.4), and the notification plugin's check its `window.Notification` makes.
+const SHELL_PERMISSIONS: [&str; 46] = [
     "allow-client-state",
     "allow-client-sign-in",
     "allow-client-send-code",
@@ -71,18 +71,29 @@ const SHELL_PERMISSIONS: [&str; 35] = [
     "allow-notify",
     "allow-notify-clear",
     "allow-secure-screen",
+    "allow-capture-sources",
+    "allow-capture-choose",
+    "allow-capture-overlay",
+    "allow-capture-ink",
+    "allow-capture-overlay-close",
     "allow-push-check",
     "allow-push-test",
     "allow-set-counts",
     "allow-set-presence",
     "allow-open-external",
+    "allow-packages-list",
+    "allow-packages-download",
+    "allow-packages-cancel",
+    "allow-packages-delete",
+    "allow-packages-status",
+    "allow-packages-addresses",
     "notification:allow-is-permission-granted",
 ];
 
-/// An app window's: the sockets of its page, the outbox and drafts of its account (which reach nothing its requests do
+/// An app window's: the sockets of its page, the screen share picker of a call in it (capture.rs), the outbox and drafts of its account (which reach nothing its requests do
 /// not), the vault module the app runs for its account (V5), and the notification plugin's check its
 /// `window.Notification` makes.
-const APP_PERMISSIONS: [&str; 17] = [
+const APP_PERMISSIONS: [&str; 22] = [
     "allow-socket-open",
     "allow-socket-send",
     "allow-socket-close",
@@ -99,6 +110,11 @@ const APP_PERMISSIONS: [&str; 17] = [
     "allow-open-in-shell",
     "allow-vault-call",
     "allow-vault-memory",
+    "allow-capture-sources",
+    "allow-capture-choose",
+    "allow-capture-overlay",
+    "allow-capture-ink",
+    "allow-capture-overlay-close",
     "notification:allow-is-permission-granted",
 ];
 
@@ -607,7 +623,7 @@ pub(crate) fn close_remotes(app: &AppHandle, account: Option<&str>) {
 }
 
 /// An app window closed: its sockets go, and it is no longer the account's. Its vault session locks, as a browser's
-/// worker goes with its tab (plans/Vault-Instances.md §3.6).
+/// worker goes with its tab (plans/archive/Vault-Instances.md §3.6).
 pub(crate) fn closed(app: &AppHandle, label: &str) {
     let Some(client) = app.try_state::<Client>() else {
         return;

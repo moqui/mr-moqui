@@ -22,7 +22,8 @@
         <actions>
             <set field="boards" from="[]"/>
             <service-call name="org.moqui.chat.ChatServices.get#RoomAccess" in-map="{chatRoomId}" out-map="access"/>
-            <if condition="!access.isMember || access.member?.leftDate"><return/></if>
+            <!-- the room's readers see its boards as its members do (a public or record room's), and change none -->
+            <if condition="!access.canRead &amp;&amp; (!access.isMember || access.member?.leftDate)"><return/></if>
             <set field="canCreate" from="access.canPost"/>
             <entity-find-one entity-name="moqui.chat.ChatRoom" value-field="room"/>
             <if condition="!room.wikiSpaceId"><return/></if>

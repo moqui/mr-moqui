@@ -337,7 +337,7 @@ pub(super) fn store_steps(
                 format!("Signed in to POP3 {place}{how}"),
             )),
             Err(err) => {
-                let kind = super::implementation::test_failure("storeLogin", &place, &err.to_string(), &own);
+                let kind = login_failure(&place, &err, &own);
                 steps.push(TestStep::failed("storeLogin", format!("POP3 {place}: {kind}")));
             }
         }
@@ -356,7 +356,7 @@ pub(super) fn store_steps(
             conn.session
         }
         Err(err) => {
-            let kind = super::implementation::test_failure("storeLogin", &place, &err.to_string(), &own);
+            let kind = login_failure(&place, &err, &own);
             steps.push(TestStep::failed("storeLogin", format!("IMAP {place}: {kind}")));
             return;
         }
@@ -394,6 +394,16 @@ pub(super) fn store_steps(
         }
     }
     let _ = session.logout();
+}
+
+/// What a failed sign-in step shows: a sign-in the server refused by its variant, not by the words of its text, which
+/// say "refused" and name the host (COM-UI-040); anything else as its kind.
+fn login_failure(place: &str, err: &super::sync::SyncFailure, own: &[String]) -> String {
+    use super::sync::SyncFailure::{Auth, SignIn};
+    match err {
+        Auth(text) | SignIn(text) => super::implementation::sign_in_failure("storeLogin", place, text, own),
+        other => super::implementation::test_failure("storeLogin", place, &other.to_string(), own),
+    }
 }
 
 /// An IMAP LIST attribute as the server wrote it, such as `\\Sent`, from its `Debug` text: the imap crate does not
@@ -884,7 +894,12 @@ impl Pop3 {
         net.set_deadline(settings.session_deadline);
         let mut reader = BufReader::new(net);
         let greeting = read_line(&mut reader)?;
-        expect_ok(&greeting)?;
+        // a server that does not take the connection is not a refused sign-in (COM-UI-040)
+        if !greeting.starts_with("+OK") {
+            return Err(Error::new(format!(
+                "POP3 server did not take the connection: {greeting}"
+            )));
+        }
         if !tls {
             reader = pop_start_tls(reader, settings)?;
             reader.get_mut().set_deadline(settings.session_deadline);
@@ -978,7 +993,10 @@ fn pop_start_tls(mut reader: BufReader<Net>, settings: &StoreSettings) -> Result
         String::new()
     };
     if capabilities.lines().any(|line| line.trim() == "STLS") {
-        expect_ok(&pop_exchange(&mut reader, "STLS")?)?;
+        // a refused STLS is a TLS failure, not a refused sign-in (COM-UI-040)
+        if !pop_exchange(&mut reader, "STLS")?.starts_with("+OK") {
+            return Err(Error::new("POP3 server refused STLS"));
+        }
         // the server sends nothing more before the handshake, so the buffer holds nothing
         let Some(tcp) = reader.into_inner().into_plain() else {
             return Err(Error::new("POP3 STLS on a connection already in TLS"));

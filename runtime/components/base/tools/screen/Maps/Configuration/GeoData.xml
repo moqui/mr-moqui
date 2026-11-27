@@ -1,0 +1,294 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Geo data (plans/archive/Maps.md §6.4; docs/tools/Maps.md "Geo data"): the registered Geo data sets (moqui.maps.GeoDataSet: US
+    Census, GeoNames, an operator's file) with their licenses, attribution and coverage, and Acknowledge license (who and
+    when, in the audit log); the countries imported, each with its edition, rows in use and last run, with Refresh, Cancel and
+    Remove; Import (a run of the GeoDataImport ServiceJob, never in the request: a country for a set read a country at a time,
+    an upload for an operator's file, in ImportDialog, loaded when Import is opened); Refresh all and its schedule (the GeoDataRefresh ServiceJob); and the run history with
+    each run's error file. Over org.moqui.maps.GeoDataServices (find#GeoDataSets, acknowledge#GeoDataLicense,
+    start#GeoDataImport, cancel#GeoDataImport, remove#GeoData, request#GeoDataRefresh, schedule#GeoDataRefresh), MAPS_ADMIN's
+    like the screen. Every country of a set read a country at a time is a queue of runs (Import's Every country), shown with
+    its progress and Cancel the rest while it runs. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
+        default-menu-title="Geo data" default-menu-index="2" menu-image="sym_o_public" menu-image-type="icon">
+
+    <transition name="acknowledgeLicense">
+        <service-call name="org.moqui.maps.GeoDataServices.acknowledge#GeoDataLicense" in-map="{dataSetId: dataSetId}"/>
+        <actions>
+            <if condition="!ec.message.hasError()"><script>ec.message.addMessage(ec.l10n.localize('License acknowledged: the data set may be imported.'), 'success')</script></if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <!-- a scope imported again: an operator's file is the one its last run read (start#GeoDataImport again) -->
+    <transition name="refreshScope">
+        <actions><script><![CDATA[
+            const started = ec.service.sync().name('org.moqui.maps.GeoDataServices.start#GeoDataImport').parameters({dataSetId: dataSetId || null,
+                countryGeoId: context.countryGeoId || null, again: true}).call() || {}
+            if (!ec.message.hasError()) ec.message.addMessage(ec.resource.expand(ec.l10n.localize('Refresh ${id} started in the background.'), '',
+                {id: started.geoDataImportId || ''}), started.jobRunId ? 'success' : 'warning')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="cancelImport">
+        <service-call name="org.moqui.maps.GeoDataServices.cancel#GeoDataImport" in-map="{geoDataImportId: geoDataImportId}"/>
+        <actions>
+            <if condition="!ec.message.hasError()"><script>ec.message.addMessage(ec.l10n.localize('Cancel requested: the run stops at its next step, retiring nothing.'), 'success')</script></if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="cancelQueue">
+        <service-call name="org.moqui.maps.GeoDataServices.cancel#GeoDataImport" in-map="{queueId: queueId}"/>
+        <actions>
+            <if condition="!ec.message.hasError()"><script>ec.message.addMessage(ec.l10n.localize('Cancel requested: the countries waiting will not run, and the one running stops at its next step.'), 'success')</script></if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="removeData">
+        <service-call name="org.moqui.maps.GeoDataServices.remove#GeoData" in-map="{dataSetId: dataSetId, countryGeoId: context.countryGeoId || null}" out-map="removed"/>
+        <actions>
+            <if condition="!ec.message.hasError()"><script>ec.message.addMessage(ec.resource.expand(ec.l10n.localize('Removed: ${deleted} rows deleted, ${retired} in use elsewhere end-dated.'), '',
+                {deleted: removed.rowsDeleted || 0, retired: removed.rowsRetired || 0}), 'success')</script></if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="refreshAll">
+        <service-call name="org.moqui.maps.GeoDataServices.request#GeoDataRefresh" in-map="{reason: 'Maps › Configuration › Geo data'}"/>
+        <actions>
+            <if condition="!ec.message.hasError()"><script>ec.message.addMessage(ec.l10n.localize('Refresh started in the background: each imported data set is read again, and an unchanged source changes nothing.'), 'success')</script></if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="scheduleRefresh">
+        <service-call name="org.moqui.maps.GeoDataServices.schedule#GeoDataRefresh" in-map="{scheduleKey: scheduleKey || 'none'}"/>
+        <actions>
+            <if condition="!ec.message.hasError()"><script>ec.message.addMessage(ec.l10n.localize('Refresh schedule saved.'), 'success')</script></if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <!-- a run's error file, found by the run (never a location from the request), under the importer's own error root -->
+    <transition name="errorFile" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const run = ec.entity.find('moqui.maps.GeoDataImport').condition('geoDataImportId', String(geoDataImportId || '')).disableAuthz().one()
+            const location = String(run?.errorFileLocation || '')
+            if (!location.startsWith('dbresource://moqui/maps/geo-import/') || location.split('/').some(part => part === '..')) {
+                ec.web.sendJsonError(404, ec.l10n.localize('Error file not found'))
+            } else {
+                const was = ec.artifactExecution.disableAuthz()
+                try { ec.web.sendResourceResponse(location, false, 'geo-import-' + run.geoDataImportId + '-errors.csv') }
+                finally { if (!was) ec.artifactExecution.enableAuthz() }
+            }
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <actions>
+        <service-call name="org.moqui.maps.GeoDataServices.find#GeoDataSets" out-map="found" transaction="force-new" ignore-error="true"/>
+        <script><![CDATA[
+            available = !!found?.dataSetList
+            ec.message.clearErrors()
+            const colorOf = status => ['GdiCompleted', 'GdiUnchanged'].includes(status) ? 'positive' : status === 'GdiFailed' ? 'negative'
+                : status === 'GdiCancelled' ? 'grey-7' : 'primary'
+            setRows = Array.from(found?.dataSetList || []).map(set => Object.assign({}, set, {
+                setTitle: set.publisher + ' · ' + set.dataSetId,
+                licenseText: set.licenseName + (set.attribution ? ' — ' + set.attribution : ''),
+                ackColor: set.licenseAcknowledged ? 'positive' : 'warning'}))
+            scopeRows = []
+            for (const set of setRows) for (const scope of set.countries || []) scopeRows.push(Object.assign({}, scope, {
+                scopeKey: set.dataSetId + '_' + (scope.countryGeoId || 'ALL'), dataSetId: set.dataSetId, setTitle: set.setTitle,
+                operatorFile: set.operatorFile, statusText: scope.lastRun.statusText, statusColor: colorOf(scope.lastRun.statusId),
+                lastRunText: scope.lastRun.thruText || scope.lastRun.fromText, geoDataImportId: scope.lastRun.geoDataImportId}))
+            runRows = Array.from(found?.runList || []).map(run => Object.assign({}, run, {statusColor: colorOf(run.statusId)}))
+            queueRows = Array.from(found?.queueList || [])
+            schedule = found?.schedule || {}
+            scheduleText = schedule.scheduleText + (schedule.runAsName ? ' (' + ec.l10n.localize('runs as') + ' ' + schedule.runAsName + ')' : '')
+            externalOff = found?.externalRequests === false
+        ]]></script>
+    </actions>
+    <widgets>
+        <label text="Geo data" type="h5"/>
+        <label type="p" style="text-caption m-muted"
+                text="Postal codes, counties and cities with their points, imported from registered public data sets or a file of your own, for postal-code lookup and approximate places. Nothing is imported with the installation: each data set is imported here, after its license is acknowledged, as a background job that notifies you when it ends."/>
+        <label type="p" style="text-negative" condition="!available" text="Geo data settings are not available to you."/>
+        <label type="p" style="text-warning" condition="available &amp;&amp; externalOff"
+                text="Outside requests for maps are off (maps@external-requests): only an operator's file can be imported, and a refresh downloads nothing."/>
+        <section name="GeoDataSections" condition="available">
+            <widgets>
+                <container-box id="GeoDataSetsBox">
+                    <box-header title="Data sets"/>
+                    <box-body>
+                        <form-list name="DataSetList" list="setRows" skip-form="true" paginate="false">
+                            <field name="setTitle"><default-field title="Data set"><display/></default-field></field>
+                            <field name="description"><default-field title="Gives"><display/></default-field></field>
+                            <field name="coverageText"><default-field title="Coverage"><display/></default-field></field>
+                            <field name="licenseText"><default-field title="License and attribution"><display/></default-field></field>
+                            <field name="licenseAckText">
+                                <default-field title="License">
+                                    <render-mode>
+                                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${html(ackColor)}">${html(licenseAckText)}</q-chip>]]></text>
+                                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: licenseAckText})}]]></text>
+                                        <text type="html">${html(licenseAckText)}</text>
+                                        <text type="text,csv">${licenseAckText}</text>
+                                    </render-mode>
+                                </default-field>
+                            </field>
+                            <field name="actions">
+                                <default-field title="">
+                                    <container-dialog id="AcknowledgeLicense_${dataSetId}" button-text="Acknowledge license" icon="sym_o_license" width="560"
+                                            title="Acknowledge the license of ${dataSetId}" condition="!licenseAcknowledged">
+                                        <label type="p" text="${publisher}: ${description}"/>
+                                        <label type="p" text="License: ${licenseName}${licenseUrl ? ' (' + licenseUrl + ')' : ''}"/>
+                                        <label type="p" condition="attribution" text="Attribution shown with its data: ${attribution}"/>
+                                        <label type="p" style="text-caption m-muted" text="Acknowledging records your name and the time. Each data set's terms are the publisher's; this installation keeps the attribution with the data."/>
+                                        <form-single name="AcknowledgeLicense" transition="acknowledgeLicense" map="{dataSetId: dataSetId}">
+                                            <field name="dataSetId"><default-field><hidden/></default-field></field>
+                                            <field name="submitButton"><default-field title="Acknowledge license"><submit/></default-field></field>
+                                        </form-single>
+                                    </container-dialog>
+                                    <!-- Import, its form loaded when opened (ImportDialog): a country for a set read a country at a time,
+                                        a file for an operator's -->
+                                    <dynamic-dialog id="ImportSet_${dataSetId}" button-text="${operatorFile ? 'Import file' : 'Import'}" width="560"
+                                            icon="${operatorFile ? 'sym_o_upload' : 'sym_o_download'}" title="Import ${dataSetId}" transition="ImportDialog"
+                                            parameter-map="{dataSetId: dataSetId}" condition="importable"/>
+                                    <link url="." text="${operatorFile ? 'Import file' : 'Import'}" icon="${operatorFile ? 'sym_o_upload' : 'sym_o_download'}"
+                                            link-type="anchor-button" condition="!importable" disable-condition="true" disable-message="${importRefusal}"/>
+                                </default-field>
+                            </field>
+                            <columns type="mobile">
+                                <column><field-ref name="setTitle"/><field-ref name="coverageText"/></column>
+                                <column><field-ref name="licenseAckText"/><field-ref name="actions"/></column>
+                            </columns>
+                        </form-list>
+                    </box-body>
+                </container-box>
+
+                <container-box id="GeoDataImportedBox">
+                    <box-header title="Imported"/>
+                    <box-toolbar>
+                        <link url="refreshAll" text="Refresh all" icon="sym_o_sync" link-type="hidden-form-link" condition="scopeRows.length"
+                                confirmation="Read every imported data set again, in the background? A source that has not changed changes nothing."/>
+                        <container-dialog id="ScheduleRefresh" button-text="Schedule" icon="sym_o_schedule" width="480" title="Schedule the refresh">
+                            <label type="p" text="Now: ${scheduleText}."/>
+                            <label type="p" style="text-caption m-muted" text="A scheduled refresh runs as you and notifies you of each run."/>
+                            <form-single name="ScheduleRefresh" transition="scheduleRefresh" map="{scheduleKey: schedule.scheduleKey}">
+                                <field name="scheduleKey"><default-field title="Refresh">
+                                    <drop-down><option key="none" text="Not scheduled"/><option key="weekly" text="Every week (Sunday night)"/>
+                                        <option key="monthly" text="Every month (the 1st, at night)"/></drop-down>
+                                </default-field></field>
+                                <field name="submitButton"><default-field title="Save schedule"><submit/></default-field></field>
+                            </form-single>
+                        </container-dialog>
+                    </box-toolbar>
+                    <box-body>
+                        <label type="p" style="text-caption m-muted" text="Refresh schedule: ${scheduleText}."/>
+                        <label type="p" style="m-muted" condition="!scopeRows.length" text="Nothing is imported yet. Acknowledge a data set's license, then Import it."/>
+                        <section name="QueueSection" condition="queueRows.length"><widgets>
+                        <form-list name="QueueList" list="queueRows" skip-form="true" paginate="false">
+                            <field name="dataSetId"><default-field title="Every country of"><display/></default-field></field>
+                            <field name="progressText"><default-field title="Progress"><display/></default-field></field>
+                            <field name="actions">
+                                <default-field title="">
+                                    <link url="cancelQueue" text="Cancel the rest" icon="sym_o_cancel" link-type="hidden-form-link"
+                                            confirmation="Stop the import of every country? The countries done stay; the one running stops at its next step, retiring nothing, and the countries waiting do not run."
+                                            parameter-map="{queueId: queueId}"/>
+                                </default-field>
+                            </field>
+                        </form-list>
+                        </widgets></section>
+                        <form-list name="ScopeList" list="scopeRows" skip-form="true" paginate="false">
+                            <field name="setTitle"><default-field title="Data set"><display/></default-field></field>
+                            <field name="countryName"><default-field title="Country"><display/></default-field></field>
+                            <field name="editionText"><default-field title="Edition in use"><display/></default-field></field>
+                            <field name="countsText"><default-field title="In use"><display/></default-field></field>
+                            <field name="statusText">
+                                <default-field title="Last run">
+                                    <render-mode>
+                                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${html(statusColor)}">${html(statusText)}</q-chip>]]></text>
+                                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: statusText})}]]></text>
+                                        <text type="html">${html(statusText)}</text>
+                                        <text type="text,csv">${statusText}</text>
+                                    </render-mode>
+                                </default-field>
+                            </field>
+                            <field name="lastRunText"><default-field title="When"><display/></default-field></field>
+                            <field name="actions">
+                                <default-field title="">
+                                    <link url="refreshScope" text="Refresh" icon="sym_o_sync" link-type="hidden-form-link" condition="!inProgress"
+                                            parameter-map="{dataSetId: dataSetId, countryGeoId: countryGeoId || ''}"/>
+                                    <link url="cancelImport" text="Cancel" icon="sym_o_cancel" link-type="hidden-form-link" condition="inProgress"
+                                            confirmation="Stop import ${geoDataImportId}? What it loaded so far stays; nothing is retired and the edition in use is kept."
+                                            parameter-map="{geoDataImportId: geoDataImportId}"/>
+                                    <link url="removeData" text="Remove" icon="sym_o_delete" btn-type="danger" link-type="hidden-form-link"
+                                            condition="!inProgress &amp;&amp; removable === true"
+                                            confirmation="Remove ${setTitle} for ${countryName}? Its rows nothing refers to are deleted and the rest end-dated; postal lookup no longer finds them."
+                                            parameter-map="{dataSetId: dataSetId, countryGeoId: countryGeoId || ''}"/>
+                                </default-field>
+                            </field>
+                            <columns type="mobile">
+                                <column><field-ref name="setTitle"/><field-ref name="countryName"/><field-ref name="countsText"/></column>
+                                <column><field-ref name="statusText"/><field-ref name="actions"/></column>
+                            </columns>
+                        </form-list>
+                    </box-body>
+                </container-box>
+
+                <container-box id="GeoDataRunsBox">
+                    <box-header title="Runs"/>
+                    <box-toolbar><link url="." text="Refresh page" icon="refresh"/></box-toolbar>
+                    <box-body>
+                        <label type="p" style="m-muted" condition="!runRows.length" text="No import has run."/>
+                        <form-list name="RunList" list="runRows" skip-form="true" paginate="false">
+                            <field name="geoDataImportId"><default-field title="Run"><display/></default-field></field>
+                            <field name="dataSetId"><default-field title="Data set"><display/></default-field></field>
+                            <field name="countryName"><default-field title="Country"><display/></default-field></field>
+                            <field name="statusText">
+                                <default-field title="Status">
+                                    <render-mode>
+                                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${html(statusColor)}">${html(statusText)}</q-chip>]]></text>
+                                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: statusText})}]]></text>
+                                        <text type="html">${html(statusText)}</text>
+                                        <text type="text,csv">${statusText}</text>
+                                    </render-mode>
+                                </default-field>
+                            </field>
+                            <field name="edition"><default-field title="Edition"><display/></default-field></field>
+                            <field name="countsText"><default-field title="Rows"><display/></default-field></field>
+                            <field name="fromText"><default-field title="Started"><display/></default-field></field>
+                            <field name="thruText"><default-field title="Ended"><display/></default-field></field>
+                            <field name="userName"><default-field title="By"><display/></default-field></field>
+                            <field name="failureText"><default-field title="Why it failed"><display/></default-field></field>
+                            <field name="errorFile">
+                                <default-field title="">
+                                    <link url="errorFile" text="Error file" icon="sym_o_download" link-type="anchor" target-window="_blank"
+                                            condition="errorFileLocation" parameter-map="{geoDataImportId: geoDataImportId}"/>
+                                </default-field>
+                            </field>
+                            <columns type="mobile">
+                                <column><field-ref name="dataSetId"/><field-ref name="countryName"/><field-ref name="fromText"/></column>
+                                <column><field-ref name="statusText"/><field-ref name="errorFile"/></column>
+                            </columns>
+                        </form-list>
+                    </box-body>
+                </container-box>
+            </widgets>
+        </section>
+    </widgets>
+</screen>

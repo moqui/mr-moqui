@@ -516,6 +516,16 @@ fn join(
                 Json::Bool(matches!(out.get("memberScreen"), Some(Value::Bool(true)))),
             );
             obj.insert("boundGuest".into(), Json::Bool(matches!(&who, Who::Guest(_))));
+            // a native screen share's leg (CltScreen) and its page leg: publish-only at the media node, its video the
+            // screen, which its page leg is not sent
+            match out
+                .get("screenOfLegId")
+                .map(to_plain_string)
+                .filter(|page| !page.is_empty())
+            {
+                Some(page) => obj.insert("boundScreenOf".into(), Json::String(page)),
+                None => obj.remove("boundScreenOf"),
+            };
             obj.insert(
                 "boundHost".to_string(),
                 Json::Bool(matches!(out.get("isHost"), Some(Value::Bool(true)))),

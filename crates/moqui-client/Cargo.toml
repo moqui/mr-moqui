@@ -16,7 +16,7 @@ getrandom = { workspace = true }
 jiff = { workspace = true }
 # http: the sign-in shared with `moqui tui --server` (moqui_lib::remote_login), on this crate's reqwest client.
 moqui-lib = { workspace = true, features = ["http"] }
-# The vault module run natively for the pages (src/vault/, plans/Vault-Instances.md V5): ops::Session, randomness from
+# The vault module run natively for the pages (src/vault/, plans/archive/Vault-Instances.md V5): ops::Session, randomness from
 # the OS.
 moqui-vault = { workspace = true, features = ["std", "json"] }
 reqwest = { workspace = true }
@@ -30,6 +30,13 @@ tracing = { workspace = true }
 tungstenite = { workspace = true }
 url = { workspace = true }
 zeroize = { workspace = true }
+
+# The free space before an offline map's download starts (src/packages, statvfs); Android is Unix too.
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["fs"] }
+# ... and on Windows (GetDiskFreeSpaceExW): the windows-sys the tree already has.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 # The test servers' certificates of the TLS proofs (src/tls_tests.rs), as the host's tests make theirs.

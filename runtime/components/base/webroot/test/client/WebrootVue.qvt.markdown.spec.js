@@ -56,7 +56,8 @@ browser.runInPage({
 // The code editor's helpers and the vendored CodeMirror bundle, in the page. Was js/WebrootCode.test.js.
 
 browser.runInPage({
-    scripts: ["/js/MoquiLib.js", "/libs/codemirror/codemirror.min.js", "/js/WebrootCode.js"],
+    scripts: ["/js/MoquiLib.js", "/libs/codemirror/codemirror.min.js", "/libs/codemirror/legacy-modes.min.js",
+        "/libs/codemirror/vim.min.js", "/libs/yjs/yjs.min.js", "/libs/codemirror/y-codemirror.min.js", "/js/WebrootCode.js"],
     test: "/files/component/webroot/test/client/pages/WebrootCode.page.js",
 })
 
@@ -167,8 +168,9 @@ feature("the data grid loads rows, edits, saves with a refused row, pastes a ran
             <script src="/js/MoquiLib.js"></script><script src="/js/MoquiL10n.js"></script><script>
             const columns = [{name: "thingId", title: "Thing", type: "text", editable: false, editor: null, pk: true, notNull: true, maxLength: 20},
                 {name: "description", title: "Description", type: "text", editable: true, editor: "input", pk: false, notNull: false, maxLength: 40},
-                {name: "amount", title: "Amount", type: "number", editable: true, editor: "number", pk: false}]
-            const rows = [{thingId: "T1", description: "One", amount: 1, _stamp: "s1"}, {thingId: "T2", description: "Two", amount: 2, _stamp: "s2"},
+                {name: "amount", title: "Amount", type: "number", editable: true, editor: "number", pk: false},
+                {name: "created", title: "Created", type: "date-time", editable: true, editor: "datetime"}]
+            const rows = [{thingId: "T1", description: "One", amount: 1, created: "1735689600000", _stamp: "s1"}, {thingId: "T2", description: "Two", amount: 2, _stamp: "s2"},
                 {thingId: "T3", description: "Three", amount: null, _stamp: "s3"}]
             let saves = 0
             // a SQL result's columns: its labels, each with the entity field it saves to
@@ -209,6 +211,19 @@ feature("the data grid loads rows, edits, saves with a refused row, pastes a ran
             </script></body></html>`)
         page.waitFor(() => !!(window.vm && vm.$refs.grid && vm.$refs.grid.ready && document.querySelectorAll("#app .tabulator-row").length === 3))
         assert.ok(page.evaluate(() => !!document.querySelector("#app .m-data-grid.tabulator")), "the grid has the theme's class")
+        const dates = page.evaluate(() => {
+            const grid = vm.$refs.grid.grid
+            const cell = grid.getRows()[0].getCell("created"), raw = cell.getValue()
+            const display = cell.getElement().textContent === moqui.l10n.formatTimestamp(Number(raw))
+            cell.edit(true)
+            cell.getElement().querySelector("input").blur()
+            const format = (field, value) => grid.getColumn(field).getDefinition().formatter({
+                getValue: () => value, getElement: () => document.createElement("div")
+            })
+            return {display, unchanged: cell.getValue() === raw, undo: grid.getHistoryUndoSize(),
+                empty: format("created", null), text: format("description", "00123")}
+        })
+        assert.deepEqual(dates, {display: true, unchanged: true, undo: 0, empty: "null", text: "00123"})
         const rowsCall = page.evaluate(() => JSON.parse(JSON.stringify(calls.find((call) => call.name === "gridRows"))))
         assert.equal(JSON.parse(rowsCall.params.sourceJson).entityName, "moqui.test.Thing")
         assert.equal(rowsCall.params.page, 1)
@@ -288,10 +303,11 @@ browser.runInPage({
 })
 
 // From WebrootVue.qvt.coedit.spec.js, merged here to share a spec run.
-// m-coedit's provider on the vendored Tiptap bundle, in the page. Was js/WebrootVue.qvt.coedit.test.js.
+// m-coedit's provider on the vendored Tiptap bundle (with Yjs, its own library, loaded first), in the page. Was
+// js/WebrootVue.qvt.coedit.test.js.
 
 browser.runInPage({
-    scripts: ["/libs/tiptap/tiptap.min.js", "/js/MoquiLib.js", "/js/WebrootVue.qvt.js"],
+    scripts: ["/libs/yjs/yjs.min.js", "/libs/tiptap/tiptap.min.js", "/js/MoquiLib.js", "/js/WebrootVue.qvt.js"],
     test: "/files/component/webroot/test/client/pages/WebrootVue.qvt.coedit.page.js",
 })
 

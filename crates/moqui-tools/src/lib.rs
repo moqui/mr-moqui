@@ -48,7 +48,18 @@ pub mod tables;
 pub mod etl;
 pub mod files;
 
-/// The services of the schema, job, table and activity screens, and of ETL and the grid's file source.
+// ---------- The Geo data importer (plans/archive/Maps.md §6.4) ----------
+pub mod geo;
+// ---------- Map archives (plans/archive/Maps.md §5) ----------
+pub mod maps_archive;
+pub mod maps_extract;
+pub mod maps_ogc;
+pub mod maps_overlay;
+pub mod maps_simplify;
+pub mod maps_tiles;
+
+/// The services of the schema, job, table and activity screens, of ETL and the grid's file source, of the Geo data
+/// importer and of map archives.
 fn register_schema_and_jobs(
     map: &mut std::collections::BTreeMap<&'static str, moqui_core::extension::RustServiceFn>,
 ) -> Result<(), String> {
@@ -57,6 +68,14 @@ fn register_schema_and_jobs(
     tables::register(map)?;
     activity::register(map)?;
     etl::service::register(map)?;
+    geo::service::register(map)?;
+    maps_archive::register(map)?;
+    maps_extract::register(map)?;
+    maps_ogc::register(map)?;
+    maps_overlay::register(map)?;
+    maps_simplify::register(map)?;
+    maps_tiles::register(map)?;
+    geo::lookup::register(map)?;
     files::register(map)
 }
 

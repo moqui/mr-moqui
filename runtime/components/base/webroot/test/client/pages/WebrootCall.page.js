@@ -392,6 +392,105 @@ test("the stage owner alone can capture, and takeover ends both share tracks", a
     }
 });
 
+test("another's snapshot asks the presenter first, and the one taken over is told who took the stage", async () => {
+    reset();
+    const prior = {confirm: moqui.confirmAction, notify: moqui.notifyMessages, snapshot: call.snapshotBoard, nameOf: call.nameOf};
+    const asked = [], told = [];
+    let snapped = 0;
+    const preview = document.createElement("div");
+    preview.className = "m-present-preview";
+    preview.append(document.createElement("video"));
+    document.body.append(preview);
+    const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+    try {
+        Object.assign(state, {current: "SN", legId: "ME", stageRevision: -1, shareMode: "CsmAnyone", sharing: false});
+        call.nameOf = leg => leg === "BOB" ? "Bob" : leg;
+        moqui.notifyMessages = list => told.push(...list.map(m => m.message));
+        call.snapshotBoard = async () => { snapped++; };
+        call.stageFrame({rtc: "stage", callSessionId: "SN", revision: 1, shareModeEnumId: "CsmAnyone",
+            stage: {kind: "screen", callLegId: "ME", inkEpoch: 5, requests: []}});
+        moqui.confirmAction = async text => { asked.push(text); return false; };
+        call.inkFrame({rtc: "ink", action: "snapshot", from: "BOB", inkEpoch: 5});
+        await settle();
+        assert.equal(asked.length, 1);
+        assert.ok(asked[0].includes("Bob"), asked[0]);
+        assert.equal(snapped, 0, "declined: no board replaces the share");
+        moqui.confirmAction = async text => { asked.push(text); return true; };
+        call.inkFrame({rtc: "ink", action: "snapshot", from: "BOB", inkEpoch: 5});
+        await settle();
+        assert.equal(snapped, 1);
+        call.inkFrame({rtc: "ink", action: "snapshot", from: "ME", inkEpoch: 5});
+        await settle();
+        assert.equal(asked.length, 2, "the presenter's own snapshot asks nothing");
+        assert.equal(snapped, 2);
+        call.stageFrame({rtc: "stage", callSessionId: "SN", revision: 2, shareModeEnumId: "CsmAnyone",
+            stage: {kind: "screen", callLegId: "BOB", inkEpoch: 6, requests: []}});
+        assert.deepEqual(told, ["Bob took over the stage"]);
+    } finally {
+        moqui.confirmAction = prior.confirm; moqui.notifyMessages = prior.notify;
+        call.snapshotBoard = prior.snapshot; call.nameOf = prior.nameOf;
+        preview.remove();
+        Object.assign(state, {stage: {kind: null, callLegId: null, requests: []}, stageRevision: -1});
+        reset();
+    }
+});
+
+test("in the macOS app the share asks for the source picked in the app's list by its desktop media id", async () => {
+    const host = window.moquiDesktop, quasar = window.Quasar;
+    const chosen = [], asked = [];
+    let pick = "window:7:0";
+    try {
+        window.moquiDesktop = {
+            captureSources: async () => [{id: "screen:1:0", screen: true, name: "Screen 1"}, {id: "window:7:0", screen: false, name: "Notes: Plan"}],
+            captureChoose: async (id) => { chosen.push(id); return {id, bounds: {x: 0, y: 0, width: 800, height: 600}}; }
+        };
+        window.Quasar = Object.assign({}, quasar, {Dialog: {create(options) {
+            asked.push(options.options.items.map(i => i.value));
+            const dialog = {onOk(fn) { if (pick) fn(pick); return dialog; }, onCancel(fn) { if (!pick) fn(); return dialog; }, onDismiss() { return dialog; }};
+            return dialog;
+        }}});
+        const media = {getDisplayMedia: async () => { throw new Error("the browser picker is not used"); },
+            getUserMedia: async (constraints) => ({constraints})};
+        const got = await call.displayMedia(media, {}, "window", false);
+        assert.deepEqual(chosen, ["window:7:0"]);
+        assert.deepEqual(asked[0], ["screen:1:0", "window:7:0"]);
+        assert.equal(got.constraints.video.mandatory.chromeMediaSource, "desktop");
+        assert.equal(got.constraints.video.mandatory.chromeMediaSourceId, "window:7:0");
+        assert.equal(call.captureSource.bounds.width, 800);
+        await call.displayMedia(media, {}, "tab", true);
+        assert.deepEqual(asked[1], ["screen:1:0"], "this tab offers the screens only");
+        pick = null;
+        let refused = null;
+        try { await call.displayMedia(media, {}, "window", false); } catch (error) { refused = error.name; }
+        assert.equal(refused, "NotAllowedError", "cancelled as the browser's picker is");
+    } finally {
+        window.moquiDesktop = host; window.Quasar = quasar; call.captureSource = null;
+    }
+});
+
+test("the presenter sends navigation once and locates changes within the same screen", async()=>{
+    const prior={followPath:call.followPath,followPage:call.followPage,send:call.send,guest:call.guest};
+    const sent=[];
+    let path="/qapps/BasicComms/Chat";
+    const queue=async()=>{call.queueFollow(0);await new Promise(resolve=>setTimeout(resolve,5));};
+    try {
+        call.followReset();
+        Object.assign(state,{current:"FOLLOW",legId:"ME",stage:{kind:"follow",callLegId:"ME"}});
+        call.guest=null;call.send=frame=>sent.push(frame);
+        call.followPath=()=>({path,params:{}});
+        call.followPage=()=>document.body;
+        await queue();
+        call.followPointer={id:"target",x:0.5,y:0.5};
+        await queue();await queue();
+        path="/qapps/BasicComms/Home";
+        await queue();
+        assert.deepEqual(sent.map(frame=>frame.action),["navigate","locate","navigate"]);
+        assert.deepEqual(sent[1].pointer,call.followPointer);
+    } finally {
+        call.followReset();Object.assign(call,prior);reset();state.stage={kind:null,callLegId:null,requests:[]};
+    }
+});
+
 test("a presenter's page sends what the server keeps, a follower with unsaved work pauses, and refused follow frames stay quiet", async()=>{
     // the vectors rtc/follow.rs tests too: one rule on both sides
     const vectors=await (await fetch("/files/component/webroot/test/client/pages/follow-vectors.json")).json();
@@ -499,5 +598,178 @@ test("screen followers confirm their own access before navigation and can pause 
     } finally {
         call.followReset();reset();state.stage={kind:null,callLegId:null,requests:[]};
         call.vm=prior.vm;call.send=prior.send;call.guest=prior.guest;window.fetch=prior.fetch;
+    }
+});
+
+test("the mobile app's native share: its screen leg's frames go to the app, the stage publishes it, another stage ends it; never in an encrypted call", async () => {
+    reset();
+    const frames = [], asked = [];
+    const devices = navigator.mediaDevices;
+    const prior = {send:call.send, pc:call.pc, request:call.request, host:window.moquiDesktop, capture:devices.getDisplayMedia,
+        handle:call.handleFrame, toRelay:call.toRelay, direct:call.direct, confirm:moqui.confirmAction};
+    let handled = 0, stopped = 0;
+    window.moquiDesktop = {
+        screenStart: async () => { asked.push("start"); return true; },
+        screenStatus: async () => ({leg:{state:"none"}, capture:{state:"sharing"}}),
+        screenOffer: async () => "v=0\r\na=mid:sv\r\na=sendonly\r\n",
+        screenAnswer: async (sdp) => { asked.push("answer:" + sdp); },
+        screenRemoteOffer: async (sdp) => "answer to " + sdp,
+        screenStop: async () => { stopped++; },
+    };
+    const view = (e2ee) => ({callSessionId:"NS", status:"active", kind:"group", e2ee, participants:[
+        {userId:"ann", displayName:"Ann", legs:[{callLegId:"ME", type:"web", status:"answered"}, {callLegId:"SCR", type:"screen", screenOfLegId:"ME"}]},
+        {userId:"bob", displayName:"Bob", legs:[{callLegId:"BOB", type:"web", status:"answered"}]}]});
+    try {
+        devices.getDisplayMedia = undefined;
+        Object.assign(state, {current:"NS", legId:"ME", phase:"connected", stageRevision:-1, shareMode:"CsmAnyone", sharing:false, calls:{NS:view(true)}});
+        call.pc = {};
+        call.direct = null;
+        call.chain = Promise.resolve();
+        call.send = (frame) => frames.push(frame);
+        call.handleFrame = () => { handled++; return null; };
+        call.request = async (name, params) => (name === "addScreenLeg" && params.callLegId === "ME" ? {callLegId:"SCR", screenOfLegId:"ME"} : {});
+        assert.equal(call.nativeShareSupported(), true, "the app's WebView has no getDisplayMedia");
+        assert.equal(await call.shareNative(), false, "an encrypted call");
+        assert.ok(/end-to-end encrypted/.test(state.error));
+        assert.equal(asked.length, 0);
+        state.error = null;
+        state.calls = {NS:view(false)};
+        assert.equal(await call.shareNative(), true);
+        assert.deepEqual(frames.map((f) => [f.rtc, f.callLegId]), [["join", "SCR"]]);
+        assert.equal(state.screenLegId, "SCR");
+        // the screen leg's frames are the app's: its answer, the media server's offer; never the page's connection
+        call.onFrame({rtc:"joined", callSessionId:"NS", callLegId:"SCR", sdp:"the answer"});
+        call.onFrame({rtc:"offer", callSessionId:"NS", callLegId:"SCR", offerId:7, sdp:"o"});
+        call.onFrame({rtc:"track", callSessionId:"NS", callLegId:"BOB", to:"ME", mid:"1", kind:"audio", source:"microphone", open:true});
+        await call.chain;
+        assert.equal(handled, 1, "only the page's own frame reaches its connection");
+        assert.ok(asked.includes("answer:the answer"));
+        const ask = frames.find((f) => f.rtc === "stage");
+        assert.deepEqual([ask.action, ask.kind, ask.callLegId], ["ask", "screen", "SCR"]);
+        assert.deepEqual(frames.find((f) => f.rtc === "answer"), {rtc:"answer", callSessionId:"NS", callLegId:"SCR", offerId:7, sdp:"answer to o"});
+        // the stage names the screen leg: its video is published as the screen, and the screen leg is no tile of its own
+        call.stageFrame({rtc:"stage", callSessionId:"NS", revision:1, shareModeEnumId:"CsmAnyone", stage:{kind:"screen", callLegId:"SCR", requests:[]}});
+        assert.deepEqual(frames.filter((f) => f.rtc === "publish").map((f) => [f.callLegId, f.mid, f.source]), [["SCR", "sv", "screen"]]);
+        assert.equal(call.isScreenLeg("SCR"), true);
+        assert.equal(call.isScreenLeg("BOB"), false);
+        assert.equal(state.sharing, true);
+        // another takes the stage: the share ends, its leg leaves, the app stops
+        call.stageFrame({rtc:"stage", callSessionId:"NS", revision:2, shareModeEnumId:"CsmAnyone", stage:{kind:"screen", callLegId:"BOB", requests:[]}});
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assert.deepEqual(frames.filter((f) => f.rtc === "leave").map((f) => f.callLegId), ["SCR"]);
+        assert.equal(stopped, 1);
+        assert.equal(state.sharing, false);
+        assert.equal(state.screenLegId, null);
+        // a late frame of the ended screen leg still never reaches the page's connection
+        call.onFrame({rtc:"offer", callSessionId:"NS", callLegId:"SCR", offerId:8, sdp:"late"});
+        await call.chain;
+        assert.equal(handled, 1);
+        // on the direct path the call moves to the media server first
+        let moved = null;
+        call.toRelay = async (reason) => { moved = reason; };
+        moqui.confirmAction = async () => true;
+        call.direct = {};
+        assert.equal(await call.shareNative(), false);
+        assert.equal(moved, "share");
+        assert.equal(call.afterRelayNative, "NS");
+    } finally {
+        Object.assign(call, {send:prior.send, pc:prior.pc, request:prior.request, handleFrame:prior.handle, toRelay:prior.toRelay, direct:prior.direct,
+            native:null, afterRelayNative:null, screenLegIds:[]});
+        window.moquiDesktop = prior.host;
+        moqui.confirmAction = prior.confirm;
+        devices.getDisplayMedia = prior.capture;
+        Object.assign(state, {stage:{kind:null, callLegId:null, requests:[]}, stageRevision:-1, screenLegId:null, sharing:false, error:null});
+        reset();
+    }
+});
+
+
+test("an encrypted call's native share: the app gets the screen leg's own keys after the others, never this page's device", async () => {
+    const keys = moqui.callKeys;
+    const prior = {crypto: moqui.crypto, host: window.moquiDesktop};
+    const sends = [], delivered = [];
+    moqui.crypto = {onToDevice: () => () => {}, devicesOf: async () => [],
+        sendToDevices: async (targets, type, content) => { sends.push({targets, type, content}); return {sent: 1, devices: targets}; }};
+    const roster = (bobGeneration) => ({callSessionId:"EK", status:"active", participants:[
+        {userId:"ann", legs:[{callLegId:"ME", status:"answered", deviceId:"DA", keyIndex:1, keyGeneration:1},
+            {callLegId:"SCR", status:"answered", type:"screen", deviceId:"DA", keyIndex:3, keyGeneration:1}]},
+        {userId:"bob", legs:[{callLegId:"BOB", status:"answered", deviceId:"DB", keyIndex:2, keyGeneration:bobGeneration}]}]});
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    try {
+        keys.begin("EK", "ME");
+        keys.onView(roster(1));
+        await keys.addSender("SCR", async (k) => { delivered.push({...k, at: sends.length}); });
+        await wait(300);
+        await keys.rotate();
+        const own = sends.filter((s) => s.content.callLegId === "ME"), screen = sends.filter((s) => s.content.callLegId === "SCR");
+        assert.ok(own.length >= 1 && screen.length >= 1, "a key of each of the page's senders");
+        for (const s of sends) assert.deepEqual(s.targets, [{userId:"bob", deviceIds:["DB"]}], "only the others' devices");
+        assert.equal(Math.floor(screen[0].content.kid / 65536), 3, "the screen leg's key index");
+        assert.equal(delivered[0].kid, screen[0].content.kid);
+        assert.equal(delivered[0].key, screen[0].content.key);
+        assert.equal(delivered[0].useAfterMs, 0, "the first key at once");
+        assert.ok(delivered[0].at >= sends.indexOf(screen[0]) + 1, "the app gets it after the others were sent it");
+        // the roster changes: a new key of the screen leg, the next epoch, used a second on
+        const before = delivered.length;
+        keys.onView(roster(2));
+        await wait(300);
+        await keys.rotate();
+        const next = delivered[before];
+        assert.ok(next && next.kid > delivered[0].kid && next.useAfterMs === 1000, JSON.stringify(next));
+        assert.notEqual(next.key, delivered[0].key);
+        // the share ends: no more keys for it
+        keys.dropSender("SCR");
+        const after = delivered.length;
+        await keys.rotate();
+        assert.equal(delivered.length, after);
+    } finally {
+        keys.end();
+        moqui.crypto = prior.crypto;
+        window.moquiDesktop = prior.host;
+    }
+});
+
+test("an encrypted call's native share asks for a sealed screen leg and gives the app its keys; an app without SFrame is refused", async () => {
+    reset();
+    const frames = [], calls = [];
+    const prior = {send:call.send, pc:call.pc, request:call.request, host:window.moquiDesktop, capture:navigator.mediaDevices.getDisplayMedia,
+        keys:moqui.callKeys, direct:call.direct};
+    const host = {screenStart: async () => true, screenStatus: async () => ({leg:{}, capture:{state:"sharing"}}),
+        screenOffer: async (sealed) => { calls.push(["offer", sealed]); return "v=0\r\na=mid:sv\r\n"; },
+        screenStop: async () => { calls.push(["stop"]); }};
+    try {
+        navigator.mediaDevices.getDisplayMedia = undefined;
+        Object.assign(state, {current:"EN", legId:"ME", phase:"connected", stageRevision:-1, sharing:false,
+            calls:{EN:{callSessionId:"EN", status:"active", e2ee:true, participants:[]}}});
+        call.pc = {};
+        call.direct = null;
+        call.send = (frame) => frames.push(frame);
+        call.request = async (name, params) => { calls.push([name, params.sframe]); return {callLegId:"SCR", screenOfLegId:"ME"}; };
+        let added = null;
+        moqui.callKeys = {state:{active:true, callSessionId:"EN"}, addSender: (legId, deliver) => { added = {legId, deliver}; },
+            dropSender: (legId) => calls.push(["drop", legId])};
+        window.moquiDesktop = host;
+        assert.equal(await call.shareNative(), false, "no screenKey: an app without SFrame");
+        assert.ok(/end-to-end encrypted/.test(state.error));
+        state.error = null;
+        host.screenKey = async (k) => calls.push(["key", k.kid, k.useAfterMs]);
+        assert.equal(await call.shareNative(), true);
+        assert.deepEqual(calls.slice(0, 2), [["addScreenLeg", true], ["offer", true]]);
+        assert.equal(added.legId, "SCR");
+        await added.deliver({kid:196609, key:"AAAAAAAAAAAAAAAAAAAAAA==", useAfterMs:0});
+        assert.deepEqual(calls.find((c) => c[0] === "key"), ["key", 196609, 0]);
+        await call.endNative(true);
+        assert.ok(calls.some((c) => c[0] === "drop" && c[1] === "SCR"), "its keys stop with the share");
+        // a key the share's end overtook goes nowhere
+        const n = calls.length;
+        await added.deliver({kid:196610, key:"AAAAAAAAAAAAAAAAAAAAAA==", useAfterMs:1000});
+        assert.equal(calls.length, n);
+    } finally {
+        Object.assign(call, {send:prior.send, pc:prior.pc, request:prior.request, direct:prior.direct, native:null, screenLegIds:[]});
+        window.moquiDesktop = prior.host;
+        moqui.callKeys = prior.keys;
+        navigator.mediaDevices.getDisplayMedia = prior.capture;
+        Object.assign(state, {screenLegId:null, sharing:false, error:null});
+        reset();
     }
 });

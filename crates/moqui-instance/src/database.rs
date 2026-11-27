@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! What a database kind does on a server (plans/Vault-Instances.md §4.1, §4.3 step 4.2): `create#Database`, its undo,
+//! What a database kind does on a server (plans/archive/Vault-Instances.md §4.1, §4.3 step 4.2): `create#Database`, its undo,
 //! and `check#Database`, for Postgres and MySQL.
 //!
 //! - **A database instance** is reached only on its own network: a one-shot client container of the server's image
@@ -281,7 +281,7 @@ pub(crate) fn one_shot(script: String, mut files: Vec<(String, Zeroizing<Vec<u8>
 pub const BACKUPS_DIR: &str = "/backups";
 
 /// The one-shot that backs up `database` on the server, or every database when none, into `file` of the backups volume
-/// `volume` (plans/Vault-Instances.md §4.6, step 5): `pg_dump` (custom format) or `pg_dumpall`, `mysqldump`, written as
+/// `volume` (plans/archive/Vault-Instances.md §4.6, step 5): `pg_dump` (custom format) or `pg_dumpall`, `mysqldump`, written as
 /// `file.partial` and renamed to `file` only when the dump succeeds (a failed one is deleted). It runs at most
 /// `manage@backup-wait-seconds` (3600). Its logs hold only the script's own `moqui:` lines.
 pub fn one_shot_backup(
@@ -411,7 +411,7 @@ pub fn one_shot_check(server: Server, admin: &AdminLogin, database: &str, user: 
     Ok(one_shot(script, vec![admin_file(server, admin)]))
 }
 
-// ----- rotation (plans/Vault-Instances.md §4.7) -----
+// ----- rotation (plans/archive/Vault-Instances.md §4.7) -----
 
 /// Whose password a rotation sets: a database's own user (its `CREATE USER`), or the server's admin (Postgres's
 /// `postgres`, MySQL's `root`, both of its hosts).

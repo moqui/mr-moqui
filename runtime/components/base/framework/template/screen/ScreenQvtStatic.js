@@ -2291,6 +2291,37 @@
             w(withCondition(n,"<"+tag+A(out)+"></"+tag+">"));
         };
 
+        // A map-view as ScreenQvt.js writes it: its configuration an object of the attributes bound over the scope (texts as
+        // expanded, record-key and points as expressions), which m-map checks as it does a server's (moqui.map.normalizeConfig:
+        // WGS84, longitude first, a bad point left out); the condition a v-if.
+        const mapView = (n) => {
+            const out = {};
+            plainAttr(out, "id", at(n, "id"), n);
+            const parts = [];
+            const textPart = (into, key, name) => { if (!blank(at(n, name))) into.push(sq(key) + ":" + exp(at(n, name), n, name, false)); };
+            const exprPart = (into, key, name) => { if (!blank(at(n, name))) into.push(sq(key) + ":" + X(at(n, name), n, name)); };
+            [["profileId", "profile"], ["layers", "layers"], ["center", "center"], ["zoom", "zoom"], ["extent", "extent"], ["projection", "projection"],
+                ["adapter", "adapter"], ["addressPurpose", "address-purpose"], ["pickForm", "pick-form"]].forEach(([key, name]) => textPart(parts, key, name));
+            exprPart(parts, "recordKey", "record-key");
+            exprPart(parts, "features", "features");
+            const point = [];
+            [["lon", "longitude"], ["lat", "latitude"], ["label", "label"], ["precision", "precision"], ["source", "source"]].forEach(([key, name]) => textPart(point, key, name));
+            const plain = blank(at(n, "longitude")) && blank(at(n, "latitude")) ? "" : "{" + point.join(",") + "}";
+            const list = blank(at(n, "points")) ? "" : "(" + X(at(n, "points"), n, "points") + "||[])";
+            if (plain || list) parts.push(sq("points") + ":[" + plain + "]" + (list ? ".concat(" + list + ")" : ""));
+            const pick = at(n, "pick");
+            if (pick && isDynamic(pick)) parts.push(sq("pick") + ":String(" + exp(pick, n, "pick", false) + ")==='true'");
+            else if (pick === "true") parts.push(sq("pick") + ":true");
+            out[":config"] = "{" + parts.join(",") + "}";
+            if (at(n, "config-transition")) {
+                const found = sri.staticUrl(at(n, "config-transition"), "transition");
+                if (found && found.path && found.path !== "#") out["config-url"] = found.path;
+            }
+            plainAttr(out, "height", at(n, "height"), n);
+            plainAttr(out, "class", at(n, "style"), n);
+            w(withCondition(n, "<m-map" + A(out) + "></m-map>\n"));
+        };
+
         // ---- dashboards ----
 
         // A number-card as ScreenQvt.js writes it, its attributes bound over the scope as a label's text is: the title localized,
@@ -2405,7 +2436,7 @@
             link: (n, inField) => link(n, inField), editable, formSingle, formList, rowOpen, colOpen, fieldGroup, fieldGroupClose, quasarColor,
             split, js: js_, widgetFns, imageTag, xmlCondition, sectionPaginate, sectionIterateOpen, buttonMenuOpen, buttonMenuItem, buttonMenuClose, screenContext,
             numberCard, navCardOpen, navCardClose, dashboardOpen, chatter, recordFiles, splitOpen, htmlView, markdownView, statusBar,
-            codeView, reportWidget
+            codeView, reportWidget, mapView
         };
         Object.defineProperty(globalThis, "$mqQvtS", { value: h, configurable: true });
     };
@@ -2628,6 +2659,7 @@
         "html-view": widget("htmlView", false),
         "markdown-view": widget("markdownView", false),
         "code-view": widget("codeView", false),
+        "map-view": widget("mapView", false),
         "form-single": formSingleMacro,
         "form-list": formListMacro
     });

@@ -1343,8 +1343,11 @@
                 }
                 kids.push(h("div", { class: "row items-center no-wrap q-mt-xs" }, [
                     this.notice ? h("div", { class: "text-caption m-muted col", "data-assist-sfc-notice": "" }, this.notice) : h("div", { class: "col" }),
+                    // what the canvas itself holds (its source and values, the assistant's) may leave in an image of another site
+                    // while this is on, which the toggle says (SEC-AI-05)
                     h(R("q-toggle"), { dense: true, size: "sm", modelValue: this.external, "onUpdate:modelValue": (value) => this.setExternal(value),
-                        label: L("Other sites"), class: "text-caption", "data-assist-sfc-external": "" }),
+                        label: L("Other sites"), class: "text-caption", "data-assist-sfc-external": "",
+                        title: L("Lets the canvas show other sites' images and content; what the canvas shows can then reach those sites") }),
                 ]));
                 return h("div", { class: "m-assist-vue-sfc", "data-assist-canvas-version": String(this.version || ""), "data-assist-sfc-ignored": String(this.ignored),
                     "data-assist-sfc-dropped": String(this.dropped) }, kids);
@@ -1355,7 +1358,7 @@
         if (qvt && qvt.registerLate) qvt.registerLate("m-assist-vue-sfc", component);
         if (moqui.assist && moqui.assist.dialects) moqui.assist.dialects.register("vue-sfc", { label: "Vue SFC", component: "m-assist-vue-sfc", streaming: false });
     }
-    // ---- screen-xml (plans/design-dev-aide.md 13.5): on a dev instance, a screen or screen-extend as it would be saved,
+    // ---- screen-xml (plans/archive/design-dev-aide.md 13.5): on a dev instance, a screen or screen-extend as it would be saved,
     // previewed as the page that shows it with the program standing at its location (the canvas's preview token),
     // under the server's read fence. The program's first line names both: <!-- screen-xml at="component://..." path="/qapps/..." -->.
     {
@@ -1386,7 +1389,7 @@
                 src() { return canvas.plainAppPath(this.header.path) ? canvas.previewUrl(this.header.path, "canvas:" + this.artifactId) + "&v=" + (this.version || 0) : ""; }
             },
             methods: {
-                // the proposal as the screen builder's buffer, unsaved (plans/design-dev-aide.md 13.5): the Workspace takes
+                // the proposal as the screen builder's buffer, unsaved (plans/archive/design-dev-aide.md 13.5): the Workspace takes
                 // the draft of the location when it opens the file
                 openInBuilder() {
                     const text = String(this.program || "").replace(/<!--\s*screen-xml[^>]*-->\s*\n?/, "");
@@ -1414,7 +1417,7 @@
         if (qvt && qvt.registerLate) qvt.registerLate("m-assist-screen-xml", screenXml);
         if (moqui.assist && moqui.assist.dialects) moqui.assist.dialects.register("screen-xml", { label: L("Moqui screen (dev)"), component: "m-assist-screen-xml", streaming: false });
     }
-    // ---- qvue-screen (plans/design-dev-aide.md 13.5): on a dev instance, a .qvue screen as it would be saved, its XML and
+    // ---- qvue-screen (plans/archive/design-dev-aide.md 13.5): on a dev instance, a .qvue screen as it would be saved, its XML and
     // its SFC in one program after the header <!-- qvue-screen at="component://.../X.xml" path="/qapps/..." -->. The SFC
     // runs in the Vue SFC sandbox, as any agent-written component does; its reads are answered by the screen's own
     // transitions with the program standing at its location, under the server's read fence; its submits are its actions.

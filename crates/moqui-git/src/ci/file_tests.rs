@@ -259,10 +259,12 @@ fn mr_moquis_own_pipelines_are_valid() {
     assert!(!file.pipelines[3].jobs[0].artifacts.is_empty());
     // every job names the build image and a pool, so the pool's allowed images and limits decide what runs
     for job in file.pipelines.iter().flat_map(|pipeline| &pipeline.jobs) {
-        assert_eq!(
-            (job.image.as_str(), job.pool.as_deref()),
-            ("moqui-build", Some("linux"))
-        );
+        let pool = if job.name == "offline-source" {
+            "linux-offline"
+        } else {
+            "linux"
+        };
+        assert_eq!((job.image.as_str(), job.pool.as_deref()), ("moqui-build", Some(pool)));
     }
 }
 

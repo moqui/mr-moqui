@@ -91,6 +91,7 @@ pub struct GitRule {
     run_on_error: bool,
     condition: String,
     actions: String,
+    actions_source: Option<moqui_lib::error::SourceLocation>,
 }
 
 impl std::fmt::Debug for GitRule {
@@ -144,6 +145,7 @@ pub(super) fn git_rule_from(node: &MNode) -> Result<GitRule, Error> {
             .first_named("actions")
             .map(|child| child.write_string())
             .unwrap_or_default(),
+        actions_source: super::rule_actions::actions_source(node),
         name,
     })
 }
@@ -255,7 +257,7 @@ pub fn run_git_rules(
         let body = || -> Result<(), Error> {
             let _frame = super::rule_actions::publish_names(fields)?;
             if super::rule_actions::condition_allows(&rule.condition)? {
-                super::rule_actions::run_stored_actions(&rule.actions)?;
+                super::rule_actions::run_stored_actions(&rule.actions, rule.actions_source.as_ref())?;
             }
             let failed = ExecutionContext::with_current(|ec| !ec.message().errors_text().is_empty()).unwrap_or(false);
             if failed {

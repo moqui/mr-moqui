@@ -34,7 +34,7 @@ use super::csv::load_csv_reader;
 use super::json::load_json_reader;
 use super::xml::{load_xml_reader, load_xml_text};
 use super::zip::load_zip_reader;
-use super::{error_chain, with_load_slot, DataFileService, LoadOptions, LoadResult};
+use super::{error_chain, with_load_slot, DataFileService, LoadFailure, LoadOptions, LoadResult};
 use crate::entity::facade::EntityFacade;
 use crate::entity::fk::fk_scope;
 use crate::entity::value::EntityValue;
@@ -108,9 +108,9 @@ pub fn load_entity_data(facade: &EntityFacade, location: &str, options: &LoadOpt
     let _scope = fk_scope(options.dummy_fks, options.disable_fk_create);
     let _seed = (!options.restrict_sensitive_entities).then(SeedLoad::enter);
     let path = resolve_location(facade, location)?;
-    let mut failed_files = 0;
-    let records = load_path(facade, location, &path, options, &mut failed_files)?;
-    Ok(LoadResult { records, failed_files })
+    let mut failures = Vec::new();
+    let records = load_path(facade, location, &path, options, &mut failures)?;
+    Ok(LoadResult { records, failures })
 }
 
 /// Load entity XML text, as `EntityDataLoader.xmlText`. `location` names the text in errors.
@@ -126,7 +126,7 @@ pub fn load_entity_xml_text(
     })?;
     Ok(LoadResult {
         records,
-        failed_files: 0,
+        failures: Vec::new(),
     })
 }
 
@@ -152,7 +152,7 @@ pub fn load_entity_text(
     })?;
     Ok(LoadResult {
         records,
-        failed_files: 0,
+        failures: Vec::new(),
     })
 }
 
@@ -161,10 +161,10 @@ fn load_path(
     location: &str,
     path: &Path,
     options: &LoadOptions,
-    failed_files: &mut u64,
+    failures: &mut Vec<LoadFailure>,
 ) -> Result<u64, Error> {
     if moqui_lib::vfs::is_dir(path) {
-        return load_directory(facade, path, options, failed_files);
+        return load_directory(facade, path, options, failures);
     }
     super::check::check_file(location, options, || {
         in_file_transaction(facade, options, || load_file(facade, location, path, options))
@@ -185,8 +185,8 @@ pub(super) fn in_file_transaction(
     let timeout = options.timeout.unwrap_or(FILE_TIMEOUT);
     let tx = facade.default_transactions()?;
     tx.run(TransactionAttribute::UseOrBegin, Some(timeout), || {
-        // The file's writes go without waiting for their results ...
-        let _pipeline = crate::entity::exec::PipelineWrites::enter();
+        // The file's writes go without waiting for their results, unless the load waits for each ...
+        let _pipeline = (!options.wait_each_write).then(crate::entity::exec::PipelineWrites::enter);
         let loaded = body()?;
         // ... which are all in before the file's transaction ends, or the caller's goes on: a failure fails the file.
         tx.finish_deferred()?;
@@ -220,12 +220,12 @@ fn load_file(facade: &EntityFacade, location: &str, path: &Path, options: &LoadO
 }
 
 /// Each file of the directory, by name. As in Java's `loadAllData`, a file that fails is logged and the load goes
-/// on with the next file; the failure is counted in `failed_files`.
+/// on with the next file; the failure is added to `failures` with its reason.
 fn load_directory(
     facade: &EntityFacade,
     path: &Path,
     options: &LoadOptions,
-    failed_files: &mut u64,
+    failures: &mut Vec<LoadFailure>,
 ) -> Result<u64, Error> {
     let mut names = Vec::new();
     // with the files built into the binary that are not on disk (moqui_lib::vfs)
@@ -241,14 +241,12 @@ fn load_directory(
     let mut total = 0_u64;
     for child in names {
         let location = child.display().to_string();
-        match load_path(facade, &location, &child, options, failed_files) {
+        match load_path(facade, &location, &child, options, failures) {
             Ok(records) => total = total.saturating_add(records),
             Err(err) => {
-                tracing::error!(
-                    "Skipping to next file after error loading {location}: {}",
-                    error_chain(&err)
-                );
-                *failed_files += 1;
+                let reason = error_chain(&err);
+                tracing::error!("Skipping to next file after error loading {location}: {reason}");
+                failures.push(LoadFailure { location, reason });
             }
         }
     }
@@ -510,7 +508,12 @@ fn refuse_restricted(facade: &EntityFacade, record: &Record, options: &LoadOptio
         && crate::entity::sensitive::is_user_account_entity(&full_name)
         && crate::entity::sensitive::USER_ACCOUNT_SECRET_FIELDS
             .iter()
-            .any(|field| record.fields.get(*field).is_some_and(|value| !moqui_lib::object::is_empty(value)))
+            .any(|field| {
+                record
+                    .fields
+                    .get(*field)
+                    .is_some_and(|value| !moqui_lib::object::is_empty(value))
+            })
     {
         return Err(Error::new(format!(
             "The password fields of {full_name} are not allowed in this data load"
@@ -588,24 +591,38 @@ fn write_tree(facade: &EntityFacade, options: &LoadOptions, record: Record, ance
     let exists = !partial && options.only_create && row_exists(facade, &shape, &fields)?;
     let mut total = 0_u64;
     if !partial && !exists {
-        if options.only_create {
-            value_from(facade, &entity, &fields)?.create(facade)?;
+        // The record a write that fails names: the data may hold many of the entity (TOOL-UI-005).
+        let label = record_label(&shape, &fields);
+        let written = if options.only_create {
+            value_from(facade, &entity, &fields).and_then(|value| value.create(facade))
         } else if facade.upsert_fits(&entity, &fields)? {
             // One statement whether or not the row is there, which a pipelined load does not wait for.
-            write_upsert(facade, &entity, fields)?;
+            write_upsert(facade, &entity, fields)
         } else if options.dummy_fks {
-            value_from(facade, &entity, &fields)?.create_or_update(facade)?;
+            value_from(facade, &entity, &fields).and_then(|value| value.create_or_update(facade))
         } else {
             // Java's plain-map loader (XML and JSON records) uses the entity-auto store path, including status checks.
             // CSV rows go through `store_value` instead.
-            (crate::hooks::get().store_entity)(facade, &entity, &crate::entity::string_map(&fields))?;
-        }
+            (crate::hooks::get().store_entity)(facade, &entity, &crate::entity::string_map(&fields)).map(drop)
+        };
+        // shown as "Could not store {label}: " and the error, whose display has its sources
+        written.map_err(|err| Error::new(format!("Could not store {label}")).with_source(err))?;
         total = 1;
     }
     for child in children {
         total = total.saturating_add(write_tree(facade, options, child, &shared)?);
     }
     Ok(total)
+}
+
+/// A record as a load's error names it, its entity and primary key: `moqui.basic.Enumeration [enumId=X]`.
+fn record_label(shape: &Shape, fields: &FieldMap) -> String {
+    let key: Vec<String> = shape
+        .pk_names
+        .iter()
+        .map(|name| format!("{name}={}", fields.get(name).map(to_plain_string).unwrap_or_default()))
+        .collect();
+    format!("{} [{}]", shape.full_name, key.join(", "))
 }
 
 /// A CSV row, as Java's `handleValue`: its primary key is complete ([`complete_csv_pk`]), and it is created when
@@ -762,19 +779,12 @@ fn convert_text(value: &Value, java_type: &str) -> Option<Value> {
     // Java parses number text with the locale (`L10nFacade.parseNumber`) to a BigDecimal and takes the type's value
     // of that, so `118,500` is 118500 and `1800.0` is 1800 for a Long.
     match value {
-        Value::String(text) if is_number_type(java_type) => {
+        Value::String(text) if crate::hooks::is_number_type(java_type) => {
             let decimal = convert_checked(&Value::String(text.replace(',', "")), "BigDecimal")?;
             convert_checked(&decimal, java_type)
         }
         _ => None,
     }
-}
-
-fn is_number_type(java_type: &str) -> bool {
-    matches!(
-        java_type.rsplit('.').next().unwrap_or(java_type),
-        "BigDecimal" | "BigInteger" | "Long" | "Integer" | "Double" | "Float" | "long" | "int" | "double" | "float"
-    )
 }
 
 fn pk_complete(shape: &Shape, fields: &FieldMap) -> bool {
@@ -840,7 +850,7 @@ pub(super) fn call_data_file_service(
         );
         return Ok(());
     }
-    with_load_slot(facade, |slot| slot.services.push(service.clone()));
+    with_load_slot(facade, |slot| super::keep_service(&mut slot.services, &service));
     (crate::hooks::get().run_data_file_service)(facade, &service)
 }
 

@@ -20,7 +20,7 @@ node_modules/
 # exports a user names: a drive's zip (FileServices.export#Drive), a repository (GitServices.export#GitRepository)
 /runtime/drive-export
 /runtime/git-export
-# the Dev AIDE's worktrees for agents' sessions (plans/design-dev-aide.md 21.8)
+# the Dev AIDE's worktrees for agents' sessions (plans/archive/design-dev-aide.md 21.8)
 /runtime/worktrees
 /myaddons.xml
 /runtime/install
@@ -130,3 +130,12 @@ Desktop.ini
 /plans/ui-refinement-evidence/
 # Reviewer reports and prompts of the security review (plans/Security-Review.md); working record, not history.
 /plans/security-review-evidence/
+
+# Verified browser output from ./moq build-js
+/runtime/components/base/webroot/screen/webroot/libs/*
+!/runtime/components/base/webroot/screen/webroot/libs/MANIFEST.json
+!/runtime/components/base/webroot/screen/webroot/libs/NOTICES.md
+!/runtime/components/base/webroot/screen/webroot/libs/licenses/
+/runtime/components/base/webroot/screen/webroot/.libs-*
+/.npm-cache/
+/runtime/components/base/webroot/build/fonts/selected.txt

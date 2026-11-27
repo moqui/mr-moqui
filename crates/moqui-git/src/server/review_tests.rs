@@ -1570,3 +1570,173 @@ fn an_imported_merge_request_keeps_its_state_and_fires_nothing() {
     assert_eq!(bodies.len(), 1, "{bodies:?}");
     assert!(bodies[0].contains("\"opened\""), "{}", bodies[0]);
 }
+
+/// A recorded change of the push log, as a push writes it: `refs` are (name, old, new, result).
+fn record_update(fixture: &Fixture, repository: &str, update_id: &str, prior: &str, refs: &[(&str, &str, &str, &str)]) {
+    let _entered = fixture.context.enter();
+    let _authz = fixture.context.disable_authz();
+    let mut row = EntityValue::make(&fixture.entity, crate::events::GIT_UPDATE).unwrap();
+    for (name, value) in [
+        ("updateId", update_id),
+        ("repositoryId", repository),
+        ("source", "push"),
+        ("transport", "http"),
+        ("priorTips", prior),
+        ("ecaStatus", "done"),
+    ] {
+        row.set(name, s(value));
+    }
+    row.create(&fixture.entity).unwrap();
+    for (name, old, new, result) in refs {
+        let mut row = EntityValue::make(&fixture.entity, crate::events::GIT_UPDATE_REF).unwrap();
+        row.set("updateId", s(update_id));
+        row.set("refName", s(name));
+        if !old.is_empty() {
+            row.set("oldObjectId", s(old));
+        }
+        row.set("newObjectId", s(new));
+        row.set("changeType", s(if old.is_empty() { "create" } else { "update" }));
+        row.set("result", s(result));
+        row.create(&fixture.entity).unwrap();
+    }
+}
+
+/// The contexts of an event of a recorded change, as `user` asks for them: each context's fields as JSON, and whether
+/// some were left out.
+fn replayed(
+    fixture: &Fixture,
+    user: &str,
+    repository: &str,
+    update_id: &str,
+    event: &str,
+) -> (Vec<serde_json::Value>, bool) {
+    let out = ok(
+        fixture,
+        user,
+        &git("get#GitUpdateEventContexts"),
+        &[
+            ("repositoryId", s(repository)),
+            ("updateId", s(update_id)),
+            ("event", s(event)),
+        ],
+    );
+    let contexts = list(&out, "contextList")
+        .iter()
+        .map(|row| moqui_lib::json::to_json(row)["context"].clone())
+        .collect();
+    (contexts, matches!(out.get("truncated"), Some(Value::Bool(true))))
+}
+
+#[test]
+fn a_replay_of_the_push_log_lists_only_the_commits_its_reader_reads() {
+    let fixture = fixture_with(
+        "review-replay",
+        moqui_core::context::framework_dir(),
+        r#"<git-server review-start-hidden="true"/>"#,
+    );
+    grant_entities(&fixture);
+    framework_rules(&fixture);
+    define(&fixture, "held", "db");
+    let files = |text: &str| Value::Map([("a.txt".to_string(), s(text))].into_iter().collect());
+    let first = ok(
+        &fixture,
+        WRITER,
+        &git("commit#GitFiles"),
+        &[
+            ("repositoryId", s("held")),
+            ("message", s("First")),
+            ("fileMap", files("one\n")),
+        ],
+    );
+    let first = get(&first, "commitId").to_string();
+    // a proposal held hidden: its commit is in the store, and not the writer's to read
+    let proposed = ok(
+        &fixture,
+        READER,
+        &git("commit#GitFiles"),
+        &[
+            ("repositoryId", s("held")),
+            ("asProposal", s("true")),
+            ("message", s("Held back")),
+            ("fileMap", files("two\n")),
+        ],
+    );
+    let held = get(&proposed, "commitId").to_string();
+    assert!(!reads_commit(&fixture, WRITER, "held", &held));
+    // a fork's commit, in the store the network shares
+    ok(
+        &fixture,
+        WRITER,
+        &git("fork#GitRepository"),
+        &[("sourceRepositoryId", s("held")), ("repositoryId", s("held-fork"))],
+    );
+    let forked = ok(
+        &fixture,
+        WRITER,
+        &git("commit#GitFiles"),
+        &[
+            ("repositoryId", s("held-fork")),
+            ("message", s("Only the fork's")),
+            ("fileMap", files("fork\n")),
+        ],
+    );
+    let forked = get(&forked, "commitId").to_string();
+    settled(&fixture);
+
+    // a change naming the held commit as a branch it made: no commit of it is listed, and the lists say they are short
+    record_update(
+        &fixture,
+        "held",
+        "REPLAY_HELD",
+        &first,
+        &[("refs/heads/side", "", &held, "ok")],
+    );
+    let (commits, truncated) = replayed(&fixture, WRITER, "held", "REPLAY_HELD", "commit");
+    assert!(commits.is_empty() && truncated, "{commits:?}");
+    let (refs, _) = replayed(&fixture, WRITER, "held", "REPLAY_HELD", "ref-update");
+    assert_eq!(refs[0]["newCommitIds"], serde_json::json!([]));
+    let (receive, _) = replayed(&fixture, WRITER, "held", "REPLAY_HELD", "pre-receive");
+    assert_eq!(receive[0]["newCommits"], serde_json::json!([]));
+    assert_eq!(receive[0]["newCommitsTruncated"], true);
+    let text = serde_json::to_string(&receive).unwrap();
+    assert!(!text.contains("Held back"), "{text}");
+
+    // a refused push naming the other fork's commit: no commit of a ref the change did not make
+    record_update(
+        &fixture,
+        "held",
+        "REPLAY_REFUSED",
+        &first,
+        &[("refs/heads/main", &first, &forked, "refused: not yours")],
+    );
+    for event in ["pre-receive", "pre-ref-update"] {
+        let (contexts, _) = replayed(&fixture, WRITER, "held", "REPLAY_REFUSED", event);
+        let text = serde_json::to_string(&contexts).unwrap();
+        assert!(!text.contains("Only the fork's"), "{event}: {text}");
+        assert_eq!(contexts[0]["newCommits"], serde_json::json!([]), "{event}");
+        assert_eq!(contexts[0]["newCommitsTruncated"], true, "{event}");
+    }
+    // nor through the store's leftovers: the same change marked made lists none of the fork's either
+    record_update(
+        &fixture,
+        "held",
+        "REPLAY_MADE",
+        &first,
+        &[("refs/heads/other", "", &forked, "ok")],
+    );
+    let (contexts, truncated) = replayed(&fixture, WRITER, "held", "REPLAY_MADE", "commit");
+    assert!(contexts.is_empty() && truncated, "{contexts:?}");
+
+    // a reader without the update right is refused the replay
+    let (_, errors) = call(
+        &fixture,
+        READER,
+        &git("get#GitUpdateEventContexts"),
+        &[
+            ("repositoryId", s("held")),
+            ("updateId", s("REPLAY_HELD")),
+            ("event", s("commit")),
+        ],
+    );
+    assert!(errors.contains("may not update"), "{errors}");
+}

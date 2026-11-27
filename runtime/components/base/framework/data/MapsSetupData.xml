@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The starting map configuration (plans/archive/Maps.md §1, §4.2), seed-initial since an administrator changes it: a fresh install
+    makes no outside request. Its default profile, OUTLINE, draws the Natural Earth country outline the dashboard geomap
+    already vendors, from this server. The OpenFreeMap provider and its profile are disabled until an administrator enables
+    the provider with a passing test (Maps › Configuration); the browser then loads its style and tiles from
+    tiles.openfreemap.org, which sees the area viewed and the client's address. -->
+<entity-facade-xml type="seed-initial">
+    <moqui.maps.MapLayer layerId="OUTLINE_NE110" layerName="Country outlines" formatEnumId="MLF_TOPOJSON"
+            description="Natural Earth 1:110m country outlines (world-atlas), served by this server"
+            sourceUrl="/libs/naturalearth/countries-110m.json" crs="EPSG:4326" minZoom="0" maxZoom="6"
+            attribution="Natural Earth" sourceEdition="4.1.0" isBasemap="Y"/>
+    <moqui.maps.MapProfile profileId="OUTLINE" profileName="Outline" basemapLayerId="OUTLINE_NE110"
+            description="Country outlines only, with no outside request: the installation default until a basemap is configured"
+            centerLongitude="0" centerLatitude="20" zoom="2" externalAccess="N" allowedOverrides="layers,extent,units"/>
+
+    <moqui.maps.MapProvider providerId="OPENFREEMAP" providerKindEnumId="MPK_VECTOR_STYLE" providerName="OpenFreeMap"
+            description="Hosted OpenMapTiles vector basemap; no key, no published request caps, no SLA"
+            endpointUrl="https://tiles.openfreemap.org/styles/liberty"
+            attribution="OpenFreeMap&#10;© OpenMapTiles&#10;Data from OpenStreetMap"
+            attributionUrls="https://openfreemap.org&#10;https://www.openmaptiles.org/&#10;https://www.openstreetmap.org/copyright"
+            termsUrl="https://openfreemap.org/tos/" allowedOperations="style,tiles" cachePolicy="private" proxyRequests="N"
+            disabled="Y" allowPrivateNetwork="N" sequenceNum="10"/>
+    <moqui.maps.MapLayer layerId="OPENFREEMAP_LIBERTY" layerName="OpenFreeMap Liberty" providerId="OPENFREEMAP"
+            formatEnumId="MLF_VECTOR_STYLE" styleLocation="https://tiles.openfreemap.org/styles/liberty" crs="EPSG:3857"
+            minZoom="0" maxZoom="20" isBasemap="Y"/>
+    <moqui.maps.MapProfile profileId="OPENFREEMAP" profileName="OpenFreeMap" basemapLayerId="OPENFREEMAP_LIBERTY"
+            description="The OpenFreeMap Liberty basemap, loaded by the browser from tiles.openfreemap.org"
+            centerLongitude="0" centerLatitude="20" zoom="2" externalAccess="Y" allowedOverrides="basemap,layers,extent,units"
+            disabled="Y"/>
+
+    <!-- The USGS National Map's topographic basemap (plans/archive/Maps.md P4a), an OGC WMTS service: public domain, no key, the
+        United States only. Disabled until an administrator tests the provider (its capabilities are read and recorded) and
+        enables the profile; the browser then loads its tiles from basemap.nationalmap.gov, which sees the area viewed. -->
+    <moqui.maps.MapProvider providerId="USGS_NATIONAL_MAP" providerKindEnumId="MPK_WMTS" providerName="USGS The National Map"
+            description="The USGS topographic basemap as an OGC WMTS service; public domain, no key, the United States only"
+            endpointUrl="https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/WMTS/1.0.0/WMTSCapabilities.xml"
+            attribution="USGS The National Map" attributionUrls="https://www.usgs.gov/programs/national-geospatial-program/national-map"
+            termsUrl="https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits" allowedOperations="tiles"
+            cachePolicy="private" proxyRequests="N" disabled="Y" allowPrivateNetwork="N" sequenceNum="20"/>
+    <moqui.maps.MapLayer layerId="USGS_TOPO" layerName="USGS Topo" providerId="USGS_NATIONAL_MAP" formatEnumId="MLF_WMTS"
+            ogcLayers="USGSTopo" ogcMatrixSet="GoogleMapsCompatible" crs="urn:ogc:def:crs:EPSG::3857" minZoom="0" maxZoom="16"
+            minLongitude="-180" minLatitude="-15" maxLongitude="180" maxLatitude="72" isBasemap="Y"/>
+    <moqui.maps.MapProfile profileId="USGS_TOPO" profileName="USGS Topo" basemapLayerId="USGS_TOPO"
+            description="The USGS topographic basemap (the United States), loaded by the browser from basemap.nationalmap.gov"
+            centerLongitude="-98.5" centerLatitude="39.5" zoom="4" externalAccess="Y" allowedOverrides="basemap,layers,extent,units"
+            disabled="Y"/>
+
+    <!-- The US Census geocoder (plans/archive/Maps.md §6.2), disabled: Browse's search asks it only after an administrator tests it
+        (a fixed public address) and enables it, and only for an explicit search. It interpolates along street address
+        ranges: its points are street-range interpolations, never rooftops. Nothing of its answers is kept (cachePolicy
+        none) until an administrator permits it. -->
+    <moqui.maps.MapProvider providerId="CENSUS_GEOCODER" providerKindEnumId="MPK_GEOCODER_CENSUS" providerName="US Census geocoder"
+            description="US addresses, one line, located by interpolation along the Census Bureau's street address ranges; public domain, no key"
+            endpointUrl="https://geocoding.geo.census.gov/geocoder" attribution="U.S. Census Bureau Geocoder"
+            attributionUrls="https://geocoding.geo.census.gov/geocoder/"
+            termsUrl="https://www.census.gov/data/developers/about/terms-of-service.html" allowedOperations="geocode"
+            cachePolicy="none" proxyRequests="N" disabled="Y" allowPrivateNetwork="N" sequenceNum="50"/>
+
+    <!-- The local address search (plans/archive/Maps-Overture.md §O2), disabled: the address points of the regions whose Overture
+        Addresses are imported and active (Maps › Configuration › Overture), searched on this server with no outside request.
+        It passes its test (a fixed query made from its own data) only once a region's addresses are active, and is enabled
+        then as any geocoder. Its points are address points whose position kind the data does not state, never rooftops;
+        a text it does not find falls back to the local postal lookup and to choosing the point on the map. -->
+    <moqui.maps.MapProvider providerId="OVERTURE_ADDRESSES" providerKindEnumId="MPK_GEOCODER_OVERTURE" providerName="Overture addresses (local)"
+            description="Address points of the imported Overture regions, matched on this server; nothing is sent anywhere"
+            attribution="Overture Maps Foundation; address sources as each result names them" attributionUrls="https://docs.overturemaps.org/attribution/"
+            allowedOperations="geocode" cachePolicy="none" proxyRequests="N" disabled="Y" allowPrivateNetwork="N" sequenceNum="40"/>
+
+    <!-- The local Protomaps profile (plans/archive/Maps.md §4.1, §5): a regional Protomaps PMTiles extract an administrator places in
+        a drive, in a git repository as a Git LFS object, or on disk, and registers under Configuration › Archives
+        (MapSourceServices.register#ArchiveLayer, which records its revision and enables the layer). Drawn with the styles,
+        sprites and fonts packaged under /libs (webroot build/libs/refresh.mjs, protomaps and mapfonts), from this server
+        only. The layers and the profile are disabled until an archive is registered and the profile enabled. -->
+    <moqui.maps.MapLayer layerId="LOCAL_PROTOMAPS_LIGHT" layerName="Local map (light)" formatEnumId="MLF_PMTILES_VECTOR"
+            description="A regional Protomaps archive registered on this server, drawn with the Protomaps light style"
+            styleLocation="/libs/protomaps/light.json" assetsLocation="/libs/protomaps" crs="EPSG:3857"
+            attribution="Protomaps&#10;© OpenStreetMap" isBasemap="Y" disabled="Y"/>
+    <moqui.maps.MapLayer layerId="LOCAL_PROTOMAPS_DARK" layerName="Local map (dark)" formatEnumId="MLF_PMTILES_VECTOR"
+            description="The same regional Protomaps archive, drawn with the Protomaps dark style (register the same location)"
+            styleLocation="/libs/protomaps/dark.json" assetsLocation="/libs/protomaps" crs="EPSG:3857"
+            attribution="Protomaps&#10;© OpenStreetMap" isBasemap="Y" disabled="Y"/>
+    <moqui.maps.MapProfile profileId="LOCAL_PROTOMAPS" profileName="Local map" basemapLayerId="LOCAL_PROTOMAPS_LIGHT"
+            description="A regional map from an archive on this server, with no outside request"
+            centerLongitude="0" centerLatitude="20" zoom="2" externalAccess="N" allowedOverrides="basemap,layers,extent,units"
+            disabled="Y"/>
+
+    <!-- Where each registered Geo data set (MapsData.xml) is downloaded from, its year and its priority: the lower is a Geo's
+        active point where sources overlap, so in the US the Census point wins and GeoNames adds names and the codes Census
+        lacks; an operator's file, chosen deliberately, comes first. -->
+    <moqui.maps.GeoDataSet dataSetId="CENSUS_ZCTA" sourceYear="2026" priority="10"
+            urlTemplate="https://www2.census.gov/geo/docs/maps-data/data/gazetteer/{year}_Gazetteer/{year}_Gaz_zcta_national.zip"
+            archiveMember="{year}_Gaz_zcta_national.txt"/>
+    <moqui.maps.GeoDataSet dataSetId="CENSUS_COUNTY" sourceYear="2026" priority="10"
+            urlTemplate="https://www2.census.gov/geo/docs/maps-data/data/gazetteer/{year}_Gazetteer/{year}_Gaz_counties_national.zip"
+            archiveMember="{year}_Gaz_counties_national.txt"/>
+    <moqui.maps.GeoDataSet dataSetId="CENSUS_PLACE" sourceYear="2026" priority="10"
+            urlTemplate="https://www2.census.gov/geo/docs/maps-data/data/gazetteer/{year}_Gazetteer/{year}_Gaz_place_national.zip"
+            archiveMember="{year}_Gaz_place_national.txt"/>
+    <moqui.maps.GeoDataSet dataSetId="CENSUS_ZCTA_COUNTY" sourceYear="2020" priority="10"
+            urlTemplate="https://www2.census.gov/geo/docs/maps-data/data/rel2020/zcta520/tab20_zcta520_county20_natl.txt"/>
+    <moqui.maps.GeoDataSet dataSetId="GEONAMES_POSTAL" priority="20"
+            urlTemplate="https://download.geonames.org/export/zip/{country}.zip"
+            archiveMember="{country}.txt"/>
+    <moqui.maps.GeoDataSet dataSetId="GEONAMES_COUNTRY" priority="20"
+            urlTemplate="https://download.geonames.org/export/dump/countryInfo.txt"/>
+    <moqui.maps.GeoDataSet dataSetId="GEONAMES_ADMIN1" priority="20"
+            urlTemplate="https://download.geonames.org/export/dump/admin1CodesASCII.txt"/>
+    <moqui.maps.GeoDataSet dataSetId="GEONAMES_ADMIN2" priority="20"
+            urlTemplate="https://download.geonames.org/export/dump/admin2Codes.txt"/>
+    <moqui.maps.GeoDataSet dataSetId="GEONAMES_CITIES15000" priority="20"
+            urlTemplate="https://download.geonames.org/export/dump/cities15000.zip"
+            archiveMember="cities15000.txt"/>
+    <moqui.maps.GeoDataSet dataSetId="OPERATOR_CSV" priority="5"/>
+
+    <!-- the installation's default profile; a user's own is their UserPreference maps.profile -->
+    <moqui.security.UserGroupPreference userGroupId="ALL_USERS" preferenceKey="maps.profile" preferenceValue="OUTLINE"/>
+</entity-facade-xml>

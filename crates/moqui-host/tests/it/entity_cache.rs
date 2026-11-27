@@ -792,12 +792,14 @@ impl Drop for ExitSim<'_> {
     }
 }
 
+/// Fields drop in declaration order: the clusters stop before their directories go. With the guards first, a
+/// postmaster outlived its data directory, its stop failed, and it held a SysV segment until it noticed.
 struct Started {
-    _guards: Vec<DirGuard>,
-    _main: EmbeddedCluster,
-    _overlay: Option<EmbeddedCluster>,
     driver: Arc<dyn DbDriver>,
     facade: EntityFacade,
+    _overlay: Option<EmbeddedCluster>,
+    _main: EmbeddedCluster,
+    _guards: Vec<DirGuard>,
 }
 
 fn start_facade(label: &str, tables: &[&str], with_overlay: bool) -> Started {

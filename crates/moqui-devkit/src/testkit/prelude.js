@@ -256,6 +256,10 @@
         return true;
     };
     define("__truthy", truthy);
+    // `a || b` and `a && b` in a condition (rewrite.rs): the operand Groovy truth chooses, its own value kept; `b` is a
+    // function of the right side, called only when it is chosen
+    define("__or", (a, b) => (truthy(a) ? a : b()));
+    define("__and", (a, b) => (truthy(a) ? b() : a));
     T.truthy = truthy;
 
     // Groovy ==: numbers, decimals and number text by value (16.99 == 16.990), lists and maps by their items.

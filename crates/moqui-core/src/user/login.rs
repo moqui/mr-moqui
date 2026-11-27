@@ -497,7 +497,11 @@ fn save_history(user_id: &str, successful: bool) {
             Value::string(if successful { "Y" } else { "N" }),
         ),
     ]);
-    let visit_id = session::visit_id().ok().flatten().filter(|id| !id.is_empty());
+    // a scoped key's login is its request's alone, of no Visit, which a declined request may take back
+    let visit_id = Some(())
+        .filter(|()| !session::identity_held())
+        .and_then(|()| session::visit_id().ok().flatten())
+        .filter(|id| !id.is_empty());
     if let Some(visit_id) = &visit_id {
         fields.insert("visitId".to_string(), Value::string(visit_id));
     }
@@ -787,7 +791,10 @@ fn internal_login(username: &str, queued: bool, person: bool) -> (Option<String>
     if username.is_empty() {
         return (None, Err(Error::new("No username specified")));
     }
-    clear_pre_authc();
+    // a scoped key's login under its hold touches no second factor the session waits for
+    if !session::identity_held() {
+        clear_pre_authc();
+    }
     let _authz = without_authz();
     let facade = match entity_facade() {
         Ok(facade) => facade,
@@ -820,7 +827,8 @@ fn internal_login(username: &str, queued: bool, person: bool) -> (Option<String>
             // code of a second factor, a forced password change, a key, an identity provider), so an id planted
             // before the sign-in does not carry it (SEC-WEB-05). A queued worker has no session of its own, and a
             // session the server made for this request was never anyone else's.
-            if queued || before == user_id || session::session_made_for_request() {
+            // a scoped key's login is held for its request, never the session's ([`session::hold_for_scoped_key`])
+            if queued || before == user_id || session::session_made_for_request() || session::identity_held() {
                 return Ok(());
             }
             session::rotate_on_password_login()
@@ -867,7 +875,7 @@ pub fn login_external_user(username: &str, authenticated_at: Option<i64>) -> Res
 ///
 /// Returns [`INVALID_LOGIN`](Error) when the key is empty, unknown, or expired, or the account cannot log in.
 pub fn login_user_key(key: &str) -> Result<(), Error> {
-    check_login_key(key, None, None)
+    check_login_key(key, None, &[])
 }
 
 /// [`login_user_key`] for the one service `scope` names (`gateway`, the LLM gateway): an account's key, or a key made
@@ -877,7 +885,7 @@ pub fn login_user_key(key: &str) -> Result<(), Error> {
 ///
 /// Returns [`INVALID_LOGIN`](Error) as [`login_user_key`] does, and for a key of another scope.
 pub fn login_user_key_for(key: &str, scope: &str) -> Result<(), Error> {
-    check_login_key(key, None, Some(scope))
+    check_login_key(key, None, &[scope])
 }
 
 /// Recheck a socket's hashed login key without logging in, writing history, or changing its session.
@@ -1024,8 +1032,8 @@ fn key_scope(row: &EntityValue) -> String {
 
 /// `session_user`, when the session is already signed in, is the only user the key may log in: a key for another
 /// user is refused before the login, so it never takes over that session or its attributes. A key made for one scope
-/// (`UserLoginKey.scope`) logs in only where `scope` names it.
-fn check_login_key(key: &str, session_user: Option<&str>, scope: Option<&str>) -> Result<(), Error> {
+/// (`UserLoginKey.scope`) logs in only where `scopes` names it.
+fn check_login_key(key: &str, session_user: Option<&str>, scopes: &[&str]) -> Result<(), Error> {
     if key.is_empty() {
         return Err(refused_credential());
     }
@@ -1044,7 +1052,7 @@ fn check_login_key(key: &str, session_user: Option<&str>, scope: Option<&str>) -
         return Err(refused_credential());
     }
     let key_scope = key_scope(&row);
-    if !key_scope.is_empty() && Some(key_scope.as_str()) != scope {
+    if !key_scope.is_empty() && !scopes.contains(&key_scope.as_str()) {
         return Err(refused_credential());
     }
     if let Some(thru) = field_millis(&row, "thruDate") {
@@ -1056,12 +1064,28 @@ fn check_login_key(key: &str, session_user: Option<&str>, scope: Option<&str>) -
     let Some(account) = find_user_id(&facade, &user_id)? else {
         return Err(refused_credential());
     };
-    recorded_login(&text_field(&account, "username"), false)?;
+    // a key for one service alone signs in its own request alone: the web session keeps its own identity, and gets no
+    // cookie or token from it, so a later request by cookie is not the account's. Held only for the login itself, after
+    // the key's own checks; a login that fails puts the session's identity back
+    let held = !key_scope.is_empty() && session_user.is_none() && session::hold_for_scoped_key();
+    if let Err(err) = recorded_login(&text_field(&account, "username"), false) {
+        if held {
+            session::release_scoped_hold();
+        }
+        return Err(err);
+    }
+    if held {
+        session::note_scoped_login();
+    }
     let kind = LoginKeyKind::of(&row);
     session::set_login_key_kind(Some(kind));
+    session::set_login_key_id(Some(hashed.clone()));
     if kind == LoginKeyKind::Device {
         session::set_device_key(Some(hashed.clone()));
         restore_key_stamps(&row, &user_id);
+    }
+    if !key_scope.is_empty() {
+        session::set_scoped_key(Some(hashed.clone()));
     }
     // a device's key shows when it was last used, in the user's device list (plans/Mobile-Desktop.md, MD3)
     if !text_field(&row, "deviceName").is_empty() {
@@ -1343,12 +1367,16 @@ pub fn get_device_key(device: &str) -> Result<String, Error> {
     )
 }
 
-/// The scopes a key may be made for alone ([`get_scoped_key`]): `gateway`, the LLM gateway's `/llm/v1`.
-pub const KEY_SCOPES: [&str; 1] = ["gateway"];
+/// The scopes a key may be made for alone ([`get_scoped_key`]): `gateway`, the LLM gateway's `/llm/v1`; `git`
+/// ([`ACCESS_TOKEN_SCOPE`]), git over HTTP and the REST resources that declare it (the framework's git and hosting
+/// reads); `tasks`, the REST resources that declare it (Mantle's `my/tasks` and a repository's issues). A REST resource
+/// names the scopes it takes with `key-scope` ([`request_key_scopes`]).
+pub const KEY_SCOPES: [&str; 3] = ["gateway", ACCESS_TOKEN_SCOPE, "tasks"];
 
 /// A new key of the logged-in user that opens only `scope` (one of [`KEY_SCOPES`]), named `device` in the user's
-/// device list and good for the conf's `login-key/@device-expire-hours`: a dev instance keeps one for a group server's
-/// LLM gateway (plans/design-dev-aide.md 21.2), where the account's own key would open everything.
+/// device list and good for the conf's `login-key/@device-expire-hours`: a dev instance keeps one for each of a group
+/// server's git, tasks and LLM gateway (plans/archive/design-dev-aide.md 21.2, question 18), where the account's own key would
+/// open everything.
 ///
 /// # Errors
 ///
@@ -1387,6 +1415,10 @@ pub fn revoke_login_key(key: &str) -> Result<bool, Error> {
         return Ok(false);
     }
     let hashed = password::hash_login_key(key)?;
+    // a request a key made for one service signed in ends that key alone, never another its holder knows (SEC-RTE-85)
+    if session::scoped_key().is_some_and(|own| own != hashed) {
+        return Ok(false);
+    }
     let _authz = without_authz();
     let facade = entity_facade()?;
     let updated = facade
@@ -1395,8 +1427,10 @@ pub fn revoke_login_key(key: &str) -> Result<bool, Error> {
         .eq("userId", Value::string(&user_id))
         .update_all([("thruDate".to_string(), now_value())])?;
     if updated > 0 {
-        // a device signing out gets no more pushes (plans/Mobile-Desktop.md §5, native push)
+        // a device signing out gets no more pushes (plans/Mobile-Desktop.md §5, native push), and the location shares
+        // it sends stop (plans/archive/Location-Sharing.md §3.4)
         crate::service::web_push::forget_device_key(&facade, &hashed);
+        stop_key_location_shares(&hashed, &user_id);
     }
     Ok(updated > 0)
 }
@@ -1442,10 +1476,75 @@ pub fn renew_device_key(key: &str) -> Result<Option<(String, i64)>, Error> {
     old.set("thruDate", stamp_value(old_thru.map_or(grace, |thru| thru.min(grace))));
     old.update(&facade)?;
     // the device's push registration goes with it to the new key (plans/Mobile-Desktop.md §5, native push)
-    crate::service::web_push::move_device_key(&facade, &hashed, &password::hash_login_key(&renewed)?);
+    let renewed_hash = password::hash_login_key(&renewed)?;
+    crate::service::web_push::move_device_key(&facade, &hashed, &renewed_hash);
+    // and so do the location shares it sends (plans/archive/Location-Sharing.md §3.4: a share's device, LocationShare.userLoginKeyId)
+    move_location_shares(&facade, &hashed, &renewed_hash);
     #[allow(clippy::cast_possible_truncation)] // As make_login_key_for's expiry.
     let thru = now.saturating_add((hours * HOUR_MILLIS).round() as i64);
     Ok(Some((renewed, thru)))
+}
+
+/// The active location shares sent from the device key `hashed` (its stored hash), revoked, stop
+/// (`LocationServices.stop#DeviceShares`, plans/archive/Location-Sharing.md §3.4): none stays on with nothing sending it, also
+/// when the device could not tell the server itself (a sign-out with no network, then its pending revoke). A failure
+/// is logged: the share then ends at its end.
+pub(crate) fn stop_key_location_shares(hashed: &str, owner_user_id: &str) {
+    if hashed.is_empty() || owner_user_id.is_empty() {
+        return;
+    }
+    let mut parameters = std::collections::BTreeMap::new();
+    parameters.insert("userLoginKeyId".to_string(), Value::string(hashed));
+    // the key's user as the revoke knows it: the key's row, which the revoke has just written, is never read there
+    parameters.insert("ownerUserId".to_string(), Value::string(owner_user_id));
+    // its own transaction (the service is force-new); the context's errors set aside around it, so one already there
+    // does not keep it from running, and its own taken back out, so nothing of it reaches the revoke: a revoke rolled
+    // back would leave a lost device's key signing in
+    let mark = ExecutionContext::with_current(|ec| {
+        ec.message().push_errors();
+        ec.message().error_mark()
+    });
+    let called = crate::service::sync("org.moqui.maps.LocationServices.stop#DeviceShares", &parameters);
+    let errors = mark
+        .and_then(|mark| {
+            ExecutionContext::with_current(|ec| {
+                let taken = ec.message().take_errors_since(mark);
+                ec.message().pop_errors();
+                taken
+            })
+        })
+        .unwrap_or_default();
+    if let Err(err) = called {
+        tracing::warn!(error = %err, "the location shares of a revoked device key were not stopped");
+    }
+    for error in errors {
+        tracing::warn!(error = %error, "a location share of a revoked device key");
+    }
+}
+
+/// The location shares sent from the device key `old_key` (`LocationShare.userLoginKeyId`, a stored hash) go with its
+/// renewal `new_key`, so the device goes on sending them past the old key's end (plans/archive/Location-Sharing.md §3.4). In a
+/// transaction of its own, as the push registrations' move; a failure is logged, and the device's next report is then
+/// refused as another device's until the owner sends it from this device again.
+fn move_location_shares(facade: &EntityFacade, old_key: &str, new_key: &str) {
+    const SHARE: &str = "moqui.maps.LocationShare";
+    if old_key.is_empty() || new_key.is_empty() || !crate::entity::info::is_entity_defined(facade, SHARE) {
+        return;
+    }
+    let moved = facade.transactions_for(SHARE).and_then(|tx| {
+        tx.run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+            facade
+                .find(SHARE)?
+                .eq("userLoginKeyId", Value::string(old_key))
+                .update_all([
+                    ("userLoginKeyId".to_string(), Value::string(new_key)),
+                    ("renewedFromKeyId".to_string(), Value::string(old_key)),
+                ])
+        })
+    });
+    if let Err(err) = moved {
+        tracing::warn!(error = %err, "the location shares of a renewed device key were not moved");
+    }
 }
 
 /// A device key for the user `user_id`, made with no session of theirs: an installed app's SSO hand-back
@@ -1543,28 +1642,53 @@ fn make_key(user_id: &str, hours: f64, device: Option<&str>, scope: Option<&str>
 ///
 /// Returns the login error when the chosen key is rejected.
 pub fn apply_header_keys(api_key: Option<&str>, login_key: Option<&str>, scope: Option<&str>) -> Result<bool, Error> {
+    apply_header_keys_scoped(api_key, login_key, scope.as_slice())
+}
+
+/// [`apply_header_keys`] for a request whose path takes the keys of each of `scopes` ([`request_key_scopes`]).
+///
+/// # Errors
+///
+/// Returns the login error when the chosen key is rejected.
+pub fn apply_header_keys_scoped(
+    api_key: Option<&str>,
+    login_key: Option<&str>,
+    scopes: &[&str],
+) -> Result<bool, Error> {
     let Some(key) = present_key(api_key).or_else(|| present_key(login_key)) else {
         return Ok(false);
     };
     let signed_in = session::current_user_id()?.filter(|id| !id.is_empty());
-    check_login_key(key, signed_in.as_deref(), scope)?;
+    check_login_key(key, signed_in.as_deref(), scopes)?;
     Ok(true)
 }
 
-/// The scope of a request path ([`apply_header_keys`]): [`ACCESS_TOKEN_SCOPE`] for the git REST, the `git` resource of
-/// the framework's REST (`/rest/s1/moqui/git/...`) and the read resources of its `hosting` (`offer`, `repository`,
-/// `mergeRequests`, `agreement`), by the screen path the request reaches (`..` and empty names resolved); none for any
-/// other path, so a token for git alone makes no key for another service (`hosting/gatewayKey`) and ends none
-/// (`hosting/keyRevoke`) (SEC-RTE-85).
-pub fn request_key_scope(path: &str) -> Option<&'static str> {
+/// The scopes of a request path ([`apply_header_keys_scoped`]), by the screen path the request reaches (`..` and empty
+/// names resolved): for the REST (`/rest/s1/...`), the `key-scope` its resource declares, or the nearest resource above
+/// it (`service::rest_key_scopes`); none for any other path. The framework's REST declares [`ACCESS_TOKEN_SCOPE`] on
+/// its `git` resource and the read resources of its `hosting` (`offer`, `repository`, `mergeRequests`, `agreement`),
+/// and every scope on `hosting/keyRevoke`, where such a key ends only itself ([`revoke_login_key`]); so a token for git
+/// alone makes no key for another service (`hosting/gatewayKey`) and ends no other key (SEC-RTE-85). An application
+/// declares its own (Mantle's `my/tasks` and a repository's issues take `tasks`).
+pub fn request_key_scopes(path: &str) -> std::sync::Arc<[String]> {
     let names = crate::screen::screen_path_names(path);
-    match names.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-        ["rest", "s1", "moqui", "git", ..]
-        | ["rest", "s1", "moqui", "hosting", "offer" | "repository" | "mergeRequests" | "agreement", ..] => {
-            Some(ACCESS_TOKEN_SCOPE)
-        }
-        _ => None,
+    match names.split_first_chunk::<2>() {
+        Some(([rest, s1], below)) if rest == "rest" && s1 == "s1" => crate::service::rest_key_scopes(below),
+        _ => std::sync::Arc::from(Vec::new()),
     }
+}
+
+/// Whether this request signed in by a key made for one service alone that is not `key`: such a key ends only itself
+/// ([`revoke_login_key`]).
+///
+/// # Errors
+///
+/// Returns an error when the key cannot be hashed.
+pub fn scoped_login_is_not(key: &str) -> Result<bool, Error> {
+    let Some(own) = session::scoped_key() else {
+        return Ok(false);
+    };
+    Ok(own != password::hash_login_key(key)?)
 }
 
 fn present_key(value: Option<&str>) -> Option<&str> {
@@ -1659,7 +1783,7 @@ pub(crate) const LAST_AUTH: &str = "moquiLastAuth";
 /// The session attribute of the session's last strong sign-in, `<millis> <userId>`: a password and a second factor (the
 /// code that finishes the sign-in, or a re-authentication with both), or an SSO login. A password alone, a login key,
 /// an API key, an app password and an internal login are not; a paired device's key is, by its kind
-/// ([`strong_recent_auth`]). Fetching a wrapped personal vault key needs one (plans/Vault-Instances.md §9, Nov 19).
+/// ([`strong_recent_auth`]). Fetching a wrapped personal vault key needs one (plans/archive/Vault-Instances.md §9, Nov 19).
 pub(crate) const LAST_STRONG_AUTH: &str = "moquiLastStrongAuth";
 /// The password a re-authentication checked while it waits for the code: `<millis> <userId>`.
 pub(crate) const REAUTH_PASSWORD: &str = "moquiReauthPassword";
@@ -1767,7 +1891,7 @@ pub fn last_strong_auth_millis() -> Option<i64> {
 /// a strong sign-in made or strongly re-authenticated (`strongAuthDate` on the key), a factor the device holds, with a
 /// recent sign-in on that device ([`recent_auth`], kept on the key). Never an app password, an API or session login
 /// key, a scoped key, a device's key made after a password alone, or a password alone. The vault services ask it
-/// before they send a wrapped personal key (plans/Vault-Instances.md §3.5, §9).
+/// before they send a wrapped personal key (plans/archive/Vault-Instances.md §3.5, §9).
 pub fn strong_recent_auth(max_age_millis: i64) -> bool {
     let recent = |at: i64| (0..=max_age_millis).contains(&(now_millis() - at));
     if last_strong_auth_millis().is_some_and(recent) {
@@ -2078,6 +2202,10 @@ fn finish_login(
         let zone = nonempty(text_field(account, "timeZone"));
         session::set_locale(locale.as_deref());
         session::set_time_zone(zone.as_deref());
+        // a scoped key's request holds no Visit of the session's for its user
+        if session::identity_held() {
+            return Ok(());
+        }
         link_visit(facade, &user_id)
     })?;
     // As Java's `UserFacadeImpl`, a web login runs the webapp's after-login actions.

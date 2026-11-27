@@ -13,6 +13,13 @@
     const revision = e => JSON.stringify([e.id, e.version, e.versionNonce]);
     const clean = value => JSON.parse(JSON.stringify(value));
     const settings = app => Object.fromEntries(appKeys.filter(k => app[k] !== undefined).map(k => [k, app[k]]));
+    // The drawing types. Never an embeddable, an iframe or a magic frame, which run a page of their own, nor an element
+    // with generated HTML (customData.generationData), which Excalidraw puts in an iframe: the server refuses them too.
+    const drawingTypes = new Set(["rectangle", "diamond", "ellipse", "arrow", "line", "freedraw", "text", "image", "frame"]);
+    board.allowed = e => !!e && typeof e.id === "string" && !!e.id && !(e.customData && e.customData.generationData) &&
+        (e.isDeleted === true || drawingTypes.has(e.type));
+    /** The ids of the files the shown image elements use. */
+    board.usedFiles = elements => new Set(elements.filter(e => !e.isDeleted && e.type === "image" && e.fileId).map(e => e.fileId));
     // Excalidraw's languages, each with its region; the first of a language is the one a page's bare code gets
     const boardLanguages = ["ar-SA","az-AZ","bg-BG","bn-BD","ca-ES","cs-CZ","da-DK","de-DE","el-GR","es-ES","eu-ES",
         "fa-IR","fi-FI","fr-FR","gl-ES","he-IL","hi-IN","hu-HU","id-ID","it-IT","ja-JP","kab-KAB","kk-KZ","km-KH","ko-KR",
@@ -29,7 +36,7 @@
         for (const e of map.values()) if (!found.has(e.id) || newer(e, found.get(e.id))) found.set(e.id, e);
         return found;
     }
-    board.read = doc => [...winners(doc.getMap("elements")).values()].sort(sortElements);
+    board.read = doc => [...winners(doc.getMap("elements")).values()].filter(board.allowed).sort(sortElements);
     // A tombstone a reseeded board keeps of a deleted element (its id and revision, no shape): the editor's own copy of
     // the element, deleted at that revision, or nothing when the editor never had it.
     board.shown = (elements, local) => elements.flatMap(e => {
@@ -39,7 +46,7 @@
     });
     board.write = (doc, elements, appState, origin) => {
         const map = doc.getMap("elements"), app = doc.getMap("app"), latest = winners(map);
-        const changed = elements.filter(e => !latest.has(e.id) || newer(e, latest.get(e.id)));
+        const changed = elements.filter(e => board.allowed(e) && (!latest.has(e.id) || newer(e, latest.get(e.id))));
         doc.transact(() => {
             const replace = new Set(changed.map(e => e.id));
             if (replace.size) {
@@ -76,9 +83,11 @@
     };
     const defaultLibraries = ["wireframe", "flowchart"].map(name => base + "library/" + name + ".excalidrawlib");
     function serialize(elements, state, files) {
-        const rows = elements.filter(e => !e.isDeleted).slice().sort(sortElements).map(e => JSON.stringify(e));
-        return '{"type":"excalidraw","version":2,"elements":[\n' + rows.join(",\n") + '\n],"appState":' +
-            JSON.stringify(settings(state)) + ',"files":' + JSON.stringify(files) + '}\n';
+        const shown = elements.filter(e => !e.isDeleted && board.allowed(e)).slice().sort(sortElements);
+        const used = board.usedFiles(shown);
+        const kept = Object.fromEntries(Object.entries(files || {}).filter(([id]) => used.has(id)));
+        return '{"type":"excalidraw","version":2,"elements":[\n' + shown.map(e => JSON.stringify(e)).join(",\n") + '\n],"appState":' +
+            JSON.stringify(settings(state)) + ',"files":' + JSON.stringify(kept) + '}\n';
     }
     board.component = {
         name: "mWhiteboard",
@@ -119,12 +128,15 @@
             },
             async open() {
                 try {
+                    // without the record of installed packs, draw CJK text in the system font rather than not open
+                    root.MoquiBoardCjk = await fetchJson("/libs/fonts-extra/installed.json")
+                        .then(packs => Array.isArray(packs) && packs.includes("excalidraw-cjk"), () => false);
                     root.EXCALIDRAW_ASSET_PATH = new URL(base, root.location.href).href;
                     moqui.loadStylesheet(base + "editor.css");
                     const lib = Promise.all([...defaultLibraries, ...(this.libraries || [])].map(async path =>
                         (await fetchJson(path)).libraryItems));
                     const loads = [lib, moqui.loadScript(base + "editor.js", null, () => !!root.MoquiBoardEditor)];
-                    if (this.wikiPageId) loads.push(moqui.loadScript("/libs/tiptap/tiptap.min.js", null, () => !!root.Tiptap));
+                    if (this.wikiPageId) loads.push(moqui.loadScript("/libs/yjs/yjs.min.js", null, () => !!root.Yjs));
                     const [groups] = await Promise.all(loads);
                     if (this.closed) return;
                     this.libItems = groups.flat();
@@ -139,7 +151,7 @@
             connect() {
                 const client = this.socketClient || (this.$root && this.$root.notificationClient);
                 if (!client) throw Error(this.t("The collaboration connection is unavailable"));
-                const T = root.Tiptap;
+                const T = root.Yjs;
                 this.doc = root.Vue.markRaw(new T.Y.Doc());
                 this.awareness = root.Vue.markRaw(new T.Awareness(this.doc));
                 const name = this.userName || this.$root.userFullName || this.$root.username || this.$root.userId || this.t("Guest");
@@ -149,7 +161,7 @@
                     send:frame=>client.send({...frame,callSessionId:this.meetingId,callLegId:this.legId})
                 }:client, lib: T, doc: this.doc, awareness: this.awareness,
                     docKey: "WikiPage:" + this.wikiPageId,
-                    onStatus: status => this.$emit("editors", status.peers.map(p => p.name)),
+                    onStatus: status => { this.$emit("editors", status.peers.map(p => p.name)); this.presence(); },
                     onAccess: allowed => { clearTimeout(this.connectTimer); this.canEdit = allowed; this.draw(); this.remote(); },
                     onSaved: answer => this.$emit("saved", answer),
                     onFallback: info => { this.failed = true; this.report(info.message || this.t("The board is unavailable")); }
@@ -171,7 +183,7 @@
                 const E = root.MoquiBoardEditor;
                 if (!this.startData) {
                     const scene = this.initial();
-                    const elems = this.doc ? board.shown(board.read(this.doc)) : scene.elements || [];
+                    const elems = this.restore(this.doc ? board.shown(board.read(this.doc)) : (scene.elements || []).filter(board.allowed));
                     this.startData = { elements: elems.length || !this.skeleton || this.doc ? elems : E.convertToExcalidrawElements(this.skeleton),
                         appState: settings(this.doc ? this.doc.getMap("app").toJSON() : scene.appState || {}), libraryItems: this.libItems };
                 }
@@ -202,21 +214,45 @@
                 if (!this.api || this.closed) return;
                 this.flushChanges();
                 const local = new Map(this.api.getSceneElementsIncludingDeleted().map(e => [e.id, e]));
-                const elems = board.shown(board.read(this.doc), local);
-                this.api.updateScene({elements: elems, appState: this.doc.getMap("app").toJSON(), captureUpdate: "NEVER"});
+                const elems = this.restore(board.shown(board.read(this.doc), local));
+                this.api.updateScene({elements: elems, appState: settings(this.doc.getMap("app").toJSON()), captureUpdate: "NEVER"});
                 this.metaFiles = this.doc.getMap("files").toJSON();
                 this.loadFiles(this.metaFiles);
+            },
+            // Excalidraw's own repair of elements from elsewhere (missing or malformed fields), so one bad element does
+            // not stop the board drawing; an element it cannot read is left out.
+            restore(elements) {
+                const E = root.MoquiBoardEditor;
+                if (!E || !E.restoreElements) return elements;
+                try { return E.restoreElements(elements, null, {refreshDimensions: false, repairBindings: true}); }
+                catch (err) {
+                    console.warn("m-whiteboard: elements not restored together, one at a time:", err);
+                    return elements.flatMap(e => { try { return E.restoreElements([e], null); } catch (one) { return []; } });
+                }
             },
             presence() {
                 if (!this.api || !this.awareness || this.closed) return;
                 const collaborators = new Map();
                 let viewport;
+                // the name and leg the server checked for each presence; a presence the server has not named is not shown
+                const peers = new Map(((this.provider && this.provider.peers) || [])
+                    .filter(p => p.awareness !== null && p.awareness !== undefined).map(p => [Number(p.awareness), p]));
                 for (const [id, state] of this.awareness.getStates()) {
-                    if (id === this.awareness.clientID || !state.user) continue;
-                    const c = state.user.color || "#4267aa";
-                    collaborators.set(String(id), Object.assign({ username: state.user.name, color: { stroke: c, background: c },
-                        selectedElementIds: state.selection || {} }, state.cursor));
-                    if (this.follow && (this.follow === state.user.legId || this.follow === String(id))) viewport = state.viewport;
+                    const peer = peers.get(Number(id));
+                    if (id === this.awareness.clientID || !state.user || !peer) continue;
+                    // the peer's own fields only, never spread: a pointer of finite numbers, a button, the selection's ids
+                    const c = typeof state.user.color === "string" && moqui.coedit.COLOR.test(state.user.color) ? state.user.color : "#4267aa";
+                    const cursor = state.cursor && typeof state.cursor === "object" ? state.cursor : {};
+                    const point = cursor.pointer && typeof cursor.pointer === "object" ? cursor.pointer : null;
+                    const pointer = point && Number.isFinite(point.x) && Number.isFinite(point.y)
+                        ? { x: point.x, y: point.y, tool: point.tool === "laser" ? "laser" : "pointer" } : undefined;
+                    const selectedElementIds = {};
+                    if (state.selection && typeof state.selection === "object") {
+                        for (const key of Object.keys(state.selection).slice(0, 2000)) if (state.selection[key] === true) selectedElementIds[key] = true;
+                    }
+                    collaborators.set(String(id), { username: peer.name, color: { stroke: c, background: c }, selectedElementIds,
+                        pointer, button: cursor.button === "down" ? "down" : "up" });
+                    if (this.follow && peer.legId && this.follow === peer.legId) viewport = state.viewport;
                 }
                 const data = { collaborators, captureUpdate: "NEVER" };
                 if (viewport && Number.isFinite(viewport.zoom) && viewport.zoom > 0 && viewport.zoom <= 30 &&
@@ -280,10 +316,15 @@
                 this.metaFiles[file.id] = ref;
                 if (this.doc) this.doc.getMap("files").set(file.id, ref);
             },
+            // The images the board shows. One that cannot be read (removed after its element was deleted) is logged and
+            // left out: it does not block Save or Download as an upload that failed does.
             loadFiles(refs) {
+                const used = board.usedFiles(this.api.getSceneElements());
                 for (const [id, ref] of Object.entries(refs || {})) {
-                    if (this.fileJobs.has(id) || this.api.getFiles()[id]) continue;
-                    this.queueFile(id, this.fetchImage(id, ref));
+                    if (!used.has(id) || this.fileJobs.has(id) || this.api.getFiles()[id]) continue;
+                    this.fileJobs.set(id, this.fetchImage(id, ref).catch(err => {
+                        console.warn("m-whiteboard: image " + id + " is not shown:", err);
+                    }));
                 }
             },
             async fetchImage(id, ref) {

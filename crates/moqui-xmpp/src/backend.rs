@@ -99,6 +99,10 @@ pub mod services {
     pub const ATTACHMENT_URLS: &str = "org.moqui.chat.XmppServices.get#AttachmentUrls";
     pub const ICE_SERVERS: &str = "org.moqui.chat.XmppServices.get#IceServers";
 
+    /// A user location (XEP-0080) publish as a report of the user's location shares with XMPP contacts
+    /// (plans/archive/Location-Sharing.md §3.6).
+    pub const LOCATION_REPORT: &str = "org.moqui.maps.LocationServices.report#XmppPosition";
+
     pub const SEND: &str = "org.moqui.chat.ChatServices.send#Message";
     pub const EDIT: &str = "org.moqui.chat.ChatServices.edit#Message";
     pub const REDACT: &str = "org.moqui.chat.ChatServices.redact#Message";

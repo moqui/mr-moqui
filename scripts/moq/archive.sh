@@ -137,7 +137,9 @@ archive_binary() {
         die "$(rel "$out") or $(rel "$sums") is there already; -f replaces them"
     fi
     # the module is built in with the webroot, even with --nobuild
+    ensure_js
     ensure_vault_wasm
+    js_report_fonts || return 1
     bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
     if dry_run; then
         show_cmd gzip -9 -c "$bin" ">" "$out"
@@ -267,7 +269,9 @@ task_archive() {
     conf=$(resolve_conf "$conf") || exit 1
     [ -n "$no_data" ] || require_server_stopped archive
     # the runtime's webroot carries the vault's browser module, even with --nobuild
+    ensure_js
     ensure_vault_wasm
+    js_report_fonts || return 1
     local bin
     bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
 

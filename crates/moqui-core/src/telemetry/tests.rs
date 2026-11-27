@@ -1228,6 +1228,32 @@ fn queue_reserves_capacity_for_local_roots_and_bounds_total_records_and_bytes() 
     assert_eq!(shared.queued_records.load(Ordering::Relaxed), 1);
 }
 
+/// Children promoted with their root that the full export queue refuses are counted on the root (MON-UI-003); the
+/// refused child of another trace is not.
+#[test]
+fn a_root_admitted_counts_its_children_the_full_queue_refused() {
+    let in_trace = |trace: &str, parent: &str| {
+        Document::from_iter([
+            ("trace_id".into(), Value::string(trace)),
+            ("parent_span_id".into(), Value::string(parent)),
+        ])
+    };
+    let mut ready = vec![in_trace("a", "1"); MAX_QUEUE];
+    ready.push(in_trace("b", "2"));
+    let mut root = admission_root(false);
+    root.extend(in_trace("a", ""));
+    ready.push(root);
+    let (mut count, mut bytes) = (0, 0);
+    let dropped = admit_spans(&mut ready, &Capacity::default(), &mut count, &mut bytes);
+    // the root first, then the children up to the ordinary records: the rest of trace a, and b's child
+    assert_eq!(dropped, MAX_QUEUE - (MAX_QUEUE - ROOT_RESERVED_RECORDS - 1) + 1);
+    let root = ready.iter().find(|document| mandatory_root(document)).expect("the root is admitted");
+    let Some(Value::Map(attributes)) = root.get("attributes") else {
+        panic!("the root has attributes: {root:?}")
+    };
+    assert_eq!(number(attributes, "moqui.trace.dropped_spans"), (dropped - 1) as f64);
+}
+
 #[test]
 fn mixed_normalized_spans_preserve_completion_order_and_promoted_children_cannot_drop_root() {
     let (shared, receiver) = admission_shared();
@@ -1258,7 +1284,7 @@ fn mixed_normalized_spans_preserve_completion_order_and_promoted_children_cannot
     let mut ready = vec![child.clone(); MAX_QUEUE];
     ready.push(admission_root(false));
     let (mut count, mut bytes) = (0, 0);
-    let dropped = admit_ready(&mut ready, true, &Capacity::default(), &mut count, &mut bytes);
+    let dropped = admit_ready(&mut ready, true, &Capacity::default(), &mut count, &mut bytes, |_| {});
     assert!(dropped > 0);
     assert_eq!(ready.iter().filter(|document| mandatory_root(document)).count(), 1);
     assert_eq!(ready.len(), count);
@@ -1267,7 +1293,7 @@ fn mixed_normalized_spans_preserve_completion_order_and_promoted_children_cannot
     let mut ready = vec![child, admission_root(true)];
     let (mut count, mut bytes) = (0, MAX_BUFFER_BYTES - ROOT_RESERVED_BYTES);
     assert_eq!(
-        admit_ready(&mut ready, true, &Capacity::default(), &mut count, &mut bytes),
+        admit_ready(&mut ready, true, &Capacity::default(), &mut count, &mut bytes, |_| {}),
         1
     );
     assert_eq!(ready.len(), 1);
@@ -1590,6 +1616,58 @@ mod configured {
         }
     }
 
+    /// Spans of work on another thread wait in the export's tail buffer, as a request's work on the pool threads does.
+    /// Full, it makes room for a failed span by dropping the latest ordinary one, so a long trace that ends in a
+    /// failed call and its failed parent keeps both, and the kept root counts the spans the trace lost: those dropped
+    /// there and those its own thread's tail held when the thread did not keep the trace (MON-UI-003).
+    #[test]
+    fn a_full_export_tail_keeps_the_failed_spans_and_the_root_counts_the_dropped() {
+        let (telemetry, memory) = telemetry(r#"<telemetry tail-trace-spans="4"/>"#);
+        let root = telemetry.start_span("service", SpanKind::Server, None);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for _ in 0..6 {
+                    telemetry
+                        .start_span("call", SpanKind::Internal, root.context())
+                        .finish();
+                }
+                let mut parent = telemetry.start_span("request", SpanKind::Internal, root.context());
+                let mut child = telemetry.start_span("http", SpanKind::Client, parent.context());
+                child.set_error("connection refused");
+                child.finish();
+                parent.set_error("connection refused");
+                parent.finish();
+            });
+        });
+        // on the root's thread: it waits in the thread's tail, which the thread drops as nothing failed there
+        telemetry
+            .start_span("frame", SpanKind::Internal, root.context())
+            .finish();
+        root.finish();
+        telemetry.flush();
+        let spans: Vec<Document> = lock(&memory.0)
+            .iter()
+            .filter(|(index, _)| index == "otel_spans")
+            .map(|(_, document)| document.clone())
+            .collect();
+        let names: Vec<String> = spans.iter().map(|span| text(span, "name")).collect();
+        assert!(names.contains(&"http".to_string()), "{names:?}");
+        assert!(names.contains(&"request".to_string()), "{names:?}");
+        assert_eq!(names.iter().filter(|name| *name == "call").count(), 2, "{names:?}");
+        // two calls past the bound and two that made room for the errors, and the frame
+        let service = spans
+            .iter()
+            .find(|span| text(span, "name") == "service")
+            .expect("the root is kept");
+        let Some(Value::Map(attributes)) = service.get("attributes") else {
+            panic!("the root has attributes: {service:?}")
+        };
+        assert_eq!(number(attributes, "moqui.trace.dropped_spans"), 5.0, "{attributes:?}");
+        assert!(!attributes.contains_key("moqui.trace.unkept_spans"), "{attributes:?}");
+        assert_eq!(telemetry.counters().dropped, 4);
+        telemetry.shutdown();
+    }
+
     /// An unsampled span under a root open on its thread waits there as a record (plans/Profiling3.md R60): a trace
     /// that is not kept exports nothing of it, and one kept by an error below exports every span with the ids and
     /// parents it had, a grandchild's parent its child.
@@ -1619,6 +1697,13 @@ mod configured {
         let names: Vec<String> = spans.iter().map(|span| text(span, "name")).collect();
         assert_eq!(names.len(), 4, "{names:?}");
         assert!(!names.contains(&"quiet.child".to_string()), "{names:?}");
+        // the trace not kept, its request root is stored with no count of dropped spans (MON-UI-003)
+        let quiet = spans.iter().find(|span| text(span, "name") == "quiet").expect("a request root is stored");
+        let Some(Value::Map(attributes)) = quiet.get("attributes") else {
+            panic!("the root has attributes: {quiet:?}")
+        };
+        assert!(!attributes.contains_key("moqui.trace.dropped_spans"), "{attributes:?}");
+        assert!(!attributes.contains_key("moqui.trace.unkept_spans"), "{attributes:?}");
         let by_name = |name: &str| spans.iter().find(|span| text(span, "name") == name).unwrap();
         let hex = |id: &super::HexId<8>| id.0.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
         assert_eq!(text(by_name("child"), "span_id"), hex(&child_id));
@@ -1627,6 +1712,150 @@ mod configured {
         assert_eq!(text(by_name("grandchild"), "parent_span_id"), hex(&child_id));
         assert_eq!(text(by_name("grandchild"), "status_code"), "ERROR");
         assert_eq!(text(by_name("child"), "trace_id"), text(by_name("failed"), "trace_id"));
+        telemetry.shutdown();
+    }
+
+    /// The spans waiting under a root open on its thread are at most tail-trace-spans, the most the export's tail
+    /// buffer keeps of a trace: a long call (an import's hundreds of thousands of entity frames) held a record of every
+    /// one until it ended (plans/archive/Maps.md §6.3). A full tail makes room for a failed span; a kept trace counts the rest
+    /// as dropped.
+    #[test]
+    fn spans_waiting_under_an_open_root_are_bounded() {
+        let (telemetry, memory) = telemetry(r#"<telemetry tail-trace-spans="4"/>"#);
+        let root = telemetry.start_span("long", SpanKind::Server, None);
+        let trace = root.context().unwrap().trace_id.0;
+        for _ in 0..1000 {
+            telemetry
+                .start_span("frame", SpanKind::Internal, root.context())
+                .finish();
+        }
+        assert_eq!(super::sdk::waiting_spans(&trace), 4);
+        let mut failed = telemetry.start_span("failed", SpanKind::Internal, root.context());
+        failed.set_error("failure 9");
+        failed.finish();
+        assert_eq!(super::sdk::waiting_spans(&trace), 4);
+        root.finish();
+        telemetry.flush();
+        let names = span_names(&memory);
+        assert_eq!(names.iter().filter(|name| *name == "frame").count(), 3, "{names:?}");
+        assert!(names.contains(&"failed".to_string()), "{names:?}");
+        assert!(names.contains(&"long".to_string()), "{names:?}");
+        assert_eq!(telemetry.counters().dropped, 997);
+        // the kept root says how many of its spans were dropped (MON-UI-003)
+        let long = lock(&memory.0)
+            .iter()
+            .find(|(index, document)| index == "otel_spans" && text(document, "name") == "long")
+            .map(|(_, document)| document.clone())
+            .expect("the root is kept");
+        let Some(Value::Map(attributes)) = long.get("attributes") else {
+            panic!("the root has attributes: {long:?}")
+        };
+        assert_eq!(number(attributes, "moqui.trace.dropped_spans"), 997.0, "{attributes:?}");
+        telemetry.shutdown();
+    }
+
+    /// A slow artifact hit (`moqui.artifact.slow` over a second) is important too: it takes an ordinary span's place.
+    #[test]
+    fn a_slow_hit_takes_a_place_in_a_full_tail() {
+        let (telemetry, memory) = telemetry(r#"<telemetry tail-trace-spans="2"/>"#);
+        let root = telemetry.start_span("long", SpanKind::Server, None);
+        let trace = root.context().unwrap().trace_id.0;
+        for _ in 0..2 {
+            telemetry
+                .start_span("frame", SpanKind::Internal, root.context())
+                .finish();
+        }
+        let mut slow = telemetry.start_span("slow", SpanKind::Internal, root.context());
+        slow.set_attribute("moqui.artifact.slow", Value::Bool(true));
+        std::thread::sleep(std::time::Duration::from_millis(1050));
+        slow.finish();
+        assert_eq!(super::sdk::waiting_spans(&trace), 2);
+        root.finish();
+        telemetry.flush();
+        let names = span_names(&memory);
+        assert!(names.contains(&"slow".to_string()), "{names:?}");
+        assert_eq!(names.iter().filter(|name| *name == "frame").count(), 1, "{names:?}");
+        telemetry.shutdown();
+    }
+
+    /// A tail full of failed spans drops the next one, counted, and the trace is kept with those it holds.
+    #[test]
+    fn a_tail_of_important_spans_drops_the_newcomer() {
+        let (telemetry, memory) = telemetry(r#"<telemetry tail-trace-spans="2"/>"#);
+        let root = telemetry.start_span("failing", SpanKind::Server, None);
+        let trace = root.context().unwrap().trace_id.0;
+        for name in ["first", "second", "third"] {
+            let mut failed = telemetry.start_span(name, SpanKind::Internal, root.context());
+            failed.set_error("failure 3");
+            failed.finish();
+        }
+        assert_eq!(super::sdk::waiting_spans(&trace), 2);
+        root.finish();
+        telemetry.flush();
+        let names = span_names(&memory);
+        assert!(names.contains(&"first".to_string()) && names.contains(&"second".to_string()), "{names:?}");
+        assert!(!names.contains(&"third".to_string()), "{names:?}");
+        assert!(names.contains(&"failing".to_string()), "{names:?}");
+        assert_eq!(telemetry.counters().dropped, 1);
+        telemetry.shutdown();
+    }
+
+    /// Two roots open on one thread each have their own bound.
+    #[test]
+    fn nested_roots_on_a_thread_each_have_their_own_bound() {
+        let (telemetry, _memory) = telemetry(r#"<telemetry tail-trace-spans="3"/>"#);
+        let outer = telemetry.start_span("outer", SpanKind::Server, None);
+        let inner = telemetry.start_span("inner", SpanKind::Server, None);
+        let (outer_trace, inner_trace) = (outer.context().unwrap().trace_id.0, inner.context().unwrap().trace_id.0);
+        assert_ne!(outer_trace, inner_trace);
+        for _ in 0..10 {
+            telemetry
+                .start_span("outer.frame", SpanKind::Internal, outer.context())
+                .finish();
+            telemetry
+                .start_span("inner.frame", SpanKind::Internal, inner.context())
+                .finish();
+        }
+        assert_eq!(super::sdk::waiting_spans(&outer_trace), 3);
+        assert_eq!(super::sdk::waiting_spans(&inner_trace), 3);
+        inner.finish();
+        assert_eq!(super::sdk::waiting_spans(&inner_trace), 0);
+        assert_eq!(super::sdk::waiting_spans(&outer_trace), 3);
+        outer.finish();
+        telemetry.shutdown();
+    }
+
+    /// A kept tail goes out failed spans first: when the export's buffer for the trace has less room than the tail
+    /// holds (spans of the trace from another thread took some), it drops ordinary spans, and the error that keeps the
+    /// trace reaches it.
+    #[test]
+    fn a_kept_tail_goes_out_important_spans_first() {
+        let (telemetry, memory) = telemetry(r#"<telemetry tail-trace-spans="3"/>"#);
+        let root = telemetry.start_span("caught", SpanKind::Server, None);
+        // on another thread, where the root is not open: two of the export's three places for the trace
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for _ in 0..2 {
+                    telemetry
+                        .start_span("queued", SpanKind::Internal, root.context())
+                        .finish();
+                }
+            });
+        });
+        for _ in 0..3 {
+            telemetry
+                .start_span("frame", SpanKind::Internal, root.context())
+                .finish();
+        }
+        let mut failed = telemetry.start_span("failed", SpanKind::Internal, root.context());
+        failed.set_error("failure 5");
+        failed.finish();
+        root.finish();
+        telemetry.flush();
+        let names = span_names(&memory);
+        assert!(names.contains(&"failed".to_string()), "{names:?}");
+        assert!(names.contains(&"caught".to_string()), "{names:?}");
+        assert!(!names.contains(&"frame".to_string()), "{names:?}");
         telemetry.shutdown();
     }
 

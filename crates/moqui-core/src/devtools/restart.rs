@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Restart from a running server (plans/design-dev-aide.md 6.5): the universal fallback for what does not reload (an
+//! Restart from a running server (plans/archive/design-dev-aide.md 6.5): the universal fallback for what does not reload (an
 //! entity change until F5, a conf or component change). A request sets a flag and asks the host to shut down as it
 //! does on SIGTERM, which stops embedded Postgres and frees the ports; after the factory is destroyed the host sees the
 //! flag and runs itself again with the same arguments (on Unix the same process, so `./moq run` keeps it).

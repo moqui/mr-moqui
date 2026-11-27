@@ -73,6 +73,8 @@
         current: null,
         legId: null,
         phase: "idle", // idle, joining, connected, reconnecting
+        // a phone turned on its side: the stage takes the screen's height
+        phoneLandscape: false,
         error: "",
         muted: false,
         cameraOff: false,
@@ -86,6 +88,8 @@
         speaker: null,
         layout: "grid", // grid, speaker
         sharing: false,
+        // the mobile app's native screen share: its screen leg (shareNative), while it lasts
+        screenLegId: null,
         stage: {kind:null,callLegId:null,requests:[]}, stageRevision:-1, following:false,followDenied:false, inkStrokes:[], shareMode:"CsmAnyone", picking:false, capture:null,
         hand: false,
         participantsOpen: false,
@@ -126,6 +130,11 @@
         hostAudio: null,
         hostPip: false
     });
+    const landscapeQuery = root.matchMedia ? root.matchMedia("(orientation: landscape) and (max-height: 32rem)") : null;
+    if (landscapeQuery) {
+        state.phoneLandscape = landscapeQuery.matches;
+        landscapeQuery.addEventListener?.("change", (event) => { state.phoneLandscape = event.matches; });
+    }
 
     const call = {
         state,
@@ -1257,6 +1266,15 @@
         onFrame(message) {
             const frame = message && message.rtc ? message : null;
             if (!frame || frame.callSessionId !== state.current) return;
+            // the frames of this page's screen legs (the mobile app's share, which this socket signals for) go to the
+            // app, those of one that ended nowhere: never to the page's own connection. A frame to another leg names it in
+            // `to`; one without is the named leg's own (joined, offer, answer, error, ended).
+            if (!frame.to && frame.callLegId && frame.callLegId !== state.legId && (call.screenLegIds || []).includes(frame.callLegId)) {
+                call.chain = (call.chain || Promise.resolve())
+                    .then(() => call.nativeFrame(frame))
+                    .catch((err) => console.warn("screen frame " + frame.rtc + " failed", err));
+                return;
+            }
             call.chain = (call.chain || Promise.resolve())
                 .then(() => call.handleFrame(frame))
                 .catch((err) => console.warn("call frame " + frame.rtc + " failed", err));
@@ -1287,6 +1305,10 @@
                         call.pendingOffer = false;
                         (call.early || []).forEach((early) => call.send(early));
                         call.early = null;
+                        if (call.afterRelayNative === state.current) {
+                            call.afterRelayNative = null;
+                            setTimeout(() => call.shareNative(), 0);
+                        }
                         if (call.afterRelayStage?.callSessionId === state.current) {
                             const {previous:prev,kind,wikiPageId} = call.afterRelayStage;
                             call.afterRelayStage = null;
@@ -1363,7 +1385,7 @@
                     if (frame.code === "staleGeneration" || frame.follow) return null;
                     // the server keeps this call on the media server (a third person, Always relay): there it goes
                     if (frame.code === "notDirect" && call.direct) return call.toRelay("refused");
-                    state.error = frame.message || frame.code;
+                    state.error = t(frame.message || frame.code);
                     if (frame.code === "notFound" || frame.code === "callEnded" || frame.code === "legClosed") call.hangUp("ended");
                     break;
                 default:
@@ -1668,13 +1690,21 @@
             const enabled=state.capture?.ownTab && state.stage.kind==="screen" && state.stage.callLegId===state.legId;
             const target=enabled ? (state.capture.crop ? call.captureTarget() : root.document.body) : null;
             moqui.ink?.embedded(target,state.inkStrokes,call.screenStream?.getVideoTracks()[0]);
+            // a window or screen shared from the desktop app: the strokes on its overlay, over what is shared
+            if(call.overlayShown)root.moquiDesktop?.captureInk?.(state.inkStrokes.map(({id,kind,tool,color,width,points})=>({id,kind,tool,color,width,points})));
         },
         inkFrame(frame) {
             if (state.stage.kind!=="screen" || frame.inkEpoch!==state.stage.inkEpoch) return;
             if (frame.action==="snapshot") {
                 if (state.stage.callLegId===state.legId && !call.guest && !call.snapshotPending) {
                     const video=root.document.querySelector(".m-present-preview video");
-                    if(video)call.snapshotBoard(video).catch(error=>{state.error=String(error.message || error);});
+                    // a snapshot puts a board on the stage in place of the share: the presenter decides when another asks
+                    const asked=frame.from && frame.from!==state.legId;
+                    const text=t("{name} asks to put a snapshot of your share on a board, in place of the share. Allow it?")
+                        .replace("{name}",call.nameOf(frame.from));
+                    const allowed=!asked ? Promise.resolve(true) : moqui.confirmAction ? moqui.confirmAction(text) : Promise.resolve(root.confirm(text));
+                    if(video)allowed.then(ok=>ok && state.stage.callLegId===state.legId ? call.snapshotBoard(video) : null)
+                        .catch(error=>{state.error=String(error.message || error);});
                 }
                 return;
             }
@@ -1718,9 +1748,12 @@
             state.stageRevision = frame.revision;
             const old=state.stage;
             state.stage = frame.stage;
+            // the one taken over is told who took the stage (a host's Stop is no take over: the stage is then empty)
+            if (old.callLegId===state.legId && frame.stage.callLegId && frame.stage.callLegId!==state.legId)
+                moqui.notifyMessages?.([{type:"info",message:t("{name} took over the stage").replace("{name}",call.nameOf(frame.stage.callLegId))}]);
             if(old.kind!==frame.stage.kind || old.callLegId!==frame.stage.callLegId || old.followEpoch!==frame.stage.followEpoch){
                 call.followStart(frame.stage);
-                if(old.kind==="follow" || frame.stage.kind==="follow"){
+                if(!call.native && (old.kind==="follow" || frame.stage.kind==="follow")){
                     // A picker opened on the earlier stage cannot become guest video after its consent returns.
                     if(state.picking)++call.captureEpoch;
                     if(state.sharing)call.stopShare(false);
@@ -1731,7 +1764,8 @@
                 const onStage = ["screen","follow"].includes(state.stage.kind);
                 call.screenStream.getTracks().forEach(track=>{ track.enabled=onStage; });
             }
-            if (state.stage.callLegId !== state.legId || !["screen","board","follow"].includes(state.stage.kind)) {
+            if (call.native) call.nativeStageFrame();
+            else if (state.stage.callLegId !== state.legId || !["screen","board","follow"].includes(state.stage.kind)) {
                 call.captureEpoch++;
                 if (state.sharing || call.screenStream) call.stopShare(false);
             }
@@ -1802,7 +1836,7 @@
                 const controller = root.CaptureController ? new root.CaptureController() : null;
                 const opts=call.captureOptions(surface,motion,controller);
                 if(follow){opts.audio=false;opts.surfaceSwitching="exclude";}
-                stream = await media.getDisplayMedia(opts);
+                stream = await call.displayMedia(media,opts,surface,motion);
                 if (controller && surface !== "tab" && controller.setFocusBehavior) {
                     try { controller.setFocusBehavior("no-focus-change"); } catch (_) { /* optional */ }
                 }
@@ -1844,6 +1878,9 @@
                 if (epoch !== call.captureEpoch || pc !== call.pc) return false;
                 video.onended = () => call.stopShare(!follow);
                 state.sharing = true;
+                // the desktop app's overlay over a shared window or screen, where it knows the place (capture.rs)
+                if (!follow && !state.capture.ownTab && root.moquiDesktop?.captureOverlay)
+                    root.moquiDesktop.captureOverlay(call.captureSource?.bounds || null).then(shown=>{call.overlayShown=shown && state.sharing;call.syncEmbeddedInk();});
                 if (!follow && state.capture.ownTab) {
                     await moqui.loadScript("/js/WebrootInk.js",null,()=>!!moqui.ink);
                     call.syncEmbeddedInk();call.stageCommand("inkSurface",{embedded:true});
@@ -1858,10 +1895,194 @@
                 state.picking = false;
             }
         },
+        // The capture: the browser's picker, or in the macOS app (whose webview has none) the app's list of displays and
+        // windows (moqui-desktop capture.rs), the one picked asked for by its desktop media id. Cancelled is
+        // NotAllowedError, as the browser's picker answers.
+        async displayMedia(media,opts,surface,motion) {
+            const host=root.moquiDesktop;
+            if(!host?.captureSources)return media.getDisplayMedia(opts);
+            const cancelled=()=>Object.assign(new Error(t("Sharing was cancelled")),{name:"NotAllowedError"});
+            const sources=(await host.captureSources()) || [];
+            const items=sources.filter(s=>surface!=="tab" || s.screen).map(s=>({label:(s.screen?"🖥 ":"🗔 ")+s.name,value:s.id}));
+            if(!items.length)throw new Error(t("There is no screen or window to share"));
+            const open=root.Quasar?.Dialog ? o=>root.Quasar.Dialog.create(o) : null;
+            if(!open)throw new Error(t("Sharing is not available here"));
+            const id=await new Promise(resolve=>open({title:t("Share the screen"),message:t("Choose a screen or a window"),
+                options:{type:"radio",model:items[0].value,items},cancel:true,persistent:false})
+                .onOk(resolve).onCancel(()=>resolve(null)).onDismiss(()=>resolve(null)));
+            if(!id)throw cancelled();
+            const chosen=await host.captureChoose(id);
+            call.captureSource=chosen || null;
+            return media.getUserMedia({audio:false,video:{mandatory:{chromeMediaSource:"desktop",chromeMediaSourceId:id,
+                maxFrameRate:motion?30:15}}});
+        },
+        // ---- the mobile app's native screen share (plans/archive/Comms-Whiteboard.md §3.6): Android's WebView cannot capture the
+        // screen, so the app does (MediaProjection, a VP8 encoder) and sends it from its Rust (str0m) as a screen leg of
+        // this participant (add#ScreenLeg), which this page signals for on its own socket: the leg's join, the media
+        // server's answer and offers, the stage asked with the leg, its publish, and its leave. The app holds no
+        // credential of its own for it; the server checks the leg is this socket user's.
+        nativeShareSupported() { return !!root.moquiDesktop?.screenStart && !root.navigator?.mediaDevices?.getDisplayMedia; },
+        // an encrypted call's native share: the app seals its frames (SFrame) with keys this page's call keys make
+        nativeSealSupported() { return !!root.moquiDesktop?.screenKey && !!moqui.callKeys?.addSender; },
+        isScreenLeg(legId) {
+            const view = state.calls[state.current];
+            return !!legId && !!view && (view.participants || []).some((p) => (p.legs || []).some((leg) => leg.callLegId === legId && leg.type === "screen"));
+        },
+        async shareNative() {
+            const host = root.moquiDesktop, id = state.current, view = state.calls[id];
+            if (!host?.screenStart || !id || !call.pc || call.native || state.picking) return false;
+            // an encrypted call's screen comes sealed with the leg's own keys, which this page's call keys make and send;
+            // an app without SFrame cannot (the server refuses it too)
+            const sealed = !!(view && view.e2ee);
+            if (sealed && (!call.nativeSealSupported() || !call.keysOn(id))) {
+                state.error = t("Sharing the phone screen in an end-to-end encrypted call needs a newer app");
+                return false;
+            }
+            const prev = state.stage.callLegId;
+            if (!(await call.confirmTakeover(prev))) return false;
+            // a direct call moves to the media server first, as a browser's share does; the share goes on once joined there
+            if (call.direct) {
+                call.afterRelayNative = id;
+                await call.toRelay("share");
+                return false;
+            }
+            const share = call.native = {callSessionId:id, legId:null, mid:null, prev, asked:false, published:false, sealed};
+            state.picking = true;
+            try {
+                if (!(await host.screenStart())) throw new Error(t("The screen could not be shared"));
+                // the system's consent each time: the page waits (it is paused while the dialog is up)
+                const consent = await call.nativeConsent();
+                if (call.native !== share) return false;
+                if (consent !== "sharing") {
+                    call.endNative(false);
+                    return false;
+                }
+                const made = await call.request("addScreenLeg", {callSessionId:id, callLegId:state.legId, sframe:sealed});
+                if (call.native !== share) return false;
+                if (!made.callLegId) throw new Error(made.errors || t(made.reasonCode || "The screen could not be shared"));
+                share.legId = state.screenLegId = made.callLegId;
+                call.screenLegIds = (call.screenLegIds || []).concat([made.callLegId]);
+                const offer = await host.screenOffer(sealed);
+                if (call.native !== share) return false;
+                // its keys: the app sends nothing until the first comes (the roster with the leg makes it)
+                if (sealed) moqui.callKeys.addSender(share.legId, (k) => call.native === share ? host.screenKey(k) : null);
+                share.mid = (offer.match(/a=mid:(\S+)/) || [])[1] || null;
+                call.send({rtc:"join", callSessionId:id, callLegId:share.legId, sdp:offer, id:call.nextId++});
+                state.sharing = true;
+                state.capture = {surface:"phone", crop:"", audio:false, ownTab:false};
+                return true;
+            } catch (err) {
+                if (call.native === share) {
+                    state.error = String((err && err.message) || err);
+                    call.endNative(true);
+                }
+                return false;
+            } finally {
+                state.picking = false;
+            }
+        },
+        // the capture's state once the system's consent is answered: sharing, refused, or ended
+        async nativeConsent() {
+            const until = Date.now() + 120000;
+            while (Date.now() < until) {
+                const status = await root.moquiDesktop.screenStatus().catch(() => null);
+                const capture = status && status.capture && status.capture.state;
+                if (capture && capture !== "asking") return capture;
+                await new Promise((resolve) => setTimeout(resolve, 250));
+            }
+            return "timeout";
+        },
+        // the screen leg's own frames (onFrame): its answer and the media server's offers to the app, its refusals
+        nativeFrame(frame) {
+            const share = call.native, host = root.moquiDesktop;
+            if (!share || frame.callLegId !== share.legId || !host) return null;
+            switch (frame.rtc) {
+                case "joined":
+                    return host.screenAnswer(frame.sdp).then(() => call.nativeAsk(share), (err) => {
+                        state.error = String((err && err.message) || err);
+                        call.endNative(true);
+                    });
+                case "offer":
+                    return host.screenRemoteOffer(frame.sdp).then((sdp) => call.send({rtc:"answer", callSessionId:share.callSessionId,
+                        callLegId:share.legId, offerId:frame.offerId, sdp}), () => null);
+                case "ack":
+                case "stage":
+                    if (frame.stage) call.stageFrame(frame);
+                    return null;
+                case "error":
+                    if (frame.code === "staleGeneration") return null;
+                    state.error = t(frame.message || frame.code);
+                    call.endNative(true);
+                    return null;
+                case "ended":
+                    call.endNative(false);
+                    return null;
+                default:
+                    return null;
+            }
+        },
+        // the stage, asked with the screen leg once its media connects: the stage names it as this participant's share
+        nativeAsk(share) {
+            if (call.native !== share) return;
+            const view = state.calls[state.current];
+            const host = !!view && view.participants.some((p) => p.userId && p.userId === call.me && p.role === "host");
+            const prev = state.stage.callLegId && state.stage.callLegId !== share.legId ? state.stage.callLegId : null;
+            call.send({rtc:"stage", action:prev && (host || state.shareMode !== "CsmAsk") ? "take" : "ask", kind:"screen", id:call.nextId++,
+                callSessionId:share.callSessionId, callLegId:share.legId, previousLegId:prev || undefined});
+        },
+        // each stage: the leg's video is published once the stage names it; the share ends when the stage goes to another
+        // (taken over, a host's Stop) or its request is lowered
+        nativeStageFrame() {
+            const share = call.native;
+            if (!share || !share.legId) return;
+            const onStage = state.stage.callLegId === share.legId && state.stage.kind === "screen";
+            const asking = (state.stage.requests || []).includes(share.legId);
+            if (onStage && !share.published) {
+                share.published = true;
+                call.send({rtc:"publish", callSessionId:share.callSessionId, callLegId:share.legId, mid:share.mid, source:"screen"});
+            }
+            if (onStage || asking) share.asked = true;
+            else if (share.asked) call.endNative(true);
+        },
+        // the share ends here: the app's capture and leg, and (release) the screen leg at the server, which takes it off
+        // the stage; a page leaving its call needs no release (the screen leg ends with its page leg)
+        endNative(release) {
+            const share = call.native;
+            if (!share) return Promise.resolve(false);
+            call.native = null;
+            state.screenLegId = null;
+            state.sharing = false;
+            state.capture = null;
+            if (share.sealed && share.legId) moqui.callKeys?.dropSender?.(share.legId);
+            if (release && share.legId) call.send({rtc:"leave", callSessionId:share.callSessionId, callLegId:share.legId, id:call.nextId++});
+            return Promise.resolve(root.moquiDesktop?.screenStop?.()).catch(() => null).then(() => true);
+        },
+        // the app tells the page its capture or leg ended (its notification's Stop, the system's stop, the connection lost)
+        nativeScreen(info) {
+            if (info && info.state === "ended" && call.native) call.endNative(true);
+        },
+        // a take over of a presenter who is not this page asks first, as requestPresentation does; whether to go on
+        async confirmTakeover(prev) {
+            if (!prev || prev === state.legId || prev === state.screenLegId) return true;
+            const view = state.calls[state.current];
+            const host = !!view && view.participants.some(p => p.userId && p.userId === call.me && p.role === "host");
+            const hostPresents = !!view && view.participants.some(p => p.role === "host" && (p.legs || []).some(l => l.callLegId === prev));
+            if (host || state.shareMode === "CsmAsk") return true;
+            if (hostPresents) {
+                state.error = t("Only a host may take over from a host");
+                return false;
+            }
+            const text = t("Take over from {name}?").replace("{name}",call.nameOf(prev));
+            const ok = moqui.confirmAction ? await moqui.confirmAction(text) : root.confirm(text);
+            return !!ok && prev === state.stage.callLegId;
+        },
         async stopShare(release = true) {
+            if (call.native) return call.endNative(true);
             ++call.captureEpoch;
             if (release && state.stage.callLegId === state.legId) call.stageCommand("stop");
             moqui.ink?.embedded(null,[]);
+            if (call.overlayShown) { call.overlayShown=false; root.moquiDesktop?.captureOverlayClose?.(); }
+            call.captureSource = null;
             const hadCapture = !!call.screenStream;
             if (call.screenStream) call.screenStream.getTracks().forEach(track => {track.onended=null;track.stop();});
             call.screenStream = null;
@@ -1927,6 +2148,9 @@
         // reason: held (call waiting) and switched keep the side panel for what comes next.
         hangUp(reason) {
             if (state.current) call.lastLeg = { callSessionId: state.current, legId: state.legId };
+            if (call.native) call.endNative(false);
+            call.screenLegIds = [];
+            call.afterRelayNative = null;
             if (reason !== "held" && reason !== "switched") state.panel = null;
             call.closePip();
             call.cameraTx = null;
@@ -2491,24 +2715,30 @@
             picker:false,boardList:[],boardCanCreate:false,boardName:"",selectedBoard:"",boardBusy:false,followBoard:true}; },
         computed:{
             owner() { return this.call.stage.callLegId; },
-            mine() { return !!this.owner && this.owner === this.call.legId; },
+            mine() { return !!this.owner && (this.owner === this.call.legId || this.owner === this.call.screenLegId); },
             pending() { return this.call.stage.requests || []; },
+            asking() { return this.pending.includes(this.call.legId) || (!!this.call.screenLegId && this.pending.includes(this.call.screenLegId)); },
+            native() { return call.nativeShareSupported(); },
+            sealable() { return call.nativeSealSupported(); },
             host() { return !!this.view?.participants?.some(p => p.userId && p.userId === call.me && p.role === "host"); },
             sharing() { return this.call.stage.kind === "screen"; },
-            inkAllowed() {return this.call.stage.inkMode==="everyone" || (this.call.stage.inkMode==="hosts" && this.host);},
+            inkAllowed() {return this.mine || this.call.stage.inkMode==="everyone" || (this.call.stage.inkMode==="hosts" && this.host);},
             boardId() { return this.call.stage.kind === "board" ? this.call.stage.wikiPageId : null; },
             guest() { return call.guest; },
             followStage(){return this.call.stage.kind==="follow";},
             eligible(){return !call.guest && !!call.followPath(this.$root.currentLinkUrl || root.location.href);},
             stream() { return this.mine ? (this.call.sharing && call.screenStream) : (this.owner && this.call.remotes[this.owner]?.screen); },
-            supported() { return !!root.navigator?.mediaDevices?.getDisplayMedia; },
+            supported() { return !!root.navigator?.mediaDevices?.getDisplayMedia || call.nativeShareSupported(); },
             tabControls() { return this.mine && this.call.capture?.surface === "tab" && !!call.captureController?.forwardWheel; },
             modes() { return [{value:"CsmAnyone",label:t("Anyone")},{value:"CsmHosts",label:t("Hosts only")},{value:"CsmAsk",label:t("Ask a host")}]; },
-            presenter() { return this.mine ? t("You are presenting") : t("{name} is presenting").replace("{name}",call.nameOf(this.owner)); }
+            presenter() { return this.mine ? t("You are presenting") : t("{name} is presenting").replace("{name}",call.nameOf(this.owner)); },
+            boardPresenter() { return this.mine ? t("You are presenting a board") : t("{name} is presenting a board").replace("{name}",call.nameOf(this.owner)); },
+            landscape() { return this.call.phoneLandscape && !this.mine; }
         },
         watch:{owner() { this.fit(); this.forward=false; this.notice=""; this.followBoard=true; }, boardId(){this.followBoard=true;}},
         methods:{
             t, name:call.nameOf, command:call.stageCommand, ask:call.requestPresentation, capture:call.shareScreen, stop:call.stopShare,
+            shareNative:call.shareNative,
             setFollowing:call.setFollowing,
             drawInk:call.drawInk,
             async snapshot(){try{await call.snapshotBoard(this.$refs.viewport?.querySelector("video"));}catch(e){this.notice=String(e.message || e);}},
@@ -2600,18 +2830,18 @@
         template:`<section class="m-call-presentation q-mb-xs">
             <div class="row items-center q-gutter-xs">
                 <span v-if="sharing && (!mine || call.sharing)" role="status" class="text-subtitle2">{{presenter}}</span>
-                <q-btn v-if="sharing && (host || mine)" flat dense color="negative" :label="mine && !call.sharing ? t('Cancel') : t('Stop sharing')" @click="mine ? stop() : command('stop')"/>
+                <q-btn v-if="sharing && (host || mine)" flat dense color="negative" :label="mine && !call.sharing ? t('Cancel') : t('Stop sharing')" @click="mine ? stop() : command('stop',{previousLegId:owner})"/>
                 <q-btn v-if="eligible && !(mine && followStage)" flat dense icon="sym_o_present_to_all" :disable="!host && call.shareMode==='CsmHosts'" :label="t('Present this screen')" @click="ask('follow')"/>
                 <q-btn v-if="!guest" flat dense icon="sym_o_draw" :disable="!host && call.shareMode==='CsmHosts'" :label="t('Whiteboard')" @click="boardPicker"/>
-                <q-btn v-if="supported && (!mine || (boardId && !call.sharing)) && !pending.includes(call.legId)" flat dense icon="sym_o_present_to_all" :disable="!host && call.shareMode === 'CsmHosts'" :label="t('Share the screen')" @click="ask()"/>
-                <q-btn v-if="pending.includes(call.legId)" flat dense :label="t('Cancel presentation request')" @click="command('lower')"/>
+                <q-btn v-if="supported && (!mine || (boardId && !call.sharing)) && !asking" flat dense icon="sym_o_present_to_all" :disable="(!host && call.shareMode === 'CsmHosts') || (native && !!view?.e2ee && !sealable) || call.picking" :title="native && view?.e2ee && !sealable ? t('Sharing the phone screen in an end-to-end encrypted call needs a newer app') : undefined" :label="t('Share the screen')" @click="native ? shareNative() : ask()"/>
+                <q-btn v-if="asking" flat dense :label="t('Cancel presentation request')" @click="call.screenLegId ? stop() : command('lower')"/>
                 <q-btn-dropdown v-if="host" flat dense :label="t('Who can present')"><q-list dense>
                     <q-item v-for="mode in modes" :key="mode.value" clickable v-close-popup :active="call.shareMode===mode.value" @click="setMode(mode.value)">
                         <q-item-section>{{mode.label}}</q-item-section></q-item></q-list></q-btn-dropdown>
             </div>
             <div v-if="followStage" class="m-screen-follow row items-center q-gutter-xs">
                 <span role="status">{{call.followDenied ? t('{name} is on a screen you cannot open').replace('{name}',name(owner)) : presenter}}</span>
-                <q-btn v-if="host || mine" dense flat :label="t('End screen presentation')" @click="command('stop')"/>
+                <q-btn v-if="host || mine" dense flat :label="t('End screen presentation')" @click="command('stop',{previousLegId:owner})"/>
                 <q-btn v-if="!guest && !mine" dense flat :label="call.following?t('Stop following'):t('Follow again')" @click="setFollowing(!call.following)"/>
                 <q-btn v-if="mine && supported && !call.sharing" dense flat :disable="call.picking" :label="t('Share this tab with guests')" @click="capture('tab',false)"/>
                 <q-btn v-if="mine && call.sharing" dense flat :label="t('Stop guest video')" @click="stop(false)"/>
@@ -2620,10 +2850,10 @@
             </div>
             <div v-if="boardId" class="m-meeting-board">
                 <div class="row items-center q-gutter-xs">
-                    <span class="text-subtitle2">{{t('Whiteboard')}}</span>
+                    <span role="status" class="text-subtitle2">{{boardPresenter}}</span>
                     <q-btn v-if="!mine" dense flat :label="followBoard?t('Stop following'):t('Follow again')" @click="followBoard=!followBoard"/>
                     <q-btn v-if="mine && call.sharing" dense flat :label="t('Switch to screen')" @click="ask('screen')"/>
-                    <q-btn v-if="mine || host" dense flat :label="t('Close board')" @click="command('stop')"/>
+                    <q-btn v-if="mine || host" dense flat :label="t('Close board')" @click="command('stop',{previousLegId:owner})"/>
                     <q-btn-dropdown v-if="host" dense flat :label="t('Who can draw')"><q-list dense>
                         <q-item><q-toggle :label="t('Members')" :model-value="call.stage.memberCanEdit!==false" @update:model-value="v=>drawing('memberCanEdit',v)"/></q-item>
                         <q-item><q-toggle :label="t('Guests')" :model-value="call.stage.guestCanEdit!==false" @update:model-value="v=>drawing('guestCanEdit',v)"/></q-item>
@@ -2651,7 +2881,8 @@
             <div v-if="host" v-for="leg in pending" :key="leg" class="row items-center q-gutter-xs">
                 <span>{{t('{name} wants to present').replace('{name}',name(leg))}}</span><q-btn flat dense :label="t('Allow')" @click="command('approve',{targetLegId:leg})"/>
                 <q-btn flat dense :label="t('Decline')" @click="command('lower',{targetLegId:leg})"/></div>
-            <div v-if="sharing && mine && !call.sharing" class="row items-center q-gutter-xs">
+            <p v-if="sharing && mine && call.capture?.surface === 'phone'" class="text-caption">{{t('Your phone screen is shared. Stop sharing here or from the notification.')}}</p>
+            <div v-if="sharing && mine && !call.sharing && !native" class="row items-center q-gutter-xs">
                 <q-toggle v-model="motion" :label="motion?t('Optimize for video'):t('Optimize for text')"/>
                 <q-btn unelevated color="primary" :disable="call.picking" :label="t('This tab')" @click="capture('tab',motion)"/>
                 <q-btn outline :disable="call.picking" :label="t('A window or screen')" @click="capture('window',motion)"/>
@@ -2672,7 +2903,7 @@
                 <q-btn v-if="!guest" dense flat icon="sym_o_camera_alt" :label="t('Snapshot to board')" @click="snapshot"/>
             </div>
             <div v-if="sharing && stream" ref="viewport" class="m-present-viewport relative-position" :class="{'m-present-preview':mine}"
-                :style="{height:mine?'8rem':'min(58dvh,48rem)',maxWidth:mine?'15rem':'100%',background:'#121212',borderRadius:'8px',overflow:'hidden',touchAction:'none'}"
+                :style="{height:mine?'8rem':landscape?'calc(100dvh - 3rem)':'min(58dvh,48rem)',maxWidth:mine?'15rem':'100%',background:'#121212',borderRadius:'8px',overflow:'hidden',touchAction:'none'}"
                 @wheel="wheel" @pointerdown="pointer($event,'start')" @pointermove="pointer($event,'move')" @pointerup="pointer($event,'end')" @pointercancel="pointer($event,'end')">
                 <div class="relative-position" :style="{width:'100%',height:'100%',transform:'translate('+x+'px,'+y+'px) scale('+scale+')'}">
                     <m-call-video :stream="stream" muted style="width:100%;height:100%;object-fit:contain"/>
@@ -2814,7 +3045,7 @@
                     view.callSessionId !== this.call.current && view.callSessionId !== held);
             },
             remotes() {
-                return Object.values(this.call.remotes);
+                return Object.values(this.call.remotes).filter((r) => !call.isScreenLeg(r.legId));
             },
             onCallScreen() {
                 const params = this.$root.currentParameters || {};
@@ -2986,7 +3217,7 @@
         },
         computed: {
             inThis() { return this.call.current === this.callSessionId; },
-            remotes() { return Object.values(this.call.remotes); },
+            remotes() { return Object.values(this.call.remotes).filter((r) => !call.isScreenLeg(r.legId)); },
             known() { return this.call.calls[this.callSessionId] || this.view; },
             // a phone's width: the call in the compact layout, full screen; the side panel has the same layout
             phone() { return ((this.$q && this.$q.screen && this.$q.screen.width) || root.innerWidth || 0) < 600; },
@@ -3348,7 +3579,7 @@
         computed: {
             others() { return (this.view.participants || []).filter((p) => p.userId !== moqui.call.me); },
             title() { return this.others.map((p) => p.displayName).join(", ") || t("Call"); },
-            remotes() { return Object.values(this.call.remotes); },
+            remotes() { return Object.values(this.call.remotes).filter((r) => !call.isScreenLeg(r.legId)); },
             seen() { return this.remotes.filter((r) => r.stream && r.stream.getVideoTracks().length && !r.cameraOff); },
             // the stage: a screen share, else the speaker's video, else anyone's
             main() {
@@ -3591,7 +3822,7 @@
         },
         computed: {
             inCall() { return this.call.current && this.call.current === this.callSessionId; },
-            remotes() { return Object.values(this.call.remotes); },
+            remotes() { return Object.values(this.call.remotes).filter((r) => !call.isScreenLeg(r.legId)); },
             // live captions (W6): a guest gets the notice and the lines as every leg does, by its socket
             captionNotice() { return captionNotice(this.call.captions); },
             rec() { return this.callSessionId ? this.call.recordingOf[this.callSessionId] || null : null; },

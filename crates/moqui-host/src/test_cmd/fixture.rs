@@ -221,59 +221,12 @@ fn scratch_runtime(runtime: &Path) -> Result<PathBuf, Error> {
     Ok(scratch)
 }
 
+/// [`moqui_lib::fs_link::link`]. On Windows a file on the same volume is a hard link, so a later write of
+/// `MoquiConf.xml` is the file the scratch reads; one on another volume is copied. The files a scratch runtime links are
+/// `MoquiConf.xml` and `components/components.xml`.
 fn link(from: &Path, to: &Path) -> Result<(), Error> {
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(from, to)
-            .map_err(|err| Error::new(format!("could not link {}", to.display())).with_source(err))
-    }
-    #[cfg(windows)]
-    {
-        link_windows(from, to)
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = (from, to);
-        Err(Error::new("moqui test needs symbolic links"))
-    }
-}
-
-/// A directory becomes a junction, which needs no extra privilege. A file becomes a hard link on the same volume, so a
-/// later write of `MoquiConf.xml` is the file the scratch reads; a different volume cannot hold a hard link, and the
-/// file is copied. A junction cannot name a file. The files a scratch runtime links are `MoquiConf.xml` and
-/// `components/components.xml`.
-#[cfg(windows)]
-fn link_windows(from: &Path, to: &Path) -> Result<(), Error> {
-    let from = link_path(from);
-    let to = link_path(to);
-    let meta = std::fs::metadata(&from).map_err(|err| link_error(&to, err))?;
-    if meta.is_dir() {
-        junction::create(&from, &to).map_err(|err| link_error(&to, err))
-    } else if std::fs::hard_link(&from, &to).is_ok() {
-        Ok(())
-    } else {
-        std::fs::copy(&from, &to)
-            .map(|_| ())
-            .map_err(|err| link_error(&to, err))
-    }
-}
-
-#[cfg(windows)]
-fn link_error(to: &Path, err: std::io::Error) -> Error {
-    Error::new(format!("could not link {}", to.display())).with_source(err)
-}
-
-/// `canonicalize` prefixes `\\?\`. A junction stores an NT path, and a second prefix is a link that does not open.
-#[cfg(windows)]
-fn link_path(path: &Path) -> PathBuf {
-    let text = path.to_string_lossy();
-    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
-        PathBuf::from(format!(r"\\{rest}"))
-    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
-        PathBuf::from(rest.to_string())
-    } else {
-        path.to_path_buf()
-    }
+    moqui_lib::fs_link::link(from, to)
+        .map_err(|err| Error::new(format!("could not link {}", to.display())).with_source(err))
 }
 
 /// The runtime's `conf` with its subdirectories: a `MOQUI_CONF` may name a topology's conf, as
@@ -455,12 +408,15 @@ fn prune_snapshots(save: &Path, kept: &Path) {
 /// without the dev components once saved a snapshot that a run with example then restored, without example's tables.
 /// The day is part of the key: the demo data is dated from its load, so a snapshot is good for the day it was made.
 /// The binary is not part of the key, so a relink keeps the snapshots (plans/archive/Test-Reduction.md, "Cheaper
-/// machinery"); after a change to how the binary loads data, remove `runtime/save/test-*`.
+/// machinery"), but the artifact index's extraction version is (`moqui_devkit::index::EXTRACT_VERSION`); after a
+/// change to how the binary loads data, remove `runtime/save/test-*`.
 fn data_hash(scratch: &Path, framework: &Path) -> Result<u64, Error> {
     let mut hasher = DefaultHasher::new();
     env!("CARGO_PKG_VERSION").hash(&mut hasher);
-    // what a snapshot holds besides the data: the artifact index of a dev instance since this mark
+    // what a snapshot holds besides the data: the artifact index of a dev instance since this mark, read by the
+    // extraction rules of this version (a binary of another version reads every file again in each spec's server)
     "artifact-index".hash(&mut hasher);
+    moqui_devkit::index::EXTRACT_VERSION.hash(&mut hasher);
     // The day of the load, local: the demo data is dated from it (a task due today, an invoice ten days overdue), so a
     // snapshot of yesterday's load reads as a day old to the specs that count on it.
     jiff::Zoned::now().date().to_string().hash(&mut hasher);

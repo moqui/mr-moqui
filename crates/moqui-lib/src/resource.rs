@@ -275,6 +275,8 @@ pub fn content_type_for_name(filename: &str) -> Option<&'static str> {
         "pdf" => "application/pdf",
         "gz" => "application/gzip",
         "zip" => "application/zip",
+        // a map tile archive (PMTiles), read by range and never compressed
+        "pmtiles" => "application/vnd.pmtiles",
         _ => return None,
     })
 }
@@ -344,7 +346,7 @@ fn plain_fs_path(path: PathBuf) -> PathBuf {
         if plain.encode_utf16().count() >= 260 {
             return path;
         }
-        return PathBuf::from(plain);
+        PathBuf::from(plain)
     }
     #[cfg(not(windows))]
     path

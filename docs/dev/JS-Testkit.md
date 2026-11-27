@@ -176,6 +176,11 @@ priceMap.price == 16.99
 - `===` and `!==` stay strict JavaScript.
 - A bare value, `!x`, and the sides of `&&` and `||` use Groovy truth: `null`, `false`, zero (a number or a
   decimal), and an empty string, list, map or `Set` are false.
+- `a || b` gives `a` when `a` is true by Groovy truth, else `b`; `a && b` gives `b` when `a` is true, else `a`. The
+  value is the operand's own, as in JavaScript, so `&&` and `||` work inside a condition as values:
+  `Array.from(row.items || [])` is the list or `[]`, and `(row.name || "") == ""` compares the name. Only the operand
+  chosen by Groovy truth differs from JavaScript (`[] || x` is `x`, `[] && x` is `[]`). Each side is evaluated once, and
+  the right side only when it is chosen. The condition as a whole is then judged by Groovy truth, as any value is.
 - A condition that is a call and returns `undefined` passes, as a void method call does in Spock. So an action in
   `then` that returns nothing (`capture.clear()`) passes without checking anything, while a call that returns a
   value is checked as any condition is: `map.delete(key)` on a missing key returns false and fails the feature. Do
@@ -202,7 +207,7 @@ last `message` that is added to the failure:
 |---|---|
 | `assert.ok(value, message)` | As `assert`, with Groovy truth |
 | `assert.equal(actual, expected, message)`, `assert.notEqual(...)` | The same value by `Object.is`, or not: strict, with none of a condition's Groovy comparison, so a decimal does not equal a number here. For decimals use `assert(a.compare(b) === 0)` |
-| `assert.deepEqual(actual, expected, message)` | Equal structure, strictly: arrays by item, objects by their own keys and the same prototype, dates by time, regular expressions by source and flags, everything else by `Object.is` |
+| `assert.deepEqual(actual, expected, message)` | Equal structure, strictly: arrays by item, objects by their own keys and the same prototype, dates by time, regular expressions by source and flags, everything else by `Object.is`; a cycle compares equal where it closes, and one object met twice (no cycle) is compared each time |
 | `assert.match(text, pattern, message)`, `assert.doesNotMatch(...)` | The text matches the regular expression, or does not. A value that is not a string, or a pattern that is not a `RegExp`, fails |
 | `assert.throws(fn, expected, message)` | `fn` throws. With `expected`: a regular expression the error's message matches, an error constructor the error is an instance of, or a function that returns true for the error |
 | `assert.rejects(fnOrPromise, expected, message)` | The promise, or the one the function returns, rejects, with `expected` as for `throws`. In a spec it runs the engine's jobs until the promise settles and returns true; a promise still pending when no job is left fails |
@@ -227,6 +232,7 @@ A failed `assert` is an assertion failure, as a false condition is, not an error
 | `setConf(selector, value)` | A conf attribute by its selector (`ssh-server@public-host`), set over the conf files as its environment name would set it ([Conf-Paths](../../plans/archive/Conf-Paths.md#1-paths-and-names)): `ec.factory.getConfValue` and the server's readers of the conf see it; `null` puts back what the files and the environment give. It holds for the rest of the spec |
 | `withConf(selector, value, fn)` | The attribute only while `fn` runs, then as it was before; returns what `fn` returned |
 | `log` | `ec.logger`: `log.info(...)`, `log.warn(...)` |
+| `sleep(ms)` | Pause the spec's thread for `ms` milliseconds (at most a minute; a value that is not a finite number throws), as a client spec's `sleep`: between the looks of a loop that waits for work on another thread, such as a ServiceJob's run ([Pitfalls](#pitfalls)) |
 | `skip(reason)` | Skip the feature, or in `setupSpec` the spec ([Skipped and ignored](#skipped-and-ignored)) |
 | `assert(condition, message)` and its methods | [`assert`](#assert) |
 | `dec(value)` | The value as a decimal, for arithmetic with its methods: `dec(a).add(b)`, `subtract`, `multiply`, `negate()`, `compare()` |
@@ -390,7 +396,7 @@ http.requests()[0].headers["Idempotency-Key"]
 
 | Method | |
 |---|---|
-| `add({method, url, bodyContains, status, body, headers, contentType, error, times})` | A fixture. `url` is exact, or a prefix when it ends with `*`; `method` and `bodyContains` narrow it; `status` is 200 by default; `error` fails the call as a transport error after recording it; `times` is how many requests it answers (absent or 0, any number) |
+| `add({method, url, bodyContains, status, body, headers, contentType, error, times, ranges})` | A fixture. `url` is exact, or a prefix when it ends with `*`; `method` and `bodyContains` narrow it; `status` is 200 by default; `body` is text, or a `Uint8Array` for a binary answer (a zip); `error` fails the call as a transport error after recording it; `times` is how many requests it answers (absent or 0, any number); `ranges` true answers as a file server does: a request with one `Range` (`bytes=a-b`, `a-`, `-n`) with that part of `body`, 206 and `Content-Range` (416 past the end; a range whose end is before its start is ignored), and an `If-Match` or `If-Unmodified-Since` that the fixture's `ETag` or `Last-Modified` header does not meet with 412 |
 | `requests()`, `last()`, `count()` | The recorded requests, oldest first, each `{method, url, headers, body, fixture, at}`, `fixture` the index of the fixture that answered or -1 (the 500 most recent). The values of Authorization, Proxy-Authorization, Cookie and `*Api-Key` headers are `[redacted]` |
 | `enable()`, `disable()`, `isEnabled()` | Answer and record; off by default. `enable()` is refused outside a `moqui test` run |
 | `allowNetwork(urlPrefixes)` | Let requests to these URL prefixes go to the network while the fixtures are off (see below); an empty list closes it again |
@@ -570,4 +576,7 @@ How a Moqui Java Spock specification maps to a spec file, as used to port mr-man
   after it; give a new spec its own stock or its own product.
 - The switches of `MailCapture`, `HttpFixtures` and `NotificationCapture` outlive the spec: reset or disable them in
   `cleanupSpec` or a `finally`.
+- A loop that waits for a ServiceJob's run (its `ServiceJobRun` row, or a row the job writes) pauses with `sleep(ms)`
+  between its looks. `ec.factory.waitWorkerPoolEmpty` is no pause there: it waits for the service worker pool only, not
+  the job workers, so it returns at once while a job runs and the loop spins, reading the row as fast as it can.
 - Generic JavaScript linters report `no-unused-expressions` in `then` and `expect`; those expressions are the conditions.

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! What a provision makes (plans/Vault-Instances.md §4.3, steps 1 and 2): the instance and each dependency not made
+//! What a provision makes (plans/archive/Vault-Instances.md §4.3, steps 1 and 2): the instance and each dependency not made
 //! yet, dependencies first; for each its container, volumes and network, the credentials it makes and deposits, the
 //! database and user it makes on its database dependency, and the vault items its lease needs: a host's TLS client
 //! key, a registry login, a database host's admin login, or the admin login of a database instance made before. The

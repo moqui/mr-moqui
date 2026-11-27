@@ -31,6 +31,27 @@ feature("the terminal shows a page of the entity's rows, each with its record fo
     },
 })
 
+// TOOL-UI-003: the Grid's header filters come to Record as gridFilters and go back to the Grid by Back to Find, and only there.
+feature("a record opened from a filtered grid goes back to it filtered", {
+    expect() {
+        const gridFilters = JSON.stringify([{ field: "enumId", value: "=GEOT_COUNTRY" }])
+        const r = tools().render("Data/Record", { selectedEntity: "moqui.basic.Enumeration", enumId: "GEOT_COUNTRY", gridFilters }, null)
+        const out = String(r.output)
+        r.status == 200
+        r.errorMessages.length == 0
+        const find = out.match(/href="([^"]*Grid\?[^"]*)"[^>]*>\s*Back to Find/)
+        find != null
+        decodeURIComponent(find[1].replace(/&amp;/g, "&")).includes("gridFilters=" + gridFilters)
+        // Update and the levels form keep it for a later Back to Find
+        const kept = out.match(/name="gridFilters"/g) || []
+        kept.length == 2
+        // a related record's Edit link opens another entity, which does not take these filters
+        !/href="[^"]*Record\?[^"]*gridFilters/.test(out)
+        const plain = String(tools().render("Data/Record", { selectedEntity: "moqui.basic.Enumeration", enumId: "GEOT_COUNTRY" }, null).output)
+        !plain.includes("gridFilters=")
+    },
+})
+
 // B8: the rule of template/ToolsRecent.js through the grid's gridColumns transition, which is what opens an entity.
 feature("opening an entity in the grid puts it first in the user's recent entities, once, twenty at most", {
     when() {

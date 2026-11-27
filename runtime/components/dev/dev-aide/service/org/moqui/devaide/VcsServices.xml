@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The git of a root (plans/design-dev-aide.md 4.2, 4.5 to 4.7), through the developer's own git command, implemented
+<!-- The git of a root (plans/archive/design-dev-aide.md 4.2, 4.5 to 4.7), through the developer's own git command, implemented
     in the dev-aide crate (src/vcs.rs, src/repo.rs, src/repos.rs): reads, staging by file and by hunk, commit with the task
     trailer and the user as author, fetch, pull (fast-forward only) and push, Publish of the site component's changes;
     branches, tags, stashes, revert and cherry-pick, conflicts, remotes, blame, clone; and the Repositories list. -->
@@ -155,7 +155,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="forceWithLease" type="Boolean"/>
             <parameter name="confirmRef"><description>The remote branch (origin/main), typed back to confirm a force push.</description></parameter>
             <parameter name="openMergeRequest" type="Boolean"><description>Then open a merge request of the branch on the
-                root's hosted repository (plans/design-dev-aide.md 21.4), into targetBranch (its default branch when
+                root's hosted repository (plans/archive/design-dev-aide.md 21.4), into targetBranch (its default branch when
                 empty), titled title (the head commit's summary when empty).</description></parameter>
             <parameter name="targetBranch"/>
             <parameter name="title"/>
@@ -311,7 +311,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="conflict" type="Boolean"/>
         </out-parameters>
     </service>
-    <service verb="compare" noun="Refs" type="rust" location="dev_aide::repo::compare_refs" allow-remote="false" read-only="true">
+    <service verb="compare" noun="Refs" authz-action="view" type="rust" location="dev_aide::repo::compare_refs" allow-remote="false" read-only="true">
         <description>The commits on head that base has not, and the files that differ since their common ancestor.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
@@ -593,7 +593,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="task"/>
         </in-parameters>
     </service>
-    <service verb="list" noun="Repositories" type="rust" location="dev_aide::repos::list_repositories" allow-remote="false" read-only="true">
+    <service verb="list" noun="Repositories" authz-action="view" type="rust" location="dev_aide::repos::list_repositories" allow-remote="false" read-only="true">
         <description>Every root with its kind, components, branch, upstream, ahead and behind, changes and last fetch.</description>
         <out-parameters>
             <parameter name="repositories" type="List"/>

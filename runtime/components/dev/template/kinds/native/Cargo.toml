@@ -1,0 +1,17 @@
+# The Rust of @Title@. ./moq build finds this crate (a Cargo.toml beside the component.xml) and links it into the binary
+# with the framework (docs/dev/Native-Components.md). It is not a member of the mr-moqui workspace, so it names its own
+# values and its dependencies by path.
+
+[package]
+name = "@component@"
+description = "@Title@: a native MR Moqui component."
+version = "1.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+moqui-core = { path = "../../../../crates/moqui-core", default-features = false }
+moqui-lib = { path = "../../../../crates/moqui-lib" }
+
+# Its own workspace, so a cargo run inside it (cargo check, cargo test) does not look for one in a directory above.
+[workspace]

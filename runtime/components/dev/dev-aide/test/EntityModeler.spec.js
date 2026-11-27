@@ -1,4 +1,4 @@
-// The entity modeler's services on a dev instance (plans/design-dev-aide.md P5, 8): the entity view reads an entity as
+// The entity modeler's services on a dev instance (plans/archive/design-dev-aide.md P5, 8): the entity view reads an entity as
 // the server merged it, with each field's origin and the table against the fields; the changes the table check never
 // makes are planned for the full tier and refused to the extend tier, which never sees a destructive change; a site's
 // seed data loads. The view's own edits (a field through the site's extend-entity, a Picklist and its rows) are in the

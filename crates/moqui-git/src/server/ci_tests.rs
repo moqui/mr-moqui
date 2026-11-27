@@ -2202,6 +2202,19 @@ fn a_file_that_is_not_valid_is_an_error_status_and_a_component_gets_the_built_in
     );
     assert!(rows(&fixture, "moqui.resource.GitJobRun", &[("repositoryId", "broken")]).is_empty());
 
+    // SEC-GIT-89: a ci.xml over max-file-bytes is an error by its size, read only as far as its size
+    define(&fixture, "huge", "db");
+    let huge = Work::new(&fixture, &base, WRITER, "huge");
+    let big = format!("<ci><!-- {} --></ci>", "x".repeat(300 * 1024));
+    let commit = huge.push(&fixture, &[("ci.xml", big.as_str())], "main");
+    let run = only_run(&fixture, "huge", &commit);
+    assert_eq!(text(&run, "statusId"), "error");
+    assert!(
+        text(&run, "statusMessage").contains("over this server's limit of 262144"),
+        "{}",
+        text(&run, "statusMessage")
+    );
+
     // a component repository with no ci.xml: the built-in pipeline, on push
     define(&fixture, "mr-thing", "db");
     let component = Work::new(&fixture, &base, WRITER, "mr-thing");

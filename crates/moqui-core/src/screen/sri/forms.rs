@@ -226,6 +226,21 @@ fn form_map_frame(fields: moqui_lib::object::ValueMap) -> ContextFrame {
 /// Returns an error when the form, its find, its row actions or a field `from` fails.
 pub fn open_form_list(state: &RenderState, name: &str, streamed: bool) -> Result<(usize, Option<usize>), Error> {
     let form = form_of(state, name)?;
+    if crate::screen::agent_render() {
+        if let Some(field) = ai_off_find(&form)? {
+            // no rows: the same answer whatever the find kept, so it tells nothing of the field
+            tracing::debug!(
+                "form-list {} shows an agent no rows: found or sorted by {field}",
+                form.name
+            );
+            let mut lists = state.form_lists.borrow_mut();
+            lists.push(Some(FormRows {
+                rows: Vec::new(),
+                stream: None,
+            }));
+            return Ok((lists.len() - 1, Some(0)));
+        }
+    }
     if streamed && form.aggregation.is_none() {
         let stream = RowStream::open(form)?;
         let mut lists = state.form_lists.borrow_mut();
@@ -240,6 +255,51 @@ pub fn open_form_list(state: &RenderState, name: &str, streamed: bool) -> Result
     let mut lists = state.form_lists.borrow_mut();
     lists.push(Some(FormRows { rows, stream: None }));
     Ok((lists.len() - 1, Some(count)))
+}
+
+/// The field a find parameter is for: its name without a find suffix (`note_op`, `note_not`, `note_ic`, `when_from` and
+/// the others of a form's find options).
+fn find_field_of(key: &str) -> &str {
+    const SUFFIXES: [&str; 8] = ["_op", "_not", "_ic", "_from", "_thru", "_period", "_poffset", "_pdate"];
+    SUFFIXES
+        .iter()
+        .find_map(|suffix| key.strip_suffix(suffix))
+        .filter(|field| !field.is_empty())
+        .unwrap_or(key)
+}
+
+/// The `ai-opt-out` field of a form-list that the request finds or sorts by, if any: in an agent's render such a list
+/// shows no rows, as the rows a find keeps would tell the field's text that the render leaves out (design-people
+/// PE-21). Checked once here, at the list every agent render shows (the `screen` tool, the canvas reads, `data`),
+/// whatever the path's query asked for (plans/Security-Review-Low.md SEC-AI-94).
+fn ai_off_find(form: &FormInstance) -> Result<Option<String>, Error> {
+    let node = form.shared_node()?;
+    let off: Vec<String> = node
+        .children_named("field")
+        .iter()
+        .filter(|field| field.attribute_is("ai-opt-out", "true"))
+        .filter_map(|field| field.attribute("name"))
+        .collect();
+    if off.is_empty() {
+        return Ok(None);
+    }
+    let parameters = crate::web::parameters();
+    let ordered = parameters
+        .get("orderByField")
+        .map(moqui_lib::object::to_plain_string)
+        .unwrap_or_default();
+    let mut named = parameters
+        .iter()
+        .filter(|(_, value)| !moqui_lib::object::to_plain_string(value).trim().is_empty())
+        .map(|(key, _)| find_field_of(key).to_string())
+        .chain(ordered.split(',').filter_map(|part| {
+            part.trim()
+                .trim_start_matches(['-', '+', '^'])
+                .split_whitespace()
+                .next()
+                .map(str::to_string)
+        }));
+    Ok(named.find(|field| off.contains(field)))
 }
 
 /// The list a form-list shows: what its find gives (the cursor variant when `cursor`), else its `list`.

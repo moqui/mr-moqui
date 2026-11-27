@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Maps › Configuration › Archives (plans/archive/Maps.md §4.1, §5; docs/tools/Maps.md "Archives"): the PMTiles and Cloud Optimized
+    GeoTIFF layers (a COG at a resource location registered as a PMTiles archive is, its header read instead; a COG at its
+    provider's URL read from there, P4c), each with its
+    archive's location, registered revision, size, zoom range and state now (org.moqui.maps.MapSourceServices
+    find#ArchiveLayers), Register (register#ArchiveLayer: an archive in a drive, a git repository as a Git LFS object or on
+    disk, its header checked and its revision recorded, for the layer chosen and those chosen to draw it too, such as the
+    light and dark styles of one Protomaps extract, all in one action; again after the file is replaced, which registers
+    every layer naming the archive, and which a map drawing the old revision is refused and loads its configuration again), the profiles whose basemap it is with Enable and Make default
+    (MapServices.store#ProfileSettings), and the limits an archive's size meets. The services check their caller:
+    Configuration's view to read, its update to change. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
+        default-menu-title="Archives" default-menu-index="3" menu-image="sym_o_layers" menu-image-type="icon">
+
+    <transition name="registerArchive">
+        <service-call name="org.moqui.maps.MapSourceServices.register#ArchiveLayer" out-map="registered"
+                in-map="{layerId:layerId, resourceLocation:(resourceLocation || null),
+                    alsoLayerIds:(alsoLayerIds ? (Array.isArray(alsoLayerIds) ? alsoLayerIds : String(alsoLayerIds).split(',')) : null)}"/>
+        <actions>
+            <if condition="!ec.message.hasError()">
+                <script>ec.message.addMessage(registered.reason + (registered.applied &amp;&amp; registered.notes?.length ? ' ' + Array.from(registered.notes).join(' ') : ''),
+                    registered.applied ? 'success' : 'warning')</script>
+            </if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="storeProfile">
+        <service-call name="org.moqui.maps.MapServices.store#ProfileSettings" out-map="stored"
+                in-map="{profileId:profileId, enabled:(enabled || null), makeDefault:(makeDefault === 'Y')}"/>
+        <actions>
+            <if condition="!ec.message.hasError()">
+                <script>ec.message.addMessage(stored.reason, stored.applied ? 'success' : 'warning')</script>
+            </if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions>
+        <service-call name="org.moqui.maps.MapSourceServices.find#ArchiveLayers" out-map="found" transaction="force-new" ignore-error="true"/>
+        <set field="configured" from="found?.applied === true"/>
+        <script><![CDATA[
+            const colors = {ready: 'positive', warning: 'warning', failed: 'negative'}
+            const states = {ready: ec.l10n.localize('Ready'), warning: ec.l10n.localize('Warning'), failed: ec.l10n.localize('Failed')}
+            archiveRows = Array.from(found?.archiveList || []).map(row => Object.assign({}, row, {
+                stateText: states[row.state] || row.state, stateColor: colors[row.state] || 'grey-7',
+                revisionText: row.revision ? row.revision.slice(0, 12) + (row.addressKind ? ' (' + row.addressKind + ')' : '') : '',
+                detailText: [row.message].concat(Array.from(row.notes || [])).filter(text => text).join(' '),
+                profileText: Array.from(row.profiles || []).map(profile => profile.profileName + (profile.enabled ? '' : ' (' + ec.l10n.localize('disabled') + ')')).join(', ')}))
+            profileRows = []
+            for (const row of archiveRows) for (const profile of Array.from(row.profiles || []))
+                if (!profileRows.some(other => other.profileId === profile.profileId))
+                    profileRows.push(Object.assign({}, profile, {layerName: row.layerName, registered: !!row.revision,
+                        stateText: profile.enabled ? ec.l10n.localize('Enabled') : ec.l10n.localize('Disabled')}))
+            layerOptions = archiveRows.map(row => ({key: row.layerId, text: row.layerName}))
+            // the packaged local profile's two styles draw one extract: offered together while neither is registered
+            const unregistered = layerId => archiveRows.some(row => row.layerId === layerId && !row.revision)
+            registerDefaults = unregistered('LOCAL_PROTOMAPS_LIGHT') && unregistered('LOCAL_PROTOMAPS_DARK')
+                ? {layerId: 'LOCAL_PROTOMAPS_LIGHT', alsoLayerIds: ['LOCAL_PROTOMAPS_DARK']} : {}
+            const limits = found?.limits || {}
+            limitsText = ec.l10n.localize('An upload is at most') + ' ' + (limits.maxUploadText || '?') + ' (max-upload); '
+                + ec.l10n.localize('a Git LFS object at most') + ' ' + (limits.lfsMaxObjectText || '?') + ' (git-server@lfs-max-object-size); '
+                + ec.l10n.localize('a git object that is not in LFS at most') + ' ' + (limits.gitMaxObjectText || '?') + ', '
+                + ec.l10n.localize('and a map archive is never one') + '. '
+                + ec.l10n.localize('A browser keeps the ranges it read for') + ' ' + (limits.pinnedMaxAge || '86400') + ' '
+                + ec.l10n.localize('seconds (resource-facade@pinned-max-age): after a share is taken away it still shows them until then, and any other range is refused at once.')
+        ]]></script>
+    </actions>
+    <widgets>
+        <label text="Map archives" type="h5"/>
+        <label type="p" style="text-caption m-muted"
+                text="A PMTiles archive or a Cloud Optimized GeoTIFF on this server draws a map with no outside request: place a regional extract (such as a Protomaps download) or a COG in a drive, in a git repository as a Git LFS object, or on the server's disk, then register its location here. Registering checks its header and records the revision maps read; register again after replacing the file. A COG layer with no location and its provider's URL is read from the provider, its header recorded."/>
+        <label type="p" style="text-negative" condition="!configured" text="Maps configuration is not available to you."/>
+        <section name="ArchiveSections" condition="configured">
+            <widgets>
+                <container-box id="MapsArchiveRegisterBox">
+                    <box-header title="Register an archive"/>
+                    <box-body>
+                        <form-single name="RegisterArchive" transition="registerArchive" map="registerDefaults">
+                            <field name="layerId">
+                                <default-field title="Layer"><drop-down><list-options list="layerOptions" key="${key}" text="${text}"/></drop-down></default-field>
+                            </field>
+                            <field name="alsoLayerIds">
+                                <default-field title="Also drawn by" tooltip="Other PMTiles layers of the same format that draw the same archive, such as the dark style of a Protomaps extract: all are registered together">
+                                    <drop-down allow-multiple="true" allow-empty="true"><list-options list="layerOptions" key="${key}" text="${text}"/></drop-down>
+                                </default-field>
+                            </field>
+                            <field name="resourceLocation">
+                                <default-field title="Location" tooltip="A file's resource location: dbresource://drive/..., git://repository/path.pmtiles or .tif (a Git LFS object), file:/path or runtime://path; empty for the layer's own (a COG layer's provider URL when it has no location)">
+                                    <text-line size="60"/></default-field>
+                            </field>
+                            <field name="submitButton"><default-field title="Register"><submit/></default-field></field>
+                        </form-single>
+                        <label type="p" style="text-caption m-muted"
+                                text="Who reads an archive: in a drive, those the drive's members and shares let view the file; in a git repository outside any drive, those who may view the repository. A location outside every drive and repository (a file on the server's disk, a dbresource path no drive holds) has no access of its own: every user who may see the layer reads it."/>
+                    </box-body>
+                </container-box>
+
+                <container-box id="MapsArchivesBox">
+                    <box-header title="Archive layers"/>
+                    <box-body>
+                        <label type="p" style="m-muted" condition="!archiveRows.length" text="No PMTiles or COG layer is registered."/>
+                        <form-list name="ArchiveList" list="archiveRows" skip-form="true" paginate="false">
+                            <field name="layerName"><default-field title="Layer"><display/></default-field></field>
+                            <field name="resourceLocation"><default-field title="Location"><display/></default-field></field>
+                            <field name="sizeText"><default-field title="Size"><display/></default-field></field>
+                            <field name="zoomText"><default-field title="Zoom"><display/></default-field></field>
+                            <field name="revisionText"><default-field title="Revision"><display/></default-field></field>
+                            <field name="stateText">
+                                <default-field title="State">
+                                    <render-mode>
+                                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${html(stateColor)}">${html(stateText)}</q-chip>]]></text>
+                                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                                        <text type="html">${html(stateText)}</text>
+                                        <text type="text,csv">${stateText}</text>
+                                    </render-mode>
+                                </default-field>
+                            </field>
+                            <field name="detailText"><default-field title="Detail"><display/></default-field></field>
+                            <field name="profileText"><default-field title="Profiles"><display/></default-field></field>
+                            <field name="actions">
+                                <default-field title="">
+                                    <link url="registerArchive" text="Register again" icon="sym_o_refresh" link-type="hidden-form-link"
+                                            condition="!!resourceLocation" parameter-map="{layerId:layerId}"
+                                            confirmation="Register the archive of ${layerName} again? Its current revision becomes the one maps read."/>
+                                </default-field>
+                            </field>
+                            <columns type="mobile">
+                                <column><field-ref name="layerName"/><field-ref name="detailText"/></column>
+                                <column><field-ref name="stateText"/><field-ref name="actions"/></column>
+                            </columns>
+                        </form-list>
+                    </box-body>
+                </container-box>
+
+                <container-box id="MapsArchiveProfilesBox">
+                    <box-header title="Profiles drawn from an archive"/>
+                    <box-body>
+                        <label type="p" style="m-muted" condition="!profileRows.length" text="No profile's basemap is an archive layer."/>
+                        <form-list name="ArchiveProfileList" list="profileRows" skip-form="true" paginate="false">
+                            <field name="profileName"><default-field title="Profile"><display/></default-field></field>
+                            <field name="layerName"><default-field title="Basemap"><display/></default-field></field>
+                            <field name="stateText"><default-field title="State"><display/></default-field></field>
+                            <field name="actions">
+                                <default-field title="">
+                                    <link url="storeProfile" text="Enable" icon="sym_o_toggle_on" link-type="hidden-form-link" condition="!enabled &amp;&amp; registered"
+                                            parameter-map="{profileId:profileId, enabled:'Y'}"/>
+                                    <link url="storeProfile" text="Make default" icon="sym_o_star" link-type="hidden-form-link" condition="enabled &amp;&amp; registered"
+                                            confirmation="Make ${profileName} the default map profile? Every user who chose no profile of their own sees it."
+                                            parameter-map="{profileId:profileId, makeDefault:'Y'}"/>
+                                </default-field>
+                            </field>
+                        </form-list>
+                    </box-body>
+                </container-box>
+
+                <container-box id="MapsArchiveLimitsBox">
+                    <box-header title="Limits"/>
+                    <box-body>
+                        <label type="p" text="${limitsText}"/>
+                        <label type="p" style="text-caption m-muted"
+                                text="Each map asks this server for many small ranges of an archive while it is moved. Where the per-client web protection is on, its all rate limit (50 requests a second, a burst of 500) counts them, for everyone behind one address together."/>
+                    </box-body>
+                </container-box>
+            </widgets>
+        </section>
+    </widgets>
+</screen>

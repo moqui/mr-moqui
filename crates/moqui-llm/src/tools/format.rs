@@ -365,6 +365,45 @@ fn other_urls(text: &str) -> Vec<String> {
     .collect()
 }
 
+/// Whether `text` may hold a link [`check_answer`] would change or list: a Markdown link or image, or an external url.
+/// A text with none is stored as it is, without reading the conversation's references.
+#[must_use]
+pub fn may_link(text: &str) -> bool {
+    text.contains("](") || text.contains("http://") || text.contains("https://") || text.contains("mailto:")
+}
+
+/// The text [`check_answer`] made of an answer as it is stored: also each bare or `<…>` external link no tool returned
+/// is set as code, so a client that shows the stored text (a conversation read again, which has no `invented` list)
+/// draws no live link for it (SEC-AI-92).
+#[must_use]
+pub fn stored_text(checked: &CheckedAnswer) -> String {
+    let mut text = checked.text.clone();
+    for url in &checked.invented {
+        let external = url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:");
+        if !external {
+            continue;
+        }
+        text = text.replace(&format!("<{url}>"), &format!("`{url}`"));
+        let mut out = String::with_capacity(text.len() + 2);
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find(url.as_str()) {
+            let quoted = rest[..at].ends_with('`');
+            out.push_str(&rest[..at]);
+            if quoted {
+                out.push_str(url);
+            } else {
+                out.push('`');
+                out.push_str(url);
+                out.push('`');
+            }
+            rest = &rest[at + url.len()..];
+        }
+        out.push_str(rest);
+        text = out;
+    }
+    text
+}
+
 /// What [`check_answer`] made of an answer: its text with the links no tool returned made plain, and those links.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CheckedAnswer {
@@ -441,6 +480,23 @@ pub fn check_answer(answer: &str, seen: &Seen) -> CheckedAnswer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// SEC-AI-92: as stored, a bare or `<…>` external link no tool returned is code too, not only a Markdown link
+    /// made plain; a link a tool returned stays a link.
+    #[test]
+    fn the_stored_text_has_no_live_invented_link() {
+        let seen = seen_in(["docs at https://example.com/guide"]);
+        let checked = check_answer(
+            "[steal](https://evil.example/a) see <https://evil.example/raw> and https://evil.example/bare, \
+             not https://example.com/guide",
+            &seen,
+        );
+        assert_eq!(
+            stored_text(&checked),
+            "steal see `https://evil.example/raw` and `https://evil.example/bare`, not https://example.com/guide"
+        );
+        assert!(may_link("see [x](y)") && !may_link("no links here, and/or paths"));
+    }
 
     #[test]
     fn links_no_tool_returned_are_made_plain_external_ones_too() {

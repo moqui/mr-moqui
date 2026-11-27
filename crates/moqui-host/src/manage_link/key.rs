@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The link key (plans/Vault-Instances.md §4.4): a 32-byte seed from which the node's Ed25519 TLS key (its link
+//! The link key (plans/archive/Vault-Instances.md §4.4): a 32-byte seed from which the node's Ed25519 TLS key (its link
 //! identity, pinned by the other end) and the X25519 key its bootstrap bundle is sealed to are both derived. It must work
 //! while the instance is sealed, so it is not under the root key: `runtime/db/manage_link_key`, mode 0600, or with
 //! `manage@key-store="systemd-creds"` that file holds a credential `systemd-creds` made with the host's TPM2 (the seal's

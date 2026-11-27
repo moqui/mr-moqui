@@ -23,10 +23,7 @@ use serde_json::json;
 
 use moqui_lib::object::{to_plain_string, Value, ValueMap};
 
-use super::{
-    cleanup_runs_docker, create_body, inspect_run_docker, remove_run_docker, start_run_docker,
-    Hardening,
-};
+use super::{cleanup_runs_docker, create_body, inspect_run_docker, remove_run_docker, start_run_docker, Hardening};
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 use moqui_core::entity::{EntityFacade, EntityValue};
 
@@ -143,6 +140,11 @@ fn answer(method: &str, target: &str, body: &serde_json::Value, seen: &Seen) -> 
                 json!({"Config": {"User": user, "Labels": {"moqui.ci.server": "this"}}, "Mounts": mounts}).to_string(),
             )
         }
+        // Docker's answer: no component named "Podman Engine"
+        ("GET", "/v1.40/version") => (
+            200,
+            json!({"Version": "27.5.1", "Components": [{"Name": "Engine"}]}).to_string(),
+        ),
         ("GET", _) => (404, json!({"message": "No such container"}).to_string()),
         ("POST", path) if path.ends_with("/start") => (204, String::new()),
         ("DELETE", path) if path.starts_with("/v1.40/networks/") => {
@@ -269,8 +271,15 @@ impl Api {
         (out, errors)
     }
 
+    /// What the fake API was asked, without the engine's `/version` question, which a create asks first.
     fn seen(&self) -> Vec<(String, String, serde_json::Value)> {
-        self.seen.lock().unwrap().clone()
+        self.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, target, _)| target != "/v1.40/version")
+            .cloned()
+            .collect()
     }
 }
 
@@ -443,6 +452,16 @@ fn the_run_services_speak_the_docker_api() {
     assert_eq!(seen[1].2["HostConfig"]["Privileged"], false);
     assert_eq!(seen[1].2["HostConfig"]["Memory"], 2048i64 * 1024 * 1024);
     assert_eq!(seen[1].2["Labels"]["moqui.ci.job"], "J1");
+    // the engine was asked, once, for its tmpfs options (seen() leaves the question out)
+    assert_eq!(
+        api.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, target, _)| target == "/v1.40/version")
+            .count(),
+        1
+    );
 
     // an image the host does not have is pulled, then created again
     api.seen.lock().unwrap().clear();
@@ -689,7 +708,7 @@ fn a_host_row_that_cannot_be_reached_says_why() {
         "{errors}"
     );
     // a TLS host with a client certificate: its key is a vault item, which a CI run (unattended) reads under the
-    // machine access of the host's environment (plans/Vault-Instances.md §4.1, §3.8); nothing is sent without it
+    // machine access of the host's environment (plans/archive/Vault-Instances.md §4.1, §3.8); nothing is sent without it
     let api = Api::new("https", "docker.example.com", Some(2376), Seen::default());
     let set = |fields: Vec<(String, Value)>| {
         let _entered = api.context.enter();
@@ -786,6 +805,27 @@ fn an_image_user_that_is_root_is_refused_before_it_starts() {
     assert!(out.contains_key("instanceRef"));
 }
 
+/// Podman refuses a tmpfs's `uid=` and `gid=` (`unknown mount option "uid=1000"`, seen on Podman 5.7): on Podman
+/// each tmpfs a numeric user owns takes `U` in their place, and a world-writable one is left as it is.
+#[test]
+fn on_podman_a_tmpfs_is_the_container_users_by_u_not_uid_and_gid() {
+    let mut body = create_body(
+        &[("image", Value::string("busybox"))]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
+        &Hardening::default(),
+        None,
+    );
+    body["HostConfig"]["Tmpfs"]["/open"] = json!("rw,exec,nosuid,nodev,size=8m,mode=1777");
+    super::podman_tmpfs(&mut body);
+    let tmpfs = &body["HostConfig"]["Tmpfs"];
+    assert_eq!(tmpfs["/tmp"], "rw,exec,nosuid,nodev,size=1024m,mode=0700,U");
+    assert_eq!(tmpfs["/workspace"], "rw,exec,nosuid,nodev,size=4096m,mode=0700,U");
+    assert_eq!(tmpfs["/open"], "rw,exec,nosuid,nodev,size=8m,mode=1777");
+    assert_eq!(body["User"], "1000:1000", "U chowns to this user");
+}
+
 /// SEC-GIT-93: an image that declares a VOLUME runs with a sized tmpfs at each such path, so the engine makes no
 /// anonymous volume on the host's disk; a path no tmpfs can cover is refused before anything is made, and a container
 /// the engine gave a volume anyway is refused before it starts and removed with its volumes.
@@ -838,4 +878,66 @@ fn an_image_volume_is_a_sized_tmpfs_and_one_that_cannot_be_is_refused() {
     assert!(seen.iter().any(|(method, target, _)| method == "DELETE"
         && target.contains("/containers/c0")
         && target.contains("v=true")));
+}
+
+/// A developer's local run is a job's container with the working tree bound over the working directory, as its owner,
+/// `HOME` off the read-only root, and on Podman the host's user kept; never root, never privileged.
+#[test]
+fn a_local_run_mounts_the_working_tree_and_is_kept_in_as_a_job() {
+    let run = super::LocalRun {
+        name: "moqui-devaide-x-1".into(),
+        image: "busybox".into(),
+        command: vec!["sh".into(), "-c".into(), "true".into()],
+        labels: vec![("moqui.devaide.user".into(), "EX_ANN".into())],
+        tree: std::path::PathBuf::from("/home/ann/my-site"),
+        user: Some("1000:1000".into()),
+        memory_mb: 4096,
+        pids_limit: 1024,
+        network_mode: "bridge".into(),
+    };
+    let hardening = Hardening::default();
+    let body = super::local_body(&run, &hardening, super::Engine::Docker);
+    let host = &body["HostConfig"];
+    assert_eq!(body["User"], "1000:1000");
+    assert_eq!(body["WorkingDir"], "/workspace");
+    assert_eq!(body["Cmd"], serde_json::json!(["sh", "-c", "true"]));
+    assert!(
+        body["Env"].as_array().unwrap().iter().any(|env| env == "HOME=/tmp"),
+        "{body}"
+    );
+    assert_eq!(body["Labels"]["moqui.devaide.user"], "EX_ANN");
+    assert_eq!(host["Mounts"][0]["Type"], "bind");
+    assert_eq!(host["Mounts"][0]["Source"], "/home/ann/my-site");
+    assert_eq!(host["Mounts"][0]["Target"], "/workspace");
+    assert_eq!(host["Mounts"].as_array().unwrap().len(), 1, "{body}");
+    assert!(
+        host["Tmpfs"].get("/workspace").is_none() && host["Tmpfs"].get("/tmp").is_some(),
+        "{body}"
+    );
+    assert_eq!(host["Privileged"], false);
+    assert_eq!(host["CapDrop"], serde_json::json!(["ALL"]));
+    assert_eq!(host["ReadonlyRootfs"], true);
+    assert_eq!(host["NetworkMode"], "bridge");
+    assert_eq!(host["Memory"], 4096_i64 * 1024 * 1024);
+    assert!(host.get("UsernsMode").is_none());
+    let podman = super::local_body(&run, &hardening, super::Engine::Podman);
+    assert_eq!(podman["HostConfig"]["UsernsMode"], "keep-id");
+    // a tree root owns runs as the conf's user, never root; an image's user is held to the default
+    let as_root = super::LocalRun {
+        user: Some("0:0".into()),
+        ..run.clone()
+    };
+    assert_eq!(
+        super::local_body(&as_root, &hardening, super::Engine::Docker)["User"],
+        "1000:1000"
+    );
+    let image_user = Hardening {
+        user: None,
+        ..Hardening::default()
+    };
+    let unowned = super::LocalRun { user: None, ..run };
+    assert_eq!(
+        super::local_body(&unowned, &image_user, super::Engine::Docker)["User"],
+        "1000:1000"
+    );
 }

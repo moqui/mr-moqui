@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The framework's artifact index (plans/design-dev-aide.md 7, F11) as the dev-aide shows it: each artifact with the root
+<!-- The framework's artifact index (plans/archive/design-dev-aide.md 7, F11) as the dev-aide shows it: each artifact with the root
     and path that open it in the Workspace and whether it is the site's or upstream. The view tier and above. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="search" noun="Artifacts" type="rust" location="dev_aide::artifacts::search_artifacts" allow-remote="false" read-only="true">
@@ -96,6 +96,50 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="brokenCount" type="Integer"/>
             <parameter name="extensions" type="List"/>
             <parameter name="siteComponents" type="List"/>
+        </out-parameters>
+    </service>
+    <!-- Convert to site extension (plans/archive/design-dev-aide.md 7.2, question 16), src/dbform.rs: a DbForm that modifies a
+        screen form becomes the form merge of the site's screen-extend of that screen, one way. -->
+    <service verb="get" noun="DbFormChanges" type="rust" location="dev_aide::dbform::get_db_form_changes" allow-remote="false" read-only="true">
+        <description>The DbForms that modify a screen form (modifyXmlScreenForm): formId, description, screenLocation,
+            formName, userGroups and fieldCount, the rows Customizations offers Convert on.</description>
+        <out-parameters><parameter name="dbForms" type="List"/></out-parameters>
+    </service>
+    <service verb="get" noun="DbFormConversion" type="rust" location="dev_aide::dbform::get_db_form_conversion" allow-remote="false" read-only="true">
+        <description>The conversion of a DbForm to review: the site's screen-extend file it writes (rootId, path, exists),
+            its text now and converted with the diff, the rows that go (each entity and its count), what is not carried
+            (notes: the user groups, the merge order, the print layout) and the digest convert#DbForm takes. Refused for
+            a DbForm with responses, a dated one, one that modifies no screen form, or with no site component.</description>
+        <in-parameters><parameter name="formId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="rootId"/>
+            <parameter name="path"/>
+            <parameter name="component"/>
+            <parameter name="exists" type="Boolean"/>
+            <parameter name="currentText"/>
+            <parameter name="proposedText"/>
+            <parameter name="diff"/>
+            <parameter name="rows" type="List"/>
+            <parameter name="notes" type="List"/>
+            <parameter name="digest"/>
+        </out-parameters>
+    </service>
+    <service verb="convert" noun="DbForm" type="rust" location="dev_aide::dbform::convert_db_form" allow-remote="false">
+        <description>The accepted conversion, the full tier's: the DbForm's row locked, and when the digest is still the
+            review's (every field of its rows, the notes and the file), its rows deleted with the user's entity
+            authorization and the screen-extend written through the save pipeline in one transaction (a refused or
+            conflicting write keeps the rows). Audited (DAA_CONVERT, and the file's save). Out as a save, with the deleted
+            rows' counts.</description>
+        <in-parameters>
+            <parameter name="formId" required="true"/>
+            <parameter name="digest" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="rootId"/>
+            <parameter name="path"/>
+            <parameter name="deleted" type="Map"/>
+            <parameter name="hash"/>
+            <parameter name="problems" type="List"/>
         </out-parameters>
     </service>
     <service verb="search" noun="Palette" type="rust" location="dev_aide::artifacts::search_palette" allow-remote="false" read-only="true">

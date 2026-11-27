@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A file's diff as hunks, and the patch of some of them (plans/design-dev-aide.md 4.5): what `git apply --cached`
+//! A file's diff as hunks, and the patch of some of them (plans/archive/design-dev-aide.md 4.5): what `git apply --cached`
 //! stages, `--cached -R` unstages and `-R` discards, a hunk at a time. Pure, so the hunk arithmetic is tested here.
 
 use serde::Serialize;

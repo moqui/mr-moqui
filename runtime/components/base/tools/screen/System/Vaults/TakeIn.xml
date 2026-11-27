@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Take in deposited items (plans/Vault-Instances.md §3.2, §4.7): opened from a vault's page with ?vaultId=. The server
+<!-- Take in deposited items (plans/archive/Vault-Instances.md §3.2, §4.7): opened from a vault's page with ?vaultId=. The server
     deposits the credentials a provision makes and a rotation's new values wrapped to the vault's deposit key, which it
     cannot open; a lease names an item only after a member takes it in. TakeIn.qvue does that in the browser through the
     vault worker (js/vault/VaultClient.js, its worker and wasm module loaded with integrity hashes, as the lease dialog

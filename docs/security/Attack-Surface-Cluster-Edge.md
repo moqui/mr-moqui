@@ -217,7 +217,7 @@ A manager's HTTPS listener takes ALPN `moqui-manage/1` in a binary with the `man
 Enterprise), when it is not an edge node (an edge node's listener reads the ClientHello for the edge link and takes no
 manager link). Every build with `manage` (all packages) dials it as a managed instance when `manage@url` is set or it
 paired. `crates/moqui-host/src/manage_link/`, [Run-Deploy, The manager link](../Run-Deploy.md#the-manager-link),
-plans/Vault-Instances.md §4.4.
+plans/archive/Vault-Instances.md §4.4.
 
 - **`moqui-manage/1`** on the manager: the manager presents a certificate from its link key (`runtime/db/manage_link_key`,
   mode 0600, or a `systemd-creds` credential) and requires a client certificate; any key passes the handshake, which
@@ -267,7 +267,7 @@ plans/Vault-Instances.md §4.4.
   set (taken only when signed by an approver the instance pinned, at a higher version); an unknown command is refused,
   and while sealed only status runs. The bootstrap bundle is HPKE to the pinned bundle key, its instance id as
   associated data, and goes into `seal.json`, never `.env`.
-- **Deploys** (M3, plans/Vault-Instances.md §4.6): `request#InstanceDeploy`, `prepare#` and `deploy#GitDeployment`
+- **Deploys** (M3, plans/archive/Vault-Instances.md §4.6): `request#InstanceDeploy`, `prepare#` and `deploy#GitDeployment`
   and `backup#DatabaseInstance` need `INSTANCE_ADMIN` (or authorization disabled: crates/moqui-git's deploy step), and
   an environment's approver group when it names one, checked as the caller before authorization is turned off;
   `prepare#` and `deploy#GitDeployment` only with authorization disabled (the deploy step), the deployment in its
