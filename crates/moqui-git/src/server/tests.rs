@@ -2243,7 +2243,12 @@ fn an_updates_events_run_as_its_pusher_or_no_one_never_as_the_caller() {
             .unwrap();
         account.set("disabled", Value::string("Y"));
         account.update(&fixture.entity).unwrap();
-        for (id, pusher) in [("BY_READER", READER), ("BY_DISABLED", "git.disabled")] {
+        // and one whose account is gone (a deleted user): no user, never the caller
+        for (id, pusher) in [
+            ("BY_READER", READER),
+            ("BY_DISABLED", "git.disabled"),
+            ("BY_GONE", "git.no.such.user"),
+        ] {
             let mut update = EntityValue::make(&fixture.entity, crate::events::GIT_UPDATE).unwrap();
             for (name, value) in [
                 ("updateId", id),
@@ -2260,7 +2265,7 @@ fn an_updates_events_run_as_its_pusher_or_no_one_never_as_the_caller() {
     let _entered = fixture.context.enter();
     moqui_core::user::internal_login_user(WRITER).unwrap();
     let provider = crate::provider(fixture.context.factory()).unwrap();
-    for id in ["BY_READER", "BY_DISABLED"] {
+    for id in ["BY_READER", "BY_DISABLED", "BY_GONE"] {
         provider.process_update(id).unwrap();
         assert_eq!(
             moqui_core::user::current_user_id().unwrap().as_deref(),
@@ -2272,6 +2277,7 @@ fn an_updates_events_run_as_its_pusher_or_no_one_never_as_the_caller() {
     let rows = test_rows(&fixture);
     assert!(rows.contains_key(&format!("UBY_READER-{READER}")), "{:?}", rows.keys());
     assert!(rows.contains_key("UBY_DISABLED-none"), "{:?}", rows.keys());
+    assert!(rows.contains_key("UBY_GONE-none"), "{:?}", rows.keys());
     assert!(
         !rows.keys().any(|key| key.ends_with(&format!("-{WRITER}"))),
         "{:?}",

@@ -639,21 +639,32 @@ impl GitProvider {
         // the events run as the user who made the change, in a context of their own entered on this thread: it shares
         // the caller's transaction, and the caller's own context (a screen's Run again, a test) comes back when it is
         // dropped, a panic in a rule included, so the rest of the caller's request is never the pusher's; a pusher who
-        // may not sign in has the events run with no user, never as the caller (SEC-GIT-94)
+        // may not sign in, one whose account is gone, and an update with no user have the events run with no user,
+        // never as the caller (SEC-GIT-94)
         let run = || match self.run_post_events(&update, &refs) {
             Ok(errors) => errors,
             Err(err) => vec![err.message().to_string()],
         };
-        let pusher = text(update.get("userId"))
-            .filter(|user_id| moqui_core::user::current_user_id().ok().flatten().as_deref() != Some(user_id.as_str()))
-            .and_then(|user_id| username_of(entity, &user_id));
+        let pusher = text(update.get("userId"));
+        let caller = moqui_core::user::current_user_id().ok().flatten();
         let factory = moqui_core::context::ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()));
-        let errors = match (pusher, factory) {
-            (Some(username), Some(factory)) => {
+        let errors = match factory {
+            Some(factory) if pusher.is_none() || pusher != caller => {
                 let context = factory.new_context();
                 let _entered = context.enter();
-                if let Err(err) = moqui_core::user::internal_login_user(&username) {
-                    tracing::warn!(update = update_id, "git update events run with no user: {err}");
+                match pusher.as_deref().map(|user_id| (user_id, username_of(entity, user_id))) {
+                    Some((_, Some(username))) => {
+                        if let Err(err) = moqui_core::user::internal_login_user(&username) {
+                            tracing::warn!(update = update_id, "git update events run with no user: {err}");
+                        }
+                    }
+                    Some((user_id, None)) => {
+                        tracing::warn!(
+                            update = update_id,
+                            "git update events run with no user: no account {user_id}"
+                        );
+                    }
+                    None => {}
                 }
                 run()
             }
