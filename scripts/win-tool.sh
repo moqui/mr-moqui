@@ -95,3 +95,15 @@ win_tool_fetch() {
     [ -x "$bsdtar" ] || { echo "Windows tar is required to unpack $label" >&2; exit 1; }
     "$bsdtar" -xf "$WIN_TOOL_WORK/$zip" -C "$WIN_TOOL_WORK"
 }
+
+# Puts a checked file or directory in the cache: copied to <dest>.tmp beside it and renamed into place, so a copy cut
+# short leaves no partial tool where the next run would take it.
+#   win_tool_install "$WIN_TOOL_WORK/nasm-3.02/nasm.exe" "$cache/nasm.exe"
+win_tool_install() {
+    local src=$1 dest=$2 tmp=$2.tmp
+    rm -rf "$tmp"
+    mkdir -p "$(dirname "$dest")"
+    cp -Rp "$src" "$tmp"
+    rm -rf "$dest"
+    mv "$tmp" "$dest"
+}

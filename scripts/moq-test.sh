@@ -104,9 +104,9 @@ chmod +x "$R/moq"
 mkdir -p "$R/scripts/moq"
 cp "$SRC"/scripts/moq/*.sh "$R/scripts/moq/"
 cp "$SRC/scripts/js-state.pl" "$R/scripts/"
-# need_cargo downloads NASM on Windows (scripts/nasm.sh, with scripts/win-tool.sh). The fixture is this tree, so the
-# scripts have to be here.
-cp "$SRC/scripts/nasm.sh" "$SRC/scripts/win-tool.sh" "$R/scripts/"
+# need_cargo downloads NASM on Windows (scripts/nasm.sh), and the desktop task CMake and Ninja (cmake.sh, ninja.sh), all
+# with scripts/win-tool.sh. The fixture is this tree, so the scripts have to be here.
+cp "$SRC/scripts/nasm.sh" "$SRC/scripts/cmake.sh" "$SRC/scripts/ninja.sh" "$SRC/scripts/win-tool.sh" "$R/scripts/"
 # Minimal verified webroot; CLI command tests run offline with the stub binary.
 webroot="$R/runtime/components/base/webroot"
 mkdir -p "$webroot/build" "$webroot/screen/webroot/libs"
@@ -1365,6 +1365,49 @@ if have zip && have unzip && have tar && have gzip; then
 else
     skipped="$skipped archive"
 fi
+
+# The Windows tool scripts (scripts/win-tool.sh), on a PATH of a uname that answers MINGW and dirname only: no cmake,
+# ninja, cygpath, git or curl, so nothing is found or downloaded. A HOME of the fixture's keeps the cache empty.
+W=$FIX/win-tools
+mkdir -p "$W/bin" "$W/home" "$W/cmake/bin" "$W/ninja"
+printf '#!/bin/sh\necho MINGW64_NT-10.0\n' >"$W/bin/uname"
+chmod +x "$W/bin/uname"
+ln -s "$(command -v dirname)" "$W/bin/dirname"
+: >"$W/cmake/bin/cmake.exe"
+: >"$W/ninja/ninja.exe"
+win_tool() {
+    env -i PATH="$W/bin" HOME="$W/home" "$@"
+}
+case $(uname -s) in
+    MINGW* | MSYS* | CYGWIN*) ;;
+    *)
+        for tool in nasm cmake ninja; do
+            check "$tool.sh does nothing off Windows" 0 '' -- \
+                sh -c "out=\$('$BASH' '$R/scripts/$tool.sh' ensure) && [ -z \"\$out\" ]"
+        done
+        ;;
+esac
+check "cmake.sh takes MOQUI_CMAKE as an install tree" 0 "^$W/cmake/bin\$" -- \
+    win_tool MOQUI_CMAKE="$W/cmake" "$BASH" "$R/scripts/cmake.sh" ensure
+check "cmake.sh takes MOQUI_CMAKE as the executable" 0 "^$W/cmake/bin\$" -- \
+    win_tool MOQUI_CMAKE="$W/cmake/bin/cmake.exe" "$BASH" "$R/scripts/cmake.sh" ensure
+check "cmake.sh refuses a MOQUI_CMAKE with no cmake" 1 "MOQUI_CMAKE has no cmake: $W/none" -- \
+    win_tool MOQUI_CMAKE="$W/none" "$BASH" "$R/scripts/cmake.sh" ensure
+check "ninja.sh takes MOQUI_NINJA as a directory" 0 "^$W/ninja\$" -- \
+    win_tool MOQUI_NINJA="$W/ninja" "$BASH" "$R/scripts/ninja.sh" ensure
+check "ninja.sh takes MOQUI_NINJA as the executable" 0 "^$W/ninja\$" -- \
+    win_tool MOQUI_NINJA="$W/ninja/ninja.exe" "$BASH" "$R/scripts/ninja.sh" ensure
+check "ninja.sh refuses a MOQUI_NINJA with no ninja" 1 "MOQUI_NINJA has no ninja: $W/cmake" -- \
+    win_tool MOQUI_NINJA="$W/cmake" "$BASH" "$R/scripts/ninja.sh" ensure
+check "cmake.sh dry run prints the pinned download" 0 \
+    '^\+ curl -fsSL -o cmake-[0-9.]+-windows-x86_64\.zip https://github\.com/Kitware/CMake/releases/download/v[0-9.]+/cmake-[0-9.]+-windows-x86_64\.zip$' -- \
+    win_tool MOQ_DRY_RUN=1 "$BASH" "$R/scripts/cmake.sh" ensure
+check "ninja.sh dry run prints the pinned download with the proxy" 0 \
+    '^\+ curl -fsSL --proxy http://proxy\.test:3128 -o ninja-win\.zip https://github\.com/ninja-build/ninja/releases/download/v[0-9.]+/ninja-win\.zip$' -- \
+    win_tool MOQ_DRY_RUN=1 https_proxy=http://proxy.test:3128 "$BASH" "$R/scripts/ninja.sh" ensure
+check "nasm.sh dry run prints the pinned download" 0 '^\+ curl -fsSL -o nasm-[0-9.]+-win64\.zip https://www\.nasm\.us/' -- \
+    win_tool MOQ_DRY_RUN=1 "$BASH" "$R/scripts/nasm.sh" ensure
+lacks "a dry run prints no directory" '^/' -- win_tool MOQ_DRY_RUN=1 "$BASH" "$R/scripts/cmake.sh" ensure
 
 # The deploy files (SEC-OUT-13): the unit leaves only the runtime and its components writable and keeps the binary and
 # the conf read-only in it; the image gives the moqui user neither the binary, the conf nor the runtime directory.

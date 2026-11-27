@@ -45,7 +45,6 @@ fi
 
 win_tool_fetch Ninja "$NINJA_URL" "$NINJA_SHA256" ninja-win.zip
 [ -f "$WIN_TOOL_WORK/ninja.exe" ] || { echo "ninja.zip has no ninja.exe" >&2; exit 1; }
-mkdir -p "$cache"
-cp -p "$WIN_TOOL_WORK/ninja.exe" "$cache/ninja.exe"
-ninja_version_ok "$cache/ninja.exe" || { echo "downloaded ninja is not $NINJA_VERSION" >&2; rm -f "$cache/ninja.exe"; exit 1; }
+ninja_version_ok "$WIN_TOOL_WORK/ninja.exe" || { echo "downloaded ninja is not $NINJA_VERSION" >&2; exit 1; }
+win_tool_install "$WIN_TOOL_WORK/ninja.exe" "$cache/ninja.exe"
 to_unix "$cache"

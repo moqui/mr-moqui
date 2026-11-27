@@ -93,25 +93,26 @@ fn main() {
 /// nothing is left to do. The files come from the distribution itself, which the patched tauri-runtime-cef passes on
 /// as `DEP_TAURI_RUNTIME_CEF_CEF_DIR` (patches/tauri-runtime-cef/build.rs): its loose files, less the two that only
 /// build the wrapper, and `locales/`. This script watches those sources, which only a new distribution changes, so a
-/// build with nothing changed does not run it again. The copies cef-dll-sys left in `build/` are deleted.
+/// build with nothing changed does not run it again. The copies cef-dll-sys left in `build/` are deleted. Without the
+/// variable, under the newer layout, the build warns that the runtime was not placed.
 fn place_cef_runtime() {
     // On macOS the bundler places the framework; cef-dll-sys copies nothing there.
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os != "windows" && target_os != "linux" {
         return;
     }
-    let Some(cef_dir) = std::env::var_os("DEP_TAURI_RUNTIME_CEF_CEF_DIR").map(PathBuf::from) else {
-        return;
-    };
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR for a build script"));
-    let Some(build_dir) = out_dir
-        .ancestors()
-        .nth(3)
-        .filter(|dir| dir.file_name().is_some_and(|name| name == "build"))
-    else {
+    let Some(build_dir) = layout_build_dir(&out_dir) else {
         return;
     };
     let Some(profile_dir) = build_dir.parent() else {
+        return;
+    };
+    let Some(cef_dir) = std::env::var_os("DEP_TAURI_RUNTIME_CEF_CEF_DIR").map(PathBuf::from) else {
+        println!(
+            "cargo::warning=the CEF runtime was not placed beside the executable: tauri-runtime-cef passed no \
+             DEP_TAURI_RUNTIME_CEF_CEF_DIR (is patches/tauri-runtime-cef in [patch.crates-io]?)"
+        );
         return;
     };
 
@@ -140,6 +141,22 @@ fn place_cef_runtime() {
     }
 }
 
+/// `target/<profile>/build/` when `OUT_DIR` is `build/<package>/<hash>/out` under it, Cargo 1.100's layout, where
+/// cef-dll-sys's copies land. None under the older `build/<package>-<hash>/out`, also with a profile named `build`.
+fn layout_build_dir(out_dir: &Path) -> Option<&Path> {
+    let package = std::env::var("CARGO_PKG_NAME").ok()?;
+    let mut ancestors = out_dir.ancestors();
+    let is_named = |dir: Option<&Path>, name: &str| dir.and_then(Path::file_name).is_some_and(|dir| dir == name);
+    if !is_named(ancestors.next(), "out") {
+        return None;
+    }
+    ancestors.next()?;
+    if !is_named(ancestors.next(), &package) {
+        return None;
+    }
+    ancestors.next().filter(|dir| is_named(Some(dir), "build"))
+}
+
 /// The loose files of a CEF distribution, among those cef-dll-sys copies, that only build its C++ wrapper (and record
 /// the archive): not copied beside the executable.
 const BUILD_ONLY_FILES: [&str; 2] = ["CMakeLists.txt", "archive.json"];
@@ -159,8 +176,10 @@ fn file_names(dir: &Path) -> Vec<OsString> {
 }
 
 /// Copies a CEF file over the one beside the executable unless that one has the same size and modification time,
-/// which the copy takes from its source. A running app keeps its CEF files open on Windows, so a rebuild that changes
-/// nothing in CEF leaves them alone, and a CEF upgrade that has to replace one says to close the app.
+/// which the copy takes from its source. The copy is written beside it and renamed over it: on Linux a running app
+/// keeps the old file mapped, which truncating it in place would crash. On Windows a running app keeps its CEF files
+/// open, so a rebuild that changes nothing in CEF leaves them alone, and a CEF upgrade that has to replace one says to
+/// close the app.
 fn copy_if_changed(from: &Path, to: &Path) {
     let from_meta = from
         .metadata()
@@ -179,19 +198,24 @@ fn copy_if_changed(from: &Path, to: &Path) {
         std::fs::remove_dir_all(to)
             .unwrap_or_else(|error| panic!("removing {} before copying the CEF runtime: {error}", to.display()));
     }
-    std::fs::copy(from, to).unwrap_or_else(|error| {
-        panic!(
-            "copying {} to {}: {error}. If moqui-desktop is running, close it and rebuild.",
-            from.display(),
-            to.display()
-        )
-    });
+    let mut part_name = to.file_name().expect("a CEF file has a name").to_os_string();
+    part_name.push(".part");
+    let part = to.with_file_name(part_name);
+    std::fs::copy(from, &part)
+        .unwrap_or_else(|error| panic!("copying {} to {}: {error}", from.display(), part.display()));
     if let Some(modified) = modified {
         std::fs::File::options()
             .write(true)
-            .open(to)
+            .open(&part)
             .and_then(|file| file.set_modified(modified))
-            .unwrap_or_else(|error| panic!("setting the modification time of {}: {error}", to.display()));
+            .unwrap_or_else(|error| panic!("setting the modification time of {}: {error}", part.display()));
+    }
+    if let Err(error) = std::fs::rename(&part, to) {
+        let _ = std::fs::remove_file(&part);
+        panic!(
+            "replacing {}: {error}. If moqui-desktop is running, close it and rebuild.",
+            to.display()
+        );
     }
 }
 

@@ -536,8 +536,9 @@ Prerequisites, beyond those of the server build:
 
 - **Tauri CLI**, the version `./moq desktop` checks for (`TAURI_CLI_VERSION` in `moq`), from cargo, so no Node:
   `cargo install tauri-cli --version 3.0.0-alpha.6 --locked`.
-- **CMake, Ninja and a C++ compiler**, which build CEF's C++ wrapper (cef-dll-sys uses the Ninja generator). On
-  Windows, `./moq desktop` downloads CMake 4.4.4 and Ninja 1.13.2 into `%USERPROFILE%\.moqui` when they are not on
+- **CMake, Ninja and a C++ compiler on Windows and macOS**, which build CEF's C++ wrapper there (cef-dll-sys uses the
+  Ninja generator; on Linux it only links `libcef.so`, so the Linux build needs neither tool). On Windows,
+  `./moq desktop` downloads CMake 4.4.4 and Ninja 1.13.2 into `%USERPROFILE%\.moqui` when they are not on
   `PATH` (`MOQUI_CMAKE` or `MOQUI_NINJA` is a directory that contains the executable, or the executable itself, and
   nothing is downloaded). The C++ compiler stays the Visual Studio Build Tools workload ([Windows](#windows)).
 - **Linux:** the GTK 4 development packages and pkg-config (gtk4-sys); `patchelf` for the AppImage; and `cc`, which

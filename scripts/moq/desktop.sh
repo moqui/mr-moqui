@@ -38,14 +38,15 @@ ensure_ninja() {
     export PATH="$dir:$PATH"
 }
 
-# Linux and macOS: the cmake and ninja on PATH, which this script never downloads.
+# macOS: the cmake and ninja on PATH, which this script never downloads. cef-dll-sys builds CEF's C++ wrapper with them
+# on Windows and macOS only; on Linux it links libcef.so and needs neither.
 need_cef_build_tools() {
     local tool missing=
     for tool in cmake ninja; do
         command -v "$tool" >/dev/null 2>&1 || missing+="${missing:+ or }$tool"
     done
     [ -z "$missing" ] || die "the desktop build needs CMake and Ninja to build CEF's C++ wrapper, and the PATH has no $missing." \
-        "Install them (Debian or Ubuntu: apt install cmake ninja-build; Fedora: dnf install cmake ninja-build; macOS: brew install cmake ninja)."
+        "Install them: brew install cmake ninja."
 }
 
 task_desktop() {
@@ -66,11 +67,12 @@ task_desktop() {
         shift
     done
     need_tauri_cli
-    # CMake and Ninja build CEF's C++ wrapper. On Windows they are downloaded when missing (scripts/cmake.sh,
-    # scripts/ninja.sh). Elsewhere they have to be on PATH; the C++ compiler is never fetched.
+    # CMake and Ninja build CEF's C++ wrapper on Windows and macOS. On Windows they are downloaded when missing
+    # (scripts/cmake.sh, scripts/ninja.sh); on macOS they have to be on PATH; Linux needs neither. The C++ compiler is
+    # never fetched.
     ensure_cmake
     ensure_ninja
-    moq_on_windows || need_cef_build_tools
+    [ "$(uname -s)" != Darwin ] || need_cef_build_tools
     ensure_pg_archive
     write_desktop_app_crate
     local app=$ROOT/crates/moqui-desktop

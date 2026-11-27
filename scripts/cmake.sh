@@ -46,8 +46,6 @@ fi
 win_tool_fetch CMake "$CMAKE_URL" "$CMAKE_SHA256" "cmake-${CMAKE_VERSION}-windows-x86_64.zip"
 src=$WIN_TOOL_WORK/cmake-${CMAKE_VERSION}-windows-x86_64
 [ -f "$src/bin/cmake.exe" ] || { echo "cmake.zip has no cmake-${CMAKE_VERSION}-windows-x86_64/bin/cmake.exe" >&2; exit 1; }
-rm -rf "$cache"
-mkdir -p "$cache"
-cp -R "$src"/. "$cache"/
-cmake_version_ok "$cache/bin/cmake.exe" || { echo "downloaded cmake is not $CMAKE_VERSION" >&2; rm -rf "$cache"; exit 1; }
+cmake_version_ok "$src/bin/cmake.exe" || { echo "downloaded cmake is not $CMAKE_VERSION" >&2; exit 1; }
+win_tool_install "$src" "$cache"
 to_unix "$cache/bin"

@@ -43,7 +43,6 @@ fi
 win_tool_fetch NASM "$NASM_URL" "$NASM_SHA256" "nasm-${NASM_VERSION}-win64.zip"
 src=$WIN_TOOL_WORK/nasm-$NASM_VERSION/nasm.exe
 [ -f "$src" ] || { echo "nasm.zip has no nasm-$NASM_VERSION/nasm.exe" >&2; exit 1; }
-mkdir -p "$cache"
-cp -p "$src" "$cache/nasm.exe"
-nasm_version_ok "$cache/nasm.exe" || { echo "downloaded nasm is not $NASM_VERSION" >&2; rm -f "$cache/nasm.exe"; exit 1; }
+nasm_version_ok "$src" || { echo "downloaded nasm is not $NASM_VERSION" >&2; exit 1; }
+win_tool_install "$src" "$cache/nasm.exe"
 to_unix "$cache"
