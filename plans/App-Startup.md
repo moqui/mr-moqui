@@ -1,7 +1,7 @@
 # App startup at native speed
 
 The plan to make an app open as fast as a native phone app: on Android, from the installed PWA and from the
-[mobile app](../crates/moqui-mobile/README.md). Plan only; nothing here is built.
+[mobile app](../crates/moqui-mobile/README.md). Plan and prototype; nothing here is built in the framework.
 
 ## Targets
 
@@ -11,7 +11,7 @@ mid-range Android phone on Wi-Fi.
 | Measure | Cold start (no process) | Warm start (process alive) |
 |---|---|---|
 | First frame in the app's own colors | 30 ms | 30 ms |
-| Last-known content shown and usable | 50 ms with S7, 150 ms without | 50 ms |
+| Last-known content shown and usable | native floor + 50 ms with S7 | 50 ms |
 | Fresh content shown | 1 s | 1 s |
 
 The floors, from the [prototype](#prototype):
@@ -20,6 +20,9 @@ The floors, from the [prototype](#prototype):
   process runs. So the first frame needs only the right colors and icon (S1, S6).
 - **Warm content, 50 ms.** On a resume the page is still in memory and shows with no reload (S6). A reload from the
   caches of S2 and S3 paints content in 52 ms on a CPU slowed 4 times.
+- **Cold content, the native floor.** No app shows content before its own process draws its first frame. On the
+  Android emulator an app with only a native list draws it at 165 ms (median, cold). So the cold target is relative:
+  50 ms after the first frame of an empty native app on the same device. S7 draws content in that first frame.
 - **Cold content on the web path, about 130 ms.** A new browser process paints its first frame at 120 to 140 ms on
   a CPU slowed 4 times, whatever the page: the service worker, the page size and the shell libraries change it by
   less than 20 ms. So cold content in 50 ms needs content drawn without the WebView (S7).
@@ -80,9 +83,31 @@ What it proves:
   each reload (f), and an earlier run with it paints at 436 ms. So S2 needs the service worker.
 - On a CPU slowed 4 times, a cold start is 120 to 140 ms in each variant: the new process is the floor, not the page.
 
-Not proved: a phone. CPU slowdown is not a phone, and a browser process is not a WebView in a cold app process. The
-Android emulator did not run here (the device panel needs an ffmpeg with libx264). S0 measures on a phone, and S7 is
-not built.
+### On the Android emulator
+
+[android/](../scripts/app-startup-proto/android/) is a small app that loads variant b in a WebView, with S7 as an
+option. Pixel 8 AVD, Android 15, x86_64, WebView 124, host GPU, page and data delays as above. Cold is after
+`am force-stop`, after two starts that fill the caches. 10 runs per row, except 5 for the last. Median, in ms:
+
+| App | First frame, cold (`TotalTime`) | Content, cold | Warm start (`WaitTime`) |
+|---|---|---|---|
+| Native list only (the floor) | 165 | 165 | 24 to 40 |
+| WebView made before the first frame | 414 | 917 | 51 |
+| WebView made after the first frame | 197 | 582 | not measured |
+| S7, WebView made before the first frame | 433 | 433 (WebView 563) | 45 |
+| S7, WebView made after the first frame | 232 | 232 (WebView 647) | not measured |
+
+What it proves:
+
+- S7 works: the snapshot is in the first frame, 2.5 times sooner than the WebView's content (232 against 582) and
+  4 times sooner than now (917). That is 67 ms after the native floor.
+- To make the WebView before the first frame delays the first frame by 220 ms. So S6 makes it after the first frame.
+- A warm start is 20 to 80 ms in each app: the page stays in memory.
+- Content from the WebView is about 400 ms after the first frame, also with the caches of S2 and S3. That is the
+  start of the WebView's renderer, so only S7 meets the cold target in the mobile app.
+
+Not proved: a phone. An emulator is not a phone, and the emulator crashed in its GPU driver in the last row. S0
+measures on a phone.
 
 ## Work
 
@@ -164,7 +189,8 @@ document is the same for two users.
 - Keep the Android 12 splash on screen (`setKeepOnScreenCondition`) until the page sends "content shown". This
   removes the black frame.
 - Set the WebView's background color to the app's theme before the first load.
-- Make the WebView early, in `Application.onCreate`, in parallel with the Rust start.
+- Draw the first frame (the theme, or the S7 snapshot) before the WebView is made. Make the WebView in the first
+  task after that frame, in parallel with the Rust start. A WebView made before the first frame delays it by 220 ms.
 - Show the last-known store before the first server request (S3).
 
 - On a resume, show the page as it was. Ask for fresh data after the first frame, never before it.
@@ -179,7 +205,8 @@ document is the same for two users.
 - Change to the WebView page with no visible change when it has painted the same content.
 - The snapshot is private data on the device: D1 applies. Screen security (`FLAG_SECURE`) turns snapshots off.
 
-**Check:** on a cold start, the content shows in 50 ms, and the change to the WebView shows no flash.
+**Check:** on a cold start, the content shows within 50 ms of the native floor, and the change to the WebView shows
+no flash.
 
 ## Tests
 

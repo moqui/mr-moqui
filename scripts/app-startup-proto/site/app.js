@@ -8,7 +8,9 @@ async function main() {
   const v = window.VARIANT
     if (window.SHOWN || document.querySelector('#list li[data-last]')) mark('content')
   const d = await (await fetch('data')).json()
+  const first = !window.SHOWN
   render(d); mark('content'); mark('fresh')
+  if (first && window.probe) requestAnimationFrame(() => setTimeout(() => probe.shown(d.items.slice(0, 15).join('\n'))))
   if (v === 'f') localStorage.setItem('last:u1', JSON.stringify(d))
   if (v === 'b') { localStorage.setItem('last:u1', JSON.stringify(d)); navigator.serviceWorker.register('sw.js') }
   if (v === 'd' || v === 'e') {
