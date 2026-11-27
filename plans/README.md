@@ -14,7 +14,7 @@ Full screen inventories, user workflows, verification maps and running records f
 addons, including shared helpers and generated email/report outputs. The November 26 change-led queue supersedes the
 November 25 execution queue; dated activity outcomes and evidence remain in the owning ledgers. See the
 [change-led queue](ui-review-shared-gallery.md#november-26-change-led-review) and
-[inspection follow-up and open findings](ui-review-shared-gallery.md#november-26-inspection-follow-up). The
+[latest findings and execution counts](ui-review-shared-gallery.md#november-26-tools-system-dashboards-and-calls-follow-up). The
 [shared review protocol](ui-review-shared-gallery.md#common-review-protocol) applies to the whole set.
 
 - [Shared shell and Gallery](ui-review-shared-gallery.md): authentication, navigation, preferences, shared controls,
