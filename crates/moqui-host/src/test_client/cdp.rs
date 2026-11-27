@@ -798,9 +798,11 @@ impl Browser {
         self.navigate_within(url, ANSWER_WAIT).map(|_| ())
     }
 
-    /// The status of the document `loader` (a navigation's loader id) answered with, once its response came.
+    /// The status, URL and response headers of the document `loader` (a navigation's loader id) answered with, once its
+    /// response came. The headers are an object of their names in lower case, each value as the browser gives it (the
+    /// values of a repeated header joined by a line break).
     #[must_use]
-    pub fn document_status(&self, loader: &str) -> Option<(u64, String)> {
+    pub fn document_status(&self, loader: &str) -> Option<(u64, String, Value)> {
         self.events.iter().rev().find_map(|event| {
             let params = &event["params"];
             (event["method"] == "Network.responseReceived"
@@ -810,6 +812,7 @@ impl Browser {
                     (
                         params["response"]["status"].as_u64().unwrap_or(0),
                         params["response"]["url"].as_str().unwrap_or("").to_string(),
+                        lower_case_headers(&params["response"]["headers"]),
                     )
                 })
         })
@@ -1278,6 +1281,20 @@ pub fn truthy(value: &Value) -> bool {
     }
 }
 
+/// A response's headers as `Network.responseReceived` gives them, with their names in lower case: an object of text values
+/// (the browser joins a repeated header's values with a line break), any other value an empty object.
+fn lower_case_headers(headers: &Value) -> Value {
+    let Some(map) = headers.as_object() else {
+        return json!({});
+    };
+    let mut out = serde_json::Map::new();
+    for (name, value) in map {
+        let text = value.as_str().map_or_else(|| value.to_string(), str::to_string);
+        out.insert(name.to_ascii_lowercase(), Value::String(text));
+    }
+    Value::Object(out)
+}
+
 /// Kills the browser and removes its profile when the launch stops before the `Browser` owns it.
 struct ChildGuard(Option<Child>, PathBuf);
 
@@ -1292,7 +1309,19 @@ impl Drop for ChildGuard {
 
 #[cfg(test)]
 mod tests {
-    use super::{key_codes, KeyCodes};
+    use super::{key_codes, lower_case_headers, KeyCodes};
+    use serde_json::json;
+
+    #[test]
+    fn response_headers_are_named_in_lower_case() {
+        let headers =
+            lower_case_headers(&json!({"Referrer-Policy": "strict-origin", "cache-control": "no-store", "X-Count": 2}));
+        assert_eq!(
+            headers,
+            json!({"referrer-policy": "strict-origin", "cache-control": "no-store", "x-count": "2"})
+        );
+        assert_eq!(lower_case_headers(&json!(null)), json!({}));
+    }
 
     #[test]
     fn keys_have_their_codes() {

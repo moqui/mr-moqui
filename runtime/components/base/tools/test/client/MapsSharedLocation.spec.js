@@ -1,7 +1,8 @@
 // The guest page of a location share's link (plans/Location-Sharing.md §3.7; tools Maps/SharedLocation.xml and .qvue,
 // webroot WebrootPublic.qvt.js), its one render in the regression suite: the link made from Maps › Browse is this
-// server's link with the secret in its fragment; the shell page, rendered once (the browser's navigation), enforces its
-// Content-Security-Policy (an outside image refused) with nothing it loads refused; the page opened with the fragment
+// server's link with the secret in its fragment; the shell page, rendered once (the browser's navigation, whose response
+// headers goto answers), is sent with Referrer-Policy strict-origin, no-store and its Content-Security-Policy, which it
+// enforces (an outside image refused) with nothing it loads refused; the page opened with the fragment
 // shows the share's label and the address bar no longer holds the secret; and the read refuses a secret in its request
 // line.
 const state = {}
@@ -35,8 +36,7 @@ feature("the guest page: its link, its policy enforced with nothing it needs ref
     expect() {
         const guest = session()
         const inUrl = guest.post(state.path + "/read", {params: {linkSecret: state.secret}, form: {}, csrf: false}).json()
-        // the one render of the shell page: the browser's navigation (the testkit gives no response headers there, so the
-        // policy is checked as the page enforces it; Referrer-Policy and no-store are set beside it in PublicShell.xml)
+        // the one render of the shell page: the browser's navigation, with its response headers
         const page = browser.newPage()
         const opened = page.goto(state.path + "#" + state.secret)
         const shown = page.waitFor(`(() => { const label = document.getElementById("SharedLocationLabel")
@@ -59,6 +59,9 @@ feature("the guest page: its link, its policy enforced with nothing it needs ref
         // refused before the transition runs: a transition with actions takes no URL parameters (the read refuses one too)
         inUrl.errorCode == 400 && inUrl.share == null
         opened.status == 200
+        opened.headers["referrer-policy"] == "strict-origin"
+        /no-store/.test(opened.headers["cache-control"] || "")
+        /default-src 'self'/.test(opened.headers["content-security-policy"] || "")
         shown.label == "Spec guest van"
         shown.hash == "" && !shown.href.includes(state.secret)
         loadProblems.length == 0

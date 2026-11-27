@@ -621,7 +621,7 @@
             });
         }
         _host(name, args) { return host(name, Object.assign({ page: this.id }, args)); }
-        // Navigate, wait for the load event, then settle: { status, url } of the document.
+        // Navigate, wait for the load event, then settle: { status, url, headers } of the document (headers by name in lower case).
         goto(path, opts) { return this._host("page.goto", { path: String(path), timeout: timeoutOf(options(opts)) }); }
         // Offline only: the document at https://moqui.test/, so /js, /css and /libs resolve on that origin.
         setContent(html) { return this._host("page.setContent", { html: html == null ? "" : String(html) }); }
