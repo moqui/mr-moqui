@@ -1,0 +1,16 @@
+${JSON.stringify((() => {
+    const L = (value) => ec.l10n.localize(value)
+    const nodes = [{t: 'text', id: 'OfflineTitle', style: 'h5', text: L('Offline maps')},
+        {t: 'text', id: 'OfflineAbout', text: L('Your offline maps, built from what you may see, for the Android app and the desktop client. A new one is made in the browser (Maps › Offline maps); here, Update builds one again, Cancel stops a build and Delete removes one. A package on a device stays readable there until it is deleted there.')}]
+    if (!available) return nodes.concat([{t: 'text', id: 'OfflineUnavailable', text: L('Offline maps are not available to you.')}])
+    if (!packageRows.length) return nodes.concat([{t: 'text', id: 'OfflineNone', text: L('No offline map yet.')}])
+    const post = (id, text, transition, row, extra) => Object.assign({t: 'link', id: id + row.packageId, text: L(text), kind: 'hidden-form-link', method: 'post', writes: true,
+        url: sri.buildUrl(transition).addParameter('packageId', row.packageId).getUrlWithParams()}, extra || {})
+    const rows = packageRows.map((row) => ({id: String(row.packageId), cells: [row.name, row.stateText, row.zoomsText, row.sizeText, row.builtText,
+        [row.canUpdate ? post('OfflineUpdate', 'Update', 'updatePackage', row) : null,
+            row.canCancel ? post('OfflineCancel', 'Cancel', 'cancelPackage', row) : null,
+            row.canDelete ? post('OfflineDelete', 'Delete', 'deletePackage', row, {btnType: 'danger',
+                confirm: L('Delete the offline map') + ' ' + row.name + '? ' + L('A copy on a device stays there until it is deleted there.')}) : null].filter(Boolean)]}))
+    return nodes.concat([{t: 'formList', id: 'OfflinePackages', name: 'OfflinePackages', columns: [{title: L('Offline map')}, {title: L('State')},
+        {title: L('Zooms')}, {title: L('Size')}, {title: L('Built')}, {title: ''}], rows: rows, paging: {index: 0, size: rows.length, count: rows.length}}])
+})())}

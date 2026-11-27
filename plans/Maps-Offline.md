@@ -1,6 +1,6 @@
 # Maps offline: region packages for the Android app and the desktop client
 
-Status 2026-11-26: plan; nothing built. It carries the "offline mobile packages" item of
+Status 2026-11-27: OF1 built (§3); OF2 next. It carries the "offline mobile packages" item of
 [Maps §9, Later research](archive/Maps.md#9-delivery-and-acceptance) forward as work for now, on the user's decision of
 November 26, 2026: a person downloads a region of the map to the Android app or the desktop client and browses it with
 no network, its basemap, its own places and overlays, and the region's postal codes and Overture places. The web PWA is
@@ -105,6 +105,8 @@ beyond Update and Delete).
 - The OpenLayers main entry (and `ol-pmtiles`, `pmtiles`) join the shell's bundled libraries (`shell/libs.txt`), and a
   bundled screen `MapsOffline.qvue` joins `bundled-screens.txt` (`precompiled_qvue`); the raster part is not bundled (a
   COG layer is not packaged in this build).
+- A package's source attribution comes from its archive's metadata and is often HTML: the offline screen shows it
+  as text, never through OpenLayers' HTML attributions (review of OF1).
 - `m-map` gets a **package mode**: its configuration is the manifest's, its allowed origin the package path, and its
   fonts and sprites the package's; everything else (styles, layers, Locate me, places) is the same component.
 - Search offline: the package's places, postal codes and Overture places, in the page over the package's JSON (bounded
@@ -119,7 +121,7 @@ beyond Update and Delete).
 
 | Phase | Deliverable |
 | --- | --- |
-| OF1 — server | `MapPackage`; the streaming writer; the extract and its estimate; `maps@package-max-bytes` and `package-keep-days`; `MapPackageBuild`; `Maps/Offline.xml` and its terminal twin; the `package` transition. Regression `framework/test/MapsPackages.spec.js` (a small fixture archive cut and served by range; a layer the owner cannot see left out; over the cap refused at the estimate; cancel; a replaced source ending the run); Rust tests of the bbox tile set (antimeridian too), the writer's equal bytes and the extract's bounds |
+| OF1 — server | `MapPackage`; the streaming writer; the extract and its estimate; `maps@package-max-bytes` and `package-keep-days`; `MapPackageBuild`; `Maps/Offline.xml` and its terminal twin; the `package` transition. Regression `framework/test/MapsPackages.spec.js` (a small fixture archive cut and served by range; a layer the owner cannot see left out; over the cap refused at the estimate; cancel; a replaced source ending the run); Rust tests of the bbox tile set (antimeridian too), the writer's equal bytes and the extract's bounds. Built November 26 and 27, 2026, after six review rounds: a build per package and one pending or building per user, an installation queue (`maps@package-concurrent-builds`, 1) under one scheduler that runs after commit, ends lost runs (a queued run judged by its job run's own stamp after 6 hours, a started one by `progressDate` after an hour) and passes by an owner in a tarpit lock; a random `buildKey` naming each run's files and guarding every write; the build signed in as the package's owner whoever started it; `maps@package-user-max-bytes` (8 GiB) and the whole-package budget enforced while cutting; one zoom at a time with a bounded key map; another user's places never packaged |
 | OF2 — device store | `moqui-client` `packages.rs`, the scheme path in both apps, the commands, `PackageDownloadWorker`. Tests in `moqui-client` (a range answered from the file, resume after a cut, a checksum mismatch keeping the previous revision, a member outside the manifest refused, the shared-mode wipe) and the Kotlin unit test of the worker's resume |
 | OF3 — offline Maps | The bundled libraries and screen, `m-map`'s package mode, offline search, places through the outbox, the shell's entry. A page test of the package mode; `./moq verify-js` |
 | OF4 — finish | Acceptance `MapsOfflinePackage` on the emulator (`./moq android emulator`): a package built, downloaded, the network cut, the region browsed and searched, a place saved and sent when the network returns. Guides: Maps "Offline packages", Mobile-Client, Desktop-Client, Privacy (what a package keeps on the device) |

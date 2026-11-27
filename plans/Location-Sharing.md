@@ -1,6 +1,6 @@
 # Location sharing: explicitly shared live location
 
-Status 2026-11-26: plan; nothing built. It carries the "explicitly shared person-location feeds" item of
+Status 2026-11-26: LL0 and LL1 built (§4); LL2 next. It carries the "explicitly shared person-location feeds" item of
 [Maps §9, Later research](archive/Maps.md#9-delivery-and-acceptance) forward as work for now, on the user's decisions of
 November 26, 2026: a person shares where they are, for a time they choose, with people they choose (users, a group,
 their XMPP contacts, or a guest link for one record such as a delivery or a service visit); the Android app keeps
@@ -19,7 +19,8 @@ From [Maps §8](archive/Maps.md#8-access-publication-and-reliability), mr-home
   starts one: not an administrator, an organizer of a household, a manager, a record or a schedule. No position is
   inferred from an address, a photo, a check-in or a login.
 - **Visible to everyone it concerns.** The owner sees every active share, its audience and its end, wherever they are
-  in the app (the tray, Maps, the Android notification), and can stop any of them at once. Each person in an audience
+  in the app (a status chip in the app bar on every screen, Maps, the Android notification; the user's decision of
+  November 27, 2026, since the shell's tray takes no app item: a generic shell indicator hook), and can stop any of them at once. Each person in an audience
   is told who shares with them and until when.
 - **Ended by time.** Every share has an end, at most `location@max-share-hours` (24) after its start; extending it is
   the owner's act again. Revoking or ending a share stops the feed at once; a device still sending is told to stop.
@@ -55,8 +56,15 @@ In the framework (`entity/MapEntities.xml`, package `moqui.maps`):
   page), `label` (what the audience sees: the owner's name by default), `purposeText`, `fromDate`, `thruDate`
   (required), `revokedDate`, `precisionEnumId` (`LspExact`, `LspApproximate`), `keepTrail` and `trailKeepDays`, and for
   a guest share the record it is for (`recordAdapterKey`, `recordKey`, as `MapAdapter` names records).
+- The device a share is sent from (`userLoginKeyId`) waits for LL3: no host member yet tells a script which login key
+  signed the request (`ec.user.loginKeyKind` tells only its kind), so LL1 binds a share to its owner, not a device.
 - **`LocationShareAudience`**: `shareId`, `audienceSeqId`, `audienceTypeEnumId` (`LsaUser`, `LsaUserGroup`, `LsaXmpp`,
   `LsaLink`), `userId`, `userGroupId`, `jid`, and for a link `tokenDigest`, `failedTries`, `lastViewedDate`.
+- **`LocationShareAudienceMember`** (built in LL1 after review): a group entry's snapshot, the members the owner's act
+  reached (less those the chat directory keeps the owner from) and the membership row that made each a member; a user
+  counts only while that same row is current, so a membership written later by anyone, with any dates or stamp, reaches
+  nobody until the owner adds the group again (a snapshot member's own row ended and reopened brings that same person
+  back: accepted).
 - **`LocationLatest`**: one row a share (`shareId`), `latitude`, `longitude`, `accuracy` (metres, as the device gives
   it), `heading`, `speed`, `observedDate`, `receivedDate`. Not cached.
 - **`LocationTrailPoint`**: `shareId`, `observedDate`, the same values, indexed by share and date. A share's trail is
@@ -88,6 +96,9 @@ In the framework (`entity/MapEntities.xml`, package `moqui.maps`):
 - Start, extend, stop and revoke are written to the audit log (who, when, the audience; never a position).
 
 ### 3.3 In Maps
+
+A client sends a share's audience only for an explicit "add the group again": any `update#Share` naming an existing
+group takes a new snapshot of it (LL1 review).
 
 - The effective configuration carries `locationShares` (the viewer's own active shares and those shared with them).
   `m-map` draws them in a live layer: a marker with the label and the position's age, an accuracy circle, a stale style
@@ -147,8 +158,8 @@ an ended share an empty `geoloc` item (the XEP's "stopped"). Approximate shares 
 
 | Phase | Deliverable |
 | --- | --- |
-| LL0 — the geoloc gap | The XMPP PEP `geoloc` node refused, nothing stored or pushed (built first, with the Maps leftovers) |
-| LL1 — model and services | §3.1 and §3.2, the `location` conf element. Regression `framework/test/LocationShares.spec.js`: seen by its audience only; a group member removed loses it; an expired share shows nothing and its latest row is cleaned; a trail kept only when chosen, and purged; a non-owner's report refused; the rate; approximate rounding; no ADMIN read; the audit rows hold no position |
+| LL0 — the geoloc gap | The XMPP PEP `geoloc` node refused, nothing stored or pushed (built first, with the Maps leftovers). Built November 26, 2026: refused in the XMPP session and in `XmppServices` (`get#PepNodeRefused`), a trimmed, case-insensitive name, `forbidden` on every path |
+| LL1 — model and services | §3.1 and §3.2, the `location` conf element. Regression `framework/test/LocationShares.spec.js`: seen by its audience only; a group member removed loses it; an expired share shows nothing and its latest row is cleaned; a trail kept only when chosen, and purged; a non-owner's report refused; the rate; approximate rounding; no ADMIN read; the audit rows hold no position. Built November 26, 2026, after five review rounds: six entities (`LocationShareAudienceMember`, the group snapshot; `LocationShareOwner`, the owner's lock row; all in the audit class, so no generic tool, REST, agent or import reaches them; the agent `data` tool now refuses restricted entities), one fixed grid with hysteresis held per person, minute-rounded times and a 60 s interval for approximate shares, caps on active shares and audience, an ordered, time-bounded clean; operator routes that can still see a share are stated in Maps and Privacy (login-as, the SQL runner, `NotificationCapture`, the database) |
 | LL2 — Maps | §3.3: the live layer, Browse's panels and dialog, the tray, the terminal list. A page test of the live layer (pushes moving a marker, stale, ended) |
 | LL3 — Android | §3.4. Kotlin unit tests of the service's stop rules; the host command's tests in `moqui-client` (newest point only, a 410 stopping) |
 | LL4 — chat | §3.5 with the encrypted-room decision recorded here |

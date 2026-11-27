@@ -790,8 +790,8 @@ interface MoquiResourceFacade {
     readSheetPreview(location: string, sheetName?: string | null, maxRows?: number | null, maxCols?: number | null): { sheetNames: string[]; sheetName: string; rows: unknown[][]; truncated: boolean } | null;
     /** The text of a PDF, spreadsheet or text file (maxChars, 100000), kept under runtime://tmp/file-text by cacheKey; "" when it has none; null with cacheOnly when not extracted yet. */
     extractText(location: string, cacheKey: string, maxChars?: number | null, cacheOnly?: boolean | null): string | null;
-    /** A zip of the files at the entries' locations, each under its path; an entry that cannot be read is in failures. */
-    writeZip(target: string, entries: { path: string; location: string }[]): { count: number; size: number; failures: { path: string; error: string }[] };
+    /** A zip of the files at the entries' locations, each under its path, deflated or with stored true as it is; an entry that cannot be read is in failures. */
+    writeZip(target: string, entries: { path: string; location: string; stored?: boolean | null }[]): { count: number; size: number; failures: { path: string; error: string }[] };
     /** The digest of text's UTF-8 bytes, lower-case hex (sha256 by default). */
     digestText(text: string | null, algorithm?: "sha256" | "sha1" | null): string;
     /** HMAC-SHA256 of message with key (both UTF-8), lower-case hex or unpadded base64url; throws without a key. */

@@ -16,6 +16,7 @@ searches.
 | --- | --- |
 | Browse (`Maps/Browse.xml`, `Browse.qvue`, `Browse.tui.json`) | The map filling the page, with optional browser full screen. One panel at a time beside it, a bottom sheet on a phone: Search (saved views and places, the permitted records of the record layers shown, postal codes and, when one is enabled, the geocoder's addresses), Layers (the basemap, overlays and record layers, and the user's own and shared overlays with Add overlay and, on one's own, Edit ([below](#overlays-and-places)); a layer that is not shown is named with Retry; a record layer cut to `maps@max-features` says so), Saved views (and Save view, which keeps where the map is, its basemap and its layers) and the selected feature's details: a place's, a record's (with its [links](#record-links)) or an overlay's feature, selected by a click or by Enter on the map for the feature at its center, with its label and description as plain text, its overlay and its coordinates (Save place; Remove place on one of one's own places). The scale, attribution, coordinate readout and Locate me are the map's. A qvue screen: under `/apps` it opens at the same path under `/qapps`. In the terminal, the `map` component over `terminalMap`: a postal search's places (`s`: a code and its country, the local Geo data's approximate place), the saved places (own and, read-only, shared), the saved views' and the records' places as a list over the braille land mask, then the overlays, own and shared, the notices and the attribution |
 | Saved views (`Maps/Views.xml`) | The user's saved views and those others shared, each with its place, owner and whether its layers are all available; Share, Stop sharing and Delete for one's own, View map for any. Below them the user's overlays and saved places and, read-only, those shared with them, with Remove for one's own |
+| Offline maps (`Maps/Offline.xml`, `Offline.tui.json`) | The user's offline map packages for the Android app and the desktop client, with Download, Update, Cancel and Delete, and New offline map: a region on the map, its zooms and contents, Estimate and Build ([below](#offline-packages)) |
 | Preferences (`Maps/Preferences.xml`) | The user's map profile, basemap, initial area, units, the layers shown and Restore my last view. Only what an administrator enabled is offered, and a profile's `allowedOverrides` decide what a preference changes. No location is asked for unless Locate me is pressed, and the last view is kept only while its restoring is on |
 | Configuration (`Maps/Configuration.xml`, route key `mapsConfiguration`) | For `MAPS_ADMIN`: readiness, the outside-request policy and limits (read from the conf), map providers (connections of the `mapProvider` kind: a provider's page is `Configuration/ConnectionDetail` over `tools/template/ConnectionParts.xml`), profiles (enable, disable, make the installation default, the view projection) and layers; Archives (`Configuration/Archives.xml`, [below](#archives), PMTiles and COG layers); Projections (`Configuration/Projections.xml`, [below](#projections)); Geo data (`Configuration/GeoData.xml`, [below](#geo-data)); and Overture (`Configuration/Overture.xml`, [below](#overture-places-and-buildings)). Its settings index entry is `maps.configuration` |
 | Local map (`Maps/LocalMap.xml`) | The dialog below |
@@ -39,7 +40,8 @@ Three artifact groups in `tools/data/MapsSecurityData.xml`:
 
 - `MAPS_APP`: the app's root, for `MAPS_USERS` and `ADMIN`. `MAPS_APP_SERVICES` gives the same groups the preference,
   saved-view, overlay and place services, each acting on the signed-in user's own (a shared overlay is read through its
-  file's drive access), and the address and place search (`find#Places`).
+  file's drive access), the offline package services (`estimate#`, `create#`, `update#`, `cancel#`, `delete#Package`,
+  `find#Packages`, `get#PackageAccess`: the user's own packages only), and the address and place search (`find#Places`).
 - `MAPS_DIALOG`: LocalMap and its transitions, the effective configuration, the user's own preferences
   (`get#Preferences`), the postal lookup (`get#PostalLocation`, public reference data only), the map-source check (`MapSourceServices.get#SourceAccess`, [Archives](#archives)) and the adapter registry, for every signed-in user (`ALL_USERS`, always-allow, not inherited). Opening a record's map needs neither the Maps app, System
   nor any app's access.
@@ -68,7 +70,9 @@ The installation-wide switches are attributes of the `maps` conf element (`Moqui
 or the environment (`moqui_conf__maps__external_requests`) and shown read-only under Configuration:
 `maps@external-requests` (false: no outside basemap or layer is offered and the server makes no outside request for
 maps), `maps@max-features` (the most features one record layer or viewport sends, and a user's overlay may have),
-`maps@import-max-bytes` and `maps@overlay-max-bytes` (a user's overlay file, 10 MiB). A page
+`maps@import-max-bytes`, `maps@overlay-max-bytes` (a user's overlay file, 10 MiB), and `maps@package-max-bytes`,
+`maps@package-user-max-bytes`, `maps@package-concurrent-builds` and `maps@package-keep-days`
+([Offline packages](#offline-packages)). A page
 `Content-Security-Policy` stricter than the default needs each provider's host in `connect-src`, `img-src` and
 `font-src`; the readiness checks name what to add. A map with a [COG layer](#cloud-optimized-geotiff) decodes it in module
 workers of this server (the OpenLayers build's decoder entry under `libs/openlayers/`), so such a policy also needs `worker-src` (or `child-src`,
@@ -863,6 +867,171 @@ fallback), and a refresh is compared by address, not by ID.
   record keeps its own point, and Choose location saves through the adapter: the record's point, then an address match,
   then the postal area, then a point chosen by hand.
 
+## Offline packages
+
+A user downloads a region of their map to the Android app or the desktop client and browses it with no network
+([plans/Maps-Offline.md](../../plans/Maps-Offline.md)). The server part is built: the package, its build and its
+download. The device's store and download (OF2) and the offline Maps screen in the apps (OF3) are coming; until then a
+package is downloaded and checked by hand or by a client of the package transition.
+
+**A package** (`moqui.maps.MapPackage`) is one region (west, south, east, north; a west east of its east crosses the
+antimeridian) at a zoom range (0 to 16), built on the server from what its owner may see when it is built. It is its
+owner's alone: it is never shared, and every service and request checks the owner (another user's package is, to them,
+one that is not there). The file is a zip, every member stored as it is (the tiles are compressed already):
+
+| Member | Contents |
+| --- | --- |
+| `manifest.json` | `schemaVersion` 1; the package (id, name, bbox, zooms, revision, built date); the effective configuration frozen with every URL package-relative (paths from the package's root, no host and no path of this server: the packaged basemaps, the outline, the places and overlays, `allowedOrigins` empty, `externalRequests` false, the view the region); each source with its revision, attribution and license; each member's path, size and SHA-256; what was left out (`omitted`) and what could not be read (`failures`) |
+| `basemap/<layerId>.pmtiles` | The extract of each basemap archive: the light and dark styles of one archive share one |
+| `style/<flavor>.json`, `sprites/…`, `fonts/noto-sans/…` | A basemap's style (one under `/libs`) with its `sprite` and `metadata["ol:webfonts"]` made package-relative, its sprites, and the map label fonts' CSS and woff2 files |
+| `outline.json` | The Natural Earth outline, for the zooms below the extract |
+| `places.geojson`, `overlays/<overlayId>.geojson` | The owner's places, and the overlays they read now that meet the region, as the overlay transition gives them; an overlay simplified into tiles as its tiles' extract, `overlays/<overlayId>.pmtiles` |
+| `postal.json` | The postal codes whose representative point is in the region (at most 50,000): code, display code, country, place names with their admin names, point and precision, with the data sets' licenses in the manifest |
+| `overture-places.json`, `overture-addresses.json` | The rows of the active Overture imports whose point is in the region (at most 200,000 each), each import's licenses in the manifest |
+
+Only the archive basemaps the owner's map profile offers them now are cut (the profile's basemap and the other styles of
+its archive, or those the user chose among the profile's basemaps), and only overlays they read now. **Record layers** (an
+app's facilities, assets, a party's addresses) are not packaged: their access is read at each request, and a copy on a
+device would outlive a revoked grant. **A provider's remote tiles** (OpenFreeMap) are never packaged: its terms allow a
+limited offline download, not a mirror; an offline package needs a [registered archive](#archives). A package holds only
+what its owner could read when it was built, and a copy on a device stays readable there until it is deleted there: the
+screen says so.
+
+**Building.** Estimate reads the size before anything is built: for each archive the tiles of the region found through
+its directories, their distinct contents and their bytes (`MapSourceServices.estimate#PackageExtract`, in Rust,
+`moqui-tools` `maps_extract.rs`: no tile is read, and one zoom's tile IDs at most are held), the postal and Overture
+rows counted in the region and sized near enough. A package past `maps@package-max-bytes` is refused there, as is a
+region of more than 4,000,000 tiles, one with no registered basemap archive to cut (`NO_ARCHIVE`), and one that would
+take the user's packages past `maps@package-user-max-bytes` (`TOO_LARGE_FOR_USER`). Build (`create#Package`) records the
+archives' registered revisions and a random build key, and its run of the `MapPackageBuild` ServiceJob starts when the
+installation has room: at most `maps@package-concurrent-builds` packages are built at once (the job workers are shared
+with the scheduled jobs), another waits, pending ("Waiting for its turn"), and starts when one ends (the hourly clean
+starts any whose turn was missed); a user has at most one package pending or building (`PACKAGE_BUSY`). One scheduler
+runs at a time (`schedule#PackageBuilds`, after the commit of the request that asked), and it first ends any build whose
+run is gone or ended, silent for an hour once started, or never started six hours after it was handed to the job (each
+clock the run's own: a download or a cancel does not reset it). A lost run (a
+full worker queue when its request committed, a run-as user the job runner refused, a restart mid-build or while it was
+queued) so holds its turn for up to an hour or two (a queued one up to about seven), until a scheduler pass or the
+hourly clean ends it. The run is signed in as the package's owner, whoever's request or build's end started it, and cuts
+only what the owner may see; an owner whose account is closed (disabled for good, or past its terminate date) or whose
+password must change, or a run that throws, ends the package failed. An owner locked out for a few minutes after failed
+sign-ins (someone else's, it may be; `user-facade/login@disable-minutes`) puts the build back to wait, and it starts
+after the lock ends, at the next scheduler pass (within about an hour). The owner alone is told when it ends (topic
+`MapPackageBuild`, sent to them directly). The run holds no transaction while it cuts, each write its own, and writes
+only while the package still holds its build key; its files are named by the key, so two runs never share one. It cuts
+each archive (`build#PackageExtract`): for each zoom in turn the tiles of the region sorted by tile ID, found through
+the directories as the tile transition finds one (kept by the archive's tag), read by range in batches by offset
+(neighbouring tiles one read) and handed as stored to a streaming writer (`moqui-lib` `pmtiles.rs` `ArchiveWriter`),
+which writes the tile data to a part file and keeps only the directory entries and a bounded map of the contents the
+archive shares between tiles (the sea, read and stored once), the archive's metadata JSON copied whole. Each archive has
+what is left of `maps@package-max-bytes` after the members before it, and a zip past it fails the run. An archive
+registered again since Build, or replaced while it is cut (its tag and size checked when the cut starts and ends, a file
+on disk by its modification time too), fails the run: never a mixed extract; so does a region where no basemap could be
+cut. The other members are read as the owner; one that cannot be read is logged and named in the manifest's `failures`
+in general words (no path of the server), and the rest goes on. The zip is
+`runtime://tmp/map-packages/<packageId>-<revision>-<buildKey>.zip`, with its size and SHA-256 on the row. The run's
+progress is on the row, and Cancel (`cancel#Package`) stops it at its next batch of tiles (a package still waiting ends
+at once); a run that stopped with no word for an hour is ended by the next scheduler or when its owner next updates,
+cancels or deletes the package, and a run so ended that was only slow stops at its next batch, its key gone. Update
+(`update#Package`) builds it again as a new revision from what the owner may see and the archives as registered then;
+the earlier revision stays downloadable until the new one is ready, and its file is removed then. Delete removes the
+row, its download records and the file. The hourly `clean_MapPackages_hourly` job (`clean#MapPackages`) removes the file
+of a package not downloaded for `maps@package-keep-days` since it was built or last downloaded (the package is left
+Expired; Update builds it again) and any file under `runtime://tmp/map-packages` no package names, a busy package's own
+build left alone.
+
+**The settings** are attributes of the `maps` conf element: `maps@package-max-bytes` (2 GiB),
+`maps@package-user-max-bytes` (8 GiB), `maps@package-concurrent-builds` (1) and `maps@package-keep-days` (30).
+
+**The screen** is Maps › Offline maps (`Maps/Offline.xml`, `MAPS_APP`): the user's packages with their state, zooms,
+size and built date, with Download, Update, Cancel and Delete; and New offline map, the region drawn as a box on the map
+(the one its west, south, east and north parameters name, else the user's map's initial view), its zooms, its basemaps
+and what else it holds, with Estimate and Build. Its terminal page (`Offline.tui.json`) lists the packages and their
+states with Update, Cancel and Delete; a package is not made from the terminal. The `package` transition
+(`/apps/maps/Offline/package?packageId=…&revision=…`) sends the zip by `ec.web.sendPinnedResourceResponse` with its
+SHA-256 as the strong `ETag` (`sha256-…`), by range (one `Range`, `If-Range`), so a download resumes; it checks the
+owner on every request (`get#PackageAccess`: another user's package is 404) and answers 409 for a revision that is no
+longer the package's. Each download is recorded (`moqui.maps.MapPackageDownload`: the package, the revision and, for a
+request signed in by a device's key, that `UserLoginKey` and its device name); the account's Devices list showing each
+device's packages is coming (OF4).
+
+## Live location
+
+A person shares where they are, until a time they choose, with people they choose; nothing else starts a share
+([plans/Location-Sharing.md](../../plans/Location-Sharing.md)). The server side is built: the services
+`org.moqui.maps.LocationServices` (`framework/service/org/moqui/maps/LocationServices.xml`, `LocationShares.js`), the
+entities `LocationShare`, `LocationShareAudience`, `LocationShareAudienceMember`, `LocationShareOwner` (the lock of an
+owner's share count), `LocationLatest` and `LocationTrailPoint` (`moqui.maps`,
+`framework/entity/MapLocationEntities.xml`) and the hourly clean. The Maps live layer and panels, the Android app's
+background sharing, chat's live location, XMPP and the guest page for a link are still to come, so a share is started
+and read through the services only.
+
+- **The owner's acts.** `create#Share` (the audience, the end, exact or approximate, a trail or not), `update#Share`
+  (extend or shorten, add to the audience, change the label or purpose), `stop#Share`, `revoke#Audience` (one person,
+  group, XMPP contact or the link), `report#Position` and `delete#Trail` are the owner's alone; another person's share,
+  an administrator's request included, answers `SHARE_NOT_FOUND`. Every signed-in user may call them for their own
+  shares (`LocationShareServices`, framework `data/MapsLocationData.xml`).
+- **Who a share is for.** A user the owner may message (the chat directory's rule, `ChatServices.get#RefusedUsers`: a
+  user it refuses, or one who blocked the owner, answers as one that does not exist), a group the owner is in now (never
+  `ALL_USERS` or a group of external users), a contact of the owner's XMPP roster (`username@xmpp-server@domain`, a
+  person of one of the owner's direct rooms; kept for the XMPP server to deliver to), or one guest link a share, whose
+  token is answered once by the call that makes it and kept only as its digest (as `ResourceShare`'s link). Each person
+  added is told who shares with them and until when (the `LocationShared` notification, in their own time zone). A
+  person has at most `location@max-active-shares` shares on at once, and a share at most `location@max-audience` people
+  (a group's members counted each), contacts and links.
+- **Who reads it.** `find#MyShares` (the owner's shares with their audiences), `find#SharedWithMe` and `get#Share` (the
+  latest position, and a kept trail in pages of up to 1000 points) answer the owner and the share's current audience
+  only: a user whose entry is not revoked, or a member of a group whose entry is not revoked who is in the entry's
+  snapshot and whose membership row of the snapshot is still current, checked again at every read and every push. The
+  snapshot (`LocationShareAudienceMember`) is the group's members when the owner adds the group, each with the
+  membership row that makes them one, less every one the chat directory refuses the owner at that act (its hooks, the
+  external-caller rule, the people who blocked the owner; a block made later applies at the next re-add, as for a direct
+  user), written only by `create#Share` and by `update#Share` when the owner adds the group again. A person taken out of
+  a group sees nothing of it from then on, and one put into it later, by anyone and with whatever dates (an
+  administrator, an app or a household organizer; a backdated, reopened or new membership, a member removed and given a
+  new row) sees nothing and gets no push until the owner adds the group again, which lets in and tells its new members,
+  names them to the owner, and tells anyone it leaves out. The one way back without the owner: a snapshot member's own
+  row, ended and reopened, or deleted and made again with the same `fromDate` (an administrator can do either in System
+  › Access), lets that same person back. No grant of these services reads another person's shares, and the generic
+  entity tools, entity REST, entity-auto services and the agents' `data` tool refuse these six entities, an
+  administrator's included (`moqui-entity` `sensitive.rs`).
+- **What the server's operator can still reach.** These services keep a share from other users, not from whoever runs
+  the server: an administrator who signs in as the person (`ADMIN_LOGIN_AS`) sees what that person sees; a holder of the
+  Tools SQL runner reads the tables; any server script can turn on the `NotificationCapture` tool (meant for specs, not
+  gated) and see pushes in transit; and the database, its backups and its own logs hold what the tables hold. Who shared
+  with whom and until when (never a position) stays in the entity audit log and in the `LocationShared` notification
+  rows of the people told, under their own retention.
+- **Reports.** From the owner only, for an active share: the values checked (latitude and longitude in range, accuracy,
+  heading and speed, a time not before the share began and later than the latest), at most one a
+  `location@min-interval-seconds`, or `location@approximate-interval-seconds` for an approximate share (a sooner one is
+  dropped with 429), 410 for a share that has ended or was stopped, which stops a device, and 409 `CLOCK_AHEAD` for a
+  time more than a minute ahead of the server's clock. An approximate share's position is made here, before it is stored
+  or sent: the centre of a cell of about 1 km on one fixed grid that every share uses (so two shares of one person at
+  one place show the same cell), the last cell kept until a fix is more than a quarter of a cell inside another one, for
+  the person rather than the share (a new share starts from the cell the person's other approximate shares hold, so they
+  show one cell; once none is active the next starts afresh), an accuracy of 1000 m (a device's coarser one rounded up
+  to the next 1000), no heading or speed. Keeping the cell stops jitter at a line flipping it, but a change of cell
+  still shows that the person crossed a line 0.75 cell from the old centre, to within what they move in one
+  `location@approximate-interval-seconds` (not to within the cell). The stored and answered `observedDate` is rounded
+  down to the minute; the push itself goes out when the report comes, so its arrival tells the time. Each report
+  replaces the share's latest position, adds a trail point when the share keeps a trail, and goes out on the topic
+  `locationShare:<shareId>` to the audience's current users only, never saved as a notification or pushed to a phone. On
+  the same topic the owner's other devices are told when a share starts, and the owner and the audience when it changes
+  or ends; a revoked entry's people (and the owner) are told it was revoked. The audience learns of a start by the
+  `LocationShared` notification.
+- **Retention.** A share ends at its end (at most `location@max-share-hours` from its start or last extension) or when
+  stopped: reads stop then, and its latest position is deleted at once by a stop, and up to an hour after an end by time
+  (the hourly job). A trail is kept only when the owner chose it for that share, for its days after the share ends (at
+  most `location@trail-max-days`), and the owner deletes it at any time. The hourly job `clean_LocationShares_hourly`
+  (`clean#LocationShares`) ends the shares past their end, deletes the trails whose purge date has come
+  (`trailPurgeDate`, set when the share ends) and removes the shares ended more than `location@trail-max-days` ago.
+  Start, extension, stop and an audience added or revoked are in the entity audit log (who, when, the audience), never a
+  position. Positions never go to a log, a telemetry attribute, an error message or a cache.
+- **Settings**, on the conf's `location` element (`moqui_conf__location__max_share_hours` and the rest):
+  `location@max-share-hours` (24), `location@trail-max-days` (30), `location@min-interval-seconds` (5),
+  `location@approximate-interval-seconds` (60), `location@max-active-shares` (20), `location@max-audience` (50) and
+  `location@link-max-views-per-minute` (30, the reads a minute of a guest link's page).
+
 ## Tests
 
 The regression spec is `tools/test/MapsScreens.spec.js` (Browse in tui, its terminal's overlays, postal search and the
@@ -929,6 +1098,16 @@ refused with no outside request) are a page test,
 `webroot/test/client/pages/WebrootMap.page.js`, a dashboard geomap's link into Maps `WebrootReport.page.js`, and the terminal's postal search and overlays `moqui-tui`
 `components/map_tests.rs`. The acceptance walks are `MapsBrowseWalk` and `MapsDialogWalk` (browser, desktop and phone width) and
 `MapsTerminalWalk`, with their fixture `MapsWalkFixtures`: `./moq accept tools --spec MapsBrowseWalk`.
+Offline packages: `framework/test/MapsPackages.spec.js` (a package cut from a small fixture archive by the build job and
+served to its owner by range with its strong tag, refused another user and 409 for another revision; a basemap the owner
+may not see left out; the manifest listing every member with its size and SHA-256 and no URL of this server; a package
+past `maps@package-max-bytes` refused at its estimate; a user's second build refused and another user's waiting its turn
+and started when the build ends; a cancel; a run whose key the package does not hold writing nothing; an archive
+registered again since the build was asked failing it; the owner's places and the overlays they read packaged, another
+user's places and an unshared overlay never, a shared one until its share is revoked; the Offline page once in qvt and once in the terminal), with the box's tile set (across the antimeridian, at
+zoom 0, a tile's edge), the extract's bounds, a shared content cut once, a replaced archive and a cancel leaving no file in
+Rust (`moqui-tools` `maps_extract_tests.rs`), and the streaming writer giving the bytes the whole-archive writer gave
+(`moqui-lib` `pmtiles_tests.rs`).
 Overture: the services' rules are `framework/test/MapsOverture.spec.js` (a non-holder, outside requests off, a license not
 acknowledged, a region too large and a release of schema 3 refused; a Places import read by range from the one item and row
 group that meet the region, active and searched, the later ranges pinned to the file's ETag; a failed update and a file
@@ -947,3 +1126,16 @@ area, nothing saved; a refresh that moves one address and removes one, counted b
 untouched), with the parsing, keys and ranking in Rust (`moqui-maps` `address_tests.rs`, `address_service_tests.rs`), and
 the real release for central Florence and part of Boston's Back Bay with sample lookups, the acceptance test
 `OvertureAddressLookup`.
+
+Live location: `framework/test/LocationShares.spec.js` (by the real grants, with authorization on: a share read and
+pushed to its audience alone, another user and an administrator refused; a blocked user, an audience past `max-audience`
+(on create, on update and on a group added again) and a share past `max-active-shares` refused; a group member taken out
+losing it at the next read and the pushes, and a membership given a caller's dates and stamp, a backdated add, an ended
+membership reopened, an ended one with a new row and a member removed and added again getting nothing until the owner
+adds the group again, which names and tells only those it lets in and is audited; a member who blocked the owner never
+reached; the rate and its 429, a clock ahead and a time before the share; an approximate share's cell made before it is
+stored or sent, the same for two shares at one place, kept through jitter at a cell line, its accuracy 1000 m or the
+device's rounded up and its time to the minute; an ended share hidden, 410 to a report and its latest position cleaned;
+a trail kept only when chosen, deleted by its owner and purged past its days; the audit rows with no position; a link's
+token answered once and only its digest kept), with the generic tools' refusal of the six entities in Rust
+(`moqui-entity` `sensitive.rs`) and the agents' `data` tool's (`moqui-llm` `core_tests.rs`).
