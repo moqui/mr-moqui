@@ -11,6 +11,11 @@
         }).call()
         spans = (result.hits || []).map(hit => hit.body || {})
         spanLimitReached = result.total > spans.length
+        // the spans the trace lost when it was recorded (a full tail buffer or queue), which its kept root counts: a lower
+        // bound, as some drops are not counted per trace (docs/tools/Monitoring.md, MON-UI-003)
+        droppedSpans = spans.reduce((total, span) => total + (Number((span.attributes || {})['moqui.trace.dropped_spans']) || 0), 0)
+        droppedText = droppedSpans == 1 ? ec.l10n.localize('At least 1 span of this trace was dropped when it was recorded, so the trace is incomplete.')
+            : ec.resource.expand(ec.l10n.localize('At least ${count} spans of this trace were dropped when it was recorded, so the trace is incomplete.'), '', {count: droppedSpans})
         const stamp = value => { const date = new Date(/^\d+$/.test(String(value)) ? Number(value) : value); return Number.isNaN(date.getTime()) ? String(value || '') : date.toISOString() }
         // The flame graph of the same trace: span-name paths and their self time, computed on the server.
         const flame = ec.service.sync().name('org.moqui.report.ReportServices.run#Query').parameters({
@@ -24,6 +29,7 @@
         <label text="${ec.l10n.localize('Trace')} ${traceId}" type="h4" style="m-wrap-anywhere"/>
         <link url="logs" text="Logs for this trace" parameter-map="{queryString:'trace_id:'+traceId,from:from,thru:thru}"/>
         <section name="SpanLimit" condition="spanLimitReached"><widgets><label text="This trace exceeds the display limit. Narrow the time range to inspect more spans." type="p"/></widgets></section>
+        <section name="DroppedSpans" condition="droppedSpans > 0"><widgets><label text="${droppedText}" type="p"/></widgets></section>
         <render-mode>
             <text type="qvt"><![CDATA[<m-trace-waterfall :spans="${WebUtilities.encodeHtml(JSON.stringify(spans))}"></m-trace-waterfall>]]></text>
             <text type="tui"><![CDATA[${JSON.stringify({t:'component',name:'trace-waterfall',props:{spans:spans}})}]]></text>

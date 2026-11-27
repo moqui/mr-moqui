@@ -463,7 +463,7 @@ pub fn definition_info(facade: &EntityFacade, name: &str) -> Option<moqui_lib::o
 /// members, its aliases as declared (not those `alias-all` made), its `alias-all`s and whether it has a condition.
 pub fn entity_detail(facade: &EntityFacade, name: &str) -> Option<moqui_lib::object::ValueMap> {
     let mut map = definition_info(facade, name)?;
-    let extra = facade.with_entity(name, |entity, dialect, _| {
+    let extra = facade.with_entity(name, |entity, dialect, model| {
         let mut extra = IndexMap::new();
         extra.insert("databaseName".to_string(), text(&dialect.name));
         extra.insert(
@@ -475,7 +475,7 @@ pub fn entity_detail(facade: &EntityFacade, name: &str) -> Option<moqui_lib::obj
                     .map(|field| {
                         (
                             field.name.clone(),
-                            dialect.sql_type(&field.field_type).map_or(Value::Null, text),
+                            moqui_db::sql::field_sql_type(model, dialect, field).map_or(Value::Null, |sql| text(&sql)),
                         )
                     })
                     .collect(),

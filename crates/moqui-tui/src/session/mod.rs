@@ -30,7 +30,7 @@ use crate::keys::{scheme_keys, Action, Key, KeyMap, KeyPress, KeyScheme, MergeSk
 use crate::layout::PAGE_ROWS;
 use crate::link::{row_link_target, LinkCall, LinkError, MenuItem, RawBody, Reply, ScreenLink, ShellInfo};
 use crate::model::{clean_text, Cell, Choice, FormList, Node, ScreenModel, Widget};
-use crate::nav::{level_path, Location, Nav};
+use crate::nav::{level_path, Kept, Location, Nav};
 use crate::state::{Confirm, Edits, Finished, Lanes, Purpose, Request, Then};
 
 mod assist;
@@ -338,6 +338,11 @@ pub struct Session {
     collapsed: BTreeMap<String, bool>,
     trees: BTreeMap<String, TreeState>,
     components: BTreeMap<String, ComponentState>,
+    /// What the screen Back asked for held when it was left, by the id of Back's request: put back when that reply
+    /// brings that screen, and dropped with any other answer to it (an error, a login, a superseded request) ([`Kept`]).
+    back_kept: Option<(u64, Location, Kept)>,
+    /// The component states of that screen, taken by `load_parts` as its components load.
+    restoring: BTreeMap<String, (String, ComponentState)>,
     /// A display's text from its value url, by field id.
     shown_text: BTreeMap<String, String>,
     /// The bodies of dynamic dialogs and containers by node id, kept so a reload of the screen does not blank them.
@@ -422,6 +427,8 @@ impl Session {
             collapsed: BTreeMap::new(),
             trees: BTreeMap::new(),
             components: BTreeMap::new(),
+            back_kept: None,
+            restoring: BTreeMap::new(),
             shown_text: BTreeMap::new(),
             fragments: BTreeMap::new(),
             history: VecDeque::new(),
@@ -463,6 +470,11 @@ impl Session {
 
     /// The answer to request `id`.
     pub fn on_reply(&mut self, id: u64, reply: Reply) {
+        // what Back's screen held goes with any answer to Back's request, and is put back only by a screen it brings
+        let back = match &self.back_kept {
+            Some((back_id, ..)) if *back_id == id => self.back_kept.take().map(|(_, location, kept)| (location, kept)),
+            _ => None,
+        };
         let purpose = match self.lanes.finish(id) {
             Finished::Apply(purpose) => purpose,
             Finished::Superseded | Finished::Unknown => {
@@ -478,7 +490,7 @@ impl Session {
             return;
         }
         match (purpose, reply) {
-            (Purpose::Level, Reply::Level(result)) => self.level_reply(id, result),
+            (Purpose::Level, Reply::Level(result)) => self.level_reply(id, result, back),
             (Purpose::Level, Reply::Raw(result)) => {
                 self.intents.remove(&id);
                 match result {
@@ -1753,12 +1765,17 @@ impl Session {
     }
 
     fn go_back_now(&mut self) {
-        let Some(location) = self.nav.pop_history() else {
+        let Some((location, kept)) = self.nav.pop_history() else {
             self.set_message("This is the first screen.".to_string(), false);
             return;
         };
         self.overlays.clear();
-        self.request_level(&location.path, location.parameters, Intent::Navigate { history: false });
+        let id = self.request_level(
+            &location.path,
+            location.parameters.clone(),
+            Intent::Navigate { history: false },
+        );
+        self.back_kept = id.zip(kept).map(|(id, kept)| (id, location, kept));
     }
 
     /// Esc: close the top dialog, find or row editor. Then, in Modern, open the palette; in Classic, clear the message,
@@ -2005,7 +2022,8 @@ impl Session {
         self.request_level(&path, parameters, Intent::Reload);
     }
 
-    fn request_level(&mut self, path: &str, parameters: BTreeMap<String, String>, intent: Intent) {
+    /// Ask for a screen; the request's id, unless its lane already holds the same request.
+    fn request_level(&mut self, path: &str, parameters: BTreeMap<String, String>, intent: Intent) -> Option<u64> {
         self.last_location = Some(Location {
             path: path.to_string(),
             parameters: parameters.clone(),
@@ -2021,9 +2039,11 @@ impl Session {
             path: shell::terminal_url(path),
             parameters: sent,
         };
-        if let Some(id) = self.lanes.push(Purpose::Level, call) {
+        let id = self.lanes.push(Purpose::Level, call);
+        if let Some(id) = id {
             self.intents.insert(id, (intent, parameters));
         }
+        id
     }
 
     fn request_shell(&mut self, path: &str) {
@@ -2031,7 +2051,8 @@ impl Session {
             .push(Purpose::Shell, LinkCall::Shell { path: path.to_string() });
     }
 
-    fn level_reply(&mut self, id: u64, result: Result<ScreenModel, LinkError>) {
+    /// A screen came. `back`: what it held when it was left, when this is the reply to Back.
+    fn level_reply(&mut self, id: u64, result: Result<ScreenModel, LinkError>, back: Option<(Location, Kept)>) {
         let (intent, parameters) = self
             .intents
             .remove(&id)
@@ -2047,9 +2068,14 @@ impl Session {
         let navigate = matches!(intent, Intent::Navigate { .. });
         if let Intent::Navigate { history: true } = intent {
             if !self.model().screen.path.is_empty() {
-                self.nav.push_history();
+                let kept = self.kept_here();
+                self.nav.push_history(kept);
             }
         }
+        // Back to a screen left with its state (MAP-UI-001): its components and focus are put back as it comes
+        let mut back = back
+            .filter(|(location, _)| location.path == model.screen.path && location.parameters == parameters)
+            .map(|(_, kept)| kept);
         let app_changed = app_root(&model.screen.path) != app_root(self.path());
         let path_changed = model.screen.path != self.path();
         // a code editor of the same screen keeps its cursor, scroll and undo; it starts over when its text is not its own
@@ -2087,6 +2113,9 @@ impl Session {
             self.fragments.clear();
             self.trees.clear();
             self.components.clear();
+            if let Some(kept) = &mut back {
+                self.restoring = std::mem::take(&mut kept.components);
+            }
             self.timers.retain(|timer, _| !matches!(timer, Timer::Component(_)));
             self.shown_text.clear();
             self.collapsed.clear();
@@ -2102,6 +2131,10 @@ impl Session {
         }
         self.reindex(!navigate);
         self.after_screen(navigate, path_changed);
+        self.restoring.clear();
+        if let Some(kept) = back {
+            self.focus_back(kept.focus);
+        }
         for (id, state) in kept_editors {
             if self.index.components.get(&id).is_some_and(|info| info.name == "code") {
                 self.components.insert(id, state);
@@ -2119,6 +2152,40 @@ impl Session {
             }
         }
         self.assist_after_level(navigate);
+    }
+
+    /// What this screen holds that Back should put back: each component's state with its name, without the data it
+    /// read (the load after Back reads it again), and the focus key.
+    fn kept_here(&self) -> Kept {
+        let components = self
+            .components
+            .iter()
+            .filter_map(|(id, state)| {
+                let info = self.index.components.get(id)?;
+                let state = ComponentState {
+                    data: None,
+                    ..state.clone()
+                };
+                Some((id.clone(), (info.name.clone(), state)))
+            })
+            .collect();
+        Kept {
+            components,
+            focus: self.focus_id().to_string(),
+        }
+    }
+
+    /// The focus a screen had when it was left, once Back has brought it again; a key its levels have not brought yet
+    /// is kept for the rebuild that brings them, as a key with nothing to focus is.
+    fn focus_back(&mut self, key: String) {
+        if key.is_empty() {
+            return;
+        }
+        match self.focus.iter().position(|item| item.key == key) {
+            Some(at) => self.focus_at = at,
+            None if self.focus.is_empty() => self.focus_kept = key,
+            None => {}
+        }
     }
 
     /// The flash messages a transition left for this screen, and the errors its render added: a validation error (a
