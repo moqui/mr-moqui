@@ -761,8 +761,10 @@ pub(crate) fn clip(text: &str, max: usize) -> String {
 
 /// A server page's request to the web (`moquiDesktop.webRequest`): see the module's text. The main webview's server
 /// pages only (`moqui-app`), not the shell and not a frame (the host takes no IPC from frames).
-#[tauri::command(async)]
-pub(crate) fn web_request(
+/// The request is blocking (reqwest's blocking client has its own runtime), so it runs on a blocking thread: in an
+/// async worker that runtime would panic when it is dropped.
+#[tauri::command]
+pub(crate) async fn web_request(
     webview: tauri::Webview,
     method: Option<String>,
     url: String,
@@ -774,7 +776,11 @@ pub(crate) fn web_request(
     if webview.label() != crate::host::MAIN || page.origin().ascii_serialization() != moqui_client_tauri::APP_ORIGIN {
         return Err("Not a server page".to_string());
     }
-    crate::web::request(method.as_deref().unwrap_or("GET"), &url, &headers.unwrap_or_default(), body.as_deref(), &hosts)
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::web::request(method.as_deref().unwrap_or("GET"), &url, &headers.unwrap_or_default(), body.as_deref(), &hosts)
+    })
+    .await
+    .map_err(|err| format!("The web request stopped: {err}"))?
 }
 
 /// The shell's page, or an error: the screen share is the call's, which the shell owns.
