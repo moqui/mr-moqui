@@ -1281,8 +1281,9 @@ pub fn truthy(value: &Value) -> bool {
     }
 }
 
-/// A response's headers as `Network.responseReceived` gives them, with their names in lower case: an object of text values
-/// (the browser joins a repeated header's values with a line break), any other value an empty object.
+/// A response's headers as `Network.responseReceived` gives them, with their names in lower case: an object of text
+/// values (the browser joins a repeated header's values with a line break, and two names that are one in lower case are
+/// joined so too), any other value an empty object.
 fn lower_case_headers(headers: &Value) -> Value {
     let Some(map) = headers.as_object() else {
         return json!({});
@@ -1290,7 +1291,11 @@ fn lower_case_headers(headers: &Value) -> Value {
     let mut out = serde_json::Map::new();
     for (name, value) in map {
         let text = value.as_str().map_or_else(|| value.to_string(), str::to_string);
-        out.insert(name.to_ascii_lowercase(), Value::String(text));
+        let joined = match out.get(&name.to_ascii_lowercase()).and_then(Value::as_str) {
+            Some(before) => format!("{before}\n{text}"),
+            None => text,
+        };
+        out.insert(name.to_ascii_lowercase(), Value::String(joined));
     }
     Value::Object(out)
 }
@@ -1321,6 +1326,10 @@ mod tests {
             json!({"referrer-policy": "strict-origin", "cache-control": "no-store", "x-count": "2"})
         );
         assert_eq!(lower_case_headers(&json!(null)), json!({}));
+        // two names that are one in lower case: both values, joined with a line break
+        let joined = lower_case_headers(&json!({"Set-Cookie": "a=1", "set-cookie": "b=2"}));
+        let text = joined["set-cookie"].as_str().unwrap_or_default();
+        assert!(text == "a=1\nb=2" || text == "b=2\na=1", "{text}");
     }
 
     #[test]

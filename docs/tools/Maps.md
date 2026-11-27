@@ -1161,7 +1161,10 @@ one from Chat's Share live location (below, "In chat"), a share's XMPP contacts 
   `recordThruDate`); the share's end is no later, also when `update#Share` extends it (`AFTER_RECORD_END`), and the
   record's end stops it (`stop#RecordShares`). Mantle mails the link only once the technician's app has confirmed the
   share (or, in a browser, at the press), and keeps the mail's `EmailMessage` row for the mail queue with the link's
-  secret blanked from its body when the share ends or is stopped (mr-mantle `LocationShareServices.xml`).
+  secret blanked from its body when the share ends or is stopped (mr-mantle `LocationShareServices.xml`). The send runs
+  under the share's lock, in a transaction of 60 seconds, while an SMTP session may take up to 120: a send that stalls
+  between the two can answer that the link could not be mailed for a mail that went out or is queued, so the page's
+  "could not be mailed" means the technician should check with the customer, not send again.
 - **The owner's acts.** `create#Share` (the audience, the end, exact or approximate, a trail or not), `update#Share`
   (extend or shorten, add to the audience, change the label or purpose), `stop#Share`, `revoke#Audience` (one person,
   group, XMPP contact or the link), `report#Position` and `delete#Trail` are the owner's alone; another person's share,

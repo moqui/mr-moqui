@@ -157,8 +157,8 @@ link is refused (403), its owner adding a new one: knowing the selector lets som
 ended share or a revoked link answers 410. The shell page sends `Referrer-Policy: strict-origin`, `Cache-Control:
 no-store` and a `Content-Security-Policy` of this server, the public basemap's origins and the theme's outside files
 (the `MapsSharedLocation` client spec checks the three headers on the page's one render, the policy as the page enforces
-it, nothing the page needs refused, and the fragment cleared). The link starts with `getWebappRootUrl`'s web root: the conf's
-host, or a request's host only where a `root-screen` pattern names it as one of the configured sites; with none
+it, nothing the page needs refused, and the fragment cleared). The link starts with `getWebappRootUrl`'s web root: the
+conf's host, or a request's host only where a `root-screen` pattern names it as one of the configured sites; with none
 configured Browse answers the path alone and says so. tools adds `shared-location-read` on
 `POST /location/*/read`, 60 requests in 60 seconds, burst 10, applied when per-client web protection is on; no spec
 runs it.
