@@ -71,7 +71,7 @@ fn the_recipients_of_each_node_come_from_its_copies() {
     let mut copies = Copies {
         built_at: Some(1),
         loaded: HashSet::from(["node-a".to_string(), "node-b".to_string()]),
-        nodes: build(&values),
+        nodes: build(&values).into(),
         active: HashSet::from(["node-a".to_string(), "node-b".to_string()]),
     };
     let found = |node: &str, account: &str| Lookup::Found {
@@ -147,7 +147,7 @@ fn an_account_its_local_node_marked_full_is_answered_452() {
     let copies = Copies {
         built_at: Some(1),
         loaded: nodes.clone(),
-        nodes: build(&values),
+        nodes: build(&values).into(),
         active: nodes,
     };
     let answer = |address: &str| lookup_answer(copies.find(address, "+"));
@@ -184,7 +184,7 @@ fn an_address_two_pairings_hold_gets_451_and_each_other_goes_to_its_own() {
     let mut copies = Copies {
         built_at: Some(1),
         loaded: nodes.clone(),
-        nodes: build(&values),
+        nodes: build(&values).into(),
         active: nodes,
     };
     let found = |node: &str, account: &str| Lookup::Found {
@@ -203,7 +203,7 @@ fn an_address_two_pairings_hold_gets_451_and_each_other_goes_to_its_own() {
         account("node-b", "201", "joe@d.example", "EakHosted", ""),
     ];
     let both = Copies {
-        nodes: build(&values),
+        nodes: build(&values).into(),
         built_at: Some(2),
         loaded: copies.loaded.clone(),
         active: copies.active.clone(),
@@ -225,7 +225,7 @@ fn all_in_one_copies() -> Copies {
     Copies {
         built_at: Some(1),
         loaded: HashSet::from(["node-a".to_string()]),
-        nodes: build(&values),
+        nodes: build(&values).into(),
         active: HashSet::from(["node-a".to_string()]),
     }
 }
@@ -310,7 +310,7 @@ fn an_exact_match_on_one_side_wins_over_a_match_without_the_plus_tag_on_the_othe
     let copies = Copies {
         built_at: Some(1),
         loaded: HashSet::from(["node-a".to_string()]),
-        nodes: build(&values),
+        nodes: build(&values).into(),
         active: HashSet::from(["node-a".to_string()]),
     };
     let answer = |address: &str| choose(address, own_leveled(address), leveled_lookup(&copies, address, "+"));

@@ -20881,7 +20881,12 @@ module.exports = {
         isTrusted(message) {
             if (message.store === 'internal') return true;
             const address = message.from && message.from.address ? String(message.from.address).toLowerCase() : null;
-            return !!address && (this.data.prefs.remoteImages === 'always' || (this.data.prefs.trustedSenders || []).includes(address) || (message.from && message.from.isMe));
+            if (!address) return false;
+            if (this.data.prefs.remoteImages === 'always') return true;
+            // a From is the sender's to write (SEC-MAIL-10): a trusted sender's only when the server's verdict does not say
+            // it is forged, the reader's own only on a message of the account or one whose From passed DMARC
+            if (message.fromVerdict === 'fail') return false;
+            return (this.data.prefs.trustedSenders || []).includes(address) || !!(message.from && message.from.isMe && ['own', 'pass'].includes(message.fromVerdict));
         },
         onShowImages(message) { if (message.store === 'email' && message.from && message.from.address && !message.from.isMe) this.trustOffer = message.key; },
         trustSender(message) {

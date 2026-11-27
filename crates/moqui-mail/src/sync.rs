@@ -1112,6 +1112,27 @@ pub(super) fn run_sync(facade: &EntityFacade, account_id: &str, options: &SyncOp
         }
         _ => {}
     }
+    // what a sync fetches is held to the mailbox quota the listener holds delivered mail to (SEC-MAIL-93); what the
+    // user changed still goes to the server
+    if !options.push_only {
+        match super::delivery::over_quota(facade, account_id) {
+            Ok(false) => {}
+            Ok(true) => {
+                return SyncReport::with(
+                    "skipped",
+                    format!(
+                        "Email account {account_id} is over its mailbox quota (quotaBytes, email-client mailbox-quota): no new mail is synced until it is under"
+                    ),
+                )
+            }
+            Err(err) => {
+                return SyncReport::with(
+                    "failed",
+                    format!("Email account {account_id}: its mailbox quota could not be checked: {err}"),
+                )
+            }
+        }
+    }
     let lease = match Lease::claim(facade, account_id, options.lease_millis.unwrap_or(LEASE_MILLIS)) {
         Ok(Some(lease)) => lease,
         Ok(None) => return SyncReport::with("busy", format!("Email account {account_id} is syncing already")),
@@ -3407,11 +3428,74 @@ fn has_backlog(account_id: &str) -> bool {
     backlog().is_some_and(|backlog| moqui_lib::sync::lock(&backlog.0).contains(account_id))
 }
 
+/// The most accounts the job syncs at once, each on a thread of its own, when the server has service workers: a slow
+/// server a user names holds one of them for at most its session's lease, not the job's pass over every other account
+/// (SEC-MAIL-93).
+const SYNC_WORKERS: usize = 4;
+
+/// The accounts a thread of [`sync_in_background`] syncs now, across the process.
+static SYNCING: std::sync::Mutex<std::collections::BTreeSet<String>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+/// Takes an account out of [`SYNCING`] when its thread ends, a panic included.
+struct Syncing(String);
+
+impl Drop for Syncing {
+    fn drop(&mut self) {
+        moqui_lib::sync::lock(&SYNCING).remove(&self.0);
+    }
+}
+
+/// Sync account `account_id` on a thread of its own, without waiting for it: false when [`SYNC_WORKERS`] accounts
+/// are syncing already, this one among them, or no thread could be started; the next run of the job tries again.
+fn sync_in_background(
+    factory: &std::sync::Arc<moqui_core::context::ExecutionContextFactory>,
+    account_id: &str,
+) -> bool {
+    {
+        let mut syncing = moqui_lib::sync::lock(&SYNCING);
+        if syncing.len() >= SYNC_WORKERS || syncing.contains(account_id) {
+            return false;
+        }
+        syncing.insert(account_id.to_string());
+    }
+    let weak = std::sync::Arc::downgrade(factory);
+    let id = account_id.to_string();
+    let spawned = std::thread::Builder::new()
+        .name(format!("moqui-email-sync-{account_id}"))
+        .spawn(moqui_core::context::framework_thread(move || {
+            let _syncing = Syncing(id.clone());
+            let Some(factory) = weak.upgrade() else {
+                return;
+            };
+            let ctx = factory.new_context();
+            let _entered = ctx.enter();
+            let _authz = ctx.disable_authz();
+            let Some(facade) = factory.entity() else {
+                return;
+            };
+            let report = run_sync(&facade, &id, &SyncOptions::default());
+            if report.outcome == "failed" {
+                tracing::warn!(
+                    "The sync of email account {id} failed: {}",
+                    take_errors_string().unwrap_or_default()
+                );
+            }
+        }));
+    if let Err(err) = spawned {
+        moqui_lib::sync::lock(&SYNCING).remove(account_id);
+        tracing::error!("Could not start the sync of email account {account_id}: {err}");
+        return false;
+    }
+    true
+}
+
 /// `sync#DueEmailAccounts`, the job `sync_EmailAccounts_frequent`: each account with an incoming server whose last
 /// sync is older than its interval (`syncIntervalMinutes`, else `email-client` `sync-interval`, 5 minutes; three times that
 /// after an error), or whose last sync stopped at `email-client` `sync-batch` with mail left (at every run of the job, so a
 /// large first sync goes on a batch a minute), each on its own. A paused account, one whose sign-in failed and one
-/// syncing now are left.
+/// syncing now are left. With service workers the accounts are synced on [`SYNC_WORKERS`] threads of their own and
+/// the job does not wait for them (`syncedCount` counts those started); without (a test, a tool), one after another.
 pub(super) fn sync_due_accounts(
     _parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -3422,6 +3506,8 @@ pub(super) fn sync_due_accounts(
     }
     moqui_core::entity::fence::check_effect(moqui_core::entity::fence::Effect::Mail, "sync#DueEmailAccounts")?;
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let background = ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()))
+        .filter(|factory| factory.service_pools().sizes().0 > 0);
     let default_interval = property_number("sync-interval", 5);
     let rows = facade
         .find(ACCOUNT)?
@@ -3457,6 +3543,14 @@ pub(super) fn sync_due_accounts(
                 .last_sync_millis
                 .is_some_and(|last| now - last + 5_000 < interval)
         {
+            continue;
+        }
+        if let Some(factory) = &background {
+            if sync_in_background(factory, &account.id) {
+                synced += 1;
+            } else {
+                busy += 1;
+            }
             continue;
         }
         let report = run_sync(facade, &account.id, &SyncOptions::default());

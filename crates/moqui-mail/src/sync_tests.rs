@@ -3431,3 +3431,38 @@ fn a_flag_change_or_a_new_message_reads_only_the_rows_involved() {
     read("an expunge");
     assert!(by_message_id(&facade, &account, "<kept300@example.com>").is_none());
 }
+
+/// SEC-MAIL-93: a sync is held to the mailbox quota the listener holds delivered mail to: an account over it fetches
+/// nothing more until it is under.
+#[test]
+fn an_account_over_its_mailbox_quota_syncs_no_new_mail() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup_with(r#"<moqui-conf><email-client mailbox-quota="1000"/></moqui-conf>"#);
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let imap = FakeImap::start(&["UIDPLUS"]);
+    imap.add(
+        "INBOX",
+        &mail("<q1@example.com>", "x@example.com", "alice@example.com", "One", "", "b"),
+        &[],
+    );
+    let account = imap_account(imap.port, "app-password");
+    sync(&account);
+    assert!(by_message_id(&facade, &account, "<q1@example.com>").is_some());
+    // over the quota: the next message waits on the server
+    {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let mut row = by_message_id(&facade, &account, "<q1@example.com>").unwrap();
+        row.set("messageSize", Value::I64(5000));
+        row.update(&facade).unwrap();
+    }
+    imap.add(
+        "INBOX",
+        &mail("<q2@example.com>", "x@example.com", "alice@example.com", "Two", "", "b"),
+        &[],
+    );
+    let out = ok("sync#EmailAccount", &[("emailAccountId", text(&account))]);
+    assert_eq!(out_text(&out, "outcome"), "skipped", "{out:?}");
+    assert!(by_message_id(&facade, &account, "<q2@example.com>").is_none());
+}

@@ -71,7 +71,7 @@ use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 use moqui_lib::sync::{lock, wait_timeout};
 
-const DELIVERY: &str = "moqui.edge.EdgeMailDelivery";
+pub(crate) const DELIVERY: &str = "moqui.edge.EdgeMailDelivery";
 const PENDING: &str = "EmdPending";
 const SENT: &str = "EmdSent";
 const BOUNCED: &str = "EmdBounced";
@@ -189,7 +189,7 @@ pub(super) fn record(
     facade: &EntityFacade,
     node: &str,
     item: &str,
-    mail_from: &str,
+    mail_from: &dyn Fn(&str) -> String,
     to: &[String],
     local: &[String],
     refused: &[String],
@@ -233,7 +233,7 @@ pub(super) fn record(
             "recipientsJson",
             Value::string(serde_json::json!(recipients).to_string()),
         );
-        row.set("mailFrom", Value::string(mail_from));
+        row.set("mailFrom", Value::string(mail_from(domain)));
         row.set("contentLocation", Value::string(&location));
         row.set("attemptCount", Value::I64(0));
         row.set("bouncedCount", Value::I64(0));
@@ -1047,7 +1047,10 @@ fn hosts(domain: &str, policy: Option<&sts::Policy>) -> Result<Hosts, Answer> {
     for (_, host) in mx {
         match super::dns::ips(&host) {
             Ok(ips) if !ips.is_empty() => {
-                let public: Vec<IpAddr> = ips.into_iter().filter(|ip| !moqui_lib::net::internal_address(*ip)).collect();
+                let public: Vec<IpAddr> = ips
+                    .into_iter()
+                    .filter(|ip| !moqui_lib::net::internal_address(*ip))
+                    .collect();
                 if public.is_empty() {
                     failed.push(format!("{host} {NO_PUBLIC_ADDRESS}"));
                 } else {

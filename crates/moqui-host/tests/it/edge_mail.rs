@@ -127,6 +127,16 @@ fn rows(gate: &Gate, entity: &str, conditions: &[(&str, &str)]) -> Vec<BTreeMap<
         .collect()
 }
 
+/// The envelope sender of a message the relay took: its `MAIL FROM:<...>` line's address.
+fn verp_sender(taken: &str) -> String {
+    let line = taken.lines().next().unwrap_or_default();
+    line.trim_start_matches("MAIL FROM:<")
+        .split('>')
+        .next()
+        .unwrap_or_default()
+        .to_string()
+}
+
 fn wait_until(limit: Duration, what: &str, check: impl Fn() -> bool) {
     let started = Instant::now();
     while !check() {
@@ -613,8 +623,10 @@ fn mail_crosses_the_edge_node_both_ways_and_waits_while_the_link_is_down() {
             .any(|message| message.contains("Hello from the local node"))
     });
     let taken = relay.taken.lock().unwrap()[0].clone();
+    // the VERP sender carries a tag only this node makes (SEC-MAIL-91)
+    let verp_1 = verp_sender(&taken);
     assert!(
-        taken.starts_with(&format!("MAIL FROM:<bounce+{item_1}@bounce.test>")),
+        verp_1.starts_with(&format!("bounce+{item_1}.")) && verp_1.ends_with("@bounce.test"),
         "{}",
         taken.lines().next().unwrap_or_default()
     );
@@ -632,26 +644,37 @@ fn mail_crosses_the_edge_node_both_ways_and_waits_while_the_link_is_down() {
     assert_eq!(first.get("statusId").map(String::as_str), Some("ES_SENT"));
     assert_eq!(relay.taken.lock().unwrap().len(), 1, "the bounce was not relayed");
 
-    // a remote MX's bounce later, a delivery status notification to the VERP address: the message back in the Outbox;
-    // the bounce address of an item the edge node never relayed is refused
-    let (rcpt, _) = lmtp(lmtp_address, &["bounce+k0000@bounce.test"], "Subject: x\r\n\r\nx\r\n");
+    // a remote MX's bounce later, a delivery status notification to the VERP address: the message stays Sent, the
+    // recipient named not delivered (SEC-MAIL-91); the bounce address of an item the edge node never relayed, or of
+    // this item with a tag this node did not make, is refused
+    let (rcpt, _) = lmtp(
+        lmtp_address,
+        &["bounce+k0000.0123456789abcdef0123@bounce.test"],
+        "Subject: x\r\n\r\nx\r\n",
+    );
+    assert!(rcpt[0].starts_with("550 5.1.1"), "{rcpt:?}");
+    let (rcpt, _) = lmtp(
+        lmtp_address,
+        &[&format!("bounce+{item_1}.0123456789abcdef0123@bounce.test")],
+        "Subject: x\r\n\r\nx\r\n",
+    );
     assert!(rcpt[0].starts_with("550 5.1.1"), "{rcpt:?}");
     let dsn = format!(
-        "From: MAILER-DAEMON@mx.example.net\r\nTo: bounce+{item_1}@bounce.test\r\nSubject: Undelivered Mail\r\n\
+        "From: MAILER-DAEMON@mx.example.net\r\nTo: {verp_1}\r\nSubject: Undelivered Mail\r\n\
          MIME-Version: 1.0\r\nContent-Type: multipart/report; report-type=delivery-status; boundary=\"b1\"\r\n\r\n\
          --b1\r\nContent-Type: text/plain\r\n\r\nNot delivered.\r\n--b1\r\nContent-Type: message/delivery-status\r\n\r\n\
          Reporting-MTA: dns; mx.example.net\r\n\r\nFinal-Recipient: rfc822; ok@example.net\r\nAction: failed\r\n\
          Status: 5.1.1\r\nDiagnostic-Code: smtp; 550 5.1.1 User unknown\r\n\r\n--b1--\r\n"
     );
-    let (rcpt, after) = lmtp(lmtp_address, &[&format!("bounce+{item_1}@bounce.test")], &dsn);
+    let (rcpt, after) = lmtp(lmtp_address, &[&verp_1], &dsn);
     assert_eq!(rcpt, ["250 2.1.5 Ok"]);
     assert!(after[0].starts_with("250 2.1.5"), "{after:?}");
-    wait_until(Duration::from_secs(10), "the later bounce in the Outbox", || {
+    wait_until(Duration::from_secs(10), "the later bounce noted on the message", || {
         let row = &rows(&local, MESSAGE, &[("emailMessageId", "EDGE_OUT_1")])[0];
-        row.get("statusId").map(String::as_str) == Some("ES_READY")
+        row.get("statusId").map(String::as_str) == Some("ES_SENT")
             && row
                 .get("sendError")
-                .is_some_and(|error| error.contains("ok@example.net; 5.1.1"))
+                .is_some_and(|error| error.starts_with("Not delivered to: ") && error.contains("ok@example.net; 5.1.1"))
     });
     dialer.stop();
 }
@@ -832,8 +855,9 @@ fn the_moqui_mta_takes_port_25_and_delivers_to_the_mx() {
     );
     let taken = mx.taken.lock().unwrap().clone();
     let item = rows(&edge, "moqui.edge.EdgeMailDelivery", &[("domain", "example.net")])[0]["queueItemId"].clone();
+    let verp = verp_sender(&taken[0]);
     assert!(
-        taken[0].starts_with(&format!("MAIL FROM:<bounce+{item}@bounce.test>")),
+        verp.starts_with(&format!("bounce+{item}.")) && verp.ends_with("@bounce.test"),
         "{}",
         taken[0].lines().next().unwrap_or_default()
     );
@@ -853,7 +877,7 @@ fn the_moqui_mta_takes_port_25_and_delivers_to_the_mx() {
         moqui_mail::auth::Session {
             client_ip: Some("192.0.2.25".parse().unwrap()),
             helo: "edge.example.com".to_string(),
-            mail_from: format!("bounce+{item}@bounce.test"),
+            mail_from: verp.clone(),
             hostname: "mx.example.net".to_string(),
         },
         "mx.example.net".to_string(),

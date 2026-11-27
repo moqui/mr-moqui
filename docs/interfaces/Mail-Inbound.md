@@ -268,9 +268,11 @@ certificate), a 4xx tried again from 5 minutes (`mail-delivery@retry-seconds`) d
   after `mail-delivery@days`. Empty by default.
 
 - **Bounces.** Set `mail-delivery@bounce-domain` (as `bounces.example.com`, with its MX at the edge node) and each message
-  goes from `bounce+<item>@` that domain, so a remote server's later bounce names the message. This replaces an app's
-  own bounce address (`send#EmailTemplate`'s `bounceAddress`), so an app that reads its own bounces also reads the
-  message the edge marks bounced (`ES_BOUNCED`), as Mantle's delivery ledger does.
+  goes from `bounce+<item>.<tag>@` that domain (the tag a keyed MAC of the item and the recipient domain), so a
+  remote server's later bounce names the message. Every copy of the message carries that address, so a later bounce
+  only notes the failed recipients the address was for in the message's `sendError` and leaves it Sent; a refusal at
+  the time of sending still marks it bounced (`ES_BOUNCED` for a template's message). This replaces an app's own
+  bounce address (`send#EmailTemplate`'s `bounceAddress`).
 - **Reports an app reads.** Without the edge's bounce domain, an app may send with a bounce address of its own per
   message (`send#EmailTemplate`'s `bounceAddress`, as `bounces+<key>@` a domain) to a hosted account (`bounces@` it,
   found by the plus tag), and read what comes back with `org.moqui.mail.EmailServices.read#DeliveryReport`: a delivery

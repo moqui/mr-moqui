@@ -1261,6 +1261,12 @@ pub(super) fn start_sign_in(
         ));
         return Ok(out);
     }
+    // a new account with no incoming host would be delivered here by the listener, which only a mail administrator
+    // sets up (SEC-MAIL-97)
+    if pending.account.is_empty() && !pending.pop && provider.store_host.trim().is_empty() {
+        note_error(format!("{} has no IMAP server set up here", provider.name));
+        return Ok(out);
+    }
     pending.provider = provider.id.clone();
     let scope = provider.scope_for(pending.pop);
     let mut query = vec![
@@ -1851,6 +1857,20 @@ fn store_new_account(
     tokens: &Tokens,
     address: &str,
 ) -> Result<(String, String), String> {
+    // the account is made with authorization disabled: one with no incoming host would be delivered here, which
+    // create#EmailAccount lets only a mail administrator make (SEC-MAIL-97), so the provider's row must name one
+    let store_host = if pending.pop {
+        &provider.pop_host
+    } else {
+        &provider.store_host
+    };
+    if store_host.trim().is_empty() {
+        return Err(format!(
+            "{} has no {} server set up here, so no account is made",
+            provider.name,
+            if pending.pop { "POP" } else { "IMAP" }
+        ));
+    }
     let made = force_new(facade, || {
         let mut parameters: BTreeMap<String, Value> = BTreeMap::new();
         parameters.insert("emailAddress".into(), Value::string(address));

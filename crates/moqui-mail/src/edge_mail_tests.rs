@@ -328,22 +328,58 @@ Status: 4.4.1\r
 --b1--\r
 ";
 
+/// SEC-MAIL-91: a VERP address carries a keyed tag of its item and recipient domain, and a report to it names as not
+/// delivered only the failed recipients the address was for, never bouncing the message.
 #[test]
 fn a_delivery_status_notification_to_a_verp_address_names_its_item_and_failure() {
-    assert_eq!(
-        bounce_item_id("Bounce+k1234abcd@Bounce.Example.com", "bounce.example.com").as_deref(),
-        Some("k1234abcd")
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    moqui_lib::env::set_property(
+        "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
+        "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+    );
+    let address = bounce_address("k1234abcd", "example.net", "bounce.example.com").unwrap();
+    let tag = bounce_tag("k1234abcd", "example.net").unwrap();
+    assert_eq!(address, format!("bounce+k1234abcd.{tag}@bounce.example.com"));
+    assert_eq!(tag.len(), 20);
+    assert_ne!(tag, bounce_tag("k1234abcd", "").unwrap(), "a domain's tag is its own");
+    assert_ne!(
+        tag,
+        bounce_tag("k1234abce", "example.net").unwrap(),
+        "an item's tag is its own"
+    );
+    let parts = bounce_item_id(
+        &address
+            .to_uppercase()
+            .replace("BOUNCE.EXAMPLE.COM", "Bounce.Example.com"),
+        "bounce.example.com",
     );
     assert_eq!(
-        bounce_item_id("bounce+k1234abcd@example.com", "bounce.example.com"),
+        parts,
+        Some(BounceAddress {
+            item: "k1234abcd".to_string(),
+            tag: tag.clone()
+        })
+    );
+    assert_eq!(bounce_item_id(&address, "example.com"), None, "another domain");
+    assert_eq!(
+        bounce_item_id("bounce+k1234abcd@bounce.example.com", "bounce.example.com"),
+        None,
+        "no tag"
+    );
+    assert_eq!(
+        bounce_item_id(&format!("bounce+../x.{tag}@bounce.example.com"), "bounce.example.com"),
         None
     );
     assert_eq!(
-        bounce_item_id("bounce+../x@bounce.example.com", "bounce.example.com"),
+        bounce_item_id(&format!("bounce+.{tag}@bounce.example.com"), "bounce.example.com"),
         None
     );
-    assert_eq!(bounce_item_id("bounce+@bounce.example.com", "bounce.example.com"), None);
-    assert_eq!(bounce_item_id("bounce+k1@bounce.example.com", ""), None);
+    assert_eq!(
+        bounce_item_id("bounce+k1.0123@bounce.example.com", "bounce.example.com"),
+        None,
+        "a short tag"
+    );
+    assert_eq!(bounce_item_id(&address, ""), None);
     let report = parse_dsn(DSN.as_bytes()).unwrap();
     assert_eq!(report.action, "failed", "failed outranks delayed");
     assert!(
@@ -356,17 +392,40 @@ fn a_delivery_status_notification_to_a_verp_address_names_its_item_and_failure()
         report.detail.contains("Recipient address rejected"),
         "folded lines: {report:?}"
     );
-    let item = dsn_status_item("k1234abcd", &report);
+    assert_eq!(report.recipients[0].address, "nobody@example.net");
+    let scope = |recipients: &[&str]| BounceScope {
+        item: "k1234abcd".to_string(),
+        domain: "example.net".to_string(),
+        recipients: recipients.iter().map(ToString::to_string).collect(),
+    };
+    let item = dsn_status_item(&scope(&["Nobody@example.net", "later@example.net"]), &report).unwrap();
     assert_eq!(item.kind, KIND_STATUS);
     let payload: serde_json::Value = serde_json::from_str(item.payload.as_deref().unwrap()).unwrap();
     assert_eq!(payload["queueItemId"], "k1234abcd");
-    assert_eq!(payload["status"], "bounced");
+    assert_eq!(payload["status"], "partial", "never the message's bounce");
+    assert!(
+        payload["reply"]
+            .as_str()
+            .unwrap()
+            .starts_with("rfc822; nobody@example.net; 5.1.1"),
+        "{payload}"
+    );
+    assert!(!payload["reply"].as_str().unwrap().contains("later@"), "{payload}");
     assert_eq!(
-        dsn_status_item("k1234abcd", &report).idempotency_key,
+        dsn_status_item(&scope(&["nobody@example.net"]), &report)
+            .unwrap()
+            .idempotency_key,
         item.idempotency_key
     );
-    let delayed = DSN.replace("Action: failed", "Action: relayed");
-    assert_eq!(parse_dsn(delayed.as_bytes()).unwrap().action, "delayed");
+    // a failure of a recipient the address was not for is not taken; the delay of one that was is logged only
+    let delayed = dsn_status_item(&scope(&["later@example.net"]), &report).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(delayed.payload.as_deref().unwrap()).unwrap();
+    assert_eq!(payload["status"], "delayed");
+    assert_eq!(dsn_status_item(&scope(&["else@example.net"]), &report), None);
+    // the relay's address: the recipients are not known, any counts
+    assert!(dsn_status_item(&scope(&[]), &report).is_some());
+    let relayed = DSN.replace("Action: failed", "Action: relayed");
+    assert_eq!(parse_dsn(relayed.as_bytes()).unwrap().action, "delayed");
     assert_eq!(parse_dsn(b"Subject: Out of office\r\n\r\nAway\r\n"), None);
 }
 
@@ -472,12 +531,52 @@ fn a_dedicated_edge_node_refuses_a_sender_of_another_pairings_domain() {
     assert_eq!(neither, None, "a domain of no pairing");
 }
 
+/// SEC-MAIL-95: mail queued back to the local node keeps no `Authentication-Results` claiming the edge node's name,
+/// which the local node trusts; another server's stays.
+#[cfg(feature = "imap")]
+#[test]
+fn mail_queued_back_drops_a_forged_verdict_of_the_edge_nodes_name() {
+    let signed = b"Authentication-Results: Edge.Example.com; dmarc=pass header.from=server.example\r\n\
+Authentication-Results: mx.other.example; spf=pass\r\nFrom: ann@desk.example\r\nSubject: x\r\n\r\nbody\r\n";
+    let queued = String::from_utf8(queued_back_message(signed, "edge.example.com", false)).unwrap();
+    assert!(!queued.contains("dmarc=pass"), "{queued}");
+    assert!(
+        queued.starts_with("Authentication-Results: mx.other.example; spf=pass\r\nFrom:"),
+        "{queued}"
+    );
+    assert!(queued.ends_with("\r\n\r\nbody\r\n"), "{queued}");
+}
+
+/// SEC-MAIL-89: a `From` the sender rule and the mailbox would read differently (two fields, two mailboxes, a comment
+/// holding an angle address) is refused before the rule, so a paired node's message is never stored as from the
+/// server's own user.
+#[cfg(feature = "imap")]
+#[test]
+fn a_from_read_two_ways_is_refused() {
+    let head = |from: &str| format!("{from}\r\nSubject: x\r\n\r\nbody\r\n").into_bytes();
+    assert_eq!(ambiguous_from(&head("From: Ann <ann@desk.example>")), None);
+    assert_eq!(ambiguous_from(&head("From: ann@desk.example")), None);
+    assert_eq!(
+        ambiguous_from(b"Subject: x\r\n\r\nbody\r\n"),
+        None,
+        "no From: the envelope decides"
+    );
+    let two_fields = ambiguous_from(&head("From: a@desk.example\r\nFrom: ceo@server.example")).unwrap();
+    assert!(two_fields.contains("2 From fields"), "{two_fields}");
+    let two_mailboxes = ambiguous_from(&head("From: a@desk.example, ceo@server.example")).unwrap();
+    assert!(two_mailboxes.contains("2 mailboxes"), "{two_mailboxes}");
+    let comment = ambiguous_from(&head("From: ceo@server.example (<a@desk.example>)")).unwrap();
+    assert!(
+        comment.contains("ceo@server.example") && comment.contains("a@desk.example"),
+        "{comment}"
+    );
+}
+
 #[cfg(feature = "imap")]
 #[test]
 fn a_paired_node_may_not_send_as_the_servers_addresses_or_domains() {
-    let set = |domains: &[&str]| -> std::collections::BTreeSet<String> {
-        domains.iter().map(ToString::to_string).collect()
-    };
+    let set =
+        |domains: &[&str]| -> std::collections::BTreeSet<String> { domains.iter().map(ToString::to_string).collect() };
     let paired = set(&["desk.example", "split.example"]);
     let own_domains = set(&["server.example", "split.example"]);
     let claim = |address: &str| {
@@ -494,7 +593,10 @@ fn a_paired_node_may_not_send_as_the_servers_addresses_or_domains() {
     assert_eq!(refusal(&["ann@split.example"]), None, "a domain split by address");
     assert_eq!(refusal(&["me@gmail.example"]), None, "a domain of neither side");
     let text = refusal(&["ann@desk.example", "Sales@split.example"]).expect("the server's address");
-    assert!(text.contains("Sales@split.example") && text.contains("100010"), "{text}");
+    assert!(
+        text.contains("Sales@split.example") && text.contains("100010"),
+        "{text}"
+    );
     let text = refusal(&["ceo@Server.Example"]).expect("the server's domain");
     assert!(text.contains("server.example"), "{text}");
     assert!(refusal(&["x@bounce.server.example"]).is_some(), "the bounce domain");

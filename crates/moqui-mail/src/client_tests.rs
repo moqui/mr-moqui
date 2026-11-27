@@ -3231,3 +3231,121 @@ fn a_client_message_is_signed_only_from_an_account_delivered_here() {
         sent[1].2
     );
 }
+
+/// A thread's `fromVerdict` (SEC-MAIL-10): `own` for a message of the account, `pass` only for DMARC passing for the
+/// From domain in an `Authentication-Results` of this server's authserv-id, `fail` for a DMARC failure, else none, so
+/// a received message forged as from the reader does not load remote images.
+#[test]
+fn a_thread_says_whether_its_from_passed_this_servers_check() {
+    let (ctx, facade) = setup_with(r#"<moqui-conf><smtp-server authserv-id="mx.example.com"/></moqui-conf>"#);
+    let _entered = ctx.enter();
+    install();
+    let account = shared_account(&facade, "smtp.example.com");
+    let base = now() - DAY;
+    let results = |value: &str| text(&format!("Subject: x\r\nAuthentication-Results: {value}\r\n"));
+    let own_from = ("fromAddress", text("team@example.com"));
+    let in_thread = ("rootEmailMessageId", text("V1"));
+    let cases = [
+        (
+            "V1",
+            "ES_RECEIVED",
+            results("mx.example.com; spf=pass; dmarc=pass (p=reject) header.from=example.com"),
+        ),
+        (
+            "V2",
+            "ES_RECEIVED",
+            results("evil.example; dmarc=pass header.from=example.com"),
+        ),
+        (
+            "V3",
+            "ES_RECEIVED",
+            results("mx.example.com; dmarc=pass header.from=other.example"),
+        ),
+        (
+            "V4",
+            "ES_RECEIVED",
+            results("mx.example.com; dmarc=fail header.from=example.com"),
+        ),
+        ("V5", "ES_SENT", Value::Null),
+    ];
+    for (index, (id, status, headers)) in cases.iter().enumerate() {
+        let index = i64::try_from(index).unwrap();
+        message(
+            &facade,
+            &account,
+            id,
+            "",
+            base + index * 1000,
+            &[
+                own_from.clone(),
+                in_thread.clone(),
+                ("statusId", text(status)),
+                ("headersString", headers.clone()),
+            ],
+        );
+    }
+    let thread = ok("get#Thread", &[("emailMessageId", text("V1"))]);
+    let verdicts: Vec<String> = maps(&thread, "messageList")
+        .iter()
+        .map(|message| field(message, "fromVerdict"))
+        .collect();
+    assert_eq!(verdicts, ["pass", "", "", "fail", "own"]);
+}
+
+/// SEC-MAIL-68: the listener routes mail to an identity's address, so an account delivered here (shared, no incoming
+/// host) gets another address only from a mail administrator, not from a member who manages it, whatever its domain.
+#[test]
+fn an_identity_of_an_account_delivered_here_is_a_mail_administrators_to_give() {
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    for id in ["alice", "bob"] {
+        user(&facade, id);
+    }
+    super::sync_tests::mail_admin(&facade, "alice");
+    login("alice");
+    let account = out_text(
+        &ok(
+            "create#EmailAccount",
+            &[
+                ("accountKindEnumId", text("EakShared")),
+                ("emailAddress", text("orders@acme.example.com")),
+                ("smtpHost", text("smtp.example.net")),
+            ],
+        ),
+        "emailAccountId",
+    );
+    ok(
+        "add#EmailAccountUser",
+        &[
+            ("emailAccountId", text(&account)),
+            ("userId", text("bob")),
+            ("permissionEnumId", text("EapManage")),
+        ],
+    );
+    login("bob");
+    refused(
+        "create#EmailIdentity",
+        &[
+            ("emailAccountId", text(&account)),
+            ("emailAddress", text("ceo@elsewhere.example.org")),
+        ],
+        "delivered here is given only by a mail administrator",
+    );
+    // the account's own address is no new address
+    ok(
+        "create#EmailIdentity",
+        &[
+            ("emailAccountId", text(&account)),
+            ("emailAddress", text("Orders@acme.example.com")),
+        ],
+    );
+    login("alice");
+    ok(
+        "create#EmailIdentity",
+        &[
+            ("emailAccountId", text(&account)),
+            ("emailAddress", text("ceo@elsewhere.example.org")),
+        ],
+    );
+}
