@@ -31,13 +31,22 @@
     // would read as a formula (it starts with a tab or a CR, or with =, +, - or @ after any white space, and is not a
     // plain number such as -12.50; moqui_lib::string::csv_formula_guarded is the same rule) is
     // written with a leading apostrophe first, so an exported field cannot run as a formula (CSV injection).
-    // $sep writes the comma between the values of a row.
+    // $sep writes the comma between the values of a row. Inside a cell ($cellStart to $cellEnd) $csv only collects each
+    // widget's text, and the cell's whole text is guarded and quoted once: a field with two widgets cannot put a formula
+    // in a cell of its own (SEC-SCR-88).
     const prelude = `let $hasPrev = false;
-const $csv = (value) => {
+let $cellParts = null;
+const $escape = (value) => {
     value = String(value);
     if (/^[\\t\\r]/.test(value) || (/^\\s*[=+\\-@]/.test(value) && !/^\\s*[+-]?[\\d,]*\\.?\\d+$/.test(value))) value = "'" + value;
     return /[,"\\n\\r]/.test(value) ? '"' + value.replace(/"/g, '""') + '"' : value;
 };
+const $csv = (value) => {
+    if ($cellParts) { $cellParts.push(String(value)); return ""; }
+    return $escape(value);
+};
+const $cellStart = () => { $cellParts = []; };
+const $cellEnd = () => { const parts = $cellParts; $cellParts = null; if (parts && parts.length) sri.write($escape(parts.join(""))); };
 const $sep = () => { if ($hasPrev) sri.write(","); else $hasPrev = true; };
 `;
 
@@ -90,8 +99,8 @@ const $sep = () => { if ($hasPrev) sri.write(","); else $hasPrev = true; };
     });
 
     // The code for one cell, which first writes the comma that separates it from the cell before.
-    const cellCode = (field) => "$sep();\n" + fieldChain(field, (sub) =>
-        widgetless(sub) ? "" : setCode(sub) + widgetsSource(sub));
+    const cellCode = (field) => "$sep();\n$cellStart();\ntry {\n" + fieldChain(field, (sub) =>
+        widgetless(sub) ? "" : setCode(sub) + widgetsSource(sub)) + "\n} finally { $cellEnd(); }\n";
 
     const formListMacro = stmt((node) => {
         const columns = S.formListColumns(node);

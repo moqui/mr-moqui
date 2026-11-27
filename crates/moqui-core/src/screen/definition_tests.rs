@@ -737,3 +737,28 @@ fn an_action_blocks_authorization_toggles_end_with_it() {
         context.enable_entity_eca();
     }
 }
+
+/// SEC-SCR-11: a screen holds actions, so no screen is read from another server; this server's own locations are.
+#[test]
+fn a_screen_is_never_read_from_another_server() {
+    for remote in [
+        "http://evil.example/Root.xml",
+        "HTTPS://evil.example/Root.xml",
+        " ftp://evil.example/x.xml",
+    ] {
+        assert!(super::remote_location(remote), "{remote}");
+    }
+    for local in [
+        "component://webroot/screen/webroot.xml",
+        "dbresource://screens/x.xml",
+        "/tmp/Root.xml",
+        "runtime://x.xml",
+    ] {
+        assert!(!super::remote_location(local), "{local}");
+    }
+    let context = crate::context::ExecutionContextFactory::test_context();
+    let factory = context.factory();
+    let facade = super::super::ScreenFacade::of(factory);
+    let refused = facade.screen_def(factory, "https://evil.example/Root.xml").unwrap_err();
+    assert!(refused.to_string().contains("not from another server"), "{refused}");
+}
