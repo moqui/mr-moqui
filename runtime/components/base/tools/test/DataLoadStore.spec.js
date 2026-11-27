@@ -231,3 +231,16 @@ feature("Load with the foreign keys dropped names a value that does not read and
         started == 0
     },
 })
+
+// before, a file that failed was only logged: the page said "Loaded 0 records" for a location not there, and only the
+// count of the files that loaded for a batch with one bad file (TOOL-UI-006)
+feature("Load names a location it could not load as a form error, beside the count of what loaded", {
+    when() {
+        return post("john.doe", "Data/Load/load", { location: "component://tools/data/NoSuchSpecDataLoad.xml" })
+    },
+    then({ errors, messages }) {
+        errors.includes("Could not load [component://tools/data/NoSuchSpecDataLoad.xml]")
+        errors.includes("No such file")
+        messages.includes("Loaded 0 records from [component://tools/data/NoSuchSpecDataLoad.xml]")
+    },
+})

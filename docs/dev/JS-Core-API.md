@@ -787,10 +787,10 @@ const orders = ec.entity.find("mantle.order.OrderHeader").condition(cf.makeCondi
 | `messageNoActionFiles(flag)` | With false, no message for a file that had nothing to load |
 | `restrictSensitiveEntities(flag)` | Refuse records of the entities a request may not name |
 | `protectUserAccounts(flag)` | With `restrictSensitiveEntities`, also refuse a `UserAccount` record that sets a password field (`currentPassword`, `passwordSalt` and the rest), or that changes an identity field (`username`, `emailAddress`, `disabled` and the rest) of an account that is there; a new account may set those. Tools' Data Load sets it, the seed and component loads do not |
-| `load(messages)` | Loads; the number of records. The messages are added to an array given. As Java, the load sets the caller's transaction aside and loads each text and file in a transaction of its own. A file that fails is named in the messages and the next one loads. A text that fails loads nothing and throws: the message names the text, the record (`Could not store moqui.basic.Enumeration [enumId=X]`) and the database's reason |
+| `load(messages, failures)` | Loads; the number of records. The messages are added to an array given. As Java, the load sets the caller's transaction aside and loads each text and file in a transaction of its own. A file or location that fails (a directory's file included) is logged, named in the messages and added to a `failures` array given as `{location, reason}`, and the next one loads. A text that fails loads nothing and throws: the message names the text, the record (`Could not store moqui.basic.Enumeration [enumId=X]`) and the database's reason |
 | `check()`, `check(messages)` | Compares the data with the database and writes nothing: the messages of what did not match, or with an array the fields checked |
 | `checkInfo()`, `checkInfo(diffInfoList, messages)` | A row for each record not found and each field that did not match, or with arrays the fields checked |
-| `list()` | The values of the records the data has, with nothing written |
+| `list()`, `list(messages, failures)` | The values of the records the data has, with nothing written; a location that fails is in the arrays given, as for `load` |
 
 `ec.entity.makeDataWriter()` writes records as entity data. Each setter returns the writer.
 
@@ -813,8 +813,9 @@ const orders = ec.entity.find("mantle.order.OrderHeader").condition(cf.makeCondi
 | `text()` | The data as text |
 
 ```js
-const messages = []
-const loaded = ec.entity.makeDataLoader().location("component://my-app/data/MyDemoData.xml").load(messages)
+const messages = [], failures = []
+const loaded = ec.entity.makeDataLoader().location("component://my-app/data/MyDemoData.xml").load(messages, failures)
+for (const failure of failures) ec.message.addError(`Could not load [${failure.location}]: ${failure.reason}`)
 const xml = ec.entity.makeDataWriter().entityName("moqui.basic.Enumeration").filterMap({ enumTypeId: "MyType" }).text()
 ```
 

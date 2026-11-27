@@ -126,8 +126,16 @@ pub struct LoadOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LoadResult {
     pub records: u64,
-    /// Files of a directory location that failed, were logged and skipped.
-    pub failed_files: u64,
+    /// Files of a directory location that failed, were logged and skipped, each with its reason, so a caller can name
+    /// them to whoever asked for the load (TOOL-UI-006).
+    pub failures: Vec<LoadFailure>,
+}
+
+/// A file or location that failed to load: where it is and why, as [`error_chain`] gives it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoadFailure {
+    pub location: String,
+    pub reason: String,
 }
 
 /// The error and its sources, as Java logs `t` and `t.getCause()`.

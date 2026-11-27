@@ -69,6 +69,8 @@ along with this software (see the LICENSE.md file). If not, see
             loaded = false
             recordsLoaded = 0
             loadError = null
+            // the files or locations that failed while the others loaded, as "[location] reason" (TOOL-UI-006)
+            let failedFiles = []
 
             const dropped = runJob(dropJobId)
             dropStatusId = dropped.statusId || null
@@ -104,7 +106,9 @@ along with this software (see the LICENSE.md file). If not, see
                         // identity fields (SEC-TLS-81)
                         edl.restrictSensitiveEntities(true)
                         edl.protectUserAccounts(true)
-                        recordsLoaded = edl.load([])
+                        const failures = []
+                        recordsLoaded = edl.load([], failures)
+                        failedFiles = failures.map(failure => `[${failure.location}] ${failure.reason}`)
                     }
                     loaded = !ec.message.hasError()
                 } catch (e) {
@@ -119,13 +123,16 @@ along with this software (see the LICENSE.md file). If not, see
             const restored = runJob(restoreJobId)
             restoreStatusId = restored.statusId || null
             restoreFailedCount = Number(restored.failedCount || 0)
-            outcome = (loaded ? 'Loaded ' + recordsLoaded + ' records' : (loadError || 'Not loaded')) + '. Restoring the foreign keys (database job '
+            outcome = (loaded ? 'Loaded ' + recordsLoaded + (recordsLoaded == 1 ? ' record' : ' records') : (loadError || 'Not loaded'))
+                + (failedFiles.length ? '; could not load ' + failedFiles.join('; ') : '') + '. Restoring the foreign keys (database job '
                 + restoreJobId + ') ended ' + (restoreStatusId || 'with an error') + (restoreFailedCount ? ', ' + restoreFailedCount + ' failed' : '') + '.'
-            if (restoreStatusId == 'DbjsDone') ec.logger.info('Load wrap: ' + outcome)
-            else ec.logger.error('Load wrap: ' + outcome + ' Run database job ' + restoreJobId + ' again to make the rest of the keys.')
+            // a run with a failed file is not clean: the notification names the files to repair
+            const clean = loaded && !failedFiles.length && restoreStatusId == 'DbjsDone'
+            if (clean) ec.logger.info('Load wrap: ' + outcome)
+            else ec.logger.error('Load wrap: ' + outcome + (restoreStatusId == 'DbjsDone' ? '' : ' Run database job ' + restoreJobId + ' again to make the rest of the keys.'))
             // the outcome is the job run's results; the load's error is not the run's, as the restore did run
             ec.message.clearErrors()
-            if (!loaded || restoreStatusId != 'DbjsDone') ec.message.addError(outcome)
+            if (!clean) ec.message.addError(outcome)
             })
         ]]></script>
         </actions>

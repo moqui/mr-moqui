@@ -65,16 +65,15 @@ along with this software (see the LICENSE.md file). If not, see
                 let entityNames = []
                 if (!(types || components)) {
                     const names = new Set()
-                    const listMessages = []
+                    const failures = []
                     let values
                     try {
-                        values = edl.list(listMessages)
+                        values = edl.list([], failures)
                     } catch (e) {
                         notStarted(String(e && e.message || e))
                         return
                     }
-                    const failed = listMessages.map(String).filter(message => message.startsWith('Error loading '))
-                    if (failed.length) { notStarted(failed.join('; ')); return }
+                    if (failures.length) { notStarted(failures.map(failure => `[${failure.location}] ${failure.reason}`).join('; ')); return }
                     for (const value of values) {
                         const name = value && (typeof value.getEntityName === 'function' ? value.getEntityName() : value.entityName)
                         if (name) names.add(String(name))
@@ -101,17 +100,24 @@ along with this software (see the LICENSE.md file). If not, see
             } else {
                 if (onlyCreate) edl.onlyCreate(true)
                 const messages = []
+                const failures = []
                 // a text that fails loads nothing (it is one transaction) and its error names the record and the
                 // database's reason: a form error, with the text kept, not a failed request (TOOL-UI-005)
                 let recordsLoaded = 0
                 try {
-                    recordsLoaded = edl.load(messages)
+                    recordsLoaded = edl.load(messages, failures)
                 } catch (e) {
                     ec.message.addError(ec.resource.expand('Nothing was loaded from [${source}]: ${reason}', '', {source, reason: String(e && e.message || e)}))
                     return
                 }
-                ec.message.addMessage(ec.resource.expand('Loaded ${recordsLoaded} records from [${source}]', '', {recordsLoaded, source}))
-                ec.web.sessionAttributes["DataLoad.messages"] = messages
+                // a file that failed loaded nothing and the others loaded: each failed one is a form error naming it,
+                // beside the count of what did load (TOOL-UI-006)
+                for (const failure of failures) ec.message.addError(ec.resource.expand('Could not load [${location}]: ${reason}', '',
+                    {location: String(failure.location), reason: String(failure.reason)}))
+                const recordsText = recordsLoaded == 1 ? '1 record' : `${recordsLoaded} records`
+                ec.message.addMessage(ec.resource.expand('Loaded ${recordsText} from [${source}]', '', {recordsText, source}))
+                // as JSON: the session keeps text, and an array put there reads back as one string after the redirect
+                ec.web.sessionAttributes["DataLoad.messages"] = JSON.stringify(messages.map(String))
             }
         ]]></script></actions>
         <conditional-response url="." save-parameters="true">
@@ -187,8 +193,12 @@ along with this software (see the LICENSE.md file). If not, see
     <actions>
         <set field="pageSize" from="pageSize || '100'"/>
         <script><![CDATA[
-            messages = ec.web.sessionAttributes['DataLoad.messages']
-            if (messages) ec.web.sessionAttributes.remove('DataLoad.messages')
+            const storedMessages = ec.web.sessionAttributes['DataLoad.messages']
+            if (storedMessages) {
+                ec.web.sessionAttributes.remove('DataLoad.messages')
+                try { messages = JSON.parse(String(storedMessages)) } catch (e) { messages = [String(storedMessages)] }
+                if (!Array.isArray(messages)) messages = [String(messages)]
+            }
         ]]></script>
     </actions>
     <widgets>
