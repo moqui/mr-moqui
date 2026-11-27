@@ -326,8 +326,8 @@ pub(crate) fn push_check_fix(
 /// The check screen's "Send a test notification": the current account's server pushes one to this phone through the
 /// full path (§7.6). Its answer `{ackIdList, queuedDate, reasonCode}`; the screen then watches `push_check`'s
 /// `lastPushDate` for it. The shell's page only, by its nonce (SEC-CLI-97).
-#[tauri::command(async)]
-pub(crate) fn push_test(
+#[tauri::command]
+pub(crate) async fn push_test(
     app: AppHandle,
     webview: tauri::Webview,
     nonce: Option<String>,
@@ -337,8 +337,12 @@ pub(crate) fn push_test(
         return Err("Not the shell's page".to_string());
     }
     let account = host.signed_in().ok_or("No account is signed in")?;
-    let state = moqui_client_tauri::state(&app)?;
-    crate::native::test_push(&state.core, &account)
+    // its post is reqwest's blocking client: on Tauri's blocking pool, never a runtime worker
+    moqui_client_tauri::commands::blocking(move || {
+        let state = moqui_client_tauri::state(&app)?;
+        crate::native::test_push(&state.core, &account)
+    })
+    .await
 }
 
 /// The native code's part of the check (`PushCheck.state`), or none on the desktop.
@@ -630,9 +634,10 @@ const NAMES_MAX: usize = 50;
 
 /// The phone's contacts whose name or number has `term` (plans/Comms-Messaging.md §9.2), for the new-chat picker:
 /// `[{name, number}]`, at most ten. The first search asks for the contacts permission (with its reason); without it,
-/// none. Read on the phone only, for the shell's page; nothing is sent anywhere.
-#[tauri::command(async)]
-pub(crate) fn contacts_search(
+/// none. Read on the phone only, for the shell's page; nothing is sent anywhere. The permission's answer is waited for on
+/// Tauri's blocking pool, never a runtime worker.
+#[tauri::command]
+pub(crate) async fn contacts_search(
     app: AppHandle,
     webview: tauri::Webview,
     nonce: Option<String>,
@@ -645,19 +650,22 @@ pub(crate) fn contacts_search(
     let Some(term) = contact_term(&term) else {
         return Ok(serde_json::json!([]));
     };
-    #[cfg(target_os = "android")]
-    {
-        let text = crate::android::contacts_search(&term, CONTACTS_MAX)?;
-        serde_json::from_str(&text).map_err(|err| err.to_string())
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        log::info!(
-            "No phone contacts here to search for {} characters",
-            term.chars().count()
-        );
-        Ok(serde_json::json!([]))
-    }
+    moqui_client_tauri::commands::blocking(move || {
+        #[cfg(target_os = "android")]
+        {
+            let text = crate::android::contacts_search(&term, CONTACTS_MAX)?;
+            serde_json::from_str(&text).map_err(|err| err.to_string())
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            log::info!(
+                "No phone contacts here to search for {} characters",
+                term.chars().count()
+            );
+            Ok(serde_json::json!([]))
+        }
+    })
+    .await
 }
 
 /// The names the phone's contacts have for `numbers` (E.164, at most 50; others are left out): `{number: name}`. Never
@@ -886,7 +894,7 @@ pub(crate) async fn location_allow(
     exact: Option<bool>,
 ) -> Result<bool, String> {
     page_account(&app, &webview)?;
-    let work = move || {
+    moqui_client_tauri::commands::blocking(move || {
         #[cfg(target_os = "android")]
         return crate::android::location_allow(exact != Some(false));
         #[cfg(not(target_os = "android"))]
@@ -894,10 +902,8 @@ pub(crate) async fn location_allow(
             log::info!("No phone location here to allow (exact: {exact:?})");
             Ok(false)
         }
-    };
-    tauri::async_runtime::spawn_blocking(work)
-        .await
-        .map_err(|err| format!("The location permission's question did not finish: {err}"))?
+    })
+    .await
 }
 
 /// The page's Share (a share it just started, or its Send from this device): the share is sent from this phone by its
@@ -910,9 +916,9 @@ pub(crate) async fn location_allow(
 /// [`crate::location::read_share`]), never the page's; the page names only the share. `started`; `declined` when the
 /// person said Not now (the page sends nothing either); `unavailable` when the service could not start (the page sends
 /// while it is open, as a browser does). A page of the current account's only, for that account, for a share this
-/// device sends (Send from this device first). Run on Tauri's blocking pool: its read of the share is reqwest's
-/// blocking client, which panics on a runtime worker (and the page's promise was then never answered), and the app's
-/// dialog is waited for there too.
+/// device sends (Send from this device first). Run on Tauri's blocking pool (`moqui_client_tauri::commands::blocking`):
+/// its read of the share is reqwest's blocking client, which panics in a debug build and blocks a runtime worker in
+/// release when run on one (the page's promise was then never answered), and the app's dialog is waited for there too.
 #[tauri::command]
 pub(crate) async fn location_share_start(
     app: AppHandle,
@@ -920,17 +926,11 @@ pub(crate) async fn location_share_start(
     share: crate::location::ShareAsk,
 ) -> Result<String, String> {
     let account = page_account(&app, &webview)?;
-    let work = move || {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| start_share(&app, &account, &share)))
-            .unwrap_or_else(|_| Err("The share could not be started here".to_string()))
-    };
-    tauri::async_runtime::spawn_blocking(work)
-        .await
-        .map_err(|err| format!("The share's start did not finish: {err}"))?
+    moqui_client_tauri::commands::blocking(move || start_share(&app, &account, &share)).await
 }
 
 /// [`location_share_start`]'s work, off the async runtime: the share read with the account's device key, then the
-/// app's confirmation and its service.
+/// app's confirmation and its service. A share begun here is let go again when the start fails or panics after that.
 fn start_share(app: &AppHandle, account: &str, share: &crate::location::ShareAsk) -> Result<String, String> {
     let account = account.to_string();
     let state = moqui_client_tauri::state(app)?;
@@ -952,12 +952,26 @@ fn start_share(app: &AppHandle, account: &str, share: &crate::location::ShareAsk
     if !was {
         crate::location::begin(&account, &share.share_id, share.interval_seconds * 1000, version);
     }
-    #[cfg(target_os = "android")]
-    let answer = crate::android::location_start(&share.to_json(&account))?;
-    #[cfg(not(target_os = "android"))]
-    let answer = {
-        log::info!("No location service here for share {}", share.share_id);
-        "unavailable".to_string()
+    let start = || -> Result<String, String> {
+        #[cfg(target_os = "android")]
+        return crate::android::location_start(&share.to_json(&account));
+        #[cfg(not(target_os = "android"))]
+        {
+            log::info!("No location service here for share {}", share.share_id);
+            Ok("unavailable".to_string())
+        }
+    };
+    let answer = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(start)) {
+        Ok(Ok(answer)) => answer,
+        failed => {
+            if !was {
+                crate::location::forget_share(&account, &share.share_id);
+            }
+            return match failed {
+                Ok(Err(err)) => Err(err),
+                _ => Err("The share could not be started here".to_string()),
+            };
+        }
     };
     if answer == "started" {
         // the audience version the person just confirmed, also for one sent already

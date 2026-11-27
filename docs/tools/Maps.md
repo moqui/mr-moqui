@@ -1050,11 +1050,13 @@ in `LocationShares.js`), every signed-in user's for their own shares (`LocationS
   `data` tool refuse the seven entities, an administrator's included (`moqui-entity` `sensitive.rs`). Positions never
   go to a log, a telemetry attribute, an error message, a notification row or a cache.
 - **What the server's operator can still reach.** These services keep a share from other users, not from whoever runs
-  the server: an administrator who signs in as the person (`ADMIN_LOGIN_AS`) sees what that person sees; a holder of
-  the Tools SQL runner reads the tables; any server script can turn on the `NotificationCapture` tool (meant for specs,
-  not gated) and see pushes in transit; and the database, its backups and its own logs hold what the tables hold. Who
-  shared with whom and until when (never a position) stays in the entity audit log and in the `LocationShared`
-  notification rows of the people told, under their own retention.
+  the server: an administrator who signs in as the person (`ADMIN_LOGIN_AS`) sees what that person sees; a holder of the
+  Tools SQL runner reads the tables; a holder of the sealed script permission (`GROOVY_SHELL_WEB`), or any server
+  script, can read the location tables through the entity facade (the refusal above covers the generic tools and routes,
+  not a script's own finds); any server script can turn on the `NotificationCapture` tool (meant for specs, not gated)
+  and see pushes in transit; and the database, its backups and its own logs hold what the tables hold. Who shared with
+  whom and until when (never a position) stays in the entity audit log and in the `LocationShared` notification rows of
+  the people told, under their own retention.
 
 ### The owner's acts
 

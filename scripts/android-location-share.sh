@@ -14,6 +14,7 @@
 # asked or when the walk changes:
 #   ./moq android emulator && ./moq android build --target x86_64 --apk
 #   scripts/android-location-share.sh
+# On a real phone it wipes the app's data (pm clear) first: its accounts and everything kept for them.
 # ANDROID_SERIAL names the device (default: the first adb lists); MOQUI_MOBILE_APK the APK (default: the universal debug
 # APK of ./moq android build --apk); MOQUI_WALK_PORT the server's port (18087); MOQUI_WALK_PACKAGE the moq package of
 # the server binary (release, target/release/moqui, by default; debug for ./moq build --debug). The server's log is
@@ -50,13 +51,17 @@ echo "== the server half: moqui test framework tools --acceptance --spec Locatio
     --serve "127.0.0.1:$port" --ready-file "$out/ready" <"$out/stdin" >"$out/server.log" 2>&1 &
 server=$!
 exec 3>"$out/stdin"
-# however the script ends (a signal to the walk too): the notification shade closed, the forwards gone, and the server
-# stopped by the end of its standard input, else by SIGTERM after 30 seconds and SIGKILL 10 seconds later; a second
-# signal does not cut the cleanup short
+# however the script ends (a signal to the walk too): the notification shade closed, the app force-stopped unless the
+# walk passed (so a share it left on is not sent from the device any more), the walk's UI dump removed, the forwards
+# gone, and the server stopped by the end of its standard input, else by SIGTERM after 30 seconds and SIGKILL 10
+# seconds later; a second signal does not cut the cleanup short
+passed=0
 cleanup() {
     trap '' INT TERM HUP
     exec 3>&-
     adb shell cmd statusbar collapse >/dev/null 2>&1 || true
+    [ "$passed" = 1 ] || adb shell am force-stop "$app" >/dev/null 2>&1 || true
+    adb shell rm -f /sdcard/location-walk-ui.xml >/dev/null 2>&1 || true
     adb reverse --remove "tcp:$port" >/dev/null 2>&1 || true
     adb forward --remove "tcp:$devtools" >/dev/null 2>&1 || true
     for _ in $(seq 1 30); do
@@ -84,6 +89,10 @@ grep -E 'LocationShareWalkFixtures|PASSED|FAILED' "$out/server.log" | grep -v '^
 echo "   serving $(head -1 "$out/ready") after $(elapsed) s" >&2
 
 echo "== installing $apk on $serial, its data cleared" >&2
+case "$serial" in
+emulator-*) ;;
+*) echo "warning: $serial is not an emulator: pm clear wipes all of this app's data on it" >&2 ;;
+esac
 adb shell pm clear "$app" >/dev/null 2>&1 || true
 adb install -r -g "$apk" >/dev/null
 adb reverse "tcp:$port" "tcp:$port" >/dev/null
@@ -105,4 +114,5 @@ if [ "$status" -ne 0 ]; then
     echo "FAILED: LocationShareWalk (the phone) after $(elapsed) s (the server's log: $out/server.log, the screen: $out/last.png)" >&2
     exit 1
 fi
+passed=1
 echo "LocationShareWalk (the phone) passed in $(elapsed) s" >&2
