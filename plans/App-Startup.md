@@ -1,0 +1,237 @@
+# App startup at native speed
+
+The plan to make an app open as fast as a native phone app: on Android, from the installed PWA and from the
+[mobile app](../crates/moqui-mobile/README.md). Plan and prototype; nothing here is built in the framework.
+
+## Targets
+
+The goal is an instant start: content in 50 ms. Each target is from the tap on the launcher icon, measured on a
+mid-range Android phone on Wi-Fi.
+
+| Measure | Cold start (no process) | Warm start (process alive) |
+|---|---|---|
+| First frame in the app's own colors | 30 ms | 30 ms |
+| Last-known content shown and usable | native floor + 50 ms with S7 | 50 ms |
+| Fresh content shown | 1 s | 1 s |
+
+The floors, from the [prototype](#prototype):
+
+- **First frame, 30 ms in both cases.** Android draws the starting window from the app's theme before the app's
+  process runs. So the first frame needs only the right colors and icon (S1, S6).
+- **Warm content, 50 ms.** On a resume the page is still in memory and shows with no reload (S6). A reload from the
+  caches of S2 and S3 paints content in 52 ms on a CPU slowed 4 times.
+- **Cold content, the native floor.** No app shows content before its own process draws its first frame. On the
+  Android emulator an app with only a native list draws it at 165 ms (median, cold). So the cold target is relative:
+  50 ms after the first frame of an empty native app on the same device. S7 draws content in that first frame.
+- **Cold content on the web path, about 130 ms.** A new browser process paints its first frame at 120 to 140 ms on
+  a CPU slowed 4 times, whatever the page: the service worker, the page size and the shell libraries change it by
+  less than 20 ms. So cold content in 50 ms needs content drawn without the WebView (S7).
+
+Also:
+
+- No frame in a wrong theme. No blank white or black frame.
+- No sign-in page on a cold start while the user's sign-in is still valid.
+- The targets hold with the server far away: the network only changes when fresh content comes.
+
+## What happens now
+
+A screen recording (2026-11-27, Android, an installed PWA of a standalone app page, cold start) took about 5 s:
+
+| Time | Screen |
+|---|---|
+| 0.0 s | Tap on the launcher icon |
+| 1.0 s | OS splash with the icon |
+| 2.0 s | Black screen |
+| 3.0 s | The `/qapps` shell header in its light theme, empty white body |
+| 4.0 s | The app's own page in its dark theme, "loading" text |
+| 5.0 s | Content |
+
+The causes, from the code:
+
+1. **Two page loads.** The manifest's `start_url` is `/qapps` (`webroot/manifest.webmanifest`). An app tile that opens
+   a standalone page answers `{redirectUrl}`, and the shell does a full page load (`WebrootVue.qvt.js`). So the full
+   shell (Vue, Quasar, `clientConfig`) loads only to leave.
+2. **One manifest for all apps.** One name, one icon, `background_color` `#ffffff` and `theme_color` `#1976d2`. A dark
+   app shows a light splash and a light shell frame first.
+3. **The page is never cached.** `sw.js` caches only versioned static files (SEC-CLI-02). Each start waits for the
+   network: TLS, the session check and a server render of the page.
+4. **Data comes last.** The page shows, its scripts run, then it asks for its data. Nothing shows the last-known data.
+5. **The WebView paints black** before the first page paints (the mobile app and the PWA's WebAPK both).
+
+## Prototype
+
+[proto/app-startup](proto/app-startup/README.md) measures the steps in headless Chromium 1248 with
+a local server: 400 ms for the page (TLS, session check, render) and 300 ms for the data. Each page loads the
+`/qapps` shell libraries (Vue, Quasar). 10 runs per row, 2026-11-27. Cold is a new browser process; reload is the same
+process. The time is from navigation start to the paint of the first content row, median / p90, in ms.
+
+| Variant | CPU 1×, cold | CPU 1×, reload | CPU 4×, cold | CPU 4×, reload |
+|---|---|---|---|---|
+| a: now (network, blocking libraries) | 748 / 764 | 732 / 732 | 836 / 852 | 804 / 816 |
+| b: S2 + S3 (cached page, `localStorage` drawn inline) | 60 / 68 | 44 / 48 | 136 / 172 | 64 / 128 |
+| d: the cached page has the content in it | 56 / 64 | 44 / 48 | 144 / 188 | 56 / 68 |
+| e: as d, first screen only, no libraries | 48 / 56 | 32 / 48 | 128 / 144 | 52 / 92 |
+| f: as b, no service worker (HTTP cache) | 40 / 52 | 432 / 440 | 136 / 168 | 484 / 512 |
+
+What it proves:
+
+- S2 and S3 paint content in the first frame, 6 times sooner than now on a slow CPU and 12 to 15 times on a fast one, and the network no longer changes it.
+- On a fast CPU, the cold start is 44 to 60 ms and a reload 32 to 44 ms: the 50 ms target.
+- Shell libraries loaded with `defer` and an async stylesheet delay the first paint by at most 12 ms (b against e).
+- The service worker costs 10 to 20 ms on a fast CPU and nothing measurable on a slow one (b against f).
+- `stale-while-revalidate` does not apply to a page in Chromium: a page from the HTTP cache waits for the network on
+  each reload (f), and an earlier run with it paints at 436 ms. So S2 needs the service worker.
+- On a CPU slowed 4 times, a cold start is 120 to 140 ms in each variant: the new process is the floor, not the page.
+
+### On the Android emulator
+
+[android/](proto/app-startup/android/) is a small app that loads variant b in a WebView, with S7 as an
+option. Pixel 8 AVD, Android 15, x86_64, WebView 124, host GPU, page and data delays as above. Cold is after
+`am force-stop`, after two starts that fill the caches. 10 runs per row, except 5 for the last. Median, in ms:
+
+| App | First frame, cold (`TotalTime`) | Content, cold | Warm start (`WaitTime`) |
+|---|---|---|---|
+| Native list only (the floor) | 165 | 165 | 24 to 40 |
+| WebView made before the first frame | 414 | 917 | 51 |
+| WebView made after the first frame | 197 | 582 | not measured |
+| S7, WebView made before the first frame | 433 | 433 (WebView 563) | 45 |
+| S7, WebView made after the first frame | 232 | 232 (WebView 647) | not measured |
+
+What it proves:
+
+- S7 works: the snapshot is in the first frame, 2.5 times sooner than the WebView's content (232 against 582) and
+  4 times sooner than now (917). That is 67 ms after the native floor.
+- To make the WebView before the first frame delays the first frame by 220 ms. So S6 makes it after the first frame.
+- A warm start is 20 to 80 ms in each app: the page stays in memory.
+- Content from the WebView is about 400 ms after the first frame, also with the caches of S2 and S3. That is the
+  start of the WebView's renderer, so only S7 meets the cold target in the mobile app.
+
+Not proved: a phone. An emulator is not a phone, and the emulator crashed in its GPU driver in the last row. S0
+measures on a phone.
+
+## Work
+
+Do the steps in order. Each step has its check. S0 comes first, so each later step has a before and after number.
+
+### S0. Measure
+
+- Give `WebrootRum.js` a `startup` span: navigation start, first paint, first frame in the app's theme, last-known
+  content shown, fresh content shown. Mark the run cold or warm, PWA or mobile app, cached or not.
+- Let a standalone page (one outside the shell) send the same span with a small script, `js/WebrootStartup.js`, with no
+  Vue.
+- For the mobile app, record `adb shell am start -W` (`TotalTime`) and the span.
+- Add `scripts/startup-measure.sh`: on a connected phone, N cold and N warm starts of one app, then the median and p90.
+  It is a device check, run when asked, not a test.
+- Show the numbers per app in System, Monitor.
+
+**Check:** the numbers of the recording above come back within 10%.
+
+### S1. One installed app per app
+
+- Serve a manifest per app: `/apps/<app>/manifest.webmanifest`, from attributes on the app's root screen (name, short
+  name, icon, `theme_color`, `background_color`) with the site manifest's values as defaults. `id` and `start_url` are
+  the app's own page, `scope` its path.
+- The site manifest stays for `/qapps`.
+- A tile for a standalone page is a plain link to the page, with no JSON redirect.
+- Each page sends `<meta name="theme-color">` and the background color in an inline style in the first bytes of the
+  `<head>`.
+
+**Check:** an installed app opens its own page with no `/qapps` request, and the splash and first frame have its colors.
+
+### S2. The app's page from the service worker
+
+- Split a page in two: a **shell document** with no user data and no session token, and the data the page asks for.
+- The shell document is versioned and answered `Cache-Control: public`. `sw.js` keeps it, answers it cache-first, and
+  gets the new version in the background.
+- The page gets its session token from a small transition after it shows (`/qapps/sessionToken`, no-store).
+- Turn on navigation preload, so a page not cached yet does not wait for the worker to start.
+- Load each script with `defer` and each stylesheet the first frame does not need after the first paint.
+- This keeps SEC-CLI-02: the cache still has no answer that depends on who is signed in.
+
+**Check:** with the server stopped, an installed app shows its shell document. A spec checks that the cached shell
+document is the same for two users.
+
+### S3. Last-known content
+
+- A page keeps the data of its first screen in `localStorage`, under the user and the server. An inline script at the
+  end of the shell document draws it before the first paint, with no other script. Then the page asks for fresh data
+  and changes only what changed. More data than the first screen goes in IndexedDB, read after the first paint.
+- `localStorage` and not IndexedDB for the first screen: it is synchronous, so the content is in the first frame. In a
+  first run, content read from IndexedDB painted one frame after the first paint (120 ms, then 133 ms).
+- The shell document stays the same for each user (variant b). Keeping the page with the content in it (variant d)
+  is no faster and puts user data in the service worker's cache.
+- Logout, an account switch and a 401 delete the user's store. The store has an age limit per app.
+- The mobile app already keeps each account's data in a store for offline use. Use the same contract, so one page
+  code runs in both.
+- The inline script draws the kept data as text: it builds the rows with `createElement` and sets `textContent`, or
+  goes through the page's own render path, never `innerHTML` or another HTML sink. What is kept came from the server
+  and from other users (a subject, a name), so drawing it as HTML would run whatever markup it holds before any of
+  the page's escaping. The prototype builds HTML from the data throughout, for the measurement only: the inline
+  scripts of `site/b.html` and `site/f.html` and `render` in `site/app.js` set `innerHTML`, and variants d and e
+  write the rows as an HTML string into the cached page. None of that is the pattern to build.
+- This is private data on the device, which SEC-CLI-02 does not allow now. Decision D1, proposed, would allow it;
+  S3 waits for that decision and its security cost (SEC-CLI-128).
+
+**Check:** a cold start in airplane mode shows the last content. A spec checks that logout empties the store.
+
+### S4. No sign-in on a cold start
+
+- Find whether a session survives a server restart and a long idle phone.
+- If not: a device key per installed app (as the mobile app's device login keys), so the page signs in again with no
+  page change and no user step. That is decision D3, proposed; S4 waits for it and its security cost (SEC-CLI-129).
+
+**Check:** a cold start after a server restart shows content with no Login page.
+
+### S5. A lighter first paint
+
+- Inline the CSS the first frame needs. Load the rest after it.
+- Send `Link: rel=preload` (and HTTP 103 Early Hints where the proxy passes them) for the page's scripts and fonts.
+- Fonts with `font-display: swap`. Brotli for text files. `immutable` on versioned files.
+- In the `/qapps` shell: load the code of the open screen first, and Quasar parts on use.
+
+**Check:** first paint of a page not cached is under 300 ms after its first byte, per S0.
+
+### S6. The mobile app
+
+- Keep the Android 12 splash on screen (`setKeepOnScreenCondition`) until the page sends "content shown". This
+  removes the black frame.
+- Set the WebView's background color to the app's theme before the first load.
+- Draw the first frame (the theme, or the S7 snapshot) before the WebView is made. Make the WebView in the first
+  task after that frame, in parallel with the Rust start. A WebView made before the first frame delays it by 220 ms.
+- Show the last-known store before the first server request (S3).
+
+- On a resume, show the page as it was. Ask for fresh data after the first frame, never before it.
+
+**Check:** `am start -W` and the S0 span meet the targets on the `moqui-36` AVD and on one phone.
+
+### S7. Cold content without the WebView (mobile app)
+
+- When the app goes to the background, keep a snapshot of its screen: the image, or the last-known content as a small
+  list the Kotlin side can draw.
+- On a cold start, draw that snapshot natively in the first frames, while the process and the WebView start behind it.
+- Change to the WebView page with no visible change when it has painted the same content.
+- The snapshot is private data on the device: D1 applies, and S7 waits for it as S3 does. Screen security
+  (`FLAG_SECURE`) turns snapshots off.
+
+**Check:** on a cold start, the content shows within 50 ms of the native floor, and the change to the WebView shows
+no flash.
+
+## Tests
+
+- Fast specs only, each well under 15 s: the per-app manifest fields; a standalone tile is a plain link; the cached
+  shell document has no user data; logout empties the last-known store; the service worker answers a shell document
+  with the server stopped.
+- Timing on a phone is a device check in [Testing-Needed](Testing-Needed.md), run when asked. It is not a test, and no
+  test asserts a time.
+
+## Decisions
+
+Proposed 2026-11-27, not decided. D1 and D3 are decided before S3 and S4 are built, with their security cost
+weighed; each has an item with the status `proposed` in the security review's [Clients](Security-Review.md#clients)
+register (SEC-CLI-128 and SEC-CLI-129, which refer to SEC-CLI-02). D2 has no security cost.
+
+| ID | Question | Proposal | Why | Security cost | Status |
+|---|---|---|---|---|---|
+| D1 | May a page keep a user's last data on the device (S3, S7)? | Yes. Per user and server, deleted on logout, account switch and 401, with an age limit per app. Update SEC-CLI-02 to say so. | Without it no cold start shows content before the network answers. | `localStorage` and IndexedDB belong to the origin, not to an app: every app on the origin reads every other app's kept data, and so does any XSS on any page of it, with no request and after the session has ended. On a shared or lost device it shows until it is cleared. SEC-CLI-128 | Proposed; decide before S3 |
+| D2 | A manifest per app, or one manifest with shortcuts? | A manifest per app. | Each app gets its own icon, colors and splash. Shortcuts still start the one `/qapps` app. | None | Proposed |
+| D3 | A session that survives restarts, or a device key (S4)? | A device key per installed app, as the mobile app's device login keys. | It also covers a long idle phone and an expired session, and the server keeps no more session state. | In a browser the page's script must read the key to send it, unlike the `HttpOnly` session cookie and the mobile app's native key: one XSS takes a key that signs in from anywhere until it is revoked, a persistent account takeover. SEC-CLI-129 | Proposed; decide before S4 |
