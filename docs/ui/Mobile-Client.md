@@ -563,9 +563,10 @@ the phone by the app, also while it is in the background (plans/Location-Sharing
 retention and precision are the guide [Maps, Live location](../tools/Maps.md#live-location); this is the app's part. The
 Kotlin is `LocationShare.kt` (the object and `LocationShareService`), `LocationStops.kt` (the stops kept until the
 server confirms them) and `LocationRules.kt` (JVM-tested); the Rust is `src/location.rs` with `moqui_client::location`.
-`location_allow` and `location_share_start` run on Tauri's blocking pool: the share's read is reqwest's blocking client,
-which panics on a runtime worker, and the person's answer is waited for there. The emulator walk
-`scripts/android-location-share.sh` drives it ([Tests](#tests)).
+`location_allow` and `location_share_start` (as `push_test` and `contacts_search`) run on Tauri's blocking pool
+(`moqui_client_tauri::commands::blocking`, a panic answered as an error): the share's read is reqwest's blocking client,
+which panics in a debug build and blocks a runtime worker in release when run on one, and the person's answer is waited
+for there. The emulator walk `scripts/android-location-share.sh` drives it ([Tests](#tests)).
 
 - **Started by the person's Send in the app's own dialog.** A server page has `moquiDesktop.location` (`allow`, `start`,
   `stop`, `status`; the host commands `location_allow`, `location_share_start`, `location_share_stop`,

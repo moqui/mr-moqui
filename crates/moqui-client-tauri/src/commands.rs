@@ -36,8 +36,11 @@ use tauri::{AppHandle, Webview};
 
 use crate::{state, ClientState};
 
-/// Run `work` off the main thread and the async runtime; a panic in it is an error, not the app's end.
-pub(crate) async fn blocking<T: Send + 'static>(
+/// Run `work` off the main thread and the async runtime, on Tauri's blocking pool; a panic in it is an error, not the
+/// app's end and not a command that never answers. For a command whose work makes a request with reqwest's blocking
+/// client (which panics in a debug build and blocks a runtime worker in release when run on one) or waits for the
+/// person's answer to a native dialog. The apps' own commands use it too.
+pub async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     let caught = move || {
@@ -449,7 +452,10 @@ async fn revoke(state: &ClientState, account: &Account, key: String) {
     })
     .await;
     if let Err(err) = revoked {
-        tracing::warn!("The device key of {} was not revoked on the server, and is kept to revoke later: {err}", account.id);
+        tracing::warn!(
+            "The device key of {} was not revoked on the server, and is kept to revoke later: {err}",
+            account.id
+        );
         pending(&key);
     }
 }
@@ -658,3 +664,7 @@ pub(crate) fn switched(state: &ClientState) {
     state.shell.clear_page_storage();
     state.load_shell(None);
 }
+
+#[cfg(test)]
+#[path = "commands_tests.rs"]
+mod tests;

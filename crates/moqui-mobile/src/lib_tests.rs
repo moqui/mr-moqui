@@ -150,7 +150,8 @@ fn the_shells_room_notification_check_and_fetch_carry_its_nonce() {
     );
     for command in ["chat_room_shown", "push_check", "push_check_fix", "push_test"] {
         let body = commands
-            .split(&format!("pub(crate) fn {command}("))
+            // sync or async
+            .split(&format!(" fn {command}("))
             .nth(1)
             .and_then(|rest| rest.split("\n}\n").next())
             .unwrap_or_else(|| panic!("no {command} command"));

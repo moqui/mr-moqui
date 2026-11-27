@@ -346,5 +346,7 @@ try:
     share_id = None
     say("PASSED: LocationShareWalk (the phone)")
 finally:
+    # the UI dump, which can hold the dialog's and the notification's words, removed from the device
+    adb("shell", "rm", "-f", "/sdcard/location-walk-ui.xml", check=False)
     if ws is not None:
         ws.close()
