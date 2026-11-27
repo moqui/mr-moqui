@@ -530,11 +530,11 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 | Forum and Smithy (`PFS`) | 0 | 2 | 4 | 23 | 12 | 0 | 41 |
 | BOSS access model; Admin, Commons, People, Accounting (`BOS`) | 0 | 2 | 22 | 37 | 14 | 0 | 75 |
 | BOSS business apps and the Mantle REST root (`BAP`) | 0 | 3 | 17 | 30 | 20 | 0 | 70 |
-| Clients (`CLI`) | 0 | 0 | 6 | 21 | 29 | 0 | 56 |
+| Clients (`CLI`) | 0 | 0 | 7 | 22 | 29 | 0 | 58 |
 | Script engine, templates and parsers (`SCR`) | 0 | 3 | 7 | 13 | 2 | 0 | 25 |
 | Outbound requests, processes and packaging (`OUT`) | 0 | 0 | 7 | 15 | 5 | 0 | 27 |
 | Development tools (`DEV`) | 0 | 0 | 3 | 7 | 5 | 0 | 15 |
-| **All** | 0 | 24 | 176 | 414 | 162 | 0 | 776 |
+| **All** | 0 | 24 | 177 | 415 | 162 | 0 | 778 |
 
 ## Findings by area
 
@@ -1318,6 +1318,8 @@ Map file: [Attack-Surface-Clients.md](../docs/security/Attack-Surface-Clients.md
 | --- | --- | --- | --- | --- |
 | SEC-CLI-01 | crates/moqui-desktop/src/node/mod.rs:271, crates/moqui-core/src/web/origin.rs:127, runtime/components/base/webroot/screen/webroot/Login.xml:116 | The sidecar's loopback web listener is open to every local user and has no Host check seen | Medium | fixed |
 | SEC-CLI-02 | runtime/components/base/webroot/screen/webroot/sw.js:28 | The service worker keeps any same-origin GET that has a `v` parameter, cache first, with no expiry | Low | fixed |
+| SEC-CLI-128 | `plans/App-Startup.md` D1, S3, S7 (proposed, not built) | Proposed: a page keeps the user's last data on the device in `localStorage`, which every app on the origin and any XSS reads, after the session too | Low | open |
+| SEC-CLI-129 | `plans/App-Startup.md` D3, S4 (proposed, not built) | Proposed: a device key per installed app, held where the page's script reads it, turns one XSS into a persistent account takeover | Medium | open |
 | SEC-CLI-03 | crates/moqui-desktop/src/lib.rs:234 | The main window's navigation check in node modes passes every scheme but five | Low | fixed |
 | SEC-CLI-04 | crates/moqui-client-tauri/src/scheme.rs:319, crates/moqui-desktop/src/node/scheme.rs:195, crates/moqui-core/src/context/factory.rs:93 | In the apps the server's default CSP is dropped whole, `form-action` and `frame-ancestors` with it | Low | fixed |
 | SEC-CLI-05 | crates/moqui-desktop/src/bridge.rs:288, crates/moqui-desktop/src/os/mod.rs:214 | A node page can set where OS mail and call links open, and it is kept across runs | Low | fixed |

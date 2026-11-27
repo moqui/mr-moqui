@@ -60,7 +60,7 @@ The causes, from the code:
 
 ## Prototype
 
-[scripts/app-startup-proto](../scripts/app-startup-proto/README.md) measures the steps in headless Chromium 1248 with
+[proto/app-startup](proto/app-startup/README.md) measures the steps in headless Chromium 1248 with
 a local server: 400 ms for the page (TLS, session check, render) and 300 ms for the data. Each page loads the
 `/qapps` shell libraries (Vue, Quasar). 10 runs per row, 2026-11-27. Cold is a new browser process; reload is the same
 process. The time is from navigation start to the paint of the first content row, median / p90, in ms.
@@ -85,7 +85,7 @@ What it proves:
 
 ### On the Android emulator
 
-[android/](../scripts/app-startup-proto/android/) is a small app that loads variant b in a WebView, with S7 as an
+[android/](proto/app-startup/android/) is a small app that loads variant b in a WebView, with S7 as an
 option. Pixel 8 AVD, Android 15, x86_64, WebView 124, host GPU, page and data delays as above. Cold is after
 `am force-stop`, after two starts that fill the caches. 10 runs per row, except 5 for the last. Median, in ms:
 
@@ -163,7 +163,12 @@ document is the same for two users.
 - Logout, an account switch and a 401 delete the user's store. The store has an age limit per app.
 - The mobile app already keeps each account's data in a store for offline use. Use the same contract, so one page
   code runs in both.
-- This is private data on the device, which SEC-CLI-02 does not allow now. Decision D1 allows it.
+- The inline script draws the kept data as text: it builds the rows with `createElement` and sets `textContent`, or
+  goes through the page's own render path, never `innerHTML` or another HTML sink. What is kept came from the server
+  and from other users (a subject, a name), so drawing it as HTML would run whatever markup it holds before any of
+  the page's escaping. The prototype's `site/b.html` and `site/f.html` use `innerHTML` for the measurement only.
+- This is private data on the device, which SEC-CLI-02 does not allow now. Decision D1, proposed, would allow it;
+  S3 waits for that decision and its security cost (SEC-CLI-128).
 
 **Check:** a cold start in airplane mode shows the last content. A spec checks that logout empties the store.
 
@@ -171,7 +176,7 @@ document is the same for two users.
 
 - Find whether a session survives a server restart and a long idle phone.
 - If not: a device key per installed app (as the mobile app's device login keys), so the page signs in again with no
-  page change and no user step.
+  page change and no user step. That is decision D3, proposed; S4 waits for it and its security cost (SEC-CLI-129).
 
 **Check:** a cold start after a server restart shows content with no Login page.
 
@@ -203,7 +208,8 @@ document is the same for two users.
   list the Kotlin side can draw.
 - On a cold start, draw that snapshot natively in the first frames, while the process and the WebView start behind it.
 - Change to the WebView page with no visible change when it has painted the same content.
-- The snapshot is private data on the device: D1 applies. Screen security (`FLAG_SECURE`) turns snapshots off.
+- The snapshot is private data on the device: D1 applies, and S7 waits for it as S3 does. Screen security
+  (`FLAG_SECURE`) turns snapshots off.
 
 **Check:** on a cold start, the content shows within 50 ms of the native floor, and the change to the WebView shows
 no flash.
@@ -218,10 +224,12 @@ no flash.
 
 ## Decisions
 
-Decided 2026-11-27.
+Proposed 2026-11-27, not decided. D1 and D3 are decided before S3 and S4 are built, with their security cost
+weighed; each has an open item in the security review's [Clients](Security-Review.md#clients) register, next to
+SEC-CLI-02. D2 has no security cost.
 
-| ID | Question | Decision | Why |
-|---|---|---|---|
-| D1 | May a page keep a user's last data on the device (S3, S7)? | Yes. Per user and server, deleted on logout, account switch and 401, with an age limit per app. Update SEC-CLI-02 to say so. | Without it no cold start shows content before the network answers. |
-| D2 | A manifest per app, or one manifest with shortcuts? | A manifest per app. | Each app gets its own icon, colors and splash. Shortcuts still start the one `/qapps` app. |
-| D3 | A session that survives restarts, or a device key (S4)? | A device key per installed app, as the mobile app's device login keys. | It also covers a long idle phone and an expired session, and the server keeps no more session state. |
+| ID | Question | Proposal | Why | Security cost | Status |
+|---|---|---|---|---|---|
+| D1 | May a page keep a user's last data on the device (S3, S7)? | Yes. Per user and server, deleted on logout, account switch and 401, with an age limit per app. Update SEC-CLI-02 to say so. | Without it no cold start shows content before the network answers. | `localStorage` and IndexedDB belong to the origin, not to an app: every app on the origin reads every other app's kept data, and so does any XSS on any page of it, with no request and after the session has ended. On a shared or lost device it shows until it is cleared. SEC-CLI-128 | Proposed; decide before S3 |
+| D2 | A manifest per app, or one manifest with shortcuts? | A manifest per app. | Each app gets its own icon, colors and splash. Shortcuts still start the one `/qapps` app. | None | Proposed |
+| D3 | A session that survives restarts, or a device key (S4)? | A device key per installed app, as the mobile app's device login keys. | It also covers a long idle phone and an expired session, and the server keeps no more session state. | In a browser the page's script must read the key to send it, unlike the `HttpOnly` session cookie and the mobile app's native key: one XSS takes a key that signs in from anywhere until it is revoked, a persistent account takeover. SEC-CLI-129 | Proposed; decide before S4 |

@@ -1,12 +1,9 @@
-const db = () => new Promise((ok, no) => { const r = indexedDB.open('last', 1); r.onupgradeneeded = () => r.result.createObjectStore('s'); r.onsuccess = () => ok(r.result); r.onerror = no })
-const iget = async k => { const d = await db(); return new Promise(ok => { const r = d.transaction('s').objectStore('s').get(k); r.onsuccess = () => ok(r.result); r.onerror = () => ok(null) }) }
-const iput = async (k, v) => { const d = await db(); d.transaction('s', 'readwrite').objectStore('s').put(v, k) }
 const rows = d => d.items.map(i => `<li elementtiming="row">${i}</li>`).join('')
 const render = d => { document.getElementById('list').innerHTML = rows(d) }
 const mark = n => { if (!performance.getEntriesByName(n).length) performance.mark(n) }
 async function main() {
   const v = window.VARIANT
-    if (window.SHOWN || document.querySelector('#list li[data-last]')) mark('content')
+  if (window.SHOWN || document.querySelector('#list li[data-last]')) mark('content')
   const d = await (await fetch('data')).json()
   const first = !window.SHOWN
   render(d); mark('content'); mark('fresh')

@@ -1,6 +1,6 @@
-# app-startup-proto
+# App-Startup prototype
 
-A prototype that measures the startup steps of [plans/App-Startup.md](../../plans/App-Startup.md) in headless
+A prototype that measures the startup steps of [plans/App-Startup.md](../../App-Startup.md) in headless
 Chromium. It is a measurement, not a test: run it when asked.
 
 | Variant | Page |
@@ -12,7 +12,7 @@ Chromium. It is a measurement, not a test: run it when asked.
 | `f` | As `b`, with no service worker: the page from the HTTP cache. |
 
 ```sh
-NODE_PATH=<playwright node_modules> scripts/app-startup-proto/run.sh <webroot libs dir>
+NODE_PATH=<playwright node_modules> plans/proto/app-startup/run.sh <webroot libs dir>
 ```
 
 It prints, per variant and CPU slowdown (1 and 4 times), the median / p90 in ms from navigation start of the first
@@ -32,11 +32,11 @@ loads variant `b` from the same server in a WebView. The extra `mode` selects wh
 With `SYNC=true` the app makes the WebView before its first frame, and else after it.
 
 ```sh
-JAVA_HOME=<a JDK> scripts/app-startup-proto/android/build.sh   # needs build-tools 35 and android-35
+JAVA_HOME=<a JDK> plans/proto/app-startup/android/build.sh   # needs build-tools 35 and android-35
 adb install -r ~/.cache/app-startup-apk/startproto.apk
 python3 <work dir>/server.py 18777 &   # the site and server.py as run.sh copies them
 adb reverse tcp:18777 tcp:18777
-scripts/app-startup-proto/android/measure.sh s7 10
+plans/proto/app-startup/android/measure.sh s7 10
 ```
 
 It prints `TotalTime` (first frame) and `Fully drawn` (WebView content) per cold start, and `WaitTime` per warm start.
