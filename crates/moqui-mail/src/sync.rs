@@ -2610,6 +2610,8 @@ fn sync_folder(
         let sizes: Vec<Option<i64>> = to_fetch.iter().map(|item| item.3).collect();
         for range in fetch_batches(&sizes, FETCH_CHUNK, FETCH_BYTES) {
             let batch = &to_fetch[range];
+            // the server stopping ends the session here, before it writes more (SEC-MAIL-93)
+            stop_if_stopping(&session.account.id)?;
             // the store's quota is checked again before each batch: the next session starts at the first not fetched
             if quota_reached(session.facade, &session.account.id, report) {
                 stopped = batch.first().map(|item| item.0);
@@ -2765,6 +2767,19 @@ fn sync_folder(
         None => {}
     }
     force_new(session.facade, || update_folder(session.facade, &folder.id, &fields))?;
+    Ok(())
+}
+
+/// A sync of account `account_id` stops before its next batch once the server's shutdown began, so it writes nothing
+/// after the shutdown stops the database (SEC-MAIL-93): as a lapsed lease, which records nothing on the account; the
+/// next session starts where the folders' cursors are.
+fn stop_if_stopping(account_id: &str) -> Result<(), SyncFailure> {
+    let stopping = ExecutionContext::with_current(|ec| ec.factory().is_shutting_down()).unwrap_or(false);
+    if stopping {
+        return Err(SyncFailure::Lapsed(format!(
+            "The sync of email account {account_id} stops: the server is stopping"
+        )));
+    }
     Ok(())
 }
 
@@ -3309,8 +3324,11 @@ fn pop_sync(
     let max_message = super::inbound::max_message();
     for (index, (number, uidl)) in unknown.into_iter().enumerate() {
         // the store's quota checked again every batch (SEC-MAIL-93); a message not fetched stays unknown for the next
-        if index > 0 && index % FETCH_CHUNK == 0 && quota_reached(facade, &account.id, report) {
-            break;
+        if index > 0 && index % FETCH_CHUNK == 0 {
+            stop_if_stopping(&account.id)?;
+            if quota_reached(facade, &account.id, report) {
+                break;
+            }
         }
         let size = pop
             .size(number)
