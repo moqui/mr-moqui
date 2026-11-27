@@ -755,8 +755,8 @@
     // The shares a map shows live: the effective configuration's locationShares (the viewer's own active shares and those
     // shared with them, which the server checked against each share's current audience), at most LIVE_MAX. Each, checked:
     // {shareId, role (owner or viewer), label (plain text, shown as text), ownerName, thruDate (epoch millis), approximate,
-    // keepTrail, latest {lon, lat, accuracy} or null, seenAt (this page's clock when that position was taken: the read's
-    // ageSeconds before it, or a push's arrival), trail [[lon, lat]] (at most LIVE_TRAIL_MAX, the latest)}.
+    // keepTrail, latest {lon, lat, accuracy, observedDate} or null, seenAt (this page's clock when that position was taken:
+    // latest.seenAt as the parent stamped it at its read, else the read's ageSeconds before now, or a push's arrival), trail [[lon, lat]] (at most LIVE_TRAIL_MAX, the latest)}.
     const LIVE_MAX = 100;
     const LIVE_TRAIL_MAX = 500;
     // a share with no report for this long is drawn stale: its owner's page closed, or the device lost its fix
@@ -766,7 +766,7 @@
         const lon = num(first(value, "longitude", "lon")), lat = num(first(value, "latitude", "lat"));
         if (!lonOk(lon) || !latOk(lat)) return null;
         const accuracy = num(value.accuracy);
-        return { lon, lat, accuracy: accuracy !== null && accuracy >= 0 && accuracy <= 1e7 ? accuracy : null };
+        return { lon, lat, accuracy: accuracy !== null && accuracy >= 0 && accuracy <= 1e7 ? accuracy : null, observedDate: num(value.observedDate) };
     };
     const liveTrail = (trail) => (Array.isArray(trail) ? trail : []).map((pair) => (Array.isArray(pair) ? [num(pair[0]), num(pair[1])] : [null, null]))
         .filter((pair) => lonOk(pair[0]) && latOk(pair[1])).slice(-LIVE_TRAIL_MAX);
@@ -776,9 +776,12 @@
         if (!shareId) return null;
         const latest = livePoint(row.latest);
         const age = latest ? num(row.latest.ageSeconds) : null;
+        // the page's clock at its read, when the parent stamped it (Maps › Browse does, once a read): a configuration
+        // normalized again later keeps it, so a share that stopped reporting goes stale
+        const stamped = latest ? num(row.latest.seenAt) : null;
         return { shareId, role: row.role === "owner" ? "owner" : "viewer", label: map.plainText(row.label, 100) || map.plainText(row.ownerName, 100) || L("Shared location"),
             ownerName: map.plainText(row.ownerName, 100), thruDate: num(row.thruDate), approximate: row.approximate === true, keepTrail: row.keepTrail === true,
-            latest, seenAt: latest ? now - Math.max(0, age === null ? 0 : age) * 1000 : null, trail: row.keepTrail === true ? liveTrail(row.trail) : [] };
+            latest, seenAt: !latest ? null : stamped !== null ? stamped : now - Math.max(0, age === null ? 0 : age) * 1000, trail: row.keepTrail === true ? liveTrail(row.trail) : [] };
     };
     map.normalizeLiveShares = (list, now) => {
         const at = now === undefined ? Date.now() : now;
@@ -822,11 +825,13 @@
         return { shares: shares.map((one, at) => (at === index ? next : one)), changed: true, removed: null };
     };
     // A configuration's shares over those held: a share the read no longer lists is gone; one taken off by a push (gone)
-    // stays off; a held position newer than the read's is kept.
+    // stays off; the held position is kept when the read's is the same one (its time when it was first seen stays, so a
+    // configuration read or normalized again never makes an old position fresh) or older (a push came since).
+    const samePosition = (a, b) => !!a && !!b && a.lon === b.lon && a.lat === b.lat && a.observedDate === b.observedDate;
     map.mergeLiveShares = (held, given, gone) => given.filter((share) => !(gone && gone.has(share.shareId))).map((share) => {
         const before = held.find((one) => one.shareId === share.shareId);
-        return before && before.seenAt !== null && (share.seenAt === null || before.seenAt > share.seenAt)
-            ? Object.assign({}, share, { latest: before.latest, seenAt: before.seenAt, trail: before.trail.length > share.trail.length ? before.trail : share.trail }) : share;
+        const keep = before && before.seenAt !== null && (samePosition(before.latest, share.latest) || share.seenAt === null || before.seenAt > share.seenAt);
+        return keep ? Object.assign({}, share, { latest: before.latest, seenAt: before.seenAt, trail: before.trail.length > share.trail.length ? before.trail : share.trail }) : share;
     });
     // The ring of a position's accuracy: count points metres around it, in WGS84 degrees (closed), for a polygon in any
     // view's projection.

@@ -554,7 +554,7 @@ test("a live share is checked: its label plain text, a position in range, its ag
     const shares = map.normalizeLiveShares(liveConfig(30), now);
     assert.deepEqual(shares.map((share) => share.shareId), ["S1", "S2", "S3"], "a share with no id is left out");
     assert.equal(shares[0].label, "Sam Lee", "markup is not kept");
-    assert.deepEqual(shares[0].latest, { lon: -122.6, lat: 45.5, accuracy: 30 });
+    assert.deepEqual(shares[0].latest, { lon: -122.6, lat: 45.5, accuracy: 30, observedDate: null });
     assert.equal(shares[0].seenAt, now - 30000);
     assert.equal(shares[0].trail.length, 2);
     assert.equal(shares[2].latest, null, "a latitude out of range is no position");
@@ -568,6 +568,31 @@ test("a live share is checked: its label plain text, a position in range, its ag
     assert.equal(ring.length, 5);
     assert.deepEqual(ring[0], ring[4]);
     assert.ok(Math.abs(ring[1][1] - 45.51) < 1e-9);
+});
+
+test("a share read at 200 s old goes stale after 300 s, however often its configuration is read or normalized again", () => {
+    const readAt = 1764000000000;
+    const row = { shareId: "S9", role: "viewer", label: "Quiet", latest: { latitude: 45.5, longitude: -122.6, observedDate: readAt - 200000, ageSeconds: 200 } };
+    let held = [];
+    const stale = [];
+    // the same read normalized again every 30 s (a parent's render, a report of another share, a layer shown), with its
+    // ageSeconds unchanged: the position's first-seen time stays
+    for (let step = 0; step <= 5; step++) {
+        const now = readAt + step * 30000;
+        held = map.mergeLiveShares(held, map.normalizeLiveShares([row], now), new Set());
+        stale.push(map.liveStale(held[0], now));
+    }
+    assert.deepEqual(stale, [false, false, false, false, true, true], "past 300 s at 120 s after the read");
+    assert.equal(held[0].seenAt, readAt - 200000);
+    // a parent's stamp at its read is the time used, wherever it is normalized again
+    const stamped = map.normalizeLiveShares([Object.assign({}, row, { latest: Object.assign({}, row.latest, { seenAt: readAt - 200000 }) })], readAt + 600000)[0];
+    assert.equal(stamped.seenAt, readAt - 200000);
+    assert.equal(map.liveStale(stamped, readAt + 150000), true);
+    // a newer position read takes over
+    const moved = Object.assign({}, row, { latest: { latitude: 45.6, longitude: -122.6, observedDate: readAt + 170000, ageSeconds: 10 } });
+    held = map.mergeLiveShares(held, map.normalizeLiveShares([moved], readAt + 180000), new Set());
+    assert.equal(held[0].seenAt, readAt + 170000);
+    assert.equal(map.liveStale(held[0], readAt + 180000), false);
 });
 
 test("the live layer follows each share's topic: a push moves its marker, a stale one is drawn grey, ended takes it off", async () => {
@@ -618,7 +643,7 @@ test("the live layer follows each share's topic: a push moves its marker, a stal
         client.push("locationShare:S2", { shareId: "S2", event: "position", latitude: 10, longitude: 20 });
         self.setLiveShares(map.normalizeLiveShares(liveConfig(600)));
         assert.deepEqual(self.liveShares.map((share) => share.shareId), ["S2"]);
-        assert.deepEqual(self.liveShare("S2").latest, { lon: 20, lat: 10, accuracy: null });
+        assert.deepEqual(self.liveShare("S2").latest, { lon: 20, lat: 10, accuracy: null, observedDate: null });
     } finally {
         self.stopLive();
     }
