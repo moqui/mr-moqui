@@ -534,6 +534,71 @@ pub(crate) fn register_worker_start() -> Result<(), String> {
     })
 }
 
+/// An offline map package's download handed to the worker (`PackageDownloadWorker.start`, plans/Maps-Offline.md §2.4).
+pub(crate) fn package_worker_start(
+    account: &str,
+    package_id: &str,
+    revision: i64,
+    wifi_only: bool,
+) -> Result<(), String> {
+    let started = with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.PackageDownloadWorker"))?;
+        let account = env.new_string(account)?;
+        let package_id = env.new_string(package_id)?;
+        env.call_static_method(
+            &class,
+            jni_str!("start"),
+            jni_sig!("(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;JZ)Z"),
+            &[
+                JValue::Object(app),
+                JValue::Object(&account),
+                JValue::Object(&package_id),
+                JValue::Long(revision),
+                JValue::Bool(wifi_only),
+            ],
+        )?
+        .z()
+    })?;
+    if started {
+        Ok(())
+    } else {
+        Err("The download was not scheduled".to_string())
+    }
+}
+
+/// A package's worker cancelled (`PackageDownloadWorker.cancel`), or every one of an account's when `package_id` is none
+/// (`cancelAccount`).
+pub(crate) fn package_worker_cancel(package_id: Option<&str>, account: &str) -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.PackageDownloadWorker"))?;
+        let account = env.new_string(account)?;
+        match package_id {
+            Some(package_id) => {
+                let package_id = env.new_string(package_id)?;
+                env.call_static_method(
+                    &class,
+                    jni_str!("cancel"),
+                    jni_sig!("(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V"),
+                    &[
+                        JValue::Object(app),
+                        JValue::Object(&account),
+                        JValue::Object(&package_id),
+                    ],
+                )?;
+            }
+            None => {
+                env.call_static_method(
+                    &class,
+                    jni_str!("cancelAccount"),
+                    jni_sig!("(Landroid/content/Context;Ljava/lang/String;)V"),
+                    &[JValue::Object(app), JValue::Object(&account)],
+                )?;
+            }
+        }
+        Ok(())
+    })
+}
+
 /// The UnifiedPush instances registered for the accounts signed in here (`UnifiedPushes.registerAll`).
 pub(crate) fn unified_register_all() -> Result<(), String> {
     with_context(|env, app| {

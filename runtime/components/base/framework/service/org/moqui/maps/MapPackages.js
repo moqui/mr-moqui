@@ -33,8 +33,8 @@ const ROOT = "runtime://tmp/map-packages"
 const PACKAGE_PATH = "/apps/maps/Offline/package"
 const SCHEMA_VERSION = 1
 const BUSY = ["MapPkgPending", "MapPkgBuilding"]
-// a started run with no word for this long has stalled: its row is written when its progress percent changes (at most once
-// a second), and when each member is done
+// a started run with no word for this long has stalled: the build writes its row's progressDate as it starts, when its
+// percent changes or about a minute has passed (asked at most once a second, between tiles), and before its manifest
 const STALE_MS = 60 * 60 * 1000
 // a run handed to the job that never started (the worker queue is in memory: a restart loses it, and its ServiceJobRun
 // keeps no start and no end) is judged lost after this long since its ServiceJobRun row was written
@@ -1385,14 +1385,18 @@ function buildAsOwner(p) {
             "This package holds what its owner could read when it was built, and stays readable on a device until it is deleted there. Record layers and a provider's remote tiles are not packaged."
         )
     }
-    // the build's word between its members and its zip: a long lookup member is no silence
+    // the build's word between its members and its zip: a long lookup member is no silence; a key gone (a cancel, a run
+    // ended as stale) ends the run here rather than after a zip for nothing
+    let held = false
     ec.transaction.runRequireNew(60, "Error writing a map package's progress", () => {
         const current = find(PACKAGE, {packageId}).forUpdate(true).one()
         if (current && text(current.buildKey) === buildKey) {
             current.set("progressDate", ec.user.nowTimestamp)
             writeRow(current, false)
+            held = true
         }
     })
+    if (!held) return end("MapPkgCancelled", L("Cancelled"))
     const manifestLocation = folder + "/manifest.json"
     try {
         writeText(manifestLocation, JSON.stringify(manifest))

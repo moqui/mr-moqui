@@ -61,6 +61,24 @@ object Native {
     /** A share no longer sent by the location service: Rust's reporter of it goes too. */
     @JvmStatic external fun forgetLocation(account: String, shareId: String)
     @JvmStatic external fun vaultLock()
+    /**
+     * Download `revision` of an account's offline map package ([PackageDownloadWorker], plans/Maps-Offline.md §2.4), on
+     * the worker's thread: [PackageDownloadRules.DONE] when it ended (installed, refused, cancelled, stale), or
+     * [PackageDownloadRules.RETRY] to be tried again from its kept part. `runner` is the work's id; on its `last` run a
+     * failure is told as final.
+     */
+    @JvmStatic external fun packageDownload(
+        dataDir: String,
+        account: String,
+        packageId: String,
+        revision: Long,
+        runner: String,
+        last: Boolean,
+    ): Int
+    /** The worker's last run failed before Rust answered (an exception): the download's state is made final. */
+    @JvmStatic external fun packageGiveUp(account: String, packageId: String, revision: Long, runner: String)
+    /** WorkManager stopped the work `runner`: Rust stops its download at its next range and keeps its part. */
+    @JvmStatic external fun packagePause(account: String, packageId: String, runner: String)
 
     /**
      * The app's screen went (the phone locked, or another app came to the front): every vault session locks
