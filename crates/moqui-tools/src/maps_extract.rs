@@ -357,17 +357,28 @@ pub(crate) fn estimate(
         Ok(zooms) => zooms,
         Err(refusal) => return Ok(Err(refusal)),
     };
+    // A clustered archive stores its contents in tile ID order, a shared one at its first tile's place: a content past
+    // every one counted is new, one at or before is shared. Another archive's order says nothing of that: every tile whose
+    // content is not the one before it counts, which errs high. Either way the cut's own byte check is the hard limit.
+    let clustered = header.clustered;
     let (mut tiles, mut contents, mut tile_bytes, mut next_new) = (0u64, 0u64, 0u64, 0u64);
+    let mut previous: Option<u64> = None;
     let mut finder = Finder::new(source, &header, &content);
     for z in zooms.0..=zooms.1 {
         finder.zoom(&cut.bbox, z, &mut |_, found| {
             if let Some(tile) = found {
                 tiles += 1;
-                if tile.offset >= next_new {
+                let new = if clustered {
+                    tile.offset >= next_new
+                } else {
+                    previous != Some(tile.offset)
+                };
+                if new {
                     contents += 1;
                     tile_bytes += u64::from(tile.length);
-                    next_new = tile.offset + u64::from(tile.length);
+                    next_new = next_new.max(tile.offset + u64::from(tile.length));
                 }
+                previous = Some(tile.offset);
             }
             Ok(true)
         })?;
@@ -893,7 +904,12 @@ fn report(facade: &EntityFacade, package_id: &str, build_key: &str, percent: i64
     let mut cancelled = false;
     let written = facade.transactions_for(PACKAGE).and_then(|tx| {
         tx.run(TransactionAttribute::ForceNew, None, || {
-            let Some(mut row) = facade.find(PACKAGE)?.eq("packageId", Value::string(package_id)).one()? else {
+            let Some(mut row) = facade
+                .find(PACKAGE)?
+                .eq("packageId", Value::string(package_id))
+                .for_update(true)
+                .one()?
+            else {
                 cancelled = true;
                 return Ok(());
             };

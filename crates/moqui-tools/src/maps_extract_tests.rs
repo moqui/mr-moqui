@@ -380,3 +380,25 @@ fn a_cut_past_the_bytes_left_stops_with_nothing_kept() {
     assert_eq!(refused.code, "TOO_LARGE");
     assert!(leftovers(&path).is_empty(), "{:?}", leftovers(&path));
 }
+
+#[test]
+fn an_archive_not_clustered_is_estimated_high_not_low() {
+    let (source, size) = archive("sha256-extract-order");
+    let bbox = Bbox::new(-170.0, -60.0, 170.0, 60.0).unwrap();
+    let clustered = estimate(&source, "sha256-extract-order", size, &cut(bbox, 0, 3))
+        .unwrap()
+        .unwrap();
+    // the same bytes, said not to be clustered: every tile whose content is not the one before it counts
+    let mut bytes = source.read_at(0, usize::try_from(size).unwrap()).unwrap();
+    bytes[96] = 0;
+    let unordered = MemorySource::new(bytes).with_tag("sha256-extract-unordered");
+    let counted = estimate(&unordered, "sha256-extract-unordered", size, &cut(bbox, 0, 3))
+        .unwrap()
+        .unwrap();
+    assert_eq!(counted.tiles, clustered.tiles);
+    assert!(counted.contents >= clustered.contents && counted.tile_bytes >= clustered.tile_bytes);
+    assert!(
+        counted.contents > clustered.contents,
+        "the sea's tiles apart count again"
+    );
+}
