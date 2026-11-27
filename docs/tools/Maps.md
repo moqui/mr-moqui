@@ -1115,8 +1115,10 @@ one from Chat's Share live location (below, "In chat"), and a share's XMPP conta
   ("from your XMPP app" or "from this page or phone") and the XMPP app's last position's age. With no such share a
   publish is refused, so a client's setting never starts or feeds a share, and its "stopped" (an empty item) ends
   none: the share is the owner's to stop here. A share the phone sends takes it too once opted in; the phone's dialog
-  then says "Your XMPP app's location also goes to your XMPP contacts", and the raised version pauses the phone until
-  its person confirms. While the phone or page and the XMPP app are on different devices, the XMPP contacts may see
+  and notification then name its audience with "(your XMPP app's location also goes to your XMPP contacts)", and the
+  raised version pauses the phone until its person confirms. Turning it off leaves the version; it needs an XMPP contact in the
+  share (`XMPP_NO_CONTACT` otherwise), and a revoke that takes out the last one turns it off (its audit row says so),
+  while taking out a person, group or link leaves it. While the phone or page and the XMPP app are on different devices, the XMPP contacts may see
   the marker alternate between the two. The toggle is in Share my location, Who sees my location and My location
   shares; turning it off deletes the XMPP app's last position. XMPP contacts are users of this server only: there is no
   federation.

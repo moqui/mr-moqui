@@ -57,7 +57,8 @@ along with this software (see the LICENSE.md file). If not, see
             key signed this request in (userLoginKeyId, ec.user.loginKeyId: the Android app's), or from no device (a
             browser page, which sends while it is open); a share with a device takes that device's reports only, and one
             with none takes no device's (plans/Location-Sharing.md §3.4). takeXmppLocation true lets the owner's XMPP
-            app's location (report#XmppPosition) feed it too, to its XMPP contacts only (§3.6).</description>
+            app's location (report#XmppPosition) feed it too, to its XMPP contacts only (§3.6): refused XMPP_NO_CONTACT
+            without an XMPP contact in the audience.</description>
         <in-parameters>
             <parameter name="audienceList" type="List" required="true"/>
             <parameter name="thruDate" type="Timestamp" required="true"/>
@@ -89,8 +90,10 @@ along with this software (see the LICENSE.md file). If not, see
             (409 OTHER_DEVICE), which stops it. The owner's other devices and the audience are told on locationShare:shareId, each user the share
             newly reaches gets the LocationShared notification, and addedUserList (and the owner's push) names them; a
             link added returns its token once; an XMPP contact it newly reaches gets LocationSharedXmpp. takeXmppLocation
-            true or false turns the owner's XMPP app's location for it on or off (to its XMPP contacts only); turned on,
-            it raises audienceVersion. Refused: SHARE_NOT_FOUND (not the caller's), SHARE_ENDED, and create#Share's
+            true or false turns the owner's XMPP app's location for it on or off (to its XMPP contacts only, audited);
+            turned on, it raises audienceVersion, so a phone that sends the share pauses until its person confirms the
+            words get#AppShare gives; turned off, it leaves the version and deletes the XMPP app's last position
+            (LocationXmppLatest); true for a share with no XMPP contact (its adds counted) is refused XMPP_NO_CONTACT. Refused: SHARE_NOT_FOUND (not the caller's), SHARE_ENDED, and create#Share's
             reasons.</description>
         <in-parameters>
             <parameter name="shareId" required="true"/>
@@ -124,8 +127,10 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="revoke" noun="Audience">
         <description>Take one entry of a share of the current user's own out of its audience (a person, a group, an XMPP
-            contact or the link): it reads nothing from now on, and its users are told on locationShare:shareId.
-            Refused: SHARE_NOT_FOUND (not the caller's), AUDIENCE_NOT_FOUND.</description>
+            contact or the link): it reads nothing from now on, and its users are told on locationShare:shareId (an XMPP
+            contact by an empty geoloc item). A revoke that takes out its last XMPP contact turns takeXmppLocation off
+            with it (the audit row's reason "last XMPP contact revoked") and deletes the XMPP app's last position; one of
+            a person, group or link leaves it. Refused: SHARE_NOT_FOUND (not the caller's), AUDIENCE_NOT_FOUND.</description>
         <in-parameters>
             <parameter name="shareId" required="true"/>
             <parameter name="audienceSeqId" required="true"/>
@@ -211,7 +216,10 @@ along with this software (see the LICENSE.md file). If not, see
             it in its notification before it sends it from the phone (plans/Location-Sharing.md §3.4): share {shareId,
             thruDate (epoch millis), untilText (the end in the caller's zone, with the weekday when not today),
             approximate, intervalSeconds (the share's report interval), audienceText (whom with, in words the owner can
-            check: names with usernames, a group with its member count, anyone with the guest link), audienceVersion
+            check: names with usernames, a group with its member count, a JID, anyone with the guest link, and while the
+            owner's XMPP app's location feeds it and it has an XMPP contact "(your XMPP app's location also goes to your
+            XMPP contacts)", a parenthetical, since the dialog and the notification put these words mid-sentence),
+            audienceVersion
             (what the device sends with its reports once the person confirmed these words), fromThisDevice (this request's device key is the one it is sent
             from)}. The words are the
             server's, never a page's. Refused: SHARE_NOT_FOUND (not the caller's), SHARE_ENDED.</description>
