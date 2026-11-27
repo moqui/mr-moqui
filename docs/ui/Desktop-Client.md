@@ -204,9 +204,10 @@ The pages reach these through `moquiDesktop.outbox` and `moquiDesktop.drafts`, f
 
 ## Offline map packages
 
-A map region the user downloads to read with no network (plans/Maps-Offline.md §2.4, OF2; the server's part is
-[Maps, Offline packages](../tools/Maps.md#offline-packages)), kept by `moqui_client::packages`, the commands in
-`moqui_client_tauri::packages`, read by the shell's bundled offline Maps screen ([Maps, In the apps](../tools/Maps.md#in-the-apps)).
+A map region the user downloads to read with no network (plans/Maps-Offline.md §2.4; what a package holds, how the
+server builds it, the offline screen and the limits are [Maps, Offline packages](../tools/Maps.md#offline-packages)),
+kept by `moqui_client::packages`, the commands in `moqui_client_tauri::packages`, read by the shell's bundled offline
+Maps screen.
 
 - **Where:** `client/data/<account>.packages/<packageId>/<revision>/`, beside the store, owner-only as it is (folders
   0700, files 0600), outside `store-max-mb`, within `packages-max-mb` for the account's packages; a download starts

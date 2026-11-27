@@ -70,6 +70,8 @@ scripts/check-android.sh      # clippy for aarch64-linux-android and x86_64-linu
 scripts/android-smoke.sh      # on the emulator, when asked: the shell's ready line, a forged notification tap
                               # refused, the frame check, a relaunch
                               # (MOQUI_MOBILE_APK=<a release APK>: what R8 kept for JNI instead of the frame check)
+scripts/android-maps-offline.sh   # acceptance MapsOfflinePackage, when asked: a map package downloaded, browsed
+                                  # and searched offline, a place saved offline and sent when the network is back
 ```
 
 The Kotlin has JVM tests (`./gradlew :app:testUniversalDebugUnitTest` in `gen/android`) and, on the emulator when

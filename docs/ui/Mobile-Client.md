@@ -112,7 +112,7 @@ own `/qapps`), never both:
 
 The phone keeps downloaded map regions as the desktop does ([Desktop-Client](Desktop-Client.md#offline-map-packages):
 the store under `client/data/`, `packages-max-mb`, the checks, the shell's `/__moqui-app/maps/` path and the
-commands, and the bundled offline Maps screen: [Maps, In the apps](../tools/Maps.md#in-the-apps)); what differs is who
+commands, and the bundled offline Maps screen: [Maps, Offline packages](../tools/Maps.md#offline-packages)); what differs is who
 runs the download (plans/Maps-Offline.md §2.4) and the screen's "Download only on Wi-Fi" choice, the phone's alone.
 
 - **`PackageDownloadWorker`** (WorkManager, `PackageDownloadWorker.kt`, a `ListenableWorker` on a thread of its own, so
@@ -632,3 +632,16 @@ What fills each gap of MT1 and MT2 is MT3's record ([Mobile-Desktop](../../plans
   classes Rust calls by name (`dexdump`) and that the log has no JNI lookup failure. With `MOQUI_SMOKE_APP=/qapps/...` and an
   account signed in, the frame check opens that server page and puts the frames there, and checks that the page cannot
   call a shell command or go to the shell's origin itself.
+- `scripts/android-maps-offline.sh`: the acceptance walk `MapsOfflinePackage` of offline map packages, on the emulator
+  when asked (not in `./moq test-all` or `accept-all`; about half a minute once the server's data is saved). It starts
+  the server half, the tools acceptance spec `MapsOfflinePackage` (a small archive registered as a basemap, a saved
+  place, a postal code, Overture rows and the user's package of the region, built), with `moqui test --serve` on
+  `127.0.0.1:18086`, which the app reaches through `adb reverse`; installs the debug APK with its data cleared; and
+  drives the app over its WebView's DevTools socket (`scripts/android-maps-offline.py`): sign in, Offline maps,
+  Download until installed; the network cut (airplane mode, Wi-Fi and data off, the `adb reverse` removed) and the app
+  ended in the background and started again (a connection made through `adb reverse` outlives the rule's removal);
+  the drawer's Maps opening the offline screen; the package opened, its tiles drawn (the packaged style's earth and
+  water colours in the map's canvas), offline and its built date said; a saved place, a postal code, an Overture place
+  and an address found; a place saved, waiting in the outbox and not on the server; the network back, the outbox
+  sending it and the server listing it. Needs the debug APK, a `./moq build --debug` binary (or
+  `MOQUI_WALK_PACKAGE=release`) and python3's websocket-client; the server's log is `target/maps-offline/server.log`.
