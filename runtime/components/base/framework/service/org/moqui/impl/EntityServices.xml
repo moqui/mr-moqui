@@ -309,6 +309,11 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="failures" type="List"/>
         </out-parameters>
         <actions>
+            <!-- a snapshot restores every record of any entity (memberships, sealed grants) and runs its service elements
+                as the load does: only a holder of the sealed ADMIN_BACKUP_DOWNLOAD, whom a whole backup already needs, loads
+                one (SEC-DAT-89); a job with no user is the scheduler's -->
+            <if condition="ec.user.userId &amp;&amp; !ec.user.hasPermission('ADMIN_BACKUP_DOWNLOAD')">
+                <return error="true" message="Importing a snapshot needs ADMIN_BACKUP_DOWNLOAD"/></if>
             <if condition="!WebUtilities.isSafeSinglePathSegment(zipFilename)">
                 <return error="true" message="Snapshot file not found"/></if>
             <script><![CDATA[

@@ -3,8 +3,8 @@
 // m-map's pure helpers in the page (moqui.map of /js/WebrootMap.js), and its list of places when the map cannot be drawn. The
 // OpenLayers bundle (an ES module, imported as m-map imports it) is loaded for its formats and vector sources only, and its
 // raster part for the projections and the lookup it refuses: drawing a server's map is a browser walk, not a regression
-// test. The live layer (plans/Location-Sharing.md §3.3) is its features on a vector source, with a stand-in notification
-// socket for its topics. Package mode (plans/Maps-Offline.md §2.5) is checked here, its one map drawn from a package's
+// test. The live layer (plans/archive/Location-Sharing.md §3.3) is its features on a vector source, with a stand-in notification
+// socket for its topics. Package mode (plans/archive/Maps-Offline.md §2.5) is checked here, its one map drawn from a package's
 // files that the test answers as the apps' scheme does. The page is https://moqui.test.
 "use strict";
 
@@ -530,7 +530,7 @@ test("the build's files are named by their hash, and its decoder worker inflates
     }
 });
 
-// ---- the live layer (plans/Location-Sharing.md §3.3) ----
+// ---- the live layer (plans/archive/Location-Sharing.md §3.3) ----
 
 // A stand-in for the shell's notification socket: listeners by topic, and a push that calls them as MoquiLib's does.
 const fakeNotifications = () => {
@@ -689,7 +689,7 @@ test("the live shares are listed under the map as text, followed while it is mou
     }
 });
 
-// ---- package mode (plans/Maps-Offline.md §2.5): an offline map package on the device, at its path on the shell's origin ----
+// ---- package mode (plans/archive/Maps-Offline.md §2.5): an offline map package on the device, at its path on the shell's origin ----
 
 const PACKAGE = "/__moqui-app/maps/P7/";
 // a manifest as OF1's MapPackages.js writes it: the frozen configuration with package-relative URLs, the sources with an

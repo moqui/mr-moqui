@@ -134,6 +134,7 @@ the user services call.
 |---|---|
 | `userId`, `username` | The signed-in user's id and username; null with nobody signed in |
 | `loginKeyKind` | The kind of login key this request's user signed in with (the `api_key` or `login_key` header, or `loginUserKey`), read from its `UserLoginKey`: `device` (a device's key, `deviceName`), `token` (an access token, `description`, or a key made for git alone, which only git over HTTP and the REST resources that declare `key-scope` `git` take: `scope` `git`), `session` (a `getLoginKey` key) or `scoped` (a key for one service, `scope`, which only that service's login and the REST resources that declare its `key-scope` take; such a key, and a token, sign in their request alone, never the web session); null for a password, cookie or any other login. For this request only: the session's next request by cookie has none |
+| `loginKeyId` | The id of that `UserLoginKey`, with `loginKeyKind`: its stored hash, as `get#UserDeviceKeys` names a device (`loginKey`), never the key itself; null for any other login, and for this request only. A location share records the device it is sent from by it ([Maps, Live location](../tools/Maps.md#live-location)) |
 | `userAccount` | The signed-in `UserAccount` as a map, without its credential and lockout columns; null with nobody |
 | `locale`, `setLocale(locale)` | The session's locale (`en_US`); setting saves it on the signed-in user's account. Null or empty clears it |
 | `timeZone`, `setTimeZone(zone)` | The session's time zone (an IANA name), the user's own, else the server's; setting saves it on the account. An unknown zone is an error |
@@ -350,6 +351,7 @@ Change sets, version notes and change logs are described in
 | `readSheetPreview(location, sheetName, maxRows, maxCols)` | The first rows of a sheet (100 by 26): `{sheetNames, sheetName, rows, truncated}`; null when it is not a spreadsheet |
 | `makeGrant(key, subject, ttlSeconds)` | A signed grant for the subject, valid `ttlSeconds` (3600); with no key of the script's own, `ec.user.serverGrant` |
 | `checkGrant(key, subject, token)` | Whether the token is a valid grant of the same key and subject |
+| `writePrivateFile(text, extension)` | The text in a new file of the server's user alone (mode 0600, a random name under `runtime/tmp/private`, made 0700), and its `runtime://` location: for text a job reads and deletes (`getLocationReference(location).delete()`), which its parameters would keep. The extension is 1 to 8 lower-case letters and digits |
 
 ### Barcodes and rendering
 
@@ -1014,7 +1016,7 @@ const page = ec.service.rest().uri().protocol("https").host("example.com").port(
 | `isLastRunBeforeLastSchedule(cron, lastRun, description, now)` | Whether there is no last run, or it is before the latest time the expression came due |
 | `restApi.resolveService(path, method)` | The service of a Service REST API path (without `/rest/s1`): `{serviceName, path, method, pathParameters}`; not an authorization check |
 | `restApi.getRootResources()`, `restApi.getFreshRootResources()` | The root resources of the Service REST API |
-| `getServiceDefinition(serviceName)` | The definition with its auto-parameters expanded, or null: `inParameterNames`, `inParameterInfoMap`, `outParameterInfoMap` (each `{name, type, required, parameterNode}`), `serviceNode`, `getInParameter(name)`, `convertValidateCleanParameters(parameters)`. It does not run the service |
+| `getServiceDefinition(serviceName)` | The definition with its auto-parameters expanded, or null: `serviceName`, `verb`, `noun`, `inParameterNames`, `inParameterInfoMap`, `outParameterInfoMap` (each `{name, type, required, parameterNode}`), `serviceNode`, `getInParameter(name)`, `convertValidateCleanParameters(parameters)`. It does not run the service |
 | `getKnownServiceNames()` | The names of the defined services |
 | `getAllServiceInfo(levels)` | A row for each service package down a number of name levels (2) |
 | `getSecaRuleCount()`, `secaRulesByServiceName.get(serviceName)` | How many service ECA rules there are; the rules of a service, or null |
@@ -1130,7 +1132,7 @@ empty, and a send needs a request.
 | `getFieldValidationErrors(fieldName)` | The validation errors of one field, of the submit that led here and of this request |
 | `saveScreenLastInfo(path)` | Remembers the current screen path, or the one given, so a login can go back to it |
 | `getScreenHistory()` | The pages the user got in `html`, newest first: `[{name, url, urlNoParams}]` |
-| `sendJsonResponse(value)` | The value as the JSON response; entity values and lists as plain maps and lists |
+| `sendJsonResponse(value)` | The value as the JSON response; entity values and lists as plain maps and lists. With errors in the message facade they are added as `errors` and the status is 500, or 400 when every one is a validation error |
 | `sendJsonError(status, message)` | A JSON error response |
 | `sendError(errorCode, message, throwable)` | An error response as HTML, JSON or plain text, by the request's `Accept` |
 | `sendTextResponse(text, contentType, filename)` | A text response, `text/plain` by default; a file name sends it as an attachment |
@@ -1368,7 +1370,7 @@ Members Moqui Java does not have.
 | `ec.context` | Property reads and writes, `in`, `delete`, `Object.keys` |
 | `ec.user` | `machineTimeZone`, `passwordRules`, `loginRules`, `endVisit`, `hashPassword`, `passwordsMatch`, `checkOldPassword`, `checkCountedCode`, `takeFactorCode`, `countFailedLogin`, `initialAdminLocal`, `initialAdminAllowed`, `singleUseCodeHash`, `randomCode`, `randomString`, `serverGrant`, `checkServerGrant`, `totpSecret`, `totpCodeValid`, `totpCodeStep`, `totpUri`, `timestampMillis` |
 | `ec.l10n` | `getAvailableTimeZones`, `getAvailableLocales`, the time zone argument of `format` |
-| `ec.resource` | `makeChangeSet`, `putContent`, `getLastChange`, `getChildChanges`, `getChangeLog`, `getTreeSize`, `getContentAddress`, `restoreVersion`, `getVersionBytes`, `textDiff`, `readLines`, `digest`, `digestText`, `hmac`, `gunzip`, `extractArchive`, `writeZip`, `writeTarGz`, `extractText`, `readSheetPreview`, `makeThumbnail`, `makeStickerThumbnail`, `makePdfPreview`, `imageAvailable`, `makeGrant`, `checkGrant`, `markdownHtml`, `code128Svg`, `barcodeSvg`, `parseGs1`, `isValidGs1CheckDigit`, `theme`; version notes on a reference's `putText`, `putBytes` and `putStream`, and `getVersionDiff` |
+| `ec.resource` | `makeChangeSet`, `putContent`, `getLastChange`, `getChildChanges`, `getChangeLog`, `getTreeSize`, `getContentAddress`, `restoreVersion`, `getVersionBytes`, `textDiff`, `readLines`, `digest`, `digestText`, `hmac`, `gunzip`, `extractArchive`, `writeZip`, `writeTarGz`, `extractText`, `readSheetPreview`, `makeThumbnail`, `makeStickerThumbnail`, `makePdfPreview`, `imageAvailable`, `makeGrant`, `checkGrant`, `writePrivateFile`, `markdownHtml`, `code128Svg`, `barcodeSvg`, `parseGs1`, `isValidGs1CheckDigit`, `theme`; version notes on a reference's `putText`, `putBytes` and `putStream`, and `getVersionDiff` |
 | `ec.artifactExecution` | `runAsSystem`, `runAsUser`, `isPermitted`, `isPermittedOwn` |
 | `ec.entity` | `checkTables`, `runSqlStatement`, `testConfConnection`, `runSqlCountConf`, `runSqlUpdateConf`; EntityFind `forNoKeyUpdate`, `purge`; the `forNoKeyUpdate` argument of `findRelated` and `findRelatedOne`; EntityValue `getEntityNamePretty`, and fields and relationships as properties; EntityList as an array with the Array methods |
 | `ec.service` | `throwOnError`, `nextCronExecution`, `restApi.resolveService`, `passAuthority`, `ssoAvailable`; RestClient `addPropertyHeader`, `bodyBytes`, `multipart`, `streamFrom`, `followRedirects`, `denyInternal`, `allowInternal`, `send`; response `bytes` |

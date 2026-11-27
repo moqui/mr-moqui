@@ -116,6 +116,8 @@ object PushCheck {
             // the phone's dialer through the app (off: no number to call from here), and the contacts' names
             .put("dialAccount", DialAccount.state(context))
             .put("contacts", PhoneBook.granted(context))
+            // live location from this phone (plans/archive/Location-Sharing.md §3.4): the permission and the shares sent now
+            .put("location", LocationShare.state(context))
             .toString()
     }
 
@@ -144,6 +146,10 @@ object PushCheck {
             }
             "contacts" -> {
                 PhoneBook.fix(context)
+                return
+            }
+            "location" -> {
+                LocationShare.fix(context)
                 return
             }
             "battery" -> Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}"))

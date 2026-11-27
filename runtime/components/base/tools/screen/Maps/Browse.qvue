@@ -30,7 +30,7 @@ along with this software (see the LICENSE.md file). If not, see
     (rasterBands; a saved view keeps them too). Below 600 px the panel is a bottom sheet over the map. Full screen is the browser's, on request. The last view
     is posted (rememberView) only when the user turned Restore my last view on. Brand color names and Quasar classes
     only.
-    Live location (plans/Location-Sharing.md §3.3): the configuration's locationShares, drawn by m-map's live layer (which
+    Live location (plans/archive/Location-Sharing.md §3.3): the configuration's locationShares, drawn by m-map's live layer (which
     follows each share's topic and tells this screen what it holds by live-change); the Live location panel with Shared with
     me (each person, the age, Show on map, Directions: geo: in the Android app, OpenStreetMap elsewhere) and Who sees my
     location (each share of the user's own with its audience and end: Stop, Extend (the new end alone, never the audience
@@ -44,7 +44,12 @@ along with this software (see the LICENSE.md file). If not, see
     share stays active and its audience sees its position age. On every screen the app bar's "Sharing location" chip (a
     shell indicator of the framework's live-location provider) opens My location shares (MyShares.xml), whose Open in
     Maps opens this screen's Live location panel (panel=live); while this page sends, it notes "sending here" on that
-    chip. -->
+    chip. In the Android app (plans/archive/Location-Sharing.md §3.4, LL3; moquiDesktop.location) Share asks for the location
+    permission first, with the app's reason, and the app's foreground service sends the share from the phone, also with
+    the app in the background, under its notification (this page sends it only when the app could not start that); a
+    share is sent from one device or page at a time, and Send from here (Send from this device in the app) takes it over
+    on the server (sendFromHere), the one that sent it being refused as another device's (409 OTHER_DEVICE) and
+    stopping. -->
 <template><div ref="frame" class="m-maps-browse column no-wrap" :class="fullscreen ? ($q.dark.isActive ? 'bg-dark' : 'bg-white') : ''">
     <div class="row items-center no-wrap q-gutter-x-xs q-px-sm q-py-xs">
         <div class="col" style="max-width:420px">
@@ -75,18 +80,19 @@ along with this software (see the LICENSE.md file). If not, see
         </q-btn>
     </div>
     <div v-if="error" class="text-negative q-px-sm" role="alert">{{error}}</div>
-    <!-- each active share of the user's own, always in sight here (plans/Location-Sharing.md §1, "Visible to everyone it
+    <!-- each active share of the user's own, always in sight here (plans/archive/Location-Sharing.md §1, "Visible to everyone it
         concerns"), with Stop; while this page sends it, it says so -->
     <div v-for="share in banners" :key="'banner' + share.shareId" class="m-maps-sharing row items-center no-wrap q-px-sm q-py-xs m-tonal" role="status"
             :data-maps-sharing="share.shareId">
-        <q-icon :name="sending.includes(share.shareId) ? 'sym_o_share_location' : 'sym_o_location_off'" :color="sending.includes(share.shareId) ? 'positive' : 'warning'"
+        <q-icon :name="sentHere(share.shareId) ? 'sym_o_share_location' : 'sym_o_location_off'" :color="sentHere(share.shareId) ? 'positive' : 'warning'"
                 class="q-mr-sm"></q-icon>
         <div class="col text-body2">
             <span>{{t('Sharing your location with')}} {{audienceText(share)}} {{t('until')}} {{untilText(share.thruDate)}}</span>
-            <span class="text-caption m-muted"> · {{sending.includes(share.shareId) ? t('sent from this page while it is open') : t('not sent from this page') + ': ' + ageWords(share)}}</span>
+            <span class="text-caption m-muted"> · {{sentFromText(share)}}</span>
             <span v-if="sendNotes[share.shareId]" class="text-caption text-warning"> · {{sendNotes[share.shareId]}}</span>
         </div>
-        <q-btn v-if="!sending.includes(share.shareId)" dense flat no-caps size="sm" :label="t('Send from here')" @click="sendFromHere(share)"></q-btn>
+        <q-btn v-if="!sentHere(share.shareId)" dense flat no-caps size="sm" :label="nativeLocation() ? t('Send from this device') : t('Send from here')"
+                @click="sendFromHere(share)" :data-maps-send-here="share.shareId"></q-btn>
         <q-btn dense flat no-caps size="sm" color="negative" icon="sym_o_location_off" :label="t('Stop')" :aria-label="t('Stop sharing') + ': ' + audienceText(share)"
                 @click="stopShare(share)" :data-maps-stop="share.shareId"></q-btn>
     </div>
@@ -273,7 +279,14 @@ along with this software (see the LICENSE.md file). If not, see
                     <div class="text-body2">{{share.label}}</div>
                     <div class="text-caption m-muted">{{[t('until') + ' ' + untilText(share.thruDate), share.approximate ? t('approximate, about 1 km') : t('exact'),
                         share.keepTrail ? t('trail kept') + ' (' + (share.trailCount || 0) + ' ' + t('points') + ')' : t('no trail kept')].join(' · ')}}</div>
-                    <div class="text-caption m-muted">{{t('Last position')}}: {{ageWords(share)}}</div>
+                    <div class="text-caption m-muted" data-maps-last-source="true">{{t('Last position')}}:
+                        {{share.lastSource === 'xmpp' ? xmppAgeWords(share) + ' · ' + t('from your XMPP app')
+                            : ageWords(share) + (share.lastSource ? ' · ' + t('from this page or phone') : '')}}</div>
+                    <div v-if="share.takeXmppLocation && share.lastSource !== 'xmpp'" class="text-caption m-muted" data-maps-xmpp-source="true">
+                        {{t('Your XMPP app\'s location, to your XMPP contacts only')}}: {{xmppAgeWords(share)}}</div>
+                    <q-toggle v-if="share.takeXmppLocation || share.audience.some((entry) => entry.audienceTypeEnumId === 'LsaXmpp')" dense size="sm" class="q-mt-xs"
+                            :model-value="share.takeXmppLocation === true" @update:model-value="(on) => takeXmpp(share, on)" data-maps-take-xmpp="true"
+                            :label="t('Also use my XMPP app\'s location (sent to my XMPP contacts only)')"></q-toggle>
                     <q-list dense>
                         <q-item v-for="entry in share.audience" :key="entry.audienceSeqId" class="q-px-none" :data-maps-audience="entry.audienceSeqId">
                             <q-item-section avatar style="min-width:28px"><q-icon :name="audienceIcon(entry)" size="xs"></q-icon></q-item-section>
@@ -432,17 +445,18 @@ along with this software (see the LICENSE.md file). If not, see
         </div>
     </m-dialog>
 
-    <!-- Share my location (plans/Location-Sharing.md §3.3): who sees it, until when, exact or approximate, a trail or not;
-        started only by this act, sent from this page while it is open; a guest link's token shown once -->
+    <!-- Share my location (plans/archive/Location-Sharing.md §3.3): who sees it, until when, exact or approximate, a trail or not;
+        started only by this act, sent from this page while it is open; a guest link (its page's link, the secret in the fragment) shown once -->
     <m-dialog v-model="shareShown" :title="t('Share my location')" width="480">
         <div id="MapsShareDialog">
             <template v-if="shareMade">
                 <div class="text-body2">{{t('Your location is shared until')}} {{untilText(shareMade.thruDate)}}. {{t('This page sends it while it is open; close it and the people you chose see how old the last position is.')}}</div>
-                <div v-if="shareMade.linkToken" class="q-mt-sm m-tonal q-pa-sm" id="MapsShareLinkToken">
-                    <div class="text-caption">{{t('The guest link\'s token, shown this once: keep it now. The guest page that opens it is not built yet.')}}</div>
+                <div v-if="shareMade.linkUrl" class="q-mt-sm m-tonal q-pa-sm" id="MapsShareLinkToken">
+                    <div class="text-caption">{{t('The guest link, shown this once: send it now to whom it is for. Anyone with it sees where you are until the share ends.')}}</div>
+                    <div v-if="shareMade.linkPathOnly" class="text-caption text-warning">{{t('This server\'s web address is not configured: put its address before this path.')}}</div>
                     <div class="row items-center no-wrap q-mt-xs">
-                        <code class="col" style="overflow-wrap:anywhere">{{shareMade.linkToken}}</code>
-                        <q-btn dense flat round icon="sym_o_content_copy" :aria-label="t('Copy')" @click="copyText(shareMade.linkToken)"></q-btn>
+                        <code class="col" style="overflow-wrap:anywhere">{{shareMade.linkUrl}}</code>
+                        <q-btn dense flat round icon="sym_o_content_copy" :aria-label="t('Copy')" @click="copyText(shareMade.linkUrl)"></q-btn>
                     </div>
                 </div>
                 <div class="row justify-end q-mt-md"><q-btn dense unelevated no-caps color="primary" :label="t('Done')" @click="shareShown = false"></q-btn></div>
@@ -457,6 +471,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <div v-if="shareForm.groups.length" class="text-caption m-muted">{{t('A group is seen by its members now; someone who joins later sees it once you add the group again.')}}</div>
                 <q-select v-if="shareTargets.xmpp" v-model="shareForm.jids" multiple use-chips dense outlined emit-value map-options class="q-mt-sm"
                         :options="shareTargets.contacts" option-value="jid" option-label="label" :label="t('XMPP contacts')" id="MapsShareJids"></q-select>
+                <q-toggle v-if="shareForm.jids.length" v-model="shareForm.takeXmpp" dense class="q-mt-sm" id="MapsShareTakeXmpp"
+                        :label="t('Also use my XMPP app\'s location (sent to my XMPP contacts only)')"></q-toggle>
                 <q-toggle v-model="shareForm.link" dense :label="t('A guest link (its token is shown once)')" class="q-mt-sm" id="MapsShareLink"></q-toggle>
                 <div class="text-caption m-muted q-mt-sm">{{t('Until')}}</div>
                 <q-btn-toggle v-model="shareForm.hours" dense no-caps unelevated toggle-color="primary" :options="untilOptions" id="MapsShareUntil"></q-btn-toggle>
@@ -522,11 +538,13 @@ module.exports = {
             editSaving: false, editLoading: false, editStale: false,
             rasters: {}, bandLayerId: '', bandForm: { mode: 'rgb', rgb: [1, 2, 3], band: 1, colormap: 'grey', min: '', max: '', nodata: '' }, bandError: '', bandSaving: false,
             picker: { drives: [], driveId: null, crumbs: [], rows: [], loading: false, text: '', searching: false },
-            // live location (plans/Location-Sharing.md §3.3): m-map's shares as it holds them (live-change), the page's clock for
+            // live location (plans/archive/Location-Sharing.md §3.3): m-map's shares as it holds them (live-change), the page's clock for
             // ages, the shares this page sends and the newest position the browser gave
             live: null, liveGone: [], liveSelected: '', sharesNotice: '', sessionHash: null, now: Date.now(), sending: [], sendInfo: {}, sendNotes: {}, geoError: '', sendError: '',
+            // the shares the Android app's location service sends from this phone (plans/archive/Location-Sharing.md §3.4)
+            nativeSending: [],
             shareShown: false, shareSaving: false, shareError: '', shareMade: null, shareUserOptions: [],
-            shareForm: { users: [], groups: [], jids: [], link: false, hours: 1, precision: 'LspExact', keepTrail: false, label: '' },
+            shareForm: { users: [], groups: [], jids: [], link: false, hours: 1, precision: 'LspExact', keepTrail: false, takeXmpp: false, label: '' },
             shareTargets: { loaded: false, groups: [], xmpp: false, contacts: [], maxShareHours: 24, trailMaxDays: 30,
                 minIntervalSeconds: 5, approximateIntervalSeconds: 60 } };
     },
@@ -564,7 +582,13 @@ module.exports = {
                 const position = held && held.latest ? { lat: held.latest.lat, lon: held.latest.lon }
                     : latest && latest.latitude !== null && latest.latitude !== undefined ? { lat: Number(latest.latitude), lon: Number(latest.longitude) } : null;
                 const seenAt = held ? held.seenAt : latest && typeof latest.seenAt === 'number' ? latest.seenAt : null;
-                return Object.assign({}, share, { position, seenAt, thruDate: held && held.thruDate ? held.thruDate : share.thruDate });
+                // where the last position came from: the server's (by its receive time) as of the read, changed only by a
+                // position pushed after the read (a page's or the phone's, the only ones pushed here), by arrival, never by
+                // the positions' observed times
+                let lastSource = share.lastSource || null;
+                if (held && held.latest && typeof held.seenAt === 'number' && typeof share.readAt === 'number' && held.seenAt > share.readAt)
+                    lastSource = 'device';
+                return Object.assign({}, share, { position, seenAt, lastSource, thruDate: held && held.thruDate ? held.thruDate : share.thruDate });
             }).filter((share) => share && (!share.thruDate || share.thruDate > this.now));
         },
         myShares() { return this.locationShares.filter((share) => share.role === 'owner'); },
@@ -578,7 +602,7 @@ module.exports = {
         // the Android app, whose openExternal hands a geo: link to the phone's maps app (as Chat's Open in maps tells it)
         phoneApp() {
             const desktop = window.moquiDesktop;
-            return !!(desktop && typeof desktop.dialAccount === 'function' && typeof desktop.openExternal === 'function');
+            return !!(desktop && typeof desktop.openExternal === 'function' && (typeof desktop.dialAccount === 'function' || !!desktop.location));
         },
         // OpenStreetMap is offered only while this server lets a page reach outside hosts (maps@external-requests)
         outsideAllowed() { return !(this.effective && this.effective.externalRequests === false); },
@@ -645,6 +669,7 @@ module.exports = {
             const ids = value.map((share) => share.shareId);
             const had = (before || []).map((share) => share.shareId);
             this.sending.filter((id) => had.includes(id) && !ids.includes(id)).forEach((id) => this.stopSending(id));
+            this.nativeSending.filter((id) => had.includes(id) && !ids.includes(id)).forEach((id) => this.stopNative(id));
         }
     },
     methods: {
@@ -1119,7 +1144,7 @@ module.exports = {
             clipboard.writeText(text).then(() => moqui.notifyMessages([{ type: 'success', message: t('Copied') + ': ' + text }], null),
                 (err) => console.warn('Maps: the coordinates were not copied', err));
         },
-        // ---- live location (plans/Location-Sharing.md §3.3; the transitions are Browse.xml's, over LocationServices) ----
+        // ---- live location (plans/archive/Location-Sharing.md §3.3; the transitions are Browse.xml's, over LocationServices) ----
         // m-map's shares after a change: one an ended push (or a revoked one, to a viewer) took off is gone from the panels
         // too, for as long as the page is open; one a read no longer lists comes back with the next read that does
         onLiveChange(change) {
@@ -1165,6 +1190,13 @@ module.exports = {
         // once: a configuration drawn or normalized again later keeps it, so a share that stopped reporting goes stale
         stampShares(list, receivedAt) {
             return (Array.isArray(list) ? list : []).map((share) => {
+                // when it was read, once, so a push after it is known as newer
+                if (share && typeof share.readAt !== 'number') share = Object.assign({}, share, { readAt: receivedAt });
+                // the XMPP app's last position's age, stamped once as the read's clock (an owner's share)
+                const xmppAge = share ? Number(share.xmppAgeSeconds) : NaN;
+                if (share && typeof share.xmppSeenAt !== 'number' && share.xmppAgeSeconds !== null && share.xmppAgeSeconds !== undefined
+                        && Number.isFinite(xmppAge))
+                    share = Object.assign({}, share, { xmppSeenAt: receivedAt - Math.max(0, xmppAge) * 1000 });
                 const latest = share && share.latest;
                 if (!latest || typeof latest.seenAt === 'number') return share;
                 const age = Number(latest.ageSeconds);
@@ -1176,6 +1208,7 @@ module.exports = {
         pruneSending(list, readAt) {
             const mine = (Array.isArray(list) ? list : []).filter((share) => share && share.role === 'owner').map((share) => share.shareId);
             this.sending.filter((id) => !mine.includes(id) && (this.sendInfo[id] || {}).startedAt < readAt).forEach((id) => this.stopSending(id));
+            this.readNativeSending();
         },
         untilText(millis) {
             if (!millis) return '';
@@ -1189,6 +1222,13 @@ module.exports = {
             const words = seconds < 60 ? t('just now') : seconds < 3600 ? Math.floor(seconds / 60) + ' ' + t('min ago')
                 : seconds < 86400 ? Math.floor(seconds / 3600) + ' ' + t('h ago') : Math.floor(seconds / 86400) + ' ' + t('d ago');
             return seconds > 300 ? words + ' (' + t('stale') + ')' : words;
+        },
+        // the age of the XMPP app's last position (no push brings it here: stamped at the read), moving with the clock
+        xmppAgeWords(share) {
+            if (typeof share.xmppSeenAt !== 'number') return t('No position yet');
+            const seconds = Math.max(0, Math.round((this.now - share.xmppSeenAt) / 1000));
+            return seconds < 60 ? t('just now') : seconds < 3600 ? Math.floor(seconds / 60) + ' ' + t('min ago')
+                : seconds < 86400 ? Math.floor(seconds / 3600) + ' ' + t('h ago') : Math.floor(seconds / 86400) + ' ' + t('d ago');
         },
         // whom an own share is with: "Sam, Pat and 2 others"
         audienceText(share) {
@@ -1240,7 +1280,7 @@ module.exports = {
             }, (err) => console.warn('Maps: the share choices were not read', err));
         },
         openShare() {
-            this.shareForm = { users: [], groups: [], jids: [], link: false, hours: 1, precision: 'LspExact', keepTrail: false, label: '' };
+            this.shareForm = { users: [], groups: [], jids: [], link: false, hours: 1, precision: 'LspExact', keepTrail: false, takeXmpp: false, label: '' };
             this.shareError = '';
             this.shareMade = null;
             this.shareShown = true;
@@ -1258,24 +1298,93 @@ module.exports = {
             this.shareSaving = true;
             this.shareError = '';
             const params = { audience: JSON.stringify(this.shareAudience), thruDate: String(Date.now() + this.shareForm.hours * 3600000),
-                precisionEnumId: this.shareForm.precision, keepTrail: this.shareForm.keepTrail ? 'true' : 'false', label: this.shareForm.label.trim() };
+                precisionEnumId: this.shareForm.precision, keepTrail: this.shareForm.keepTrail ? 'true' : 'false',
+                takeXmppLocation: this.shareForm.takeXmpp && this.shareForm.jids.length ? 'true' : 'false', label: this.shareForm.label.trim() };
+            // in the Android app, the location permission first, after the app's dialog that says why (LL3): no share is
+            // started that this phone could not send
+            const native = this.nativeLocation();
+            const allowed = native ? Promise.resolve(native.allow(params.precisionEnumId !== 'LspApproximate')) : Promise.resolve(true);
+            return allowed.then((ok) => (ok ? null : t('Allow the app to use this phone\'s location to share it, then try again'))).then((refused) => {
+                if (refused) { this.shareError = refused; return null; }
+                return this.postShare(params);
+            }, () => null).then((shareId) => { this.shareSaving = false; return shareId; });
+        },
+        postShare(params) {
             return this.request('createShare', { method: 'POST', params }).then((json) => {
                 if (!json.applied) { this.shareError = json.reason || t('Your location was not shared'); return null; }
-                this.shareMade = { shareId: json.shareId, thruDate: json.thruDate, linkToken: json.linkToken || null };
+                this.shareMade = { shareId: json.shareId, thruDate: json.thruDate, linkUrl: json.linkUrl || null, linkPathOnly: !!json.linkPathOnly };
                 // shared by this page from now on, while it is open, at the share's precision and interval
                 const approximate = params.precisionEnumId === 'LspApproximate';
                 const form = this.shareForm;
                 const whom = form.users.map((user) => user.label).concat(this.shareTargets.groups.filter((group) => form.groups.includes(group.userGroupId))
                     .map((group) => group.label), this.shareTargets.contacts.filter((contact) => form.jids.includes(contact.jid)).map((contact) => contact.label),
                     form.link ? [t('a guest link')] : []);
-                this.startSending(json.shareId, { approximate, thruDate: json.thruDate, whomText: whom.join(', '), fresh: true,
-                    intervalSeconds: approximate ? this.shareTargets.approximateIntervalSeconds : this.shareTargets.minIntervalSeconds });
-                if (!json.linkToken) this.shareShown = false;
-                moqui.notifyMessages([{ type: 'success', message: t('Your location is shared until') + ' ' + this.untilText(json.thruDate) }], null);
-                // the app bar's chip at once, before the share's started push
-                if (this.$root && this.$root.loadShellIndicators) this.$root.loadShellIndicators();
-                return this.refreshShares().then(() => json.shareId);
-            }, (err) => { this.shareError = String(err && err.message || err); return null; }).then((shareId) => { this.shareSaving = false; return shareId; });
+                if (!json.linkUrl) this.shareShown = false;
+                // shared once it is sent: in the app only after the person's Send in its own dialog
+                return this.sendShare(json.shareId, { approximate, thruDate: json.thruDate, whomText: whom.join(', '), fresh: true, created: true, audienceVersion: 1,
+                    intervalSeconds: approximate ? this.shareTargets.approximateIntervalSeconds : this.shareTargets.minIntervalSeconds })
+                    .then(() => {
+                        // the app bar's chip at once, before the share's started push
+                        if (this.$root && this.$root.loadShellIndicators) this.$root.loadShellIndicators();
+                        return this.refreshShares();
+                    }).then(() => json.shareId);
+            }, (err) => { this.shareError = String(err && err.message || err); return null; });
+        },
+        // ---- the Android app (plans/archive/Location-Sharing.md §3.4, LL3): its location service sends a share from this phone, also
+        // with the app in the background, with its notification for as long as it does (moquiDesktop.location, a server
+        // page's); with none (a browser, the desktop app) or when the app could not start it, this page sends while open ----
+        nativeLocation() {
+            const desktop = window.moquiDesktop;
+            const native = desktop && desktop.location;
+            return native && typeof native.start === 'function' ? native : null;
+        },
+        // a share started here or taken over: sent by the app's service once the person says Send in the app's own dialog
+        // (whose words are the server's), else by this page; the person's Not now there sends it from nowhere: a share just
+        // started (created) is stopped, one taken over is left with this device and not sent from it
+        sendShare(shareId, info) {
+            const native = this.nativeLocation();
+            const shared = () => {
+                if (info.thruDate) moqui.notifyMessages([{ type: 'success', message: t('Your location is shared until') + ' ' + this.untilText(info.thruDate) }], null);
+            };
+            const onPage = () => { this.startSending(shareId, info); shared(); return false; };
+            if (!native) return Promise.resolve(onPage());
+            return Promise.resolve(native.start({ shareId })).then((answer) => {
+                if (answer === 'started') {
+                    this.stopSending(shareId);
+                    if (!this.nativeSending.includes(shareId)) this.nativeSending = this.nativeSending.concat([shareId]);
+                    this.noteSending();
+                    shared();
+                    return true;
+                }
+                if (answer === 'declined') {
+                    // the person's Not now: a share just made is stopped; one taken over stays this device's, and nothing
+                    // sends it (its audience sees its last position grow old), which the person is told plainly
+                    if (info.created) {
+                        this.shareAction('stopShare', { shareId });
+                        moqui.notifyMessages(null, [t('Your location was not shared')]);
+                    } else moqui.notifyMessages(null, [t('Nothing sends this share now: its audience sees your last position until you send it again or stop it')]);
+                    return false;
+                }
+                return onPage();
+            }, onPage);
+        },
+        // what the app's service sends now, read when the shares are (it stops a share by itself at its end, a 410, another
+        // device's takeover, a sign-out, its notification's Stop or the permission taken away)
+        readNativeSending() {
+            const native = this.nativeLocation();
+            if (!native || typeof native.status !== 'function') return Promise.resolve();
+            return Promise.resolve(native.status()).then((list) => {
+                this.nativeSending = Array.isArray(list) ? list.map(String) : [];
+                this.noteSending();
+            }, () => {});
+        },
+        sentHere(shareId) { return this.sending.includes(shareId) || this.nativeSending.includes(shareId); },
+        // where an own share is sent from, for its banner
+        sentFromText(share) {
+            if (this.nativeSending.includes(share.shareId)) return t('sent from this phone, also while the app is in the background');
+            if (this.sending.includes(share.shareId)) return t('sent from this page while it is open');
+            const from = share.sentFromDevice ? (share.deviceName ? t('sent from') + ' ' + share.deviceName : t('sent from another device')) : t('not sent from this page');
+            return from + ': ' + this.ageWords(share);
         },
         // an action on a share of the user's own, then the shares read again
         shareAction(name, params, done) {
@@ -1287,6 +1396,7 @@ module.exports = {
         },
         stopShare(share) {
             this.stopSending(share.shareId);
+            this.stopNative(share.shareId);
             this.shareAction('stopShare', { shareId: share.shareId }, () => moqui.notifyMessages([{ type: 'success', message: t('Sharing stopped') }], null));
         },
         // Extend sends the new end alone, never the audience again
@@ -1301,6 +1411,8 @@ module.exports = {
             });
         },
         revokeAudience(share, entry) { this.shareAction('revokeAudience', { shareId: share.shareId, audienceSeqId: entry.audienceSeqId }); },
+        // the owner's XMPP app's location for this share's XMPP contacts, on or off (update#Share takeXmppLocation)
+        takeXmpp(share, on) { this.shareAction('takeXmppShare', { shareId: share.shareId, takeXmppLocation: on ? 'true' : 'false' }); },
         deleteTrail(share) {
             if (!window.confirm(t('Delete the trail of this share now?'))) return;
             this.shareAction('deleteTrail', { shareId: share.shareId });
@@ -1342,11 +1454,31 @@ module.exports = {
             kept.filter((id) => !this.sending.includes(id)).forEach((id) => this.sendFromHere(mine.find((share) => share.shareId === id), true));
             if (kept.length !== stored.length) this.storeSending();
         },
-        // a listed share of the user's own sent from here, at its precision and interval
+        // a listed share of the user's own sent from here, at its precision and interval. The user's Send from here (Send from
+        // this device in the app) takes it over on the server first (sendFromHere), so the device that sent it is told
+        // another one does now and stops; a reload goes on sending what this tab sent, as it was
         sendFromHere(share, restored) {
-            if (!share) return;
-            this.startSending(share.shareId, { approximate: !!share.approximate, intervalSeconds: share.reportIntervalSeconds, thruDate: share.thruDate,
-                restored: !!restored, fresh: !restored });
+            if (!share) return Promise.resolve();
+            const info = { approximate: !!share.approximate, intervalSeconds: share.reportIntervalSeconds, thruDate: share.thruDate,
+                whomText: this.audienceText(share), restored: !!restored, fresh: !restored };
+            if (restored) { this.startSending(share.shareId, info); return Promise.resolve(); }
+            const native = this.nativeLocation();
+            const allowed = native ? Promise.resolve(native.allow(!share.approximate)) : Promise.resolve(true);
+            return allowed.then((ok) => {
+                if (!ok) { moqui.notifyMessages(null, [t('Allow the app to use this phone\'s location to share it, then try again')]); return null; }
+                return this.request('sendFromHere', { method: 'POST', params: { shareId: share.shareId } }).then((json) => {
+                    if (!json.applied) { moqui.notifyMessages(null, [json.reason || t('That did not change the share')]); return null; }
+                    return this.sendShare(share.shareId, info).then(() => this.refreshShares());
+                });
+            }).catch((err) => moqui.notifyMessages(null, [String(err && err.message || err)]));
+        },
+        // the app's service no longer sends a share (its Stop here, or it ended)
+        stopNative(shareId) {
+            const native = this.nativeLocation();
+            if (!this.nativeSending.includes(shareId)) return;
+            this.nativeSending = this.nativeSending.filter((id) => id !== shareId);
+            if (native && typeof native.stop === 'function') Promise.resolve(native.stop(shareId)).catch(() => {});
+            this.noteSending();
         },
         // info: approximate, intervalSeconds (the share's report interval), thruDate and whomText (for its banner before the
         // share is read), fresh (a share just started: no fix taken before it is sent), restored (after a reload)
@@ -1355,6 +1487,7 @@ module.exports = {
             const given = info || {};
             if (!this.sending.includes(shareId)) this.sending = this.sending.concat([shareId]);
             this.sendInfo = Object.assign({}, this.sendInfo, { [shareId]: { approximate: !!given.approximate, intervalSeconds: Number(given.intervalSeconds) || 0,
+                audienceVersion: Number(given.audienceVersion) || 0,
                 thruDate: given.thruDate || null, whomText: given.whomText || '', startedAt: Date.now() } });
             this.storeSending();
             this.sendError = '';
@@ -1379,9 +1512,12 @@ module.exports = {
             this.noteSending();
         },
         // the app bar's "Sharing location" chip (the shell's indicator of the framework's live-location shell-indicator provider) says "sending here"
-        // while this page sends a share
+        // while this page sends a share, and "sending from this phone" while the Android app's location service does, which
+        // goes on after this page closes (plans/archive/Location-Sharing.md §3.4), so that note stays when it does
         noteSending(off) {
-            if (moqui.shellIndicators) moqui.shellIndicators.note(INDICATOR_KEY, !off && !this.closed && this.sending.length ? t('sending here') : null);
+            if (!moqui.shellIndicators) return;
+            const here = !off && !this.closed && this.sending.length > 0;
+            moqui.shellIndicators.noteFrom(INDICATOR_KEY, 'maps', this.nativeSending.length ? t('sending from this phone') : here ? t('sending here') : null);
         },
         note(shareId, text) { this.sendNotes = Object.assign({}, this.sendNotes, { [shareId]: text }); },
         // a share's report interval in milliseconds: its own, else the listed share's, else location@min-interval-seconds' default
@@ -1472,7 +1608,11 @@ module.exports = {
             if (this.closed) return;
             const interval = this.intervalOf(shareId);
             const num = (value) => (value === null || value === undefined || !Number.isFinite(Number(value)) ? '' : String(value));
-            const params = { shareId, latitude: num(fix.latitude), longitude: num(fix.longitude), accuracy: num(fix.accuracy), heading: num(fix.heading), speed: num(fix.speed),
+            // the audience version this page read (a share sent from a device, the app's page, takes reports of the version
+            // its audience is at; one the page has not read since is refused and read again)
+            const share = this.myShares.find((one) => one.shareId === shareId);
+            const version = share && share.audienceVersion != null ? share.audienceVersion : (this.sendInfo[shareId] || {}).audienceVersion;
+            const params = { shareId, audienceVersion: version != null ? String(version) : '', latitude: num(fix.latitude), longitude: num(fix.longitude), accuracy: num(fix.accuracy), heading: num(fix.heading), speed: num(fix.speed),
                 observedDate: state.serverTime ? '' : String(fix.timestamp) };
             state.inFlight = true;
             const signedOut = () => {
@@ -1490,6 +1630,14 @@ module.exports = {
                     if (json.latest) this.showOwnLatest(shareId, json.latest);
                 } else if (status === 429) state.nextAt = now + Math.max(1, Number(json.retryAfterSeconds) || 1) * 1000;
                 else if (status === 410 || status === 404) {
+                    this.stopSending(shareId);
+                    this.refreshShares();
+                } else if (status === 409 && json.reasonCode === 'AUDIENCE_CHANGED') {
+                    // the audience changed since this page read it: read again (the banner shows whom it reaches now), then on
+                    state.nextAt = now + interval;
+                    this.refreshShares();
+                } else if (status === 409 && json.reasonCode === 'OTHER_DEVICE') {
+                    // another device of the user's sends it now (its Send from here): this page stops, and offers it back
                     this.stopSending(shareId);
                     this.refreshShares();
                 } else if ((status === 409 && json.reasonCode === 'CLOCK_AHEAD') || (status === 400 && json.reasonCode === 'BEFORE_SHARE')) {

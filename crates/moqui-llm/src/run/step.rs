@@ -751,6 +751,9 @@ pub(crate) fn run_step(factory: &Arc<ExecutionContextFactory>, run_id: &str) {
         Err(_) => "the step panicked".to_string(),
     };
     tracing::error!("agent run {run_id} failed: {failure}");
+    // the error's own text (a database error, a row that does not read) is the log's: the user, the run's events and
+    // a chat room the run answers in get a fixed text with the run's id (SEC-AI-91)
+    let failure = step_failure_text(run_id);
     if let Some(facade) = factory.entity() {
         let user_id = quietly(|| load_run(&facade, run_id))
             .ok()
@@ -773,6 +776,12 @@ pub(crate) fn run_step(factory: &Arc<ExecutionContextFactory>, run_id: &str) {
         }
     }
     engine.forget_if(run_id, &local);
+}
+
+/// What a run that failed in a step for an error of its own says to its user: a fixed text with the run's id, never the
+/// error's text, which the server log holds (SEC-AI-91).
+pub(crate) fn step_failure_text(run_id: &str) -> String {
+    format!("the step failed; see the server log for agent run {run_id}")
 }
 
 /// The working state of one step.
@@ -1690,6 +1699,24 @@ impl Turn {
             metadata.insert("promptChars".to_string(), json!(sent_chars));
         }
         let metadata = (!metadata.is_empty()).then_some(Json::Object(metadata));
+        // links no tool returned are made plain in every assistant text before it is stored, a step's that also calls
+        // a tool included, so a conversation read again (a reload, another tab) shows none live (plan 7.7, SEC-AI-92)
+        let mut invented = Vec::new();
+        if tools::format::may_link(&reply.text) {
+            let seen = quietly(|| seen_references(&facade, &self.run.conversation_id)).unwrap_or_else(|error| {
+                tracing::error!("the references of agent run {run_id} could not be read: {error}");
+                tools::format::Seen::default()
+            });
+            let checked = tools::format::check_answer(&reply.text, &seen);
+            if !checked.invented.is_empty() {
+                reply.text = tools::format::stored_text(&checked);
+                self.sink.emit(
+                    "answer.references",
+                    json!({"messageId": message_id, "invented": checked.invented, "text": reply.text}),
+                );
+                invented = checked.invented;
+            }
+        }
         let calls = quietly(|| self.store_reply(target, &reply, &mut message, metadata.as_ref()))?;
         self.budget.steps += 1;
         self.budget.tokens += reply.usage.input + reply.usage.output;
@@ -1743,20 +1770,11 @@ impl Turn {
                 }
                 let reason =
                     (reply.finish == Finish::Length).then(|| "the answer was cut at the output limit".to_string());
-                // links to /apps/ paths no tool returned are invented references (plan 7.7): the clients show them
-                // as plain text, and the evaluation counts them
+                // links to /apps/ paths no tool returned are invented references (plan 7.7), made plain before the
+                // text was stored: the evaluation counts them
                 let mut result = json!({"text": reply.text, "messageId": message_id});
-                let seen = quietly(|| seen_references(&facade, &self.run.conversation_id)).unwrap_or_else(|error| {
-                    tracing::error!("the references of agent run {run_id} could not be read: {error}");
-                    tools::format::Seen::default()
-                });
-                let checked = tools::format::check_answer(&reply.text, &seen);
-                if !checked.invented.is_empty() {
-                    self.sink.emit(
-                        "answer.references",
-                        json!({"messageId": message_id, "invented": checked.invented, "text": checked.text}),
-                    );
-                    result["invented"] = json!(checked.invented);
+                if !invented.is_empty() {
+                    result["invented"] = json!(invented);
                 }
                 quietly(|| {
                     transition(

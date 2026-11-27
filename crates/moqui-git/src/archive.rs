@@ -157,7 +157,7 @@ fn io_error(what: &str, path: &Path, err: impl std::fmt::Display) -> Error {
 /// A tree entry's name as an archive may hold it: UTF-8, not empty, not `.`, `..` or `.git` (in any case, as a file
 /// system that ignores case reads it), and without `/`, `\` or NUL. git's own clients refuse to make such entries; a
 /// pushed tree is whatever was pushed.
-fn entry_name(raw: &[u8]) -> Option<&str> {
+pub(crate) fn entry_name(raw: &[u8]) -> Option<&str> {
     let name = std::str::from_utf8(raw).ok()?;
     let reserved = name == "." || name == ".." || name.eq_ignore_ascii_case(".git");
     let unsafe_character = name.contains(['/', '\\', '\0']);

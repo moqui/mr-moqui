@@ -11,7 +11,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The offline Maps screen of the desktop and mobile apps (plans/Maps-Offline.md §2.5): the map packages of the account,
+<!-- The offline Maps screen of the desktop and mobile apps (plans/archive/Maps-Offline.md §2.5): the map packages of the account,
     as the server lists them and as this device holds them (moquiDesktop.packages: list, status), each to download (on the
     phone, only on Wi-Fi if asked), update, cancel and delete; and a package opened, drawn by m-map in package mode from
     its manifest and its files at /__moqui-app/maps/<packageId>/ on the shell's origin (js/WebrootMap.js), never asking

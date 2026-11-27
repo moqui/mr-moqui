@@ -667,6 +667,14 @@ pub(crate) fn restart_soon(what: &str) -> bool {
         });
         return false;
     }
+    // a restart is a program's effect, which a sim or a read fence never lets through: the sim of an agent's try_service
+    // records it as refused rather than restarting the server (SEC-DEV-81)
+    if let Err(err) =
+        moqui_core::entity::fence::check_effect(moqui_core::entity::fence::Effect::Process, "restart#Server")
+    {
+        ExecutionContext::with_current(|ec| ec.message().add_error(format!("{what}: {err}")));
+        return false;
+    }
     let user = moqui_core::user::session::current_user_id()
         .ok()
         .flatten()

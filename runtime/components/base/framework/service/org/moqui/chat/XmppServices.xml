@@ -438,8 +438,10 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="PepNodeRefused" allow-remote="false">
         <description>Whether a PEP node is one the service does not keep: user location (XEP-0080), which would be pushed
-            to everyone the user shares a room with, a share the user can neither see nor revoke in Moqui, until Moqui's
-            own live location sharing maps it (plans/Location-Sharing.md). The node is compared with ASCII whitespace
+            to everyone the user shares a room with, a share the user can neither see nor revoke in Moqui. Its one way
+            in is the XMPP session's mapping onto the user's location share (plans/archive/Location-Sharing.md §3.6, LL5): a
+            publish is LocationServices.report#XmppPosition, and its positions go to the share's XMPP contacts only;
+            these PEP services (publish, items, configure, retract, delete) never take it. The node is compared with ASCII whitespace
             trimmed (space, tab, LF, FF, CR, as the session's Rust check trims: JavaScript's trim would strip U+FEFF too,
             and the two would disagree) and in any ASCII case, so a variant spelling cannot reach a stored row on a
             case-insensitive collation. The same list as the XMPP session's (REFUSED_NODES in
@@ -612,9 +614,14 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="retract" noun="PepItem">
+        <description>Retract an item of one of the current user's PEP nodes; a refused node (get#PepNodeRefused) is an
+            error.</description>
         <in-parameters><parameter name="node" required="true"/><parameter name="itemId" required="true"/></in-parameters>
         <out-parameters><parameter name="notifyUserIdList" type="List"/></out-parameters>
         <actions><script><![CDATA[
+            if (ec.service.sync().name('org.moqui.chat.XmppServices.get#PepNodeRefused').parameter('node', node).call().refused) {
+                ec.message.addError('This PEP node is not kept'); return
+            }
             const me = ec.user.userId
             const nodeRow = ec.entity.find('moqui.xmpp.XmppPepNode').condition('userId', me).condition('node', node).disableAuthz().one()
             if (!nodeRow) { ec.message.addError('No such node'); return }
@@ -625,9 +632,13 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="configure" noun="PepNode">
-        <description>Change one of the current user's PEP nodes' access_model or max_items (pubsub#owner configure).</description>
+        <description>Change one of the current user's PEP nodes' access_model or max_items (pubsub#owner configure); a
+            refused node (get#PepNodeRefused) is an error.</description>
         <in-parameters><parameter name="node" required="true"/><parameter name="options" type="Map"/></in-parameters>
         <actions><script><![CDATA[
+            if (ec.service.sync().name('org.moqui.chat.XmppServices.get#PepNodeRefused').parameter('node', node).call().refused) {
+                ec.message.addError('This PEP node is not kept'); return
+            }
             const nodeRow = ec.entity.find('moqui.xmpp.XmppPepNode').condition('userId', ec.user.userId).condition('node', node).disableAuthz().one()
             if (!nodeRow) { ec.message.addError('No such node'); return }
             const asked = options || {}
@@ -641,8 +652,13 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="delete" noun="PepNode">
+        <description>Delete one of the current user's PEP nodes with its items; a refused node (get#PepNodeRefused) is
+            an error.</description>
         <in-parameters><parameter name="node" required="true"/></in-parameters>
         <actions><script><![CDATA[
+            if (ec.service.sync().name('org.moqui.chat.XmppServices.get#PepNodeRefused').parameter('node', node).call().refused) {
+                ec.message.addError('This PEP node is not kept'); return
+            }
             const me = ec.user.userId
             ec.entity.find('moqui.xmpp.XmppPepItem').condition('userId', me).condition('node', node).disableAuthz().deleteAll()
             const removed = ec.entity.find('moqui.xmpp.XmppPepNode').condition('userId', me).condition('node', node).disableAuthz().deleteAll()

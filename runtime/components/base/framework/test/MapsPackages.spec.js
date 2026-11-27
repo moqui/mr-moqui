@@ -1,4 +1,4 @@
-// Offline map packages (plans/Maps-Offline.md §2, OF1; org.moqui.maps.MapSourceServices, MapPackages.js, tools
+// Offline map packages (plans/archive/Maps-Offline.md §2, OF1; org.moqui.maps.MapSourceServices, MapPackages.js, tools
 // screen/Maps/Offline.xml package): a package is cut from a small fixture archive (MapsArchiveLib's tiles) and built by
 // the MapPackageBuild job from what its owner may see, a basemap layer they may not see left out; its zip is served to
 // its owner by range with its SHA-256 as the strong ETag and refused another user, and a stale revision is 409, and

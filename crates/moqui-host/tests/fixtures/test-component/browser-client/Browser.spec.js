@@ -10,6 +10,8 @@ feature("the login form signs in with fill, click and waitForURL", {
         const page = browser.newPage()
         const res = page.goto("/Login")
         res.status == 200
+        // the document response's headers, named in lower case
+        /text\/html/.test(res.headers["content-type"])
         page.locator("#login_form [name=username]").fill("john.doe")
         page.getByLabel("Username").value() == "john.doe"
         page.fill("#login_form [name=password]", "moqui")

@@ -413,19 +413,25 @@ pub(crate) fn author_signature(author: &Author) -> gix::actor::Signature {
     }
 }
 
-/// A message with the `Moqui-User-Id` trailer of `author`, as a commit made through Moqui has.
+/// A message with the `Moqui-User-Id` trailer of `author`, as a commit made through Moqui has. A trailer of that name the
+/// message already has (the caller wrote it) is taken out first, so the commit names the user who made it and no other
+/// (SEC-GIT-97).
 pub(crate) fn with_user_trailer(message: &str, author: &Author) -> String {
-    let mut message = message.trim_end().to_string();
+    let name = ops::USER_TRAILER.trim_end().to_ascii_lowercase();
+    let kept: Vec<&str> = message
+        .trim_end()
+        .lines()
+        .filter(|line| !line.trim_start().to_ascii_lowercase().starts_with(&name))
+        .collect();
+    let mut message = kept.join("\n").trim_end().to_string();
     message.push('\n');
     if let Some(user_id) = &author.user_id {
-        if ops::user_of(&message).is_none() {
-            if ops::trailers(&message).is_empty() {
-                message.push('\n');
-            }
-            message.push_str(ops::USER_TRAILER);
-            message.push_str(user_id);
+        if ops::trailers(&message).is_empty() {
             message.push('\n');
         }
+        message.push_str(ops::USER_TRAILER);
+        message.push_str(user_id);
+        message.push('\n');
     }
     message
 }

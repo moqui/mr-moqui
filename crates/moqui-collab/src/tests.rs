@@ -361,6 +361,92 @@ fn an_update_lost_between_servers_is_merged_from_the_stored_state_and_saved() {
     let _ = super::take_events();
 }
 
+/// SEC-TLS-118: a state stored before updates were checked, with shared types nested past the bound, is not opened: the
+/// join reads the page's text again, and the next tick does not merge the row back in.
+#[test]
+fn a_stored_state_nested_past_the_bound_is_not_opened() {
+    let _serial = serial();
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    user(&facade, "dave");
+    login("dave");
+    call(
+        "org.moqui.resource.WikiServices.create#WikiSpace",
+        &[
+            ("wikiSpaceId", Value::string("DEEP")),
+            ("description", Value::string("Deep")),
+        ],
+    );
+    let page = call(
+        "org.moqui.resource.WikiServices.update#WikiPage",
+        &[
+            ("wikiSpaceId", Value::string("DEEP")),
+            ("pageName", Value::string("Plan")),
+            ("pageText", Value::string("# Plan\n\nStart.\n")),
+        ],
+    );
+    let key = format!("WikiPage:{}", to_plain_string(page.get("wikiPageId").unwrap()));
+    super::join(&key, "dave", &[]).unwrap();
+    super::leave(&key);
+    super::tick();
+    let depth = |doc: &Doc| {
+        let fragment = doc.get_or_insert_xml_fragment(super::markdown::FRAGMENT);
+        let txn = doc.transact();
+        let mut levels = 0;
+        let mut next = fragment.get(&txn, fragment.len(&txn).saturating_sub(1));
+        while let Some(yrs::XmlOut::Element(element)) = next {
+            levels += 1;
+            next = element.get(&txn, 0);
+        }
+        levels
+    };
+    {
+        // as an older build would have stored it: 300 quotes, each in the one before
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let mut row = facade
+            .find(super::COLLAB_DOCUMENT)
+            .unwrap()
+            .eq("documentKey", Value::string(&key))
+            .one()
+            .unwrap()
+            .unwrap();
+        let doc = Doc::new();
+        doc.transact_mut()
+            .apply_update(Update::decode_v1(&super::bytes_of(&row, "stateData")).unwrap())
+            .unwrap();
+        let fragment = doc.get_or_insert_xml_fragment(super::markdown::FRAGMENT);
+        {
+            let mut txn = doc.transact_mut();
+            let mut parent = fragment.push_back(&mut txn, XmlElementPrelim::empty("blockquote"));
+            for _ in 1..300 {
+                parent = parent.push_back(&mut txn, XmlElementPrelim::empty("blockquote"));
+            }
+        }
+        assert_eq!(depth(&doc), 300);
+        row.set(
+            "stateData",
+            Value::Bytes(doc.transact().encode_state_as_update_v1(&StateVector::default())),
+        );
+        row.update(&facade).unwrap();
+    }
+    let joined = super::join(&key, "dave", &[]).unwrap();
+    assert!(
+        depth(&client(&joined)) <= super::nesting::MAX_TYPE_DEPTH,
+        "the deep state is not opened"
+    );
+    super::tick();
+    assert!(updates_for(&key).iter().all(|update| {
+        let doc = client(&joined);
+        doc.transact_mut()
+            .apply_update(Update::decode_v1(update).unwrap())
+            .unwrap();
+        depth(&doc) <= super::nesting::MAX_TYPE_DEPTH
+    }));
+    super::leave(&key);
+    super::tick();
+    let _ = super::take_events();
+}
+
 /// The Rust services register at the `moqui_collab::` locations the service file names, and at no other.
 #[test]
 fn the_services_register_at_the_locations_the_service_file_names() {

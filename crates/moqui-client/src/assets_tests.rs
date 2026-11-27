@@ -101,7 +101,7 @@ fn the_shell_serves_its_page_scripts_and_libraries_and_nothing_else() {
         assert!(assets.file_of(path).is_none(), "{path}");
     }
     assert!(assets.read("/js/NoSuchFile.js").is_none());
-    // a library staged by its main part (plans/Maps-Offline.md §2.5): the files its parts.json lists, not the raster part
+    // a library staged by its main part (plans/archive/Maps-Offline.md §2.5): the files its parts.json lists, not the raster part
     for path in [
         "/libs/openlayers/ol-map.json",
         "/libs/openlayers/ol-map-A.min.js",
@@ -260,7 +260,7 @@ fn a_bundle_reads_its_staged_copy() {
     );
 }
 
-/// plans/Maps-Offline.md §2.5: a bundle's staged library of one part holds that part's files and no `parts.json`
+/// plans/archive/Maps-Offline.md §2.5: a bundle's staged library of one part holds that part's files and no `parts.json`
 /// (`./moq desktop build` copies only the part), and is served as it is staged.
 #[test]
 fn a_bundles_library_staged_by_its_part_is_served_without_its_parts_list() {

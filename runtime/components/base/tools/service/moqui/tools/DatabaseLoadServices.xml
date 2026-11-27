@@ -30,6 +30,10 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="xmlText" allow-html="any"/>
             <parameter name="jsonText" allow-html="any"/>
             <parameter name="csvText" allow-html="any"/>
+            <parameter name="textLocation"><description>The load text in a private file of
+                ec.resource.writePrivateFile (runtime://tmp/private/, its extension xml, json or csv), which Data › Load
+                passes in place of the text, so the job run's parameters and notification do not keep it; read, and
+                deleted whatever the run did (SEC-DAT-96).</description></parameter>
             <parameter name="location"/>
             <parameter name="types"/>
             <parameter name="components"/>
@@ -53,10 +57,17 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="outcome"/>
         </out-parameters>
         <actions>
-            <!-- the ADMIN grant of this service is not enough to drop keys: the caller needs DATABASE_ADMIN, before anything runs -->
-            <if condition="!ec.user.hasPermission('DATABASE_ADMIN')">
-                <return error="true" message="A load with the foreign keys dropped needs the DATABASE_ADMIN permission"/></if>
             <script><![CDATA[
+            // the load text's private file: only one writePrivateFile made, deleted at the end whatever happened
+            const privateText = textLocation && /^runtime:\/\/tmp\/private\/[0-9a-f]{32}\.(xml|json|csv)$/.test(String(textLocation))
+                ? String(textLocation) : null
+            try {
+            if (textLocation && !privateText) {
+                ec.message.addError('The load text location is not a private file of the load')
+            } else if (!ec.user.hasPermission('DATABASE_ADMIN')) {
+                // the ADMIN grant of this service is not enough to drop keys: the caller needs DATABASE_ADMIN, before anything runs
+                ec.message.addError('A load with the foreign keys dropped needs the DATABASE_ADMIN permission')
+            } else {
             // a ServiceJob runs with authorization off: a data load is the user's, authorized as from the Tools app for all
             // actions (the Data › Load transition), so entity authorization and the security checks of what it writes apply;
             // a snapshot import is not (below)
@@ -102,6 +113,11 @@ along with this software (see the LICENSE.md file). If not, see
                         } else if (location) {
                             if (/^https?:/i.test(String(location))) throw new Error('Remote data load location is not allowed')
                             edl.location(location)
+                        } else if (privateText) {
+                            const text = ec.resource.getLocationText(privateText)
+                            if (privateText.endsWith('.csv')) edl.csvText(text)
+                            else if (privateText.endsWith('.json')) edl.jsonText(text)
+                            else edl.xmlText(text)
                         } else if (csvText) edl.csvText(csvText)
                         else if (jsonText) edl.jsonText(jsonText)
                         else if (xmlText) edl.xmlText(xmlText)
@@ -141,6 +157,16 @@ along with this software (see the LICENSE.md file). If not, see
             ec.message.clearErrors()
             if (!clean) ec.message.addError(outcome)
             })
+            }
+            } finally {
+                if (privateText) {
+                    try {
+                        ec.resource.getLocationReference(privateText).delete()
+                    } catch (e) {
+                        ec.logger.error('Load wrap: the load text ' + privateText + ' was not deleted: ' + String(e && e.message || e))
+                    }
+                }
+            }
         ]]></script>
         </actions>
     </service>

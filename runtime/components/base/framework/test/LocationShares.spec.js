@@ -1,4 +1,4 @@
-// Shared live location (plans/Location-Sharing.md §3.2, LL1; org.moqui.maps.LocationServices, LocationShares.js), by
+// Shared live location (plans/archive/Location-Sharing.md §3.2, LL1; org.moqui.maps.LocationServices, LocationShares.js), by
 // the grants of data/MapsLocationData.xml with authorization on: a share is read and pushed to its current audience
 // only, a group member taken out loses it at the next read, and a membership added or reopened after the owner added
 // the group (with a caller's dates and stamp, backdated, an ended row reopened, an ended row and a new one, a member
@@ -11,8 +11,14 @@
 // sent, an ADMIN reads nothing of another's, the audit rows hold no position, and a link's token is returned once with
 // only its digest kept; the owner's lock row is made on first use, and a group of more than four times the audience cap
 // is refused before its snapshot is written (the LL1 review); and the effective configuration's locationShares (LL2, Maps
-// › Browse) hold the owner's own share and the audience's, nobody else's. It ends its memberships and stops its shares in
-// cleanup, so it runs again on --db existing.
+// › Browse) hold the owner's own share and the audience's, nobody else's; a share started on a device (LL3, §3.4) takes
+// that device's reports only, another device or a browser is refused as OTHER_DEVICE, Send from here and Send from this
+// device move it, the app's reportClientLocation and stopClientLocation take it, and the device key's renewal keeps it; and
+// over XMPP (LL5, §3.6) an XMPP client's position feeds only a share whose owner turned on takeXmppLocation (which raises
+// the audience version), and goes to its XMPP contacts alone, never its users, groups, link, latest or trail; each share's
+// report reaches those contacts, rounded when approximate, a contact added later only from then on and told, an end and
+// a revoke as an empty item. It
+// ends its memberships and stops its shares in cleanup, so it runs again on --db existing.
 // Run: ./moq test framework --spec LocationShares
 const S = "org.moqui.maps.LocationServices."
 const A = "LOC_SHARE_A"
@@ -753,7 +759,8 @@ feature("a guest link's token is returned once and only its digest is kept; a sh
     },
     then({made, link, mine, leaked, twoLinks, secondLink}) {
         made.errors == ""
-        made.linkToken.length == 32
+        // its selector, a dot and its secret (LL6, plans/archive/Location-Sharing.md §3.7): 16 and 32 characters
+        made.linkToken.length == 49 && made.linkToken.split(".")[0] == link.tokenSelector
         link.tokenDigest == ec.user.singleUseCodeHash(made.linkToken)
         link.tokenDigest != made.linkToken
         mine.audienceList.find(row => row.audienceTypeEnumId == "LsaLink").hasLink == true
@@ -923,3 +930,719 @@ feature(
         }
     }
 )
+
+// A share's device (LL3, plans/archive/Location-Sharing.md §3.4): a device key of A's as the REST login's createLoginKey with
+// deviceName makes it, the key and its stored hash
+function deviceKey(deviceName) {
+    const ids = () =>
+        sys(() =>
+            Array.from(
+                ec.entity
+                    .find("moqui.security.UserLoginKey")
+                    .condition("userId", A)
+                    .list()
+            ).map(row => row.loginKey)
+        )
+    ec.user.internalLoginUser(username(A))
+    const before = ids()
+    const key = ec.user.getLoginKey()
+    const hash = ids().find(found => !before.includes(found))
+    sys(() => {
+        const row = ec.entity.find("moqui.security.UserLoginKey").condition("loginKey", hash).one()
+        row.deviceName = deviceName
+        row.update()
+    })
+    return {key, hash}
+}
+// a call as A signed in by a device key (none: a browser), with authorization on: its results and errors
+function asDevice(device, verbNoun, parameters) {
+    ec.user.internalLoginUser(username(A))
+    if (device && !ec.user.loginUserKey(device.key)) {
+        ec.message.clearErrors()
+        return {errors: "the device key did not sign in"}
+    }
+    const kind = ec.user.loginKeyKind
+    ec.artifactExecution.enableAuthz()
+    let out = {}
+    let thrown = ""
+    try {
+        out =
+            ec.service
+                .sync()
+                .name(S + verbNoun)
+                .parameters(parameters || {})
+                .call() || {}
+    } catch (err) {
+        thrown = String(err.message || err)
+    }
+    const errors = thrown + (ec.message.hasError() ? ec.message.errorsString : "")
+    ec.message.clearErrors()
+    return Object.assign({errors, kind}, out)
+}
+// the audience version the share is at, as the app confirmed it (a share sent from a device takes reports of it only)
+const versionOf = shareId =>
+    sys(() => String(ec.entity.find("moqui.maps.LocationShare").condition("shareId", shareId).one().audienceVersion))
+const reportFrom = (device, shareId, latitude, version) => {
+    later(6000)
+    return asDevice(device, "report#Position", {
+        shareId,
+        latitude,
+        longitude: "-111.9",
+        observedDate: new Date(shared.now),
+        audienceVersion: version === undefined ? versionOf(shareId) : version
+    })
+}
+// a POST to the app's /qapps transition as the app sends it, signed in by the device key (as its login_key header signs
+// a request in; the header is given too, which renewClientDevice reads), or by none (this context's login ended alone: a
+// logout of the account would end its keys' sign-ins too)
+function postApp(transition, parameters, key) {
+    ec.user.logoutLocal()
+    if (key) {
+        ec.user.internalLoginUser(username(A))
+        if (!ec.user.loginUserKey(key)) return {status: 401, json: null}
+    }
+    let test = ec.screen.makeTest().rootScreen("component://webroot/screen/webroot.xml")
+    if (key) test = test.header("login_key", key)
+    const str = test.render("qapps/" + transition, parameters || {}, "post")
+    ec.message.clearErrors()
+    let json = null
+    try {
+        json = JSON.parse(String(str.output || ""))
+    } catch (err) {
+        json = null
+    }
+    return {status: str.status, json, text: json ? null : String(str.output || "").slice(0, 300)}
+}
+const deviceOf = shareId => sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", shareId).one().userLoginKeyId)
+
+feature(
+    "a share started on a device takes that device's reports only; another device or a browser is told so, Send from here and Send from this device move it, and a renewed key keeps it",
+    {
+        when() {
+            const phone = deviceKey("Spec phone")
+            const tablet = deviceKey("Spec tablet")
+            later(6000)
+            const made = asDevice(phone, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)})
+            const shareId = made.shareId
+            const out = {made, boundTo: deviceOf(shareId), phone, tablet}
+            out.fromPhone = reportFrom(phone, shareId, "40.71")
+            out.fromBrowser = reportFrom(null, shareId, "40.72")
+            out.fromTablet = reportFrom(tablet, shareId, "40.73")
+            out.mineOnTablet = Array.from(asDevice(tablet, "find#MyShares").shareList || []).find(row => row.shareId === shareId)
+            // the browser's Send from here: no device from now on, and the phone is refused
+            out.toBrowser = asDevice(null, "update#Share", {shareId, sendFromHere: true})
+            out.browserBound = deviceOf(shareId)
+            out.phoneAfter = reportFrom(phone, shareId, "40.74")
+            out.browserAfter = reportFrom(null, shareId, "40.75")
+            // the tablet's Send from this device, then its report through the app's transition, and none without a user
+            out.toTablet = asDevice(tablet, "update#Share", {shareId, sendFromHere: true})
+            out.tabletBound = deviceOf(shareId)
+            later(6000)
+            out.appReport = postApp("reportClientLocation", {shareId, latitude: "40.76", longitude: "-111.9", audienceVersion: versionOf(shareId)}, tablet.key)
+            out.noUser = postApp("reportClientLocation", {shareId, latitude: "40.77", longitude: "-111.9"}, null)
+            out.mineOnPhone = Array.from(asDevice(phone, "find#MyShares").shareList || []).find(row => row.shareId === shareId)
+            // the tablet's key renewed: the share goes with it, and the new key reports
+            const renewed = postApp("renewClientDevice", {}, tablet.key)
+            const renewedKey = renewed.json && renewed.json.loginKey
+            out.renewed = renewed
+            out.renewedBound = deviceOf(shareId)
+            later(6000)
+            out.renewedReport = postApp("reportClientLocation", {shareId, latitude: "40.78", longitude: "-111.9", audienceVersion: versionOf(shareId)}, renewedKey)
+            // the key the renewal replaced still signs in for its grace: a report on its way as it was renewed is taken
+            out.oldKeyReport = reportFrom(tablet, shareId, "40.785")
+            // the app's confirmation reads the share's words from the server; another user's share is not found
+            out.appShare = postApp("clientLocationShare", {shareId}, renewedKey)
+            out.othersAppShare = sys(() => {
+                ec.user.internalLoginUser(username(B))
+                const got = ec.service.sync().name(S + "get#AppShare").parameters({shareId}).call() || {}
+                const refused = got.reasonCode
+                ec.message.clearErrors()
+                return refused
+            })
+            // a takeover by a browser clears the renewal's grace: the replaced key is refused from then on
+            later(6000)
+            out.takeOver = asDevice(null, "update#Share", {shareId, sendFromHere: true})
+            out.graceAfter = sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", shareId).one().renewedFromKeyId)
+            out.oldKeyAfter = reportFrom(tablet, shareId, "40.786")
+            // a share started in a browser has no device
+            later(6000)
+            const browserShare = asDevice(null, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)}).shareId
+            out.browserShareBound = deviceOf(browserShare)
+            out.stopped = postApp("stopClientLocation", {shareId}, renewedKey)
+            out.afterStop = reportFrom(phone, shareId, "40.79")
+            as(A, "stop#Share", {shareId: browserShare})
+            return out
+        },
+        then(out) {
+            out.made.errors == ""
+            out.made.kind == "device"
+            out.boundTo == out.phone.hash
+            out.fromPhone.statusCode == 200
+            out.fromBrowser.statusCode == 409
+            out.fromBrowser.reasonCode == "OTHER_DEVICE"
+            out.fromBrowser.errors.includes("Another device sends")
+            out.fromTablet.statusCode == 409
+            out.fromTablet.reasonCode == "OTHER_DEVICE"
+            out.mineOnTablet.sentFromDevice == true
+            out.mineOnTablet.deviceName == "Spec phone"
+            out.mineOnTablet.fromThisDevice == false
+            JSON.stringify(out.mineOnTablet).includes(out.phone.hash) == false
+            out.toBrowser.errors == ""
+            out.browserBound == null
+            out.phoneAfter.reasonCode == "OTHER_DEVICE"
+            out.browserAfter.statusCode == 200
+            out.toTablet.errors == ""
+            out.tabletBound == out.tablet.hash
+            out.appReport.status == 200
+            out.appReport.json.statusCode == 200
+            out.noUser.json == null || out.noUser.json.statusCode == null
+            out.mineOnPhone.deviceName == "Spec tablet"
+            out.mineOnPhone.fromThisDevice == false
+            out.renewed.status == 200
+            out.renewed.json.loginKey != null
+            out.renewedBound != null
+            out.renewedBound != out.tablet.hash
+            out.renewedReport.json.statusCode == 200
+            out.oldKeyReport.statusCode == 200
+            out.appShare.text == null
+            out.appShare.json.found == true
+            out.appShare.json.share.fromThisDevice == true
+            out.appShare.json.share.intervalSeconds == 5
+            out.appShare.json.share.approximate == false
+            out.appShare.json.share.audienceText == "Loc B (loc.share.b)"
+            out.appShare.json.share.untilText.length > 0
+            out.appShare.json.share.audienceVersion == 1
+            out.othersAppShare == "SHARE_NOT_FOUND"
+            out.takeOver.errors == ""
+            out.graceAfter == null
+            out.oldKeyAfter.reasonCode == "OTHER_DEVICE"
+            out.browserShareBound == null
+            out.stopped.json.stopped == true
+            out.afterStop.statusCode == 410
+        }
+    }
+)
+
+feature("revoking a device key stops the shares it sends, and its audience is told", {
+    when() {
+        const phone = deviceKey("Spec revoked phone")
+        later(6000)
+        const shareId = asDevice(phone, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)}).shareId
+        const before = sharedWith(B).some(row => row.shareId === shareId)
+        // the device signed out from the device list (revoke#UserDeviceKey, by its stored hash, as qapps
+        // revokeClientDevice calls it), the device never told
+        ec.user.internalLoginUser(username(A))
+        ec.service.sync().name("org.moqui.impl.UserServices.revoke#UserDeviceKey").parameters({loginKey: phone.hash}).disableAuthz().call()
+        const errors = ec.message.hasError() ? ec.message.errorsString : ""
+        ec.message.clearErrors()
+        const row = sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", shareId).one())
+        return {
+            errors,
+            before,
+            revoked: row.revokedDate != null,
+            ended: row.endedDate != null,
+            after: sharedWith(B).some(one => one.shareId === shareId),
+            told: pushes(shareId).some(one => one.event === "ended")
+        }
+    },
+    then({errors, before, revoked, ended, after, told}) {
+        errors == ""
+        before == true
+        revoked == true
+        ended == true
+        after == false
+        told == true
+    }
+})
+
+feature("a revoke goes through when stop#DeviceShares fails on a share that is not the key's user's, and logout's revoke stops a key's shares", {
+    when() {
+        // the device list's revoke, with a share bound to the key that another user owns (data that does not hold
+        // together): that share is refused and left, A's own share is stopped, and the key is revoked all the same
+        const phone = deviceKey("Spec tampered phone")
+        later(6000)
+        const own = asDevice(phone, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)}).shareId
+        make("moqui.maps.LocationShare", {shareId: "LOC_SPEC_TAMPERED", ownerUserId: B, userLoginKeyId: phone.hash,
+            fromDate: new Date(shared.now), thruDate: new Date(shared.now + HOUR), precisionEnumId: "LspExact"})
+        ec.user.internalLoginUser(username(A))
+        ec.service.sync().name("org.moqui.impl.UserServices.revoke#UserDeviceKey").parameters({loginKey: phone.hash}).disableAuthz().call()
+        const revokeErrors = ec.message.hasError() ? ec.message.errorsString : ""
+        ec.message.clearErrors()
+        const row = id => sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", id).one())
+        const keyEnded = sys(() => {
+            const key = ec.entity.find("moqui.security.UserLoginKey").condition("loginKey", phone.hash).one()
+            return key.thruDate != null && ec.user.timestampMillis(key.thruDate) <= Date.now() + 1000
+        })
+        const signsIn = asDevice(phone, "find#MyShares").errors === ""
+        const out = {revokeErrors, keyEnded, signsIn, ownEnded: row(own).endedDate != null, tamperedLeft: row("LOC_SPEC_TAMPERED").endedDate == null}
+        sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", "LOC_SPEC_TAMPERED").deleteAll())
+        // logout's revoke of the key it signs in with (revoke#UserHeldKey, user::revoke_login_key)
+        const laptop = deviceKey("Spec laptop")
+        later(6000)
+        const heldMade = asDevice(laptop, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)})
+        if (!heldMade.shareId) return Object.assign(out, {heldMade})
+        const held = heldMade.shareId
+        ec.user.internalLoginUser(username(A))
+        ec.service.sync().name("org.moqui.impl.UserServices.revoke#UserHeldKey").parameters({loginKey: laptop.key}).disableAuthz().call()
+        out.heldErrors = ec.message.hasError() ? ec.message.errorsString : ""
+        ec.message.clearErrors()
+        out.heldEnded = row(held).endedDate != null
+        return out
+    },
+    then(out) {
+        out.revokeErrors == ""
+        out.keyEnded == true
+        out.signsIn == false
+        out.ownEnded == true
+        out.tamperedLeft == true
+        out.heldMade == null
+        out.heldErrors == ""
+        out.heldEnded == true
+    }
+})
+
+feature("a share sent from a device takes reports of the audience version its person confirmed: a group added again with a new member, after a revoke, is refused with nothing written or pushed", {
+    when() {
+        const phone = deviceKey("Spec audience phone")
+        later(6000)
+        const shareId = asDevice(phone, "create#Share", {audienceList: [toUser(J), toGroup(GROUP)], thruDate: new Date(shared.now + HOUR)}).shareId
+        const out = {created: versionOf(shareId)}
+        out.first = reportFrom(phone, shareId, "41.1", "1")
+        // no version from the device: refused (fail closed)
+        out.none = reportFrom(phone, shareId, "41.15", "")
+        // a person taken out (J) keeps the version: who is left was confirmed
+        const jEntry = rows("moqui.maps.LocationShareAudience", {shareId, userId: J})[0]
+        as(A, "revoke#Audience", {shareId, audienceSeqId: jEntry.audienceSeqId})
+        out.afterRevoke = versionOf(shareId)
+        out.stillSent = reportFrom(phone, shareId, "41.2", "1")
+        // C joins the group and the group is added again: its snapshot gains C, with no new entry; the version rises
+        make("moqui.security.UserGroupMember", {userGroupId: GROUP, userId: C, fromDate: new Date(shared.now)})
+        out.readd = as(A, "update#Share", {shareId, addAudienceList: [toGroup(GROUP)]})
+        out.afterReadd = versionOf(shareId)
+        const before = latestOf(shareId)
+        const pushedBefore = pushes(shareId).filter(one => one.event === "position").length
+        out.refused = reportFrom(phone, shareId, "41.3", "1")
+        out.latestKept = Number(latestOf(shareId).latitude) === Number(before.latitude)
+        out.nothingPushed = pushes(shareId).filter(one => one.event === "position").length === pushedBefore
+        out.cSees = sharedWith(C).some(row => row.shareId === shareId && row.latest && Number(row.latest.latitude) === 41.3)
+        // the version the person confirms again: sent
+        out.again = reportFrom(phone, shareId, "41.4", out.afterReadd)
+        // a browser's share (no device) sends no version and is not checked
+        later(6000)
+        const browserShare = as(A, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)}).shareId
+        out.browser = as(A, "report#Position", {shareId: browserShare, latitude: "41.5", longitude: "-111.9", observedDate: new Date(shared.now)})
+        as(A, "stop#Share", {shareId})
+        as(A, "stop#Share", {shareId: browserShare})
+        sys(() => ec.entity.find("moqui.security.UserGroupMember").condition({userGroupId: GROUP, userId: C}).updateAll({thruDate: new Date(Date.now() - 1000)}))
+        return out
+    },
+    then(out) {
+        out.created == "1"
+        out.first.statusCode == 200
+        out.none.statusCode == 409
+        out.none.reasonCode == "AUDIENCE_CHANGED"
+        out.afterRevoke == "1"
+        out.stillSent.statusCode == 200
+        out.readd.errors == ""
+        out.afterReadd == "2"
+        out.refused.statusCode == 409
+        out.refused.reasonCode == "AUDIENCE_CHANGED"
+        out.latestKept == true
+        out.nothingPushed == true
+        out.cSees == false
+        out.again.statusCode == 200
+        out.browser.statusCode == 200
+    }
+})
+
+feature("a person added sees no position reported before they were added: no latest and no trail until the next report", {
+    when() {
+        later(6000)
+        const shareId = as(A, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR), keepTrail: true}).shareId
+        report(shareId, "42.1", "-111.9")
+        later(6000)
+        report(shareId, "42.2", "-111.9")
+        later(6000)
+        // C added after those reports, and a person already there given again (nothing new: the version stays)
+        const versionBefore = sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", shareId).one().audienceVersion)
+        const sameAgain = as(A, "update#Share", {shareId, addAudienceList: [toUser(B)]})
+        const versionSame = sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", shareId).one().audienceVersion)
+        const added = as(A, "update#Share", {shareId, addAudienceList: [toUser(C)]})
+        const versionAdded = sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", shareId).one().audienceVersion)
+        const seen = userId => sharedWith(userId).find(row => row.shareId === shareId) || null
+        const out = {sameAgain, added, versionBefore, versionSame, versionAdded}
+        out.cListed = seen(C)
+        out.cGot = as(C, "get#Share", {shareId})
+        out.bGot = as(B, "get#Share", {shareId})
+        out.ownerGot = as(A, "get#Share", {shareId})
+        // the next report reaches C, and C's trail starts there
+        later(6000)
+        report(shareId, "42.3", "-111.9")
+        out.cAfter = as(C, "get#Share", {shareId})
+        as(A, "stop#Share", {shareId})
+        return out
+    },
+    then(out) {
+        out.sameAgain.errors == ""
+        out.versionSame == out.versionBefore
+        out.added.errors == ""
+        out.versionAdded == out.versionBefore + 1
+        out.cListed != null
+        out.cListed.latest == null
+        out.cGot.latest == null
+        out.cGot.trailList.length == 0
+        out.cGot.trailCount == 0
+        out.bGot.latest.latitude == 42.2
+        out.bGot.trailList.length == 2
+        out.ownerGot.trailList.length == 2
+        out.cAfter.latest.latitude == 42.3
+        out.cAfter.trailList.map(point => point.latitude).join() == "42.3"
+    }
+})
+
+feature("the time the audience reached a viewer is the server's receive time: an approximate share's first position is read, a fast clock before an add is not, and a member out and back by a new row sees nothing from while out", {
+    when() {
+        const out = {}
+        // an approximate share: its stored time is the minute, before the share began, yet its audience reads it (the clock
+        // moved off the minute first, so the stored minute is before the share's start in every run)
+        later(6000)
+        if (shared.now % MINUTE < 2000) later(2000 - (shared.now % MINUTE))
+        const rough = as(A, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR), precisionEnumId: "LspApproximate"}).shareId
+        report(rough, "43.1", "-111.9")
+        out.roughSeen = (sharedWith(B).find(row => row.shareId === rough) || {}).latest || null
+        as(A, "stop#Share", {shareId: rough})
+        // a device clock 50 s fast, a report, then C added a second later: its observed time is after the add, its
+        // receive time before it, and C does not see it
+        later(6000)
+        const fast = as(A, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR), keepTrail: true}).shareId
+        as(A, "report#Position", {shareId: fast, latitude: "43.2", longitude: "-111.9", observedDate: new Date(shared.now + 50000)})
+        later(1000)
+        as(A, "update#Share", {shareId: fast, addAudienceList: [toUser(C)]})
+        const cFast = as(C, "get#Share", {shareId: fast})
+        out.fastLatest = cFast.latest || null
+        out.fastTrail = Array.from(cFast.trailList || []).length
+        out.bFast = (as(B, "get#Share", {shareId: fast}).latest || {}).latitude
+        as(A, "stop#Share", {shareId: fast})
+        // B in the group, out by its row's end, back by a new row, and the group added again: nothing reported while out
+        later(6000)
+        const group = as(A, "create#Share", {audienceList: [toGroup(GROUP)], thruDate: new Date(shared.now + HOUR), keepTrail: true}).shareId
+        report(group, "43.3", "-111.9")
+        out.bBefore = (as(B, "get#Share", {shareId: group}).latest || {}).latitude
+        later(6000)
+        sys(() =>
+            ec.entity.find("moqui.security.UserGroupMember").condition({userGroupId: GROUP, userId: B}).condition("thruDate", null)
+                .updateAll({thruDate: new Date(shared.now)})
+        )
+        later(6000)
+        report(group, "43.4", "-111.9")
+        out.bOut = as(B, "get#Share", {shareId: group}).reasonCode
+        later(6000)
+        make("moqui.security.UserGroupMember", {userGroupId: GROUP, userId: B, fromDate: new Date(shared.now)})
+        later(1000)
+        out.readd = as(A, "update#Share", {shareId: group, addAudienceList: [toGroup(GROUP)]})
+        const bBack = as(B, "get#Share", {shareId: group})
+        out.bBackLatest = bBack.latest || null
+        out.bBackTrail = Array.from(bBack.trailList || []).length
+        out.bListed = (sharedWith(B).find(row => row.shareId === group) || {}).latest || null
+        // D, in the group the whole time, still sees both points
+        out.dTrail = Array.from(as(D, "get#Share", {shareId: group}).trailList || []).length
+        later(6000)
+        report(group, "43.5", "-111.9")
+        out.bNext = as(B, "get#Share", {shareId: group})
+        as(A, "stop#Share", {shareId: group})
+        return out
+    },
+    then(out) {
+        out.roughSeen != null
+        out.fastLatest == null
+        out.fastTrail == 0
+        out.bFast == 43.2
+        out.bBefore == 43.3
+        out.bOut == "SHARE_NOT_FOUND"
+        out.readd.errors == ""
+        out.bBackLatest == null
+        out.bBackTrail == 0
+        out.bListed == null
+        out.dTrail == 2
+        out.bNext.latest.latitude == 43.5
+        out.bNext.trailList.map(point => point.latitude).join() == "43.5"
+        out.bNext.latest.receivedDate === undefined
+    }
+})
+
+feature("over XMPP: a position from the owner's XMPP app feeds only a share they opted in, to its XMPP contacts alone, never its users, groups, link, latest or trail", {
+    when() {
+        const XMPP = "report#XmppPosition"
+        const out = {}
+        withConf("xmpp-server@domain", "loc.example.test", () => {
+            // C is A's contact: a direct room of the two (the XMPP roster)
+            ec.user.internalLoginUser(username(A))
+            sys(() =>
+                ec.service
+                    .sync()
+                    .name("org.moqui.chat.ChatServices.create#Room")
+                    .parameters({roomTypeEnumId: "CrtDirect", memberUserIdList: [C]})
+                    .call()
+            )
+            ec.message.clearErrors()
+            const jid = username(C) + "@loc.example.test"
+            const contact = {audienceTypeEnumId: "LsaXmpp", jid}
+            const xmppPushes = shareId =>
+                capture()
+                    .getMessages("locationShareXmpp:" + shareId)
+                    .map(row =>
+                        Object.assign(
+                            {userIds: Array.from(row.userIds || [])},
+                            typeof row.message === "string" ? JSON.parse(row.message) : row.message
+                        )
+                    )
+            const told = topic =>
+                capture()
+                    .getMessages(topic)
+                    .map(row => Array.from(row.userIds || []).join())
+            const versionOf = shareId =>
+                sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", shareId).one().audienceVersion)
+            const xmppLatest = shareId => rows("moqui.maps.LocationXmppLatest", {shareId})
+            const own = shareId => as(A, "get#Share", {shareId})
+
+            // a share with a person, a group, a link and an XMPP contact, a trail kept, and no opt-in
+            later(6000)
+            capture().clear()
+            const made = as(A, "create#Share", {
+                audienceList: [toUser(B), toGroup(GROUP), {audienceTypeEnumId: "LsaLink"}, contact],
+                thruDate: new Date(shared.now + HOUR),
+                keepTrail: true
+            })
+            const shareId = made.shareId
+            out.made = made
+            out.contactRow = rows("moqui.maps.LocationShareAudience", {shareId, audienceTypeEnumId: "LsaXmpp"})[0] || null
+            out.contactTold = told("LocationSharedXmpp")
+            out.ownerContactName = (Array.from(own(shareId).share.audienceList || []).find(row => row.audienceTypeEnumId === "LsaXmpp") || {})
+            // no opt-in: the XMPP app's position is refused, nothing written
+            out.none = as(A, XMPP, {latitude: "44.1", longitude: "-111.9"})
+            // the opt-in: the version raised once, not again for the same
+            const v0 = versionOf(shareId)
+            out.optIn = as(A, "update#Share", {shareId, takeXmppLocation: "true"})
+            const v1 = versionOf(shareId)
+            as(A, "update#Share", {shareId, takeXmppLocation: "true"})
+            out.versionRaised = [v1 - v0, versionOf(shareId) - v1]
+            out.audited = sys(() =>
+                ec.entity
+                    .find("moqui.entity.EntityAuditLog")
+                    .condition({
+                        changedEntityName: "moqui.maps.LocationShare",
+                        changedFieldName: "takeXmppLocation",
+                        pkPrimaryValue: shareId,
+                        newValueText: "Y"
+                    })
+                    .count()
+            )
+            capture().clear()
+            out.taken = as(A, XMPP, {latitude: "44.2", longitude: "-111.9", accuracy: "15", observedMillis: shared.now})
+            out.xmpp = xmppPushes(shareId)
+            out.web = pushes(shareId)
+            out.latest = latestOf(shareId)
+            out.trail = trailCount(shareId)
+            out.bRead = as(B, "get#Share", {shareId})
+            out.dRead = as(D, "get#Share", {shareId})
+            out.ownerRead = own(shareId)
+            // an exact share's XMPP latest holds its times, no coordinates
+            out.exactKept = xmppLatest(shareId).map(row => [row.latitude, row.longitude, row.accuracy].join("|")).join()
+            // the rate, then a value out of range, then a clock ahead taken as now
+            out.soon = as(A, XMPP, {latitude: "44.3", longitude: "-111.9"})
+            later(6000)
+            out.bad = as(A, XMPP, {latitude: "95", longitude: "-111.9"})
+            later(6000)
+            capture().clear()
+            out.ahead = as(A, XMPP, {latitude: "44.3", longitude: "-111.9", observedMillis: shared.now + 5 * MINUTE})
+            out.aheadPush = xmppPushes(shareId).filter(push => push.event === "position")
+            out.aheadObserved = sys(() => ec.user.timestampMillis(xmppLatest(shareId)[0].observedDate)) - shared.now
+            // an opted-in share of a person and a contact: the person taken out keeps the opt-in, the contact (its last)
+            // taken out ends it
+            const pair = as(A, "create#Share", {
+                audienceList: [toUser(B), contact],
+                thruDate: new Date(shared.now + HOUR),
+                takeXmppLocation: true
+            }).shareId
+            const optInOf = id =>
+                sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", id).one().takeXmppLocation)
+            const entryOf = type => rows("moqui.maps.LocationShareAudience", {shareId: pair, audienceTypeEnumId: type})[0]
+            as(A, "revoke#Audience", {shareId: pair, audienceSeqId: entryOf("LsaUser").audienceSeqId})
+            out.afterUserRevoke = optInOf(pair)
+            as(A, "revoke#Audience", {shareId: pair, audienceSeqId: entryOf("LsaXmpp").audienceSeqId})
+            out.afterContactRevoke = optInOf(pair)
+            as(A, "stop#Share", {shareId: pair})
+            // the opt-in with no XMPP contact is refused, on create
+            out.noContact = as(A, "create#Share", {
+                audienceList: [toUser(D)],
+                thruDate: new Date(shared.now + HOUR),
+                takeXmppLocation: true
+            }).reasonCode
+            // a page's report: to everyone, the XMPP contacts too, and the owner's last source is the page
+            later(6000)
+            capture().clear()
+            report(shareId, "44.4", "-111.9")
+            out.pageWeb = pushes(shareId).filter(push => push.event === "position").map(push => push.userIds.sort().join())
+            out.pageXmpp = xmppPushes(shareId).filter(push => push.event === "position").map(push => push.userIds.join())
+            out.pageSource = own(shareId).share.lastSource
+
+            // two shares that take it: each gets it, the approximate one as its cell, and each tells the owner once
+            later(6000)
+            const rough = as(A, "create#Share", {
+                audienceList: [contact],
+                thruDate: new Date(shared.now + HOUR),
+                precisionEnumId: "LspApproximate",
+                takeXmppLocation: true
+            }).shareId
+            capture().clear()
+            out.both = as(A, XMPP, {latitude: "44.12345", longitude: "-111.98765", accuracy: "8"})
+            out.bothExact = xmppPushes(shareId).filter(push => push.event === "position")
+            out.bothRough = xmppPushes(rough).filter(push => push.event === "position")
+            out.feeding = xmppPushes(rough).filter(push => push.event === "feeding")
+            out.feedingAgain = xmppPushes(shareId).filter(push => push.event === "feeding").length
+            // the approximate one keeps only its cell, the base of its next
+            out.roughKept = xmppLatest(rough).map(row => Number(row.latitude)).join()
+
+            // a share the phone sends takes it too once its owner opts in, which raises the version: the phone's report of
+            // the old version is refused until its person confirms, and its dialog's words say where the XMPP app's goes
+            const phone = deviceKey("Loc XMPP phone")
+            later(6000)
+            const sent = asDevice(phone, "create#Share", {audienceList: [contact], thruDate: new Date(shared.now + HOUR)}).shareId
+            const confirmed = versionOf(sent)
+            out.phoneBefore = asDevice(phone, "get#AppShare", {shareId: sent}).share.audienceText
+            asDevice(phone, "update#Share", {shareId: sent, takeXmppLocation: "true"})
+            out.phoneAfter = asDevice(phone, "get#AppShare", {shareId: sent}).share.audienceText
+            out.phoneOld = asDevice(phone, "report#Position", {shareId: sent, latitude: "44.6", longitude: "-111.9", audienceVersion: String(confirmed)}).reasonCode
+            out.phoneNew = asDevice(phone, "report#Position", {shareId: sent, latitude: "44.6", longitude: "-111.9", audienceVersion: String(versionOf(sent))}).statusCode
+            later(61000)
+            capture().clear()
+            out.phoneXmpp = as(A, XMPP, {latitude: "44.7", longitude: "-111.9"}).statusCode
+            out.phoneTook = xmppPushes(sent).filter(push => push.event === "position").length
+            // turned off: the XMPP latest goes, the version stays, and the XMPP app's position no longer reaches it
+            const onVersion = versionOf(sent)
+            as(A, "update#Share", {shareId: sent, takeXmppLocation: "false"})
+            out.offVersion = versionOf(sent) - onVersion
+            out.offKept = xmppLatest(sent).length
+            later(61000)
+            capture().clear()
+            as(A, XMPP, {latitude: "44.8", longitude: "-111.9"})
+            out.offTook = xmppPushes(sent).filter(push => push.event === "position").length
+            as(A, "stop#Share", {shareId: sent})
+
+            // a contact added later: told, the version raised, and the next position from then on; the end carried
+            later(6000)
+            // (the opt-in needs an XMPP contact: it comes with the contact's add)
+            const late = as(A, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)}).shareId
+            out.lateNoContact = as(A, "update#Share", {shareId: late, takeXmppLocation: "true"}).reasonCode
+            capture().clear()
+            const before = versionOf(late)
+            out.lateAdded = as(A, "update#Share", {shareId: late, addAudienceList: [contact], takeXmppLocation: "true"})
+            out.lateVersion = versionOf(late) - before
+            out.lateTold = told("LocationSharedXmpp")
+            out.lateChanged = xmppPushes(late).filter(push => push.event === "changed").map(push => push.thruDate != null)
+
+            // stopped: an empty item to the contact, and the XMPP latest gone; a revoked contact gets one too
+            capture().clear()
+            as(A, "stop#Share", {shareId})
+            out.ended = xmppPushes(shareId).filter(push => push.event === "ended").map(push => push.userIds.join())
+            out.xmppLatestAfter = xmppLatest(shareId).length
+            const row = rows("moqui.maps.LocationShareAudience", {shareId: rough, audienceTypeEnumId: "LsaXmpp"})[0]
+            as(A, "revoke#Audience", {shareId: rough, audienceSeqId: row.audienceSeqId})
+            out.revoked = xmppPushes(rough).filter(push => push.event === "revoked").map(push => push.userIds.join())
+            const roughRow = sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", rough).one())
+            out.roughOptIn = roughRow.takeXmppLocation
+            out.roughReason = sys(() =>
+                Array.from(
+                    ec.entity
+                        .find("moqui.entity.EntityAuditLog")
+                        .condition({changedEntityName: "moqui.maps.LocationShare", changedFieldName: "takeXmppLocation", pkPrimaryValue: rough, newValueText: "N"})
+                        .list()
+                ).map(audit => audit.changeReason)
+            ).join()
+            out.roughXmppKept = xmppLatest(rough).length
+            as(A, "stop#Share", {shareId: rough})
+            out.afterRevoke = xmppPushes(rough).filter(push => push.event === "ended").length
+            as(A, "stop#Share", {shareId: late})
+        })
+        return out
+    },
+    then(out) {
+        out.made.errors == ""
+        out.contactRow.userId == C
+        out.contactTold.includes(C)
+        out.ownerContactName.userName == null
+        out.ownerContactName.jid != null
+        out.none.reasonCode == "NO_XMPP_SHARE"
+        out.none.errors == ""
+        out.optIn.errors == ""
+        out.versionRaised.join() == "1,0"
+        out.audited == 1
+        out.taken.statusCode == 200
+        out.xmpp.filter(push => push.event === "position").map(push => push.userIds.join()).join() == C
+        out.xmpp.filter(push => push.event === "position")[0].latitude == 44.2
+        out.xmpp.filter(push => push.event === "position")[0].accuracy == 15
+        out.xmpp.filter(push => push.event === "position")[0].thruDate != null
+        out.xmpp.filter(push => push.event === "feeding").map(push => push.userIds.join()).join() == A
+        out.xmpp.filter(push => push.event === "feeding")[0].text.includes("loc.share.c@loc.example.test")
+        out.web.length == 0
+        out.latest == null
+        out.trail == 0
+        out.bRead.share != null
+        out.bRead.latest == null
+        out.dRead.share != null
+        out.dRead.latest == null
+        out.ownerRead.latest == null
+        out.ownerRead.share.lastSource == "xmpp"
+        out.ownerRead.share.takeXmppLocation == true
+        out.ownerRead.share.xmppAgeSeconds == 0
+        out.exactKept == "||"
+        out.soon.statusCode == 429
+        out.bad.statusCode == 400
+        out.bad.reasonCode == "BAD_POSITION"
+        out.bad.errors == ""
+        out.ahead.statusCode == 200
+        out.aheadPush.length == 1
+        out.aheadObserved == 0
+        out.pageWeb.length == 1
+        !out.pageWeb[0].split(",").includes(C)
+        out.pageXmpp.join() == C
+        out.pageSource == "device"
+        out.both.statusCode == 200
+        out.bothExact.length == 1
+        out.bothExact[0].latitude == 44.12345
+        out.bothRough.length == 1
+        out.bothRough[0].latitude == 44.125
+        out.bothRough[0].accuracy == 1000
+        // the XMPP push holds the cell and its times, nothing else: no heading, speed or fix
+        Object.keys(out.bothRough[0]).sort().join() == "accuracy,event,latitude,longitude,observedDate,ownerUserId,shareId,thruDate,userIds"
+        !JSON.stringify(out.bothRough).includes("44.12345")
+        out.roughKept == "44.125"
+        !out.phoneBefore.includes("XMPP app")
+        out.phoneAfter.endsWith(" (your XMPP app's location also goes to your XMPP contacts)")
+        out.phoneOld == "AUDIENCE_CHANGED"
+        out.phoneNew == 200
+        out.phoneXmpp == 200
+        out.phoneTook == 1
+        out.offVersion == 0
+        out.offKept == 0
+        out.offTook == 0
+        out.feeding.length == 1
+        out.feedingAgain == 0
+        out.lateAdded.errors == ""
+        // the contact added and the opt-in turned on: each raises it
+        out.lateVersion == 2
+        out.lateNoContact == "XMPP_NO_CONTACT"
+        out.lateTold.join() == C
+        out.lateChanged.join() == "true"
+        out.ended.join() == C
+        out.xmppLatestAfter == 0
+        out.revoked.join() == C
+        out.roughOptIn == "N"
+        out.roughReason.includes("last XMPP contact revoked")
+        out.afterUserRevoke == "Y"
+        out.afterContactRevoke == "N"
+        out.noContact == "XMPP_NO_CONTACT"
+        out.roughXmppKept == 0
+        out.afterRevoke == 0
+    }
+})

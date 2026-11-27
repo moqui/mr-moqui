@@ -351,7 +351,7 @@ function servedUrl(layer) {
     return out.ok ? {ok: true, url: out.url} : refusal(out.reasonCode, out.reason, out.status)
 }
 
-// For MapPackages.js (an offline package, plans/Maps-Offline.md §2.2): a registered archive layer the current user may read
+// For MapPackages.js (an offline package, plans/archive/Maps-Offline.md §2.2): a registered archive layer the current user may read
 // now, as the map-source transition decides it, with what an extract pins it by: its location, tag and size, its
 // registered revision and, for a file on disk, its modification time; or the refusal
 function packageSource(layerId) {

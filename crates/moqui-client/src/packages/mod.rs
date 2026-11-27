@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The offline map packages on the device (plans/Maps-Offline.md §2.4, OF2): a region of the user's map built on the
+//! The offline map packages on the device (plans/archive/Maps-Offline.md §2.4, OF2): a region of the user's map built on the
 //! server (docs/tools/Maps.md "Offline packages"), downloaded here and served to the shell's offline screen with no
 //! network.
 //!
@@ -28,7 +28,7 @@
 //!   revision is stale: the package list is read again and the new revision offered ([`Status::Stale`]).
 //! - **Serving** ([`serve`]): `/__moqui-app/maps/<packageId>/<path>` on the shell's origin, from the package's
 //!   directory: HEAD, GET and one `Range` as a 206 slice read from the file, never the whole file in memory.
-//! - **Addresses** ([`Packages::search_addresses`], plans/Maps-Offline.md §2.5): the server's address matching over
+//! - **Addresses** ([`Packages::search_addresses`], plans/archive/Maps-Offline.md §2.5): the server's address matching over
 //!   the package's Overture addresses, for the offline screen's search.
 //!
 //! A member is at most [`MEMBER_MAX`] (2 GiB less a byte): Android's WebView reads an intercepted body's length as an

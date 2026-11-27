@@ -700,6 +700,9 @@ fn room_out(facade: &EntityFacade, room: &Room, user_id: &str) -> BTreeMap<Strin
 /// A workbook file as a model: the engine's reader for an xlsx it takes, else the cells of each sheet as values
 /// (`read#Spreadsheet`'s reader: xls, xlsb, ods, and an xlsx without the parts the engine needs).
 fn workbook_model(bytes: &[u8], name: &str) -> Result<moqui_core::workbook::ironcalc::base::Model<'static>, Error> {
+    // refused before either reader parses it (SEC-TLS-114)
+    moqui_core::service::spreadsheet::check_expanded_size(bytes, moqui_core::service::spreadsheet::MAX_EXPANDED_BYTES)
+        .map_err(|err| Error::new(err.to_string()))?;
     match workbook::open_xlsx(bytes, name) {
         Ok(model) => Ok(model),
         Err(engine_error) => {

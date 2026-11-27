@@ -91,7 +91,7 @@ fn the_native_vault_is_an_app_windows_command() {
     }
 }
 
-/// plans/Maps-Offline.md §2.4: the offline map packages are the shell's, whose pages are the app's own code; an app
+/// plans/archive/Maps-Offline.md §2.4: the offline map packages are the shell's, whose pages are the app's own code; an app
 /// window's server page has none of their commands.
 #[test]
 fn the_map_packages_commands_are_the_shells_only() {

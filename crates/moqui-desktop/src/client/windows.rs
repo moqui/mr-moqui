@@ -40,7 +40,7 @@ use serde_json::Value;
 use super::{Client, APP_ORIGIN, SHELL_ORIGIN};
 
 /// The shell's commands, as `allow-<command>` (build.rs), the sockets, the node page bridge's, the offline map
-/// packages' (plans/Maps-Offline.md §2.4), and the notification plugin's check its `window.Notification` makes.
+/// packages' (plans/archive/Maps-Offline.md §2.4), and the notification plugin's check its `window.Notification` makes.
 const SHELL_PERMISSIONS: [&str; 46] = [
     "allow-client-state",
     "allow-client-sign-in",

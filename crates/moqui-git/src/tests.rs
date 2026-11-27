@@ -238,6 +238,68 @@ fn an_import_from_an_https_source_connects_only_to_a_public_address() {
     );
 }
 
+/// SEC-GIT-86: an import from a caller's source is fetched with no credential: a host that answers 401 is never offered
+/// the token the administrator stored for the repository's own remoteUrl.
+#[test]
+fn an_import_from_a_callers_source_offers_no_stored_token() {
+    use std::io::{Read as _, Write as _};
+    let fixture = fixture_conf(
+        "import-token",
+        Some(r#"<moqui-conf><git-server webhook-private-network="true"/></moqui-conf>"#),
+    );
+    let _entered = fixture.context.enter();
+    define(
+        &fixture.entity,
+        "tok",
+        "db",
+        None,
+        Some("https://git.example.com/own.git"),
+    );
+    {
+        let mut row = fixture
+            .entity
+            .find(super::GIT_REPOSITORY)
+            .unwrap()
+            .eq("repositoryId", Value::string("tok"))
+            .one()
+            .unwrap()
+            .unwrap();
+        row.set("username", Value::string("deploy"));
+        row.set("accessToken", Value::string("STORED_TOKEN_9K"));
+        row.update(&fixture.entity).unwrap();
+    }
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let kept = std::sync::Arc::clone(&seen);
+    std::thread::spawn(move || {
+        for stream in listener.incoming().take(4) {
+            let Ok(mut stream) = stream else { break };
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+            let mut head = [0u8; 8192];
+            let read = stream.read(&mut head).unwrap_or(0);
+            kept.lock()
+                .unwrap()
+                .push(String::from_utf8_lossy(&head[..read]).into_owned());
+            let _ = stream.write_all(
+                b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"x\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+        }
+    });
+    let provider = crate::provider(fixture.context.factory()).expect("git provider");
+    let refused = provider.import("tok", Some(&format!("http://127.0.0.1:{port}/other.git")));
+    assert!(refused.is_err());
+    let token = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, "deploy:STORED_TOKEN_9K");
+    let requests = seen.lock().unwrap().clone();
+    assert!(!requests.is_empty(), "the source was asked");
+    for request in &requests {
+        assert!(
+            !request.contains(&token) && !request.to_ascii_lowercase().contains("authorization:"),
+            "{request}"
+        );
+    }
+}
+
 #[test]
 fn a_db_repository_exports_and_imports_with_the_same_ids() {
     let fixture = fixture("db");

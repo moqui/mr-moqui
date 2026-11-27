@@ -88,9 +88,20 @@ along with this software (see the LICENSE.md file). If not, see
                 if (!wrap.dropJobId || !wrap.restoreJobId) { ec.message.addError(String(wrap.jobReason || ec.l10n.localize('The foreign keys could not be planned'))); return }
                 const parameters = {dropJobId: wrap.dropJobId, restoreJobId: wrap.restoreJobId, loadKind: 'data',
                     onlyCreate: !!onlyCreate, dummyFks: !!dummyFks, useTryInsert: !!useTryInsert}
-                for (const name of ['xmlText', 'jsonText', 'csvText', 'location', 'types', 'components']) if (context[name]) parameters[name] = String(context[name])
+                for (const name of ['location', 'types', 'components']) if (context[name]) parameters[name] = String(context[name])
+                // the text goes in a private file the job reads and deletes, not in the job run's parameters (SEC-DAT-96)
+                if (!(types || components || location)) {
+                    const kind = csvText ? 'csv' : jsonText ? 'json' : xmlText ? 'xml' : null
+                    if (kind) parameters.textLocation = ec.resource.writePrivateFile(String(context[kind + 'Text']), kind)
+                }
                 if (timeout) parameters.transactionTimeout = parseInt(timeout, 10)
-                const jobRunId = ec.service.job('DatabaseLoadWrap').parameters(parameters).run()
+                let jobRunId
+                try {
+                    jobRunId = ec.service.job('DatabaseLoadWrap').parameters(parameters).run()
+                } catch (e) {
+                    if (parameters.textLocation) ec.resource.getLocationReference(parameters.textLocation).delete()
+                    throw e
+                }
                 ec.message.addMessage(`Started the load on a worker (job run ${jobRunId}): database job ${wrap.dropJobId} drops ${(wrap.dropStatements || []).length} foreign keys, then the data is loaded, then database job ${wrap.restoreJobId} makes them again. A notification says how it ended; Database › Jobs shows both jobs.`, 'info')
                 return
             }

@@ -1603,15 +1603,16 @@ impl GitProvider {
                 && (source.starts_with("https://") || source.starts_with("http://"))
                 && !mirror::private_network();
             let _deny = checked_public.then(fs::deny_internal);
-            fs::fetch(
-                &path,
-                &source,
-                &definition.branch,
-                &definition.credentials,
-                false,
-                None,
-                &|| Ok(()),
-            )?;
+            // the token stored for the repository's remoteUrl goes only to that address: a caller's other source is
+            // fetched with none, or its host would be offered the token once it asks (SEC-GIT-86)
+            let own_remote = definition.remote_url.as_deref().map(str::trim) == Some(source.as_str());
+            let no_credentials = fs::Credentials::default();
+            let credentials = if from_caller && !own_remote {
+                &no_credentials
+            } else {
+                &definition.credentials
+            };
+            fs::fetch(&path, &source, &definition.branch, credentials, false, None, &|| Ok(()))?;
             scratch = Some(path.clone());
             (Box::new(fs::FsStore::open(&path)?), definition.branch.clone())
         };

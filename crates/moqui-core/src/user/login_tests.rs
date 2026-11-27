@@ -707,7 +707,7 @@ fn require_password_change_and_an_old_password_fail_without_rehash() {
     assert_eq!(i64_field(&load_user(&facade, "must"), "successiveFailedLogins"), 0);
     assert!(!text(&load_user(&facade, "must"), "currentPassword").starts_with("$argon2"));
 
-    let old = now_millis() - 13 * WEEK_MILLIS;
+    let old = now_millis() - 105 * WEEK_MILLIS;
     create_user(&facade, "stale", "Secret1!", |value| {
         value.set("passwordSetDate", stamp(old));
     });

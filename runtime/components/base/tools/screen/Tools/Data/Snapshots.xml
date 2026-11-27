@@ -59,6 +59,9 @@ along with this software (see the LICENSE.md file). If not, see
         between the drop and the restore of the keys on a worker (the DatabaseLoadWrap ServiceJob) -->
     <transition name="importSnapshot" method="post" begin-transaction="false" authz-action="all">
         <actions>
+            <!-- a restore of any record, as the import service asks too (SEC-DAT-89) -->
+            <if condition="!ec.user.hasPermission('ADMIN_BACKUP_DOWNLOAD')">
+                <message error="true">Importing a snapshot needs ADMIN_BACKUP_DOWNLOAD</message><return/></if>
             <if condition="!WebUtilities.isSafeSinglePathSegment(zipFilename)">
                 <message error="true">Snapshot not found</message><return/></if>
             <script><![CDATA[
@@ -101,6 +104,8 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="uploadSnapshot" begin-transaction="false" authz-action="update">
         <actions><script><![CDATA[
+            // what an import restores is a holder of ADMIN_BACKUP_DOWNLOAD's to bring (SEC-DAT-89)
+            if (!ec.user.hasPermission('ADMIN_BACKUP_DOWNLOAD')) { ec.message.addError('Uploading a snapshot needs ADMIN_BACKUP_DOWNLOAD'); return }
             const filename = WebUtilities.lastPathSegment(snapshotFile.getName())
             if (!filename?.endsWith(".zip") || !WebUtilities.isSafeSinglePathSegment(filename)) {
                 ec.message.addError(`File ${filename} is not a zip file, should be a zip containing one or more xml data files`); return

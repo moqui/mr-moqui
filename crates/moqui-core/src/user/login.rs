@@ -1104,6 +1104,7 @@ fn check_login_key(key: &str, session_user: Option<&str>, scopes: &[&str]) -> Re
     }
     let kind = LoginKeyKind::of(&row);
     session::set_login_key_kind(Some(kind));
+    session::set_login_key_id(Some(hashed.clone()));
     if kind == LoginKeyKind::Device {
         session::set_device_key(Some(hashed.clone()));
         restore_key_stamps(&row, &user_id);
@@ -1451,8 +1452,10 @@ pub fn revoke_login_key(key: &str) -> Result<bool, Error> {
         .eq("userId", Value::string(&user_id))
         .update_all([("thruDate".to_string(), now_value())])?;
     if updated > 0 {
-        // a device signing out gets no more pushes (plans/Mobile-Desktop.md §5, native push)
+        // a device signing out gets no more pushes (plans/Mobile-Desktop.md §5, native push), and the location shares
+        // it sends stop (plans/archive/Location-Sharing.md §3.4)
         crate::service::web_push::forget_device_key(&facade, &hashed);
+        stop_key_location_shares(&hashed, &user_id);
     }
     Ok(updated > 0)
 }
@@ -1498,10 +1501,75 @@ pub fn renew_device_key(key: &str) -> Result<Option<(String, i64)>, Error> {
     old.set("thruDate", stamp_value(old_thru.map_or(grace, |thru| thru.min(grace))));
     old.update(&facade)?;
     // the device's push registration goes with it to the new key (plans/Mobile-Desktop.md §5, native push)
-    crate::service::web_push::move_device_key(&facade, &hashed, &password::hash_login_key(&renewed)?);
+    let renewed_hash = password::hash_login_key(&renewed)?;
+    crate::service::web_push::move_device_key(&facade, &hashed, &renewed_hash);
+    // and so do the location shares it sends (plans/archive/Location-Sharing.md §3.4: a share's device, LocationShare.userLoginKeyId)
+    move_location_shares(&facade, &hashed, &renewed_hash);
     #[allow(clippy::cast_possible_truncation)] // As make_login_key_for's expiry.
     let thru = now.saturating_add((hours * HOUR_MILLIS).round() as i64);
     Ok(Some((renewed, thru)))
+}
+
+/// The active location shares sent from the device key `hashed` (its stored hash), revoked, stop
+/// (`LocationServices.stop#DeviceShares`, plans/archive/Location-Sharing.md §3.4): none stays on with nothing sending it, also
+/// when the device could not tell the server itself (a sign-out with no network, then its pending revoke). A failure
+/// is logged: the share then ends at its end.
+pub(crate) fn stop_key_location_shares(hashed: &str, owner_user_id: &str) {
+    if hashed.is_empty() || owner_user_id.is_empty() {
+        return;
+    }
+    let mut parameters = std::collections::BTreeMap::new();
+    parameters.insert("userLoginKeyId".to_string(), Value::string(hashed));
+    // the key's user as the revoke knows it: the key's row, which the revoke has just written, is never read there
+    parameters.insert("ownerUserId".to_string(), Value::string(owner_user_id));
+    // its own transaction (the service is force-new); the context's errors set aside around it, so one already there
+    // does not keep it from running, and its own taken back out, so nothing of it reaches the revoke: a revoke rolled
+    // back would leave a lost device's key signing in
+    let mark = ExecutionContext::with_current(|ec| {
+        ec.message().push_errors();
+        ec.message().error_mark()
+    });
+    let called = crate::service::sync("org.moqui.maps.LocationServices.stop#DeviceShares", &parameters);
+    let errors = mark
+        .and_then(|mark| {
+            ExecutionContext::with_current(|ec| {
+                let taken = ec.message().take_errors_since(mark);
+                ec.message().pop_errors();
+                taken
+            })
+        })
+        .unwrap_or_default();
+    if let Err(err) = called {
+        tracing::warn!(error = %err, "the location shares of a revoked device key were not stopped");
+    }
+    for error in errors {
+        tracing::warn!(error = %error, "a location share of a revoked device key");
+    }
+}
+
+/// The location shares sent from the device key `old_key` (`LocationShare.userLoginKeyId`, a stored hash) go with its
+/// renewal `new_key`, so the device goes on sending them past the old key's end (plans/archive/Location-Sharing.md §3.4). In a
+/// transaction of its own, as the push registrations' move; a failure is logged, and the device's next report is then
+/// refused as another device's until the owner sends it from this device again.
+fn move_location_shares(facade: &EntityFacade, old_key: &str, new_key: &str) {
+    const SHARE: &str = "moqui.maps.LocationShare";
+    if old_key.is_empty() || new_key.is_empty() || !crate::entity::info::is_entity_defined(facade, SHARE) {
+        return;
+    }
+    let moved = facade.transactions_for(SHARE).and_then(|tx| {
+        tx.run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+            facade
+                .find(SHARE)?
+                .eq("userLoginKeyId", Value::string(old_key))
+                .update_all([
+                    ("userLoginKeyId".to_string(), Value::string(new_key)),
+                    ("renewedFromKeyId".to_string(), Value::string(old_key)),
+                ])
+        })
+    });
+    if let Err(err) = moved {
+        tracing::warn!(error = %err, "the location shares of a renewed device key were not moved");
+    }
 }
 
 /// A device key for the user `user_id`, made with no session of theirs: an installed app's SSO hand-back

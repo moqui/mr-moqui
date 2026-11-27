@@ -313,6 +313,7 @@ pub(crate) fn push_check_fix(
             | "firebase"
             | "callingAccounts"
             | "contacts"
+            | "location"
     ) {
         return Err(format!("Nothing to fix: {what}"));
     }
@@ -325,8 +326,8 @@ pub(crate) fn push_check_fix(
 /// The check screen's "Send a test notification": the current account's server pushes one to this phone through the
 /// full path (§7.6). Its answer `{ackIdList, queuedDate, reasonCode}`; the screen then watches `push_check`'s
 /// `lastPushDate` for it. The shell's page only, by its nonce (SEC-CLI-97).
-#[tauri::command(async)]
-pub(crate) fn push_test(
+#[tauri::command]
+pub(crate) async fn push_test(
     app: AppHandle,
     webview: tauri::Webview,
     nonce: Option<String>,
@@ -336,8 +337,12 @@ pub(crate) fn push_test(
         return Err("Not the shell's page".to_string());
     }
     let account = host.signed_in().ok_or("No account is signed in")?;
-    let state = moqui_client_tauri::state(&app)?;
-    crate::native::test_push(&state.core, &account)
+    // its post is reqwest's blocking client: on Tauri's blocking pool, never a runtime worker
+    moqui_client_tauri::commands::blocking(move || {
+        let state = moqui_client_tauri::state(&app)?;
+        crate::native::test_push(&state.core, &account)
+    })
+    .await
 }
 
 /// The native code's part of the check (`PushCheck.state`), or none on the desktop.
@@ -629,9 +634,10 @@ const NAMES_MAX: usize = 50;
 
 /// The phone's contacts whose name or number has `term` (plans/Comms-Messaging.md §9.2), for the new-chat picker:
 /// `[{name, number}]`, at most ten. The first search asks for the contacts permission (with its reason); without it,
-/// none. Read on the phone only, for the shell's page; nothing is sent anywhere.
-#[tauri::command(async)]
-pub(crate) fn contacts_search(
+/// none. Read on the phone only, for the shell's page; nothing is sent anywhere. The permission's answer is waited for on
+/// Tauri's blocking pool, never a runtime worker.
+#[tauri::command]
+pub(crate) async fn contacts_search(
     app: AppHandle,
     webview: tauri::Webview,
     nonce: Option<String>,
@@ -644,19 +650,22 @@ pub(crate) fn contacts_search(
     let Some(term) = contact_term(&term) else {
         return Ok(serde_json::json!([]));
     };
-    #[cfg(target_os = "android")]
-    {
-        let text = crate::android::contacts_search(&term, CONTACTS_MAX)?;
-        serde_json::from_str(&text).map_err(|err| err.to_string())
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        log::info!(
-            "No phone contacts here to search for {} characters",
-            term.chars().count()
-        );
-        Ok(serde_json::json!([]))
-    }
+    moqui_client_tauri::commands::blocking(move || {
+        #[cfg(target_os = "android")]
+        {
+            let text = crate::android::contacts_search(&term, CONTACTS_MAX)?;
+            serde_json::from_str(&text).map_err(|err| err.to_string())
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            log::info!(
+                "No phone contacts here to search for {} characters",
+                term.chars().count()
+            );
+            Ok(serde_json::json!([]))
+        }
+    })
+    .await
 }
 
 /// The names the phone's contacts have for `numbers` (E.164, at most 50; others are left out): `{number: name}`. Never
@@ -853,6 +862,146 @@ pub(crate) fn screen_status(app: AppHandle, webview: tauri::Webview, nonce: Opti
         crate::screen::status(),
         capture
     ))
+}
+
+// ---- live location from the phone (plans/archive/Location-Sharing.md §3.4, LL3) ----
+
+/// The account of the page asking: the shell's (the current account), or a server page's while it is the current
+/// account's (`PageState::account`); none while a navigation is under way or for any other page.
+fn page_account(app: &AppHandle, webview: &tauri::Webview) -> Result<String, String> {
+    let host = host(app)?;
+    let at = webview.url().ok().map(|url| url.origin().ascii_serialization());
+    if !matches!(
+        at.as_deref(),
+        Some(moqui_client_tauri::SHELL_ORIGIN | moqui_client_tauri::APP_ORIGIN)
+    ) {
+        return Err("Not the app's page".to_string());
+    }
+    moqui_client::app::ClientHost::page_account(host.as_ref(), crate::host::MAIN)
+        .ok_or_else(|| "No account's page".to_string())
+}
+
+/// Before a share is started from this phone: the location permission, asked after a dialog that says why when it is
+/// not given yet (`LocationShare.allow`: fine and coarse for an exact share, which the person may answer with either,
+/// coarse alone for an approximate one). Whether the app may read the location now; false when the person chose Not
+/// now. A page of the current account's only. Android's own question is the person's act here; what starts sending is
+/// `location_share_start`'s native confirmation. The person's answer is waited for on Tauri's blocking pool, never a
+/// runtime worker.
+#[tauri::command]
+pub(crate) async fn location_allow(
+    app: AppHandle,
+    webview: tauri::Webview,
+    exact: Option<bool>,
+) -> Result<bool, String> {
+    page_account(&app, &webview)?;
+    moqui_client_tauri::commands::blocking(move || {
+        #[cfg(target_os = "android")]
+        return crate::android::location_allow(exact != Some(false));
+        #[cfg(not(target_os = "android"))]
+        {
+            log::info!("No phone location here to allow (exact: {exact:?})");
+            Ok(false)
+        }
+    })
+    .await
+}
+
+/// The page's Share (a share it just started, or its Send from this device): the share is sent from this phone by its
+/// foreground service (`LocationShareService.kt`, of type `location`), also while the app is in the background, with
+/// its notification for as long as it runs. Android starts it only from the app in front, with the location permission
+/// and notifications allowed, and only once the person said Send in the app's own dialog (`LocationShare.start`: "Send
+/// your location from this phone to Sam until 15:30?", guarded against touches through another app's window), which
+/// is the control: a page's script may call this, but sends nothing without the person's answer in a native dialog.
+/// The share's words there and in the notification are the server's (`get#AppShare` with the account's device key,
+/// [`crate::location::read_share`]), never the page's; the page names only the share. `started`; `declined` when the
+/// person said Not now (the page sends nothing either); `unavailable` when the service could not start (the page sends
+/// while it is open, as a browser does). A page of the current account's only, for that account, for a share this
+/// device sends (Send from this device first). Run on Tauri's blocking pool (`moqui_client_tauri::commands::blocking`):
+/// its read of the share is reqwest's blocking client, which panics in a debug build and blocks a runtime worker in
+/// release when run on one (the page's promise was then never answered), and the app's dialog is waited for there too.
+#[tauri::command]
+pub(crate) async fn location_share_start(
+    app: AppHandle,
+    webview: tauri::Webview,
+    share: crate::location::ShareAsk,
+) -> Result<String, String> {
+    let account = page_account(&app, &webview)?;
+    moqui_client_tauri::commands::blocking(move || start_share(&app, &account, &share)).await
+}
+
+/// [`location_share_start`]'s work, off the async runtime: the share read with the account's device key, then the
+/// app's confirmation and its service. A share begun here is let go again when the start fails or panics after that.
+fn start_share(app: &AppHandle, account: &str, share: &crate::location::ShareAsk) -> Result<String, String> {
+    let account = account.to_string();
+    let state = moqui_client_tauri::state(app)?;
+    let signed_in = crate::native::asked(&state.core)
+        .into_iter()
+        .find(|asked| asked.account.id == account)
+        .ok_or("The account is not signed in here")?;
+    let share = crate::location::read_share(
+        share.share_id.trim(),
+        (&signed_in.account, signed_in.key.as_str()),
+        &crate::native::LocationPoster(&state.core),
+        crate::native::now_ms(),
+    )
+    .map_err(|refused| refused.reason().to_string())?;
+    // a share already sent from here goes on as it was when the person says Not now (or the service cannot take it);
+    // a new one is begun before the service may report it, and let go again unless it starts
+    let was = crate::location::sending(&account).contains(&share.share_id);
+    let version = share.audience_version;
+    if !was {
+        crate::location::begin(&account, &share.share_id, share.interval_seconds * 1000, version);
+    }
+    let start = || -> Result<String, String> {
+        #[cfg(target_os = "android")]
+        return crate::android::location_start(&share.to_json(&account));
+        #[cfg(not(target_os = "android"))]
+        {
+            log::info!("No location service here for share {}", share.share_id);
+            Ok("unavailable".to_string())
+        }
+    };
+    let answer = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(start)) {
+        Ok(Ok(answer)) => answer,
+        failed => {
+            if !was {
+                crate::location::forget_share(&account, &share.share_id);
+            }
+            return match failed {
+                Ok(Err(err)) => Err(err),
+                _ => Err("The share could not be started here".to_string()),
+            };
+        }
+    };
+    if answer == "started" {
+        // the audience version the person just confirmed, also for one sent already
+        crate::location::begin(&account, &share.share_id, share.interval_seconds * 1000, version);
+    } else if !was {
+        crate::location::forget_share(&account, &share.share_id);
+    }
+    Ok(answer)
+}
+
+/// The page stopped a share (its Stop), or it is sent from another device or page now: this phone no longer sends it.
+#[tauri::command(async)]
+pub(crate) fn location_share_stop(app: AppHandle, webview: tauri::Webview, share_id: String) -> Result<(), String> {
+    let account = page_account(&app, &webview)?;
+    let share_id = clip(&share_id, 64);
+    crate::location::forget_share(&account, &share_id);
+    #[cfg(target_os = "android")]
+    crate::android::location_stop(&account, &share_id)?;
+    Ok(())
+}
+
+/// The shares of the page's account this phone sends now, by id: on Android the location service's own list
+/// (`LocationShare.sending`), which is what sends, so the page never says "sent from this phone" while nothing does.
+#[tauri::command(async)]
+pub(crate) fn location_share_status(app: AppHandle, webview: tauri::Webview) -> Result<Vec<String>, String> {
+    let account = page_account(&app, &webview)?;
+    #[cfg(target_os = "android")]
+    return serde_json::from_str(&crate::android::location_sending(&account)?).map_err(|err| err.to_string());
+    #[cfg(not(target_os = "android"))]
+    Ok(crate::location::sending(&account))
 }
 
 #[cfg(test)]

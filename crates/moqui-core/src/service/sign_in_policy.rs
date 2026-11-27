@@ -48,7 +48,7 @@ const ATTRIBUTES: [(&str, &str, &str); 13] = [
     ("password", "min-digits", "1"),
     ("password", "min-others", "1"),
     ("password", "history-limit", "5"),
-    ("password", "change-weeks", "12"),
+    ("password", "change-weeks", "104"),
     ("password", "email-require-change", "false"),
     ("password", "email-expire-hours", "48"),
     ("login-key", "expire-hours", "144"),

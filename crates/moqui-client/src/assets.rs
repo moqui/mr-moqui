@@ -98,7 +98,7 @@ pub struct Assets {
     webroot: PathBuf,
     libs: Vec<String>,
     /// The files of a library staged by one part only (a line `<lib> <part>` of `libs.txt`, the part's files as the
-    /// library's `parts.json` lists them: OpenLayers' main part, plans/Maps-Offline.md §2.5), so a development run
+    /// library's `parts.json` lists them: OpenLayers' main part, plans/archive/Maps-Offline.md §2.5), so a development run
     /// serves what a bundle has. None for a host whose staged files are the bundle's ([`Self::embedded`]).
     parts: Vec<(String, Vec<String>)>,
 }

@@ -168,6 +168,9 @@ pub(super) struct Wire {
     /// Requests went out since the last read that waited, so the next one is a waited round trip
     /// ([`moqui_core::driver::note_round_trip`]).
     sent: bool,
+    /// The most bytes of rows one reply may bring ([`max_reply_bytes`]); past it the rest are read and dropped and
+    /// the request fails (SEC-DAT-94).
+    max_reply_bytes: usize,
 }
 
 /// What failed a request: the server, or this side while reading the reply (a cell that does not decode).
@@ -196,14 +199,17 @@ pub(super) struct DbError {
     hint: Option<String>,
 }
 
+/// The DETAIL and HINT lines are indented: diagnostic lines, which the server log keeps and the text a client is given
+/// leaves out (`client_text`), since a DETAIL holds a row's values as written (`Failing row contains (...)`, a key's
+/// value) (SEC-DAT-95).
 impl std::fmt::Display for DbError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "db error: {}: {}", self.severity, self.message)?;
         if let Some(detail) = &self.detail {
-            write!(f, "\nDETAIL: {detail}")?;
+            write!(f, "\n  DETAIL: {detail}")?;
         }
         if let Some(hint) = &self.hint {
-            write!(f, "\nHINT: {hint}")?;
+            write!(f, "\n  HINT: {hint}")?;
         }
         Ok(())
     }
@@ -523,6 +529,7 @@ impl Wire {
             handshake_deadline: Some(deadline),
             read_timeout: None,
             sent: false,
+            max_reply_bytes: max_reply_bytes(),
         };
         if !matches!(wire.stream, Stream::Tls(_)) {
             wire.stream
@@ -824,6 +831,14 @@ impl Wire {
 
     fn parse_buffered(&mut self) -> Result<Option<Message>, Error> {
         loop {
+            // the server's length is refused before `Message::parse` reserves room for it: a header that claims 4 GiB
+            // would otherwise be an allocation that aborts the process (SEC-DAT-94)
+            if let Some(length) = oversized_message(&self.read) {
+                self.dead = true;
+                return Err(Error::new(format!(
+                    "postgres reply: a message of {length} bytes is over the most this client takes ({MAX_MESSAGE_BYTES})"
+                )));
+            }
             let message = match Message::parse(&mut self.read) {
                 Ok(Some(message)) => message,
                 Ok(None) => return Ok(None),
@@ -853,11 +868,25 @@ impl Wire {
     /// the next reply starts where it should.
     fn read_reply(&mut self, mut each: impl FnMut(Message) -> Result<(), Error>) -> Result<Option<Failure>, Error> {
         let mut failure: Option<Failure> = None;
+        let mut row_bytes: usize = 0;
         loop {
             match self.read_message()? {
                 Message::ReadyForQuery(_) => return Ok(failure),
                 Message::ErrorResponse(body) => {
                     failure.get_or_insert_with(|| Failure::Db(DbError::parse(body.fields())));
+                }
+                Message::DataRow(body)
+                    if failure.is_none() && {
+                        row_bytes = row_bytes.saturating_add(body.buffer().len());
+                        row_bytes > self.max_reply_bytes
+                    } =>
+                {
+                    // the rest of the reply is read and dropped, so the connection stays in step with the server
+                    failure = Some(Failure::Local(Error::new(format!(
+                        "postgres reply: its rows are over the most one reply may bring (entity-facade max-reply-bytes, \
+                         {} bytes)",
+                        self.max_reply_bytes
+                    ))));
                 }
                 message => {
                     if failure.is_none() {
@@ -1438,6 +1467,26 @@ pub(super) fn cancel_within(
         .write_all(&request)
         .and_then(|()| stream.flush())
         .map_err(|err| io_error("cancel", err))
+}
+
+/// The most bytes one backend message may claim: Postgres keeps a field under 1 GiB.
+const MAX_MESSAGE_BYTES: usize = 1024 * 1024 * 1024 + 5;
+
+/// The most bytes of rows one reply may bring: `entity-facade@max-reply-bytes`, 1 GiB when it does not read.
+fn max_reply_bytes() -> usize {
+    moqui_core::context::conf_env::setting("entity-facade@max-reply-bytes")
+        .parse::<usize>()
+        .ok()
+        .filter(|max| *max > 0)
+        .unwrap_or(1 << 30)
+}
+
+/// The length a buffered backend message's header claims (its four-byte length after the type byte), when it is over
+/// [`MAX_MESSAGE_BYTES`]; None while the header has not all come or the length is in bounds.
+fn oversized_message(buffer: &[u8]) -> Option<usize> {
+    let header: [u8; 4] = buffer.get(1..5)?.try_into().ok()?;
+    let length = u32::from_be_bytes(header) as usize;
+    (length.saturating_add(1) > MAX_MESSAGE_BYTES).then_some(length)
 }
 
 #[cfg(test)]

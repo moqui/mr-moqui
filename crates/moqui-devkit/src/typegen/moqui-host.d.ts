@@ -798,6 +798,8 @@ interface MoquiResourceFacade {
     hmac(key: string, message: string | null, encoding?: "hex" | "base64url" | null): string;
     /** A signed grant for subject, valid ttlSeconds (3600); checkGrant verifies it with the same key. */
     makeGrant(key: string, subject: string, ttlSeconds?: number | null): string;
+    /** Text in a new file of the server's user alone (0600, a random name under runtime/tmp/private); its runtime:// location. For text a job reads and deletes, never its parameters. */
+    writePrivateFile(text: string | null, extension: string): string;
     checkGrant(key: string, subject: string, token: string | null): boolean;
 }
 
@@ -963,6 +965,9 @@ interface MoquiUserFacade {
     /** The kind of login key this request's user signed in with (the `api_key` or `login_key` header, or `loginUserKey`): `device` (a device's key), `token` (an access token or a key for git alone, which only git over HTTP and the REST resources that declare `key-scope` git take), `session` (a `getLoginKey` key) or `scoped` (a key for one service, tasks or the gateway, which only that service's login and the REST resources that declare its `key-scope` take); null for any other login. A key made for one service signs in its request alone, never the web session. */
     readonly loginKeyKind: "device" | "token" | "session" | "scoped" | null;
     getLoginKeyKind(): "device" | "token" | "session" | "scoped" | null;
+    /** The id of the `UserLoginKey` this request's user signed in with, with `loginKeyKind` (its stored hash, as the device list names a device; never the key itself); null for any other login. For this request only. */
+    readonly loginKeyId: string | null;
+    getLoginKeyId(): string | null;
     /** The `moqui.server.Visit` id of this session, null outside one. */
     readonly visitId: string | null;
     getVisitId(): string | null;

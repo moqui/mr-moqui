@@ -393,6 +393,133 @@ pub(crate) fn forget_account(account: &str) -> Result<(), String> {
     })
 }
 
+/// The location permission before a share is sent from this phone (`LocationShare.allow`, plans/archive/Location-Sharing.md
+/// §3.4): asked after the app's dialog that says why when it is not given yet, waiting for the answer, so never on the
+/// main thread; whether the app may read the location (fine for `exact`, coarse at least otherwise).
+pub(crate) fn location_allow(exact: bool) -> Result<bool, String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.LocationShare"))?;
+        env.call_static_method(
+            &class,
+            jni_str!("allow"),
+            jni_sig!("(Landroid/content/Context;Z)Z"),
+            &[JValue::Object(app), JValue::Bool(exact)],
+        )?
+        .z()
+    })
+}
+
+/// A share sent from this phone by the location service (`LocationShare.start`, the share's JSON with its account,
+/// the server's words): `started` once the person said Send in the app's own dialog, `declined` on Not now, or
+/// `unavailable` (the app not in front, the permission or notifications off). Waits for the person's answer.
+pub(crate) fn location_start(share: &str) -> Result<String, String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.LocationShare"))?;
+        let share = env.new_string(share)?;
+        let answer = env
+            .call_static_method(
+                &class,
+                jni_str!("start"),
+                jni_sig!("(Landroid/content/Context;Ljava/lang/String;)Ljava/lang/String;"),
+                &[JValue::Object(app), JValue::Object(&share)],
+            )?
+            .l()?;
+        let answer = env.cast_local::<jni::objects::JString>(answer)?;
+        answer.try_to_string(env)
+    })
+}
+
+/// A share of `account` no longer sent from this phone (`LocationShare.stop`): the page stopped it.
+pub(crate) fn location_stop(account: &str, share_id: &str) -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.LocationShare"))?;
+        let account = env.new_string(account)?;
+        let share_id = env.new_string(share_id)?;
+        env.call_static_method(
+            &class,
+            jni_str!("stop"),
+            jni_sig!("(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V"),
+            &[JValue::Object(app), JValue::Object(&account), JValue::Object(&share_id)],
+        )?;
+        Ok(())
+    })
+}
+
+/// The shares of `account` whose stop on the server still waits (`LocationStops.pendingFor`): posted at its sign-out.
+pub(crate) fn location_pending_stops(account: &str) -> Result<Vec<String>, String> {
+    let list = with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.LocationStops"))?;
+        let account = env.new_string(account)?;
+        let list = env
+            .call_static_method(
+                &class,
+                jni_str!("pendingFor"),
+                jni_sig!("(Landroid/content/Context;Ljava/lang/String;)Ljava/lang/String;"),
+                &[JValue::Object(app), JValue::Object(&account)],
+            )?
+            .l()?;
+        let list = env.cast_local::<jni::objects::JString>(list)?;
+        list.try_to_string(env)
+    })?;
+    serde_json::from_str(&list).map_err(|err| err.to_string())
+}
+
+/// What a stop of `account`'s share came to at its sign-out (`LocationStops.settledFor`): a settled one waits no more.
+pub(crate) fn location_stop_settled(account: &str, share_id: &str, state: &str) -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.LocationStops"))?;
+        let account = env.new_string(account)?;
+        let share_id = env.new_string(share_id)?;
+        let state = env.new_string(state)?;
+        env.call_static_method(
+            &class,
+            jni_str!("settledFor"),
+            jni_sig!("(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V"),
+            &[
+                JValue::Object(app),
+                JValue::Object(&account),
+                JValue::Object(&share_id),
+                JValue::Object(&state),
+            ],
+        )?;
+        Ok(())
+    })
+}
+
+/// The shares of `account` the location service sends now (`LocationShare.sending`, a JSON list of ids).
+pub(crate) fn location_sending(account: &str) -> Result<String, String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.LocationShare"))?;
+        let account = env.new_string(account)?;
+        let list = env
+            .call_static_method(
+                &class,
+                jni_str!("sending"),
+                jni_sig!("(Ljava/lang/String;)Ljava/lang/String;"),
+                &[JValue::Object(&account)],
+            )?
+            .l()?;
+        let list = env.cast_local::<jni::objects::JString>(list)?;
+        list.try_to_string(env)
+    })
+}
+
+/// `account` is signed out or removed: none of its shares is sent from this phone any more
+/// (`LocationShare.forgetAccount`).
+pub(crate) fn location_forget_account(account: &str) -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.LocationShare"))?;
+        let account = env.new_string(account)?;
+        env.call_static_method(
+            &class,
+            jni_str!("forgetAccount"),
+            jni_sig!("(Landroid/content/Context;Ljava/lang/String;)V"),
+            &[JValue::Object(app), JValue::Object(&account)],
+        )?;
+        Ok(())
+    })
+}
+
 /// A push registration failed: the native code's worker tries again (`RegisterWorker.start`).
 pub(crate) fn register_worker_start() -> Result<(), String> {
     with_context(|env, app| {
@@ -407,7 +534,7 @@ pub(crate) fn register_worker_start() -> Result<(), String> {
     })
 }
 
-/// An offline map package's download handed to the worker (`PackageDownloadWorker.start`, plans/Maps-Offline.md §2.4):
+/// An offline map package's download handed to the worker (`PackageDownloadWorker.start`, plans/archive/Maps-Offline.md §2.4):
 /// the id of the work enqueued.
 pub(crate) fn package_worker_start(
     account: &str,

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Offline maps (plans/Maps-Offline.md §2.3; docs/tools/Maps.md "Offline packages"): the user's own map packages, each a
+<!-- Offline maps (plans/archive/Maps-Offline.md §2.3; docs/tools/Maps.md "Offline packages"): the user's own map packages, each a
     region at a zoom range built on the server from what they may see and downloaded as one file to the Android app or the
     desktop client, over org.moqui.maps.MapSourceServices find#, estimate#, create#, update#, cancel# and delete#Package
     (MapPackages.js), which act on the signed-in user's own only. New package takes a region (the west, south, east and
@@ -43,7 +43,7 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
 
-    <!-- The user's packages as JSON ({packageList}, find#Packages), for the apps' download (plans/Maps-Offline.md §2.4):
+    <!-- The user's packages as JSON ({packageList}, find#Packages), for the apps' download (plans/archive/Maps-Offline.md §2.4):
         each with its revision, size, strong tag and download path. -->
     <transition name="packageList" method="get" read-only="true">
         <actions><script><![CDATA[
@@ -109,7 +109,7 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
 
-    <!-- A package's zip (plans/Maps-Offline.md §2.3), by range so a download resumes: each request (GET, HEAD, every range)
+    <!-- A package's zip (plans/archive/Maps-Offline.md §2.3), by range so a download resumes: each request (GET, HEAD, every range)
         checks the owner again (get#PackageAccess); a revision that is no longer the package's is 409, and the download is
         recorded with the device's UserLoginKey when the request came signed in by one. The bytes go out pinned to the
         zip's SHA-256 (the strong ETag, If-Range answered), Cache-Control private for resource-facade@pinned-max-age.

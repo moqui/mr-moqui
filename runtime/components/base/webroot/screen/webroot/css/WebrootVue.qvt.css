@@ -1049,7 +1049,7 @@ pre.m-md-mermaid-drawn:hover .m-md-mermaid-zoom, .m-md-mermaid-zoom:focus-visibl
 .m-map-place-label { font-weight:500; }
 .m-map-place-coordinates { font-family:var(--m-font-mono); font-size:calc(12px * var(--m-fs-small-scale)); }
 .m-map-place-details { display:block; color:rgba(127,127,127,0.95); font-size:calc(12px * var(--m-fs-small-scale)); }
-/* the live layer's shares (plans/Location-Sharing.md §3.3), listed as the places are; a stale one muted */
+/* the live layer's shares (plans/archive/Location-Sharing.md §3.3), listed as the places are; a stale one muted */
 .m-map-live { list-style:none; margin:0; padding:0; }
 .m-map-live-share { padding:2px 0; }
 .m-map-live-button { display:inline; text-align:left; font:inherit; padding:2px 4px; margin:0 -4px; border:0; border-radius:4px; background:transparent; color:inherit; cursor:pointer; }

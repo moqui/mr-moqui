@@ -539,9 +539,8 @@ fn tls12_client_hello(suites: &[u16]) -> Vec<u8> {
 /// ChaCha20-Poly1305) with an ephemeral key exchange, TLS 1.3's or ECDHE in TLS 1.2, so forward secret; a client that
 /// offers only suites without forward secrecy (RSA key exchange) or with CBC, 3DES, RC4 or a null cipher gets no
 /// handshake (no cipher suite in common), and one that offers those and a strong one gets the strong one. TLS 1.3 is
-/// preferred over 1.2 (`the_https_listener_speaks_tls_13_and_12_only_preferring_13`). Not proved: an order of the
-/// server's among the strong suites; rustls follows the client's order (`ignore_client_order` is not set), so a
-/// client that lists AES-128 first gets it rather than AES-256.
+/// preferred over 1.2 (`the_https_listener_speaks_tls_13_and_12_only_preferring_13`). Among the strong suites the
+/// server's order holds (`ignore_client_order`, SEC-WEB-88): a client that lists AES-128 before AES-256 gets AES-256.
 #[test]
 fn the_https_listener_enables_only_aead_suites_with_forward_secrecy() {
     let dir = temp_dir("suites");
@@ -589,6 +588,12 @@ fn the_https_listener_enables_only_aead_suites_with_forward_secrecy() {
         answer(&offered).unwrap(),
         0xc02b,
         "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256"
+    );
+    assert!(config.ignore_client_order);
+    assert_eq!(
+        answer(&[0xc02b, 0xc02c]).unwrap(),
+        0xc02c,
+        "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 though the client listed AES-128 first"
     );
     let _ = std::fs::remove_dir_all(dir);
 }

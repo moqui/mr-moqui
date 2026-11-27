@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
     the calls of the account (WebrootCall.js: the ring bar, the LiveCall window and the call's audio, m-call-dock), whose
     encrypted ones this window takes, as it holds the crypto device; the palette (m-shell-palette, Search and Mod+K, with the
     keys of moqui.keymap), whose Chat rooms come first, the comms app being the current one here (Comms-Messaging §3); and
-    Maps (plans/Maps-Offline.md §2.5): Maps' Browse in an app window when the server answers, the bundled offline Maps
+    Maps (plans/archive/Maps-Offline.md §2.5): Maps' Browse in an app window when the server answers, the bundled offline Maps
     screen (Shell/MapsOffline, the device's packages) when it does not, and that screen from Offline maps always. Any
     other screen, and those not bundled, open in an app window. The root of its Vue app, so it is the $root the client's components and those
     screens ask for: basePath, linkBasePath, currentPathList, currentParameters, setUrl, setParameters, the containers,
@@ -109,7 +109,7 @@ along with this software (see the LICENSE.md file). If not, see
                 </q-item>
                 <q-separator spaced></q-separator>
             </template>
-            <!-- Maps (plans/Maps-Offline.md §2.5): Browse when the server answers, the offline screen when it does not -->
+            <!-- Maps (plans/archive/Maps-Offline.md §2.5): Browse when the server answers, the offline screen when it does not -->
             <template v-if="mapsOn">
                 <q-item-label header>{{t('Maps')}}</q-item-label>
                 <q-item clickable class="m-shell-maps" @click="openMaps">
@@ -260,7 +260,7 @@ const SHELL_ROUTES = { 'Chat': 'chat', 'Inbox': 'mail', 'Inbox/Mail': 'mail', 'I
 const VIEW_PATHS = { chat: ['Chat'], mail: ['Inbox', 'Mail'], compose: ['Inbox', 'Compose'], call: ['Calls', 'Call'], dialer: ['Calls', 'Dialer'],
     devices: ['Settings', 'Devices'] };
 const VIEW_TITLES = { chat: 'Chat', mail: 'Mail', compose: 'New message', call: 'Call', dialer: 'Dialer', devices: 'My devices', maps: 'Offline maps' };
-// The offline Maps screen (plans/Maps-Offline.md §2.5): bundled as the shell's own, shown at Maps' Offline path; Maps'
+// The offline Maps screen (plans/archive/Maps-Offline.md §2.5): bundled as the shell's own, shown at Maps' Offline path; Maps'
 // other screens are the server's, in an app window
 const MAPS_OFFLINE = 'Shell/MapsOffline';
 const MAPS_OFFLINE_PATH = 'maps/Offline';
@@ -376,6 +376,18 @@ module.exports = {
             // the phone's contacts name numbers and are found in a new chat (§9.2), read on the phone only
             if (state.contacts !== undefined) rows.push({ key: 'contacts', ok: state.contacts === true, label: t("Names from the phone's contacts"),
                 caption: state.contacts === true ? '' : t('Allow contacts to see names on texts and find people as you type'), fix: 'contacts' });
+            // live location from this phone (plans/archive/Location-Sharing.md §3.4): the location permission, which Maps' Share asks
+            // for with the app's reason, and the shares the app sends now, each under its notification with Stop
+            if (moqui.isPlainObject(state.location)) {
+                const location = state.location;
+                const sharing = Number(location.sharing) || 0;
+                rows.push({ key: 'location', ok: location.permission !== 'none' || !location.asked, label: t('Location for live sharing'),
+                    caption: location.permission === 'fine' ? '' : location.permission === 'coarse' ? t('Approximate only: shares from this phone are about where you are')
+                        : location.asked ? t('Not allowed: a share from Maps is sent only while its page is open') : t('Asked when you first share your location in Maps'),
+                    fix: location.permission === 'fine' || !location.asked ? null : 'location', fixLabel: t('App settings') });
+                if (sharing) rows.push({ key: 'locationSharing', ok: true, label: t('Sharing your location from this phone'),
+                    caption: (sharing === 1 ? t('One share') : sharing + ' ' + t('shares')) + ', ' + t('also with the app in the background, while its notification shows') });
+            }
             // a force-stopped app gets no push until it is opened again
             if (state.forceStoppedDate) rows.push({ key: 'forceStopped', ok: Date.now() - Number(state.forceStoppedDate) > 86400000,
                 label: t('The app was stopped'), caption: this.when(state.forceStoppedDate) + ': ' + t('notifications may not have come until it was opened again') });
@@ -404,7 +416,7 @@ module.exports = {
         viewTitle() { return this.view ? t(VIEW_TITLES[this.view]) : ''; },
         // the server holds calls (its clientConfig's calls) and the call store is here, as m-qapps-root has them
         callsOn() { return !!(moqui.call && this.userId && this.config && this.config.calls); },
-        // the offline map packages of this app (moquiDesktop.packages, plans/Maps-Offline.md §2.5), for an account with the
+        // the offline map packages of this app (moquiDesktop.packages, plans/archive/Maps-Offline.md §2.5), for an account with the
         // server's Maps app (its shellData's apps, which the store keeps for offline use): one without it sees no Maps
         // entry, and the offline screen saves no place for it
         mapsOn() { return !!(host() && host().packages && this.componentOf('maps') && this.mapsApp); },
@@ -553,7 +565,7 @@ module.exports = {
                 params: this.bodyParameters || {}, fullPath: this.currentLinkUrl, meta: {}, hash: '', matched: [{ path: this.currentPath }] });
         },
         openPalette() { this.paletteOpen = true; },
-        // Maps (plans/Maps-Offline.md §2.5): Browse, the server's page, when the server answers; the offline screen with the
+        // Maps (plans/archive/Maps-Offline.md §2.5): Browse, the server's page, when the server answers; the offline screen with the
         // device's packages when it does not (moqui.connection: the host's unreachable answer, or none)
         openMaps() {
             if (!this.mapsApp) return;

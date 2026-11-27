@@ -118,6 +118,7 @@ pub(super) static USER: HostClass = HostClass {
         method!("ec.user", "username", [], None, leaf, username),
         method!("ec.user", "userId", [], None, leaf, user_id),
         method!("ec.user", "loginKeyKind", [], None, leaf, login_key_kind),
+        method!("ec.user", "loginKeyId", [], None, leaf, login_key_id),
         method!("ec.user", "loginRules", [], login_rules),
         method!("ec.user", "initialAdminLocal", [], None, leaf, initial_admin_local),
     ],
@@ -464,6 +465,13 @@ fn login_key_kind(_: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(crate::user::login_key_kind()
         .map(|kind| kind.as_str().to_string())
         .into())
+}
+
+/// `loginKeyId`: the id of the `UserLoginKey` this request's user signed in with (its stored hash, as the device list
+/// names a device; never the key itself), with `loginKeyKind`; null for any other login. A location share records the
+/// device it is sent from by it (plans/archive/Location-Sharing.md §3.1).
+fn login_key_id(_: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(crate::user::login_key_id().into())
 }
 
 fn has_permission(call: &mut Call<'_>) -> Result<Ret, HostError> {

@@ -368,6 +368,8 @@ test("the frame runtime takes its port once, from its parent, with its nonce, an
     assert.match(parent, /disable: !this\.confirmArmed/);
     assert.match(parent, /case "resize": if \(!this\.confirm\) this\.height = m\.height;/);
     assert.match(parent, /if \(this\.external\) \{/);
+    // the Other sites toggle says that what the canvas shows can reach those sites (SEC-AI-05)
+    assert.match(parent, /title: L\("Lets the canvas show other sites' images and content; what the canvas shows can then reach those sites"\)/);
     // an internal link needs the user's gesture too
     assert.match(parent, /if \(!this\.framedGesture\(\)\) \{ this\.notice/);
 });

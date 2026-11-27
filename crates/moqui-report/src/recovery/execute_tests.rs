@@ -299,3 +299,49 @@ fn the_instance_adapter_takes_the_managers_actions_and_waits_for_their_lease() {
         field(&automatic, "responseText")
     );
 }
+
+/// SEC-TLS-19: a controller's report is refused with one answer whether the action is unknown, its callback token wrong or
+/// the action no longer active; the right token on an active action is taken.
+#[test]
+fn a_controllers_report_has_one_refusal_for_every_reason() {
+    let facade = moqui_core::testing::open();
+    facade.assume_db_tables();
+    let ctx = moqui_core::context::ExecutionContextFactory::test_context_in(
+        "",
+        moqui_core::service::ServicePools::idle(),
+        moqui_core::context::framework_dir(),
+    );
+    ctx.factory().set_entity(facade.clone());
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    let hash = super::sha256("the-callback-token");
+    make(
+        &facade,
+        ACTION,
+        json!({"actionId": "CB_ACTIVE", "statusId": "Running", "callbackTokenHash": hash}),
+    );
+    make(
+        &facade,
+        ACTION,
+        json!({"actionId": "CB_DONE", "statusId": "Succeeded", "callbackTokenHash": hash}),
+    );
+    let report = |id: &str, token: &str| {
+        let report = super::Report {
+            token: Some(token),
+            status: "running",
+            external: None,
+            message: "",
+        };
+        super::report(&ctx, &facade, id, &report, moqui_core::user::now_millis()).map(|_| ())
+    };
+    for (id, token) in [
+        ("CB_ACTIVE", "a-wrong-token"),
+        ("CB_NONE", "the-callback-token"),
+        ("CB_DONE", "the-callback-token"),
+    ] {
+        let refused = report(id, token).unwrap_err().to_string();
+        assert!(refused.contains(super::CALLBACK_REFUSED), "{id}: {refused}");
+        assert!(!refused.contains(id), "{id}: {refused}");
+    }
+    report("CB_ACTIVE", "the-callback-token").unwrap();
+}

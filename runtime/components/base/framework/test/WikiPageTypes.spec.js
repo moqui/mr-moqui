@@ -192,7 +192,7 @@ feature("render#WikiPage chooses the renderer by the page's type and the space, 
     }
 })
 
-feature("a space's script and storage settings: allowScriptPages and a screen around its pages need DATABASE_ADMIN, a root outside its own place an administrator, .. never", {
+feature("a space's script and storage settings: allowScriptPages, a screen around its pages and a root outside its own place need DATABASE_ADMIN (a component's place an administrator), .. never", {
     when() {
         const root = (id) => `dbresource://WikiSpace/${id}.md`
         return {
@@ -202,12 +202,16 @@ feature("a space's script and storage settings: allowScriptPages and a screen ar
             dotDot: spaceAs("spec.wt.admin", {wikiSpaceId: "SPWTS3", rootPageLocation: "dbresource://WikiSpace/SPWTS3/../SPWTYP.md"}),
             elsewhere: spaceAs("spec.wt.admin", {wikiSpaceId: "SPWTS4", rootPageLocation: "dbresource://WikiSpace/Elsewhere/SPWTS4.md"}),
             dba: spaceAs("spec.wt.dba", {wikiSpaceId: "SPWTS5", rootPageLocation: root("SPWTS5"), allowScriptPages: "Y"}),
+            // SEC-SCR-92: another record's text is a root only with DATABASE_ADMIN; a component's place an administrator's
+            dbaElsewhere: spaceAs("spec.wt.dba", {wikiSpaceId: "SPWTS8", rootPageLocation: "dbresource://WikiSpace/Elsewhere/SPWTS8.md"}),
+            component: spaceAs("spec.wt.admin", {wikiSpaceId: "SPWTS9", rootPageLocation: "component://framework/test/SPWTS9.md"}),
             types: invokeAs("spec.wt.dba", "get#WikiPageTypes", {}).wikiTypeList
         }
     },
     then(r) {
         r.script.includes("DATABASE_ADMIN") && r.decorator.includes("DATABASE_ADMIN")
-        r.dotDot.includes("own place") && r.elsewhere == "" && r.dba == ""
+        r.dotDot.includes("own place") && r.elsewhere.includes("DATABASE_ADMIN") && r.dba == ""
+        r.dbaElsewhere == "" && r.component == ""
         Array.from(r.types).includes("fancy")
     }
 })

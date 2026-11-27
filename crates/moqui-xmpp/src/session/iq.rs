@@ -623,8 +623,18 @@ impl Session {
             .children()
             .filter(|feature| feature.is("feature", ns::DISCO_INFO))
             .filter_map(|feature| attr(feature, "var").strip_suffix("+notify").map(str::to_string))
-            // no interest is kept in a node the service refuses (user location, pep::REFUSED_NODES)
-            .filter(|node| !super::pep::refused_node(node))
+            // no interest is kept in a node the service refuses (pep::REFUSED_NODES), but user location's, under its own
+            // name: only its mapping notifies it, a location share's positions to its XMPP contacts
+            // (plans/archive/Location-Sharing.md §3.6), never a generic publish, which is refused
+            .filter_map(|node| {
+                if super::pep::geoloc_node(&node) {
+                    Some(ns::GEOLOC.to_string())
+                } else if super::pep::refused_node(&node) {
+                    None
+                } else {
+                    Some(node)
+                }
+            })
             .collect();
         *moqui_lib::sync::lock(&self.notify) = wanted;
     }

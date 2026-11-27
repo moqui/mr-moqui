@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The shell's commands of the offline map packages (plans/Maps-Offline.md §2.4, OF2; `moqui_client::packages`):
+//! The shell's commands of the offline map packages (plans/archive/Maps-Offline.md §2.4, OF2; `moqui_client::packages`):
 //! `packages_list` (the server's and the device's), `packages_download`, `packages_cancel`, `packages_delete` and
 //! `packages_status`, and the offline screen's address search `packages_addresses` (§2.5), for the current account,
 //! each refusing a page that is not the shell
@@ -175,7 +175,7 @@ pub fn packages_status(app: AppHandle, webview: Webview, nonce: Option<String>) 
     Ok(state.core.packages().status(&account))
 }
 
-/// Search the current account's package for an address (plans/Maps-Offline.md §2.5,
+/// Search the current account's package for an address (plans/archive/Maps-Offline.md §2.5,
 /// [`moqui_client::packages::Packages::search_addresses`]): the server's address matching over the package's Overture
 /// addresses, `text` read as `country` (ISO alpha-2, or each country of its rows when empty), `near` the map's middle
 /// (`[lon, lat]`) breaking ties, at most `limit` candidates (20).

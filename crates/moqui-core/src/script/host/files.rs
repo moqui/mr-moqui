@@ -44,6 +44,9 @@
 //!                                             file, each file read as a stream, never whole in memory; an entry
 //!                                             with stored true is not compressed (a file that is already)
 //! ec.resource.makeGrant(key, subject, ttlSeconds)  -> token;  ec.resource.checkGrant(key, subject, token) -> boolean
+//! ec.resource.writePrivateFile(text, extension) -> runtime://tmp/private/<32 hex>.<extension>: a new file of the
+//!                                             server's user alone (0600, in a 0700 directory), for text a job reads
+//!                                             and deletes, never its parameters
 //! ```
 
 #[cfg(feature = "image")]
@@ -123,6 +126,8 @@ macro_rules! files_js {
         host.filesMakeGrant(String(key), String(subject), ttlSeconds == null ? 3600 : Number(ttlSeconds));
     ec.resource.checkGrant = (key, subject, token) =>
         token == null ? false : host.filesCheckGrant(String(key), String(subject), String(token));
+    ec.resource.writePrivateFile = (text, extension) =>
+        host.filesWritePrivate(text == null ? "" : String(text), String(extension == null ? "" : extension));
 })"#
     };
 }
@@ -189,7 +194,50 @@ pub(super) static METHODS: &[Method] = &[
         leaf,
         files_check_grant
     ),
+    method!("tools", "filesWritePrivate", [Text, Text], files_write_private),
 ];
+
+/// `writePrivateFile(text, extension)`: `text` in a new file of `runtime/tmp/private`, made `0600` with a random name
+/// in a directory made `0700`, so no other local account reads it and no name planted there is taken; its
+/// `runtime://` location. For text a job reads and deletes, which its parameters would keep (SEC-DAT-96).
+fn files_write_private(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    use std::io::Write as _;
+    let text = call.text_or_empty(0);
+    let extension = call.text_or_empty(1);
+    if extension.is_empty()
+        || extension.len() > 8
+        || !extension
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    {
+        return Err(HostError::message(
+            "writePrivateFile needs an extension of 1 to 8 lower-case letters and digits",
+        ));
+    }
+    let dir = with_ec(|ec| ec.factory().runtime_dir().join("tmp").join("private"))?;
+    moqui_lib::private_fs::create_dir_all(&dir)
+        .map_err(|err| HostError::message(format!("the private directory could not be made: {err}")))?;
+    for _ in 0..8 {
+        let mut bytes = [0u8; 16];
+        getrandom::fill(&mut bytes).map_err(|err| HostError::message(err.to_string()))?;
+        let name: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+        let name = format!("{name}.{extension}");
+        match moqui_lib::private_fs::file_options()
+            .write(true)
+            .create_new(true)
+            .open(dir.join(&name))
+        {
+            Ok(mut file) => {
+                file.write_all(text.as_bytes())
+                    .map_err(|err| HostError::message(format!("the private file could not be written: {err}")))?;
+                return Ok(Ret::Value(Value::string(format!("runtime://tmp/private/{name}"))));
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(err) => return Err(HostError::message(format!("the private file could not be made: {err}"))),
+        }
+    }
+    Err(HostError::message("no new private file name"))
+}
 
 fn files_image_available(_call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(cfg!(feature = "image").into())

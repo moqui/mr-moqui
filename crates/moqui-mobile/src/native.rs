@@ -264,7 +264,7 @@ pub(crate) fn asked(core: &Client) -> Vec<Asked> {
 }
 
 /// Posts through the client's proxy, as the pages' requests and the outbox's go.
-struct ProxyPoster<'a>(&'a Client);
+pub(crate) struct ProxyPoster<'a>(pub(crate) &'a Client);
 
 impl Poster for ProxyPoster<'_> {
     fn post(&self, account: &Account, key: &str, path: &str, form: &[(&str, &str)]) -> Result<(u16, Value), String> {
@@ -826,7 +826,7 @@ pub(crate) fn flush_background(dir: &Path, budget_ms: i64) -> i64 {
 pub(crate) const PACKAGE_DONE: i32 = 0;
 pub(crate) const PACKAGE_RETRY: i32 = 1;
 
-/// Download `revision` of an account's offline map package on the worker's thread (plans/Maps-Offline.md §2.4), with
+/// Download `revision` of an account's offline map package on the worker's thread (plans/archive/Maps-Offline.md §2.4), with
 /// the app's client (the process's, made from the store when WorkManager started it), as `runner` (the work's id, so
 /// its stop pauses this run only): [`PACKAGE_DONE`] when it ended (installed, refused, cancelled, stale: the shell
 /// reads which), [`PACKAGE_RETRY`] for a cut, a server error, a pause, or a run of it already under way. On the
@@ -914,6 +914,123 @@ pub(crate) fn package_outcome(status: &moqui_client::packages::Status) -> i32 {
 pub(crate) fn package_pause(account: &str, package_id: &str, runner: &str) {
     if let Some(core) = moqui_lib::sync::lock(&CORE).as_ref() {
         core.packages().pause(account, package_id, Some(runner));
+    }
+}
+
+/// `Native.reportLocation(dataDir, account, shareId, fix)` (the host command `report_location`, plans/archive/Location-Sharing.md
+/// §3.4): a fix of a share the location service sends (its JSON, empty for none: a point that waited), kept as the
+/// newest and sent with the account's device key ([`crate::location::report_location`]). What it came to, as JSON. With
+/// no TLS verifier yet the point waits.
+pub(crate) fn report_location(dir: &Path, account: &str, share_id: &str, fix: &str) -> String {
+    let fix = Some(fix).filter(|fix| !fix.is_empty());
+    if !network_ready() {
+        return moqui_client::location::Outcome::Waiting(5_000).to_json().to_string();
+    }
+    let core = match core_in(dir) {
+        Ok(core) => core,
+        Err(err) => {
+            log::warn!("Location: no client to send share {share_id}: {err}");
+            return moqui_client::location::Outcome::Waiting(5_000).to_json().to_string();
+        }
+    };
+    let signed_in = asked(&core).into_iter().find(|asked| asked.account.id == account);
+    crate::location::report_location(
+        account,
+        share_id,
+        fix,
+        signed_in.as_ref().map(|asked| (&asked.account, asked.key.as_str())),
+        &LocationPoster(&core),
+        &|| core.keys().get(account),
+        now_ms(),
+    )
+}
+
+/// `Native.stopLocation(dataDir, account, shareId)`: the notification's Stop, the share stopped on the account's
+/// server too ([`crate::location::stop_share`]): what it came to (`stopped`, `gone`, `signedOut`, or `retry`, which
+/// `LocationStopWorker.kt` tries again with a network until the server answers). With no client or no TLS verifier
+/// yet, `retry`.
+pub(crate) fn stop_location(dir: &Path, account: &str, share_id: &str) -> &'static str {
+    crate::location::forget_share(account, share_id);
+    let Some(core) = network_ready().then(|| core_in(dir).ok()).flatten() else {
+        return crate::location::StopState::Retry.as_str();
+    };
+    let signed_in = asked(&core).into_iter().find(|asked| asked.account.id == account);
+    crate::location::stop_share(
+        account,
+        share_id,
+        true,
+        signed_in.as_ref().map(|asked| (&asked.account, asked.key.as_str())),
+        &LocationPoster(&core),
+    )
+    .as_str()
+}
+
+/// `Native.readLocationShare(dataDir, account, shareId)`: a share read again from its server with the account's device
+/// key, to confirm its changed audience ([`crate::location::read_share`]): `{"state": "ok", "share": ...}` (all of it
+/// the server's), `{"state": "gone", "reason"}` when the server has it no longer as this device's or the account is
+/// signed out here (let go), or `{"state": "retry", "reason"}` with no client, no network or no answer (kept, asked
+/// again at the next resume).
+pub(crate) fn read_location_share(dir: &Path, account: &str, share_id: &str) -> String {
+    let retry = |reason: &str| serde_json::json!({ "state": "retry", "reason": reason }).to_string();
+    let Some(core) = network_ready().then(|| core_in(dir).ok()).flatten() else {
+        return retry("no client or network yet");
+    };
+    let Some(signed_in) = asked(&core).into_iter().find(|asked| asked.account.id == account) else {
+        return serde_json::json!({ "state": "gone", "reason": "signedOut" }).to_string();
+    };
+    match crate::location::read_share(
+        share_id,
+        (&signed_in.account, signed_in.key.as_str()),
+        &LocationPoster(&core),
+        now_ms(),
+    ) {
+        Ok(share) => {
+            let json: Value = serde_json::from_str(&share.to_json(account)).unwrap_or(Value::Null);
+            serde_json::json!({ "state": "ok", "share": json }).to_string()
+        }
+        Err(crate::location::ReadRefused::Gone(reason)) => {
+            log::info!("Location: share {share_id} of {account} is no longer this device's: {reason}");
+            serde_json::json!({ "state": "gone", "reason": reason }).to_string()
+        }
+        Err(crate::location::ReadRefused::Retry(reason)) => {
+            log::info!("Location: share {share_id} of {account} was not read again: {reason}");
+            retry(&reason)
+        }
+    }
+}
+
+/// `Native.beginLocation(json)`: a share confirmed again by the person (its JSON from [`read_location_share`]): reported
+/// from here with that audience as the confirmed one. Whether it was one.
+pub(crate) fn begin_location(json: &str) -> bool {
+    match crate::location::ShareAsk::from_json(json) {
+        Some((account, share)) => {
+            crate::location::begin(
+                &account,
+                &share.share_id,
+                share.interval_seconds * 1000,
+                share.audience_version,
+            );
+            true
+        }
+        None => false,
+    }
+}
+
+/// Posts a live location share's report or stop through the client's proxy with the account's device key, within
+/// [`moqui_client::location::POST_TIMEOUT`] (15 s): a half-open connection gives up then, not at the proxy's ten
+/// minutes (plans/archive/Location-Sharing.md §3.4).
+pub(crate) struct LocationPoster<'a>(pub(crate) &'a Client);
+
+impl Poster for LocationPoster<'_> {
+    fn post(&self, account: &Account, key: &str, path: &str, form: &[(&str, &str)]) -> Result<(u16, Value), String> {
+        moqui_client::location::post_form(
+            self.0.proxy(),
+            &account.server,
+            key,
+            path,
+            form,
+            moqui_client::location::POST_TIMEOUT,
+        )
     }
 }
 
@@ -1439,6 +1556,91 @@ mod entries {
             let dir = client_dir(&data_dir.try_to_string(env)?);
             let (account, ack_id) = (account.try_to_string(env)?, ack_id.try_to_string(env)?);
             super::ack_push(&dir, &account, &ack_id);
+            Ok(())
+        })
+        .resolve::<LogErrorAndDefault>();
+    }
+
+    /// `Native.reportLocation(dataDir, account, shareId, fix)`: a live location share's fix (JSON; empty for none), what
+    /// it came to as JSON (plans/archive/Location-Sharing.md §3.4). The position is never logged.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_reportLocation<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+        account: JString<'caller>,
+        share_id: JString<'caller>,
+        fix: JString<'caller>,
+    ) -> JString<'caller> {
+        env.with_env(|env| -> Result<JString<'caller>, jni::errors::Error> {
+            let dir = client_dir(&data_dir.try_to_string(env)?);
+            let (account, share_id, fix) = (
+                account.try_to_string(env)?,
+                share_id.try_to_string(env)?,
+                fix.try_to_string(env)?,
+            );
+            env.new_string(super::report_location(&dir, &account, &share_id, &fix))
+        })
+        .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.stopLocation(dataDir, account, shareId)`: the notification's Stop; what it came to.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_stopLocation<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+        account: JString<'caller>,
+        share_id: JString<'caller>,
+    ) -> JString<'caller> {
+        env.with_env(|env| -> Result<JString<'caller>, jni::errors::Error> {
+            let dir = client_dir(&data_dir.try_to_string(env)?);
+            let (account, share_id) = (account.try_to_string(env)?, share_id.try_to_string(env)?);
+            env.new_string(super::stop_location(&dir, &account, &share_id))
+        })
+        .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.readLocationShare(dataDir, account, shareId)`: a share read again from its server: ok, gone or retry.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_readLocationShare<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+        account: JString<'caller>,
+        share_id: JString<'caller>,
+    ) -> JString<'caller> {
+        env.with_env(|env| -> Result<JString<'caller>, jni::errors::Error> {
+            let dir = client_dir(&data_dir.try_to_string(env)?);
+            let (account, share_id) = (account.try_to_string(env)?, share_id.try_to_string(env)?);
+            env.new_string(super::read_location_share(&dir, &account, &share_id))
+        })
+        .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.beginLocation(json)`: a share confirmed again, reported from here; whether it was one.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_beginLocation<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        json: JString<'caller>,
+    ) -> jboolean {
+        env.with_env(|env| -> Result<bool, jni::errors::Error> { Ok(super::begin_location(&json.try_to_string(env)?)) })
+            .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.forgetLocation(account, shareId)`: the location service no longer sends a share (its end, the
+    /// permission, notifications off, a refused start): Rust's reporter goes with it.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_forgetLocation<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        account: JString<'caller>,
+        share_id: JString<'caller>,
+    ) {
+        env.with_env(|env| -> Result<(), jni::errors::Error> {
+            let (account, share_id) = (account.try_to_string(env)?, share_id.try_to_string(env)?);
+            crate::location::forget_share(&account, &share_id);
             Ok(())
         })
         .resolve::<LogErrorAndDefault>();

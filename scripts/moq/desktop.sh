@@ -455,6 +455,9 @@ remake_appimage_without_namespaces_hook() {
         for image in "$dir"/*.AppImage; do
             [ -f "$image" ] || die "no AppImage beside $(rel "$appdir")"
             [ -f "$quick_sharun" ] || die "no $quick_sharun to remake $(rel "$image") with"
+            # the script tauri downloaded, checked against the SHA-256 recorded the first time for this tauri-cli
+            # (SEC-OUT-91)
+            check_download_sum "$quick_sharun" "quick-sharun:$(cargo tauri --version 2>/dev/null | tr ' ' '-')"
             run_cmd rm -f -- "$appdir/bin/fix-namespaces.hook" "$image" || die "could not remove the namespaces hook"
             (cd "$dir" && APPDIR=$appdir OUTNAME=${image##*/} run_cmd sh "$quick_sharun" --make-appimage) \
                 || die "could not remake $(rel "$image")"
@@ -563,7 +566,7 @@ stage_client_shell() {
     while IFS= read -r lib; do
         case $lib in '' | '#'*) continue ;; esac
         # "<lib> <part>": only the files the library's parts.json lists for that part (OpenLayers' main part,
-        # plans/Maps-Offline.md §2.5), else the whole library
+        # plans/archive/Maps-Offline.md §2.5), else the whole library
         part=${lib#* }
         [ "$part" != "$lib" ] || part=
         lib=${lib%% *}

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License.
-"""MapsOfflinePackage, the device half of the offline map walk (plans/Maps-Offline.md OF4), over the WebView's DevTools
+"""MapsOfflinePackage, the device half of the offline map walk (plans/archive/Maps-Offline.md OF4), over the WebView's DevTools
 socket of a debug build, as scripts/android-maps-offline.sh runs it once the server half (the tools acceptance spec
 MapsOfflinePackage) serves its package and the app is started with no account:
 
@@ -19,7 +19,7 @@ MapsOfflinePackage) serves its package and the app is started with no account:
 Each step waits a bounded time and the walk fails at the first that does not happen, naming it. The network is restored
 however the walk ends.
 
-    android-maps-offline.py --devtools PORT --serial SERIAL --adb ADB --port SERVER_PORT --user NAME --password PASS
+    python3 -P android-maps-offline.py --devtools PORT --serial SERIAL --adb ADB --port SERVER_PORT --user NAME --password PASS
 """
 import argparse
 import base64
@@ -243,17 +243,24 @@ try:
         60,
     )
     say(f"package {row} listed by the server")
-    click(f'.m-maps-offline-row[data-package="{row}"] .m-maps-offline-download')
+    # the package's row on the offline screen, found by its id given as JSON (never pasted into a selector)
+    row_js = f"Array.from(document.querySelectorAll('.m-maps-offline-row')).find((el) => el.dataset.package === {json.dumps(row)})"
+    in_row = lambda selector: f"(() => {{ const row = {row_js}; return row ? row.querySelector({json.dumps(selector)}) : null; }})()"
+    evaluate(f"(() => {{ const button = {in_row('.m-maps-offline-download')}; if (button) button.click(); return !!button; }})()")
     downloaded = wait_for(
         "the package downloaded and installed (Open)",
-        f"""(() => {{ const row = document.querySelector('.m-maps-offline-row[data-package="{row}"]');
+        f"""(() => {{ const row = {row_js};
         if (!row) return null; if (row.querySelector('.m-maps-offline-open')) return 'installed';
         const failed = row.querySelector('.m-maps-offline-state.text-negative'); return failed ? 'failed: ' + failed.innerText : null; }})()""",
         240,
     )
     if downloaded != "installed":
         fail(f"the package's download: {downloaded}")
-    installed = evaluate(f"moquiDesktop.packages.status().then((all) => all.find((one) => one.packageId === {json.dumps(row)}))")
+    installed = evaluate(
+        f"Promise.resolve(moquiDesktop.packages.status()).then((all) => (all || []).find((one) => one.packageId === {json.dumps(row)}) || null)"
+    )
+    if not isinstance(installed, dict) or "__error" in installed:
+        fail(f"the device's package status lists no package {row} after its download (got {json.dumps(installed)[:300]})")
     say(f"installed: revision {installed.get('revision')}, {installed.get('size')} bytes")
 
     # ---- the network cut, the shell started again offline ----
@@ -277,8 +284,8 @@ try:
     wait_for("the drawer's Maps", "!!document.querySelector('.m-shell-maps')", 30)
     click(".m-shell-maps")
     wait_for("the drawer's Maps opening the offline screen, offline", "!!document.querySelector('.m-maps-offline-chip')", 30)
-    wait_for("the installed package offered (Open)", f"!!document.querySelector('.m-maps-offline-row[data-package=\"{row}\"] .m-maps-offline-open')", 30)
-    click(f'.m-maps-offline-row[data-package="{row}"] .m-maps-offline-open')
+    wait_for("the installed package offered (Open)", f"!!{in_row('.m-maps-offline-open')}", 30)
+    evaluate(f"(() => {{ const button = {in_row('.m-maps-offline-open')}; if (button) button.click(); return !!button; }})()")
     say("the drawer's Maps opened the offline screen; Open")
 
     # ---- the map drawn from the package, and searched ----
