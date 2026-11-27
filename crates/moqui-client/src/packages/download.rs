@@ -296,6 +296,9 @@ impl Run<'_> {
             if self.job.cancelled() {
                 return self.cancelled(&dir);
             }
+            if self.job.paused() {
+                return self.failed("PAUSED", "The download goes on later", true);
+            }
             self.job.set(Status::Downloading {
                 revision: self.revision,
                 done: have,

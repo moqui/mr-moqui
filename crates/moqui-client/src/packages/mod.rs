@@ -97,7 +97,7 @@ pub enum Status {
     /// Installed: served from `revision`'s directory.
     Installed { revision: i64 },
     /// Stopped: `code` says why (TOO_LARGE, NO_SPACE, CHECKSUM, BAD_PACKAGE, NOT_FOUND, NOT_READY, UNAUTHORIZED,
-    /// OFFLINE, SERVER, CHANGED); `retry` when a later try may do (a network cut, a server error).
+    /// OFFLINE, SERVER, CHANGED, PAUSED); `retry` when a later try may do (a network cut, a server error).
     Failed {
         revision: i64,
         code: String,
@@ -129,10 +129,13 @@ impl Status {
     }
 }
 
-/// One package's download: its state, its cancel, and whether a run holds it.
+/// One package's download: its state, its cancel, its pause, and whether a run holds it.
 pub(crate) struct Job {
     pub(crate) revision: i64,
     pub(crate) cancel: AtomicBool,
+    /// The host stopped the run for now (Android's WorkManager: its network or its time gone): it ends at its next
+    /// range with its part kept, to be resumed.
+    pub(crate) pause: AtomicBool,
     pub(crate) running: AtomicBool,
     pub(crate) status: Mutex<Status>,
 }
@@ -142,6 +145,7 @@ impl Job {
         Self {
             revision,
             cancel: AtomicBool::new(false),
+            pause: AtomicBool::new(false),
             running: AtomicBool::new(false),
             status: Mutex::new(Status::Queued { revision }),
         }
@@ -153,6 +157,10 @@ impl Job {
 
     pub(crate) fn cancelled(&self) -> bool {
         self.cancel.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn paused(&self) -> bool {
+        self.pause.load(Ordering::SeqCst)
     }
 }
 
@@ -327,10 +335,22 @@ impl Packages {
                 job
             }
         };
-        job.running
+        let taken = job
+            .running
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_ok()
-            .then_some(job)
+            .is_ok();
+        if taken {
+            job.pause.store(false, Ordering::SeqCst);
+        }
+        taken.then_some(job)
+    }
+
+    /// Pause a package's download (the host stopped its run): it ends at its next range, failed to be tried again
+    /// (PAUSED), its part kept, so the next run resumes it.
+    pub fn pause(&self, account: &str, package_id: &str) {
+        if let Some(job) = moqui_lib::sync::lock(&self.jobs).get(&(account.to_string(), package_id.to_string())) {
+            job.pause.store(true, Ordering::SeqCst);
+        }
     }
 
     /// The state of a package's download, if one was asked for since the app started.

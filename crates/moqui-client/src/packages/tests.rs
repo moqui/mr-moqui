@@ -459,12 +459,40 @@ fn a_download_cut_off_resumes_from_its_part_file() {
     let part = dir.join(format!("data/{ACCOUNT}.packages/{PACKAGE}/1.zip.part"));
     assert_eq!(std::fs::metadata(&part).unwrap().len(), 1000);
     assert_eq!(installed(&packages), None);
+    // a pause (the host stopped the run) ends it at its next range with the part kept
+    struct PauseAfterFirst<'a>(&'a Fake, &'a Packages);
+    impl PackageServer for PauseAfterFirst<'_> {
+        fn get(&self, path: &str, headers: &[(String, String)]) -> Result<ServerAnswer, String> {
+            let answer = self.0.get(path, headers)?;
+            if answer.status == 206 {
+                self.1.pause(ACCOUNT, PACKAGE);
+            }
+            Ok(answer)
+        }
+    }
+    let paused = download(
+        &packages,
+        &PauseAfterFirst(&server, &packages),
+        ACCOUNT,
+        PACKAGE,
+        1,
+        MAX,
+    );
+    assert!(
+        matches!(&paused, Status::Failed { code, retry: true, .. } if code == "PAUSED"),
+        "{paused:?}"
+    );
+    assert_eq!(std::fs::metadata(&part).unwrap().len(), RANGE_LEN + 1000);
     // the next run asks from where the part ends, and the whole checks
     assert_eq!(
         download(&packages, &server, ACCOUNT, PACKAGE, 1, MAX),
         Status::Installed { revision: 1 }
     );
     assert_eq!(server.ranges()[1], format!("bytes=1000-{}", RANGE_LEN + 999));
+    assert_eq!(
+        server.ranges()[2],
+        format!("bytes={}-{}", RANGE_LEN + 1000, server.zip.len() - 1)
+    );
     assert!(!part.exists());
     let _ = std::fs::remove_dir_all(&dir);
 }
