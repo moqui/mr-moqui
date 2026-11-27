@@ -198,6 +198,9 @@ function blockUser(p) {
     row.create()
   }
   setFilters({ userId: me, chatRoomIdList: directRoomsOf(me, other), filterEnumId: 'CmfBlocked', replace: true })
+  // out of the live locations the user shares in chat rooms, in a transaction of its own, never failing the block
+  // (plans/Location-Sharing.md §3.5)
+  ec.resource.script('component://framework/service/org/moqui/chat/ChatLocation.js').execute('revokeLive', { ownerUserId: me, userId: other })
   return { blockedUserId: other }
 }
 

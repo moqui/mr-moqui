@@ -1103,11 +1103,12 @@ const locationCardTemplate = `
                 <div class="text-caption m-chat-live-age" :class="stale ? 'text-warning' : 'm-muted'">{{ageLine}}</div>
                 <template v-if="view.owner">
                     <div class="text-caption m-muted m-chat-live-audience">{{room.t('Shared with the members of the room when you started it')}}</div>
+                    <div v-if="leftNames" class="text-caption text-warning m-chat-live-left">{{room.t('No longer in the room, still sees it')}}: {{leftNames}}</div>
                     <div class="text-caption m-chat-live-sent" :class="sentFrom ? 'text-positive' : 'text-warning'">{{sentText}}</div>
                 </template>
             </template>
             <div v-else-if="state === 'ended'" class="text-body2 m-muted m-chat-live-ended">{{room.t('Live location ended')}}</div>
-            <div v-else-if="state === 'notShared'" class="text-body2 m-muted m-chat-live-not-shared">{{room.t('Not shared with you: only the members of the room when it started see it')}}</div>
+            <div v-else-if="state === 'notShared'" class="text-body2 m-muted m-chat-live-not-shared">{{room.t('This live location is not shared with you')}}</div>
             <div v-else-if="state === 'failed'" class="text-body2 text-warning m-chat-live-failed">{{room.t('The live location could not be read')}}</div>
             <div v-else class="text-caption m-muted">{{room.t('Loading')}}</div>
         </div>
@@ -1165,6 +1166,8 @@ const chatLocationCard = {
             return age + (thru ? ' · ' + this.room.t('until') + ' ' + moqui.chat.live.untilText(thru) : '');
         },
         nativeApp() { return !!moqui.chat.live.native(); },
+        // the people it still reaches who left the room by themselves (the owner takes them out in Who sees my location)
+        leftNames() { return Array.isArray(this.view.share && this.view.share.leftRoomNames) ? this.view.share.leftRoomNames.join(', ') : ''; },
         // where the owner's share is sent from: this page, this phone, another device, or nothing now
         sentText() {
             if (this.sentFrom === 'page') return this.room.t('Sent from this page while it is open');
@@ -1226,7 +1229,7 @@ const chatLocationCard = {
                 if (Array.isArray(list) && list.map(String).includes(this.shareId)) this.sentFrom = 'phone';
             }, () => {});
         },
-        sendHere() { this.room.sendLiveFromHere(this.view.share || { shareId: this.shareId }).then(() => this.load(), () => {}); },
+        sendHere() { this.room.sendLiveFromHere(this.view.share || { shareId: this.shareId }, this.item.eventSeq).then(() => this.load(), () => {}); },
         stop() { this.room.stopLive(this.shareId).then(() => this.load(), () => {}); }
     },
     mounted() {
@@ -1325,10 +1328,13 @@ const chatLocationBox = {
             const place = Object.assign({ source: this.here && !this.typed ? 'here' : 'typed' }, this.place);
             this.room.sendPlace(place, this.threadRoot).then(() => { this.busy = false; this.$emit('close'); }, () => { this.busy = false; });
         },
+        // one clientRef for this dialog, so Share live location again after a lost answer is the same send (the server
+        // answers the first message and its share, and starts no second one)
         shareLive() {
             if (this.liveBusy || needsConnection()) return;
             this.liveBusy = true;
-            this.room.sendLivePlace({ hours: this.liveHours, approximate: this.liveApproximate }, this.threadRoot)
+            if (!this.liveRef) this.liveRef = moqui.chat.newClientRef ? moqui.chat.newClientRef() : '';
+            this.room.sendLivePlace({ hours: this.liveHours, approximate: this.liveApproximate, clientRef: this.liveRef }, this.threadRoot)
                 .then((json) => { this.liveBusy = false; if (json) this.$emit('close'); }, () => { this.liveBusy = false; });
         }
     },
@@ -4548,13 +4554,27 @@ const chatRoom = {
         },
         redact(item) {
             if (!this.queues('chat-redact') && needsConnection()) return;
-            this.confirm(t('Delete the message?'), t('It is removed for everyone; the room shows that a message was removed.')
-                + (this.textMemberCount ? ' ' + t('Text members already got it as a text.') : ''), t('Delete'), true).then(() => {
-                // through the app's outbox it shows as waiting under the message until it is answered
-                this.change('chat-redact', 'redact', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then((json) => {
-                    if (!(json && json.queued)) this.applyRedaction(item.eventSeq);
-                }, () => {});
-            });
+            const message = t('It is removed for everyone; the room shows that a message was removed.') + (this.textMemberCount ? ' ' + t('Text members already got it as a text.') : '');
+            // through the app's outbox it shows as waiting under the message until it is answered
+            const remove = () => this.change('chat-redact', 'redact', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then((json) => {
+                if (!(json && json.queued)) this.applyRedaction(item.eventSeq);
+            }, () => {});
+            // the user's own live location (plans/Location-Sharing.md §3.5): deleting its message does not stop the share,
+            // which the dialog says, with Stop sharing too chosen
+            const place = item.event && item.event.location;
+            const liveShareId = place && place.liveShareId && item.event.senderUserId === this.me.userId ? String(place.liveShareId) : null;
+            if (liveShareId) {
+                this.$q.dialog({ title: t('Delete the message?'), class: 'm-chat-live-delete',
+                    message: message + ' ' + t('Deleting it does not stop sharing your live location: the people it was shared with see it until it ends.'),
+                    options: { type: 'checkbox', model: ['stop'], items: [{ label: t('Also stop sharing my live location'), value: 'stop' }] },
+                    ok: { label: t('Delete'), color: 'negative', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
+                    .onOk((chosen) => {
+                        if (Array.isArray(chosen) && chosen.includes('stop')) this.stopLive(liveShareId);
+                        remove();
+                    });
+                return;
+            }
+            this.confirm(t('Delete the message?'), message, t('Delete'), true).then(remove);
         },
         copyText(item) {
             const text = item.event.bodyText || plainOf(item.event.body);
@@ -5223,13 +5243,16 @@ const chatRoom = {
                 if (!threadRoot) this.replyTo = null;
                 return this.post('sendLiveLocation', { chatRoomId: this.roomId, thruDate: String(Date.now() + hours * 3600000),
                     precisionEnumId: approximate ? 'LspApproximate' : 'LspExact', threadRootEventSeq: threadRoot || '', replyToEventSeq: replyTo ? replyTo.eventSeq : '',
-                    clientRef: moqui.chat.newClientRef ? moqui.chat.newClientRef() : '' }).then((json) => {
+                    clientRef: (choice && choice.clientRef) || (moqui.chat.newClientRef ? moqui.chat.newClientRef() : '') }).then((json) => {
                     if (!json || !json.shareId) return null;
                     this.onSent({ chatRoomId: this.roomId, threadRootEventSeq: threadRoot, json });
-                    if (json.event && json.event.location) this.applyFields(json.eventSeq, { location: json.event.location });
-                    if (json.duplicate) return json;
-                    return this.startLive(json.shareId, { intervalSeconds: json.intervalSeconds, approximate, thruDate: json.thruDate,
-                        label: json.event && json.event.location ? json.event.location.label : '', audienceVersion: 1, fresh: true, created: true }).then(() => json);
+                    const place = json.event && json.event.location;
+                    if (place) this.applyFields(json.eventSeq, { location: place });
+                    // the same send again (an answer lost): the first one's share, sent from here unless it already is
+                    if (json.duplicate && moqui.chat.live.sender.sending(json.shareId)) return json;
+                    return this.startLive(json.shareId, { intervalSeconds: json.intervalSeconds, approximate: place ? place.approximate === true : approximate,
+                        thruDate: json.thruDate, label: place ? place.label : '', audienceVersion: 1, fresh: true, created: true,
+                        reread: this.liveVersion(json.eventSeq) }).then(() => json);
                 });
             }, () => null);
         },
@@ -5256,8 +5279,12 @@ const chatRoom = {
         liveView(eventSeq) {
             return moqui.request(this.url('liveLocation'), { params: { chatRoomId: this.roomId, eventSeq } }).then((result) => result.json || {});
         },
+        // the sender's read of a share's audience version again, after a report refused as AUDIENCE_CHANGED
+        liveVersion(eventSeq) {
+            return () => this.liveView(eventSeq).then((json) => (json && json.owner && json.share ? json.share.audienceVersion : null));
+        },
         // Send from here (Send from this device in the app): the share taken over from the device that sent it, then sent here
-        sendLiveFromHere(share) {
+        sendLiveFromHere(share, eventSeq) {
             const native = moqui.chat.live.native();
             const allowed = native && typeof native.allow === 'function' ? Promise.resolve(native.allow(!share.approximate)) : Promise.resolve(true);
             return allowed.then((ok) => {
@@ -5265,7 +5292,7 @@ const chatRoom = {
                 return this.post('sendLiveFromHere', { shareId: share.shareId }).then((json) => {
                     if (!json.applied) { moqui.notifyMessages(null, [json.reason || t('That did not change the share')]); return null; }
                     return this.startLive(share.shareId, { approximate: !!share.approximate, thruDate: json.thruDate || share.thruDate, label: share.label || '',
-                        intervalSeconds: share.approximate ? 60 : 5, audienceVersion: share.audienceVersion, fresh: true });
+                        intervalSeconds: share.intervalSeconds, audienceVersion: share.audienceVersion, fresh: true, reread: eventSeq ? this.liveVersion(eventSeq) : null });
                 });
             });
         },

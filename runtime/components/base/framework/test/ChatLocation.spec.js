@@ -7,7 +7,16 @@ const A = "CHAT_LOC_A"
 const B = "CHAT_LOC_B"
 // C: added to a room after its live location started
 const C = "CHAT_LOC_C"
-const USERS = [A, B, C]
+// left out of a live location when it starts: D an agent, E who put the room out of sight, F who blocked A, G whom A
+// blocked, H a disabled account; I taken out of the room by A, J blocked by A after it started
+const D = "CHAT_LOC_D"
+const E = "CHAT_LOC_E"
+const F = "CHAT_LOC_F"
+const G = "CHAT_LOC_G"
+const H = "CHAT_LOC_H"
+const I = "CHAT_LOC_I"
+const J = "CHAT_LOC_J"
+const USERS = [A, B, C, D, E, F, G, H, I, J]
 const CHAT = "org.moqui.chat.ChatServices."
 const LOC = "org.moqui.chat.ChatLocationServices."
 const MAPS = "org.moqui.maps.LocationServices."
@@ -64,6 +73,11 @@ spec({
         // a live share a failed run left on is stopped, so the spec runs again on --db existing
         for (const share of sys(() => Array.from(ec.entity.find("moqui.maps.LocationShare").condition("ownerUserId", A).condition("endedDate", null).list())))
             as(A, MAPS + "stop#Share", {shareId: share.shareId})
+        // the blocks and the disabled account of the exclusions, so the spec runs again
+        sys(() => {
+            ec.entity.find("moqui.chat.ChatUserBlock").condition("userId", "in", USERS).deleteAll()
+            ec.entity.find("moqui.security.UserAccount").condition("userId", H).updateAll({disabled: "N"})
+        })
         ec.user.logoutUser()
     }
 })
@@ -131,6 +145,10 @@ feature("live location in a room: its members see it and others do not, the mess
         // C is no member: the room is not theirs, and the share is not either
         const outsider = as(C, LOC + "get#LiveLocation", {chatRoomId: live, eventSeq: sent.eventSeq})
         const outsiderShare = as(C, MAPS + "get#Share", {shareId: sent.shareId})
+        // a non-member learns nothing of a room, not even that it is encrypted
+        const outsiderSends = as(C, LOC + "send#LiveLocation", {chatRoomId: live, thruDate: hour}).reasonCode
+        const outsiderSealed = as(C, LOC + "send#LiveLocation", {chatRoomId: room(A, {roomName: "Loc live sealed outsider", memberUserIdList: [B], encrypted: true}),
+            thruDate: hour}).reasonCode
         // C added to the room later: not added to the share
         as(A, CHAT + "add#Member", {chatRoomId: live, userId: C})
         const joined = as(C, LOC + "get#LiveLocation", {chatRoomId: live, eventSeq: sent.eventSeq})
@@ -161,23 +179,27 @@ feature("live location in a room: its members see it and others do not, the mess
             ec.entity.find("moqui.chat.ChatBridgeDelivery").condition("chatRoomId", bridged).deleteAll()
             ec.entity.find("moqui.chat.ChatRoomBridge").condition("chatRoomBridgeId", "CHAT_LOC_MAP").deleteAll()
         })
-        return {sent, again, sharesAfterAgain, message, content, before, reported, member, owner, outsider, outsiderShare, joined, joinedShare, leftShare,
+        return {sent, again, sharesAfterAgain, message, content, before, reported, member, owner, outsider, outsiderShare, outsiderSends, outsiderSealed, joined, joinedShare, leftShare,
             sealed, alone, tooLong, longKept, viaBridge, delivered, bridgedText: bridgedEvent.bodyText,
             bridgedPlace: JSON.parse(bridgedEvent.contentJson || "{}").location, ended, ownerEnded}
     },
-    then({sent, again, sharesAfterAgain, message, content, before, reported, member, owner, outsider, outsiderShare, joined, joinedShare, leftShare,
+    then({sent, again, sharesAfterAgain, message, content, before, reported, member, owner, outsider, outsiderShare, outsiderSends, outsiderSealed, joined, joinedShare, leftShare,
             sealed, alone, tooLong, longKept, viaBridge, delivered, bridgedText, bridgedPlace, ended, ownerEnded}) {
         sent.errors == ""
         sent.shareId != null
         sent.intervalSeconds == 5
         again.duplicate == true
         again.eventSeq == sent.eventSeq
+        // the first send's share, so a client whose answer was lost starts sending it
+        again.shareId == sent.shareId
+        again.thruDate == sent.thruDate
+        again.intervalSeconds == 5
         sharesAfterAgain == 1
         // the message carries the share's id, never a position
         content.location.liveShareId == sent.shareId
         content.location.source == "live"
         content.location.latitude == null
-        message.bodyText.startsWith("Live location: Loc A, until ")
+        message.bodyText.startsWith("Live location: Loc A, for 1 h\n")
         message.bodyText.includes("Live updates are in the app")
         !message.bodyText.includes("openstreetmap")
         before.state == "live"
@@ -191,6 +213,8 @@ feature("live location in a room: its members see it and others do not, the mess
         outsider.state == null
         outsider.latest == null
         outsiderShare.reasonCode == "SHARE_NOT_FOUND"
+        outsiderSends == "notMember"
+        outsiderSealed == "notMember"
         joined.state == "notShared"
         joined.latest == null
         joinedShare.reasonCode == "SHARE_NOT_FOUND"
@@ -201,12 +225,61 @@ feature("live location in a room: its members see it and others do not, the mess
         tooLong.reasonCode == "TOO_LONG"
         longKept == 0
         delivered == 1
-        bridgedText.startsWith("Live location: Loc A, until ")
+        bridgedText.startsWith("Live location: Loc A, for 1 h\n")
         bridgedPlace.liveShareId == viaBridge.shareId
         bridgedPlace.approximate == true
         bridgedPlace.latitude == null
         ended.state == "ended"
         ownerEnded.state == "ended"
         ownerEnded.owner == true
+    }
+})
+
+// Who a live location starts with and who loses it (plans/Location-Sharing.md §3.5, the LL4 decisions): an agent, a member
+// who put the room out of sight, one who blocked the owner, one the owner blocked and a disabled account are left out; a
+// member taken out of the room by another, or blocked by the owner after it started, loses it; one who leaves by
+// themselves keeps it, and the owner's card names them as no longer in the room.
+feature("live location's audience: those left out when it starts; one taken out of the room or blocked later loses it, one who leaves keeps it", {
+    when() {
+        const crowd = room(A, {roomName: "Loc live crowd", memberUserIdList: [B, D, E, F, G, H, I, J]})
+        sys(() => {
+            ec.entity.find("moqui.chat.ChatRoomMember").condition({chatRoomId: crowd, userId: D}).updateAll({roleEnumId: "CmrAgent"})
+            ec.entity.find("moqui.chat.ChatRoomMember").condition({chatRoomId: crowd, userId: E}).updateAll({filterEnumId: "CmfBlocked"})
+            ec.entity.find("moqui.security.UserAccount").condition("userId", H).updateAll({disabled: "Y"})
+        })
+        make("moqui.chat.ChatUserBlock", {userId: F, blockedUserId: A, blockedDate: new Date()})
+        make("moqui.chat.ChatUserBlock", {userId: A, blockedUserId: G, blockedDate: new Date()})
+        const sent = as(A, LOC + "send#LiveLocation", {chatRoomId: crowd, thruDate: new Date(Date.now() + 3600000)})
+        const audience = () => sys(() => Array.from(ec.entity.find("moqui.maps.LocationShareAudience").condition("shareId", sent.shareId)
+            .condition("revokedDate", null).list()).map((one) => one.userId).sort())
+        const started = audience()
+        const linked = row("moqui.chat.ChatLiveShare", {chatRoomId: crowd, eventSeq: sent.eventSeq})
+        // I taken out by A (the room's owner), J blocked by A, B leaves by themselves
+        const removed = as(A, CHAT + "remove#Member", {chatRoomId: crowd, userId: I})
+        const blocked = as(A, "org.moqui.chat.ChatBlockServices.block#ChatUser", {blockedUserId: J})
+        const left = as(B, CHAT + "remove#Member", {chatRoomId: crowd})
+        const after = audience()
+        const removedSees = as(I, MAPS + "get#Share", {shareId: sent.shareId}).reasonCode
+        const blockedSees = as(J, MAPS + "get#Share", {shareId: sent.shareId}).reasonCode
+        const leftSees = as(B, MAPS + "get#Share", {shareId: sent.shareId})
+        const ownerCard = as(A, LOC + "get#LiveLocation", {chatRoomId: crowd, eventSeq: sent.eventSeq})
+        as(A, MAPS + "stop#Share", {shareId: sent.shareId})
+        return {sent, started, linked, removed, blocked, left, after, removedSees, blockedSees, leftSees, ownerCard}
+    },
+    then({sent, started, linked, removed, blocked, left, after, removedSees, blockedSees, leftSees, ownerCard}) {
+        sent.errors == ""
+        started == [B, I, J]
+        linked.shareId == sent.shareId
+        linked.ownerUserId == A
+        removed.errors == ""
+        blocked.errors == ""
+        left.errors == ""
+        after == [B]
+        removedSees == "SHARE_NOT_FOUND"
+        blockedSees == "SHARE_NOT_FOUND"
+        leftSees.errors == ""
+        ownerCard.share.audienceCount == 1
+        ownerCard.share.leftRoomNames == ["Loc B"]
+        ownerCard.share.intervalSeconds == 5
     }
 })

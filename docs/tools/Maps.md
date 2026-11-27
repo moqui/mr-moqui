@@ -1103,9 +1103,12 @@ get one from Chat's Share live location (below, "In chat"). XMPP and the guest p
   the room's name") whose audience is the room's members of that moment as `LsaUser` entries, after the same directory
   and block rules, and posts a message carrying only the share's id (`content.location.liveShareId`). Its card reads the
   share through `get#Share` (`get#LiveLocation`, which first reads the message through `get#Timeline`, so only a reader
-  of the room asks) and follows its topic; `get#ShareStatus` (internal) tells a room member the share does not reach
-  whether it has ended, and nothing else. Who joins the room later is not added and who leaves stays in until the owner
-  takes them out here; the share is in Shared with me, Who sees my location and the app bar's chip like any other. The
+  of the room asks) and follows its topic; `get#ShareStatus` (internal) tells a reader of the room whom the share does
+  not reach whether it has ended, and nothing else. Who joins the room later is not added, who leaves by themselves
+  stays in until the owner takes them out here, and who is taken out of the room by another, or blocked by the owner, is
+  taken out of the room's live shares (`revoke#ChatAudience`, internal, the `revoke#Audience` path whoever the caller,
+  over the room's `moqui.chat.ChatLiveShare` rows); the share is in Shared with me, Who sees my location and the app
+  bar's chip like any other. The
   Android app's dialog and service, and a browser's sending while its page is open (`moqui.chat.live.sender`, Chat's
   `reportLiveLocation`), are as for a share started in Maps. Not in an encrypted room, where the server would see each
   position (the decision and its later step are in Comms).

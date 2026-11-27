@@ -1748,7 +1748,7 @@ test("an event's times: a wall clock in its zone, the box's start and end, the v
     }
 });
 
-test("live location (plans/Location-Sharing.md §3.5): a push moves a card's view, ends it or takes a viewer out; the page's sender sends at most one fix an interval, waits on 429, stops on 410 and once no chat view holds it", async () => {
+test("live location (plans/Location-Sharing.md §3.5): a push moves a card's view, ends it or takes a viewer out; the page's sender sends at most one fix an interval, waits on 429, stops on 410, another device, an audience it cannot read again and a lost sign-in (said), notes the chip, and stops once no chat view holds it", async () => {
     const live = chat.live;
     const view = live.view({ state: "live", owner: false, share: { shareId: "S1", thruDate: 5000 }, latest: { latitude: 1, longitude: 2, ageSeconds: 30 } }, 100000);
     assert.equal(view.seenAt, 70000);
@@ -1778,10 +1778,16 @@ test("live location (plans/Location-Sharing.md §3.5): a push moves a card's vie
     const sender = live.makeSender({
         geolocation: { watchPosition: (fn) => { watch.fn = fn; return 7; }, clearWatch: () => { watch.cleared += 1; }, getCurrentPosition: () => {} },
         now: () => clock,
-        post: (url, params) => { posts.push({ url, params }); return Promise.resolve(replies.shift() || { statusCode: 200 }); },
+        post: (url, params) => {
+            posts.push({ url, params });
+            const reply = replies.shift() || { statusCode: 200 };
+            return reply.rejected ? Promise.reject(reply.rejected) : Promise.resolve(reply);
+        },
         setInterval: (fn) => { timers.pump = fn; return 1; }, clearInterval: () => { timers.pump = null; },
-        setTimeout: (fn) => { timers.release = fn; return 2; }, clearTimeout: () => { timers.release = null; }
+        setTimeout: (fn) => { timers.release = fn; return 2; }, clearTimeout: () => { timers.release = null; },
+        notify: (words) => notes.push(words)
     });
+    const notes = [];
     const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
     const fix = async (at, latitude) => { clock = at; watch.fn({ coords: { latitude, longitude: 2, accuracy: 10 }, timestamp: at }); await settle(); };
     assert.equal(sender.start("S1", { url: "/r", intervalSeconds: 5 }), false, "nothing is sent while no chat view holds the sender");
@@ -1807,6 +1813,52 @@ test("live location (plans/Location-Sharing.md §3.5): a push moves a card's vie
     assert.equal(sender.sending("S1"), false, "410 stops it");
     assert.equal(watch.cleared, 1, "the watch let go");
     assert.ok(told.includes("reported") && told.includes("stopped"));
+    // the app bar's chip says "sending here" while it sends, beside what Maps says, and takes only its own words off
+    const chip = () => moqui.shellIndicators.state.notes.locationSharing || "";
+    moqui.shellIndicators.noteFrom("locationSharing", "maps", "sending from this phone");
+    sender.start("S3", { url: "/r", intervalSeconds: 5, thruDate: 999999 });
+    assert.equal(chip(), "sending from this phone, sending here");
+    // another device sends it now: stopped, and said
+    replies.push({ statusCode: 409, reasonCode: "OTHER_DEVICE" });
+    await fix(30000, 15);
+    assert.equal(sender.sending("S3"), false);
+    assert.equal(chip(), "sending from this phone");
+    moqui.shellIndicators.noteFrom("locationSharing", "maps", null);
+    assert.equal(chip(), "");
+    assert.ok(notes.pop().includes("Another device"), "said");
+    // the audience changed: its version read again and sending goes on with it; a reread that finds no change stops it, said
+    sender.start("S4", { url: "/r", intervalSeconds: 5, thruDate: 999999, audienceVersion: 1, reread: () => Promise.resolve(2) });
+    replies.push({ statusCode: 409, reasonCode: "AUDIENCE_CHANGED" });
+    await fix(40000, 16);
+    await settle();
+    assert.equal(sender.sending("S4"), true);
+    await fix(41000, 17);
+    assert.equal(posts[posts.length - 1].params.audienceVersion, "2", "sent with the version read again");
+    sender.stop("S4");
+    sender.start("S5", { url: "/r", intervalSeconds: 5, thruDate: 999999, audienceVersion: 1 });
+    replies.push({ statusCode: 409, reasonCode: "AUDIENCE_CHANGED" });
+    await fix(50000, 18);
+    assert.equal(sender.sending("S5"), false);
+    assert.ok(notes.pop().includes("Who sees your live location changed"));
+    // a sign-in lost (401 or 403 from the transition): every share stops, and the page says so; no more posts
+    sender.start("S6", { url: "/r", intervalSeconds: 5, thruDate: 999999 });
+    sender.start("S7", { url: "/r", intervalSeconds: 5, thruDate: 999999 });
+    replies.push({ rejected: { status: 401 } }, { rejected: { status: 403 } });
+    await fix(60000, 19);
+    assert.equal(sender.sending("S6") || sender.sending("S7"), false);
+    assert.ok(sender.error.includes("sign in again"));
+    assert.ok(notes.pop().includes("sign in again"));
+    const count = posts.length;
+    await fix(70000, 20);
+    assert.equal(posts.length, count, "nothing posted after a lost sign-in");
+    // a network failure is tried again at the next interval
+    sender.start("S8", { url: "/r", intervalSeconds: 5, thruDate: 999999 });
+    replies.push({ rejected: { status: 0 } });
+    await fix(80000, 21);
+    assert.equal(sender.sending("S8"), true);
+    await fix(85500, 22);
+    assert.equal(posts.length, count + 2, "tried again");
+    sender.stop("S8");
     // the last chat view let go: after a moment (not a room changed for another) the page sends nothing more
     sender.start("S2", { url: "/r", intervalSeconds: 5, thruDate: 999999 });
     release();

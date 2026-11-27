@@ -432,6 +432,22 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="CHAT_USER_BLOCKED"><index-field name="blockedUserId"/></index>
     </entity>
 
+    <entity entity-name="ChatLiveShare" package="moqui.chat" use="transactional" cache="never">
+        <description>A live location message (plans/Location-Sharing.md §3.5; ChatLocationServices.send#LiveLocation): the
+            room and message that started a location share (moqui.maps.LocationShare) and its owner, written with the
+            message. Ids only, never a position. Read when a member is taken out of the room by another (remove#Member) or
+            blocked by the owner (ChatBlocks.js blockUser), whose entry in the room's live shares is then revoked
+            (LocationServices.revoke#ChatAudience); a member who leaves by themselves stays in the share.</description>
+        <field name="chatRoomId" type="id" is-pk="true"/>
+        <field name="eventSeq" type="number-integer" is-pk="true"/>
+        <field name="shareId" type="id"/>
+        <field name="ownerUserId" type="id"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.chat.ChatRoom"/>
+        <index name="CHAT_LIVE_SHARE_OWNER"><index-field name="ownerUserId"/></index>
+        <index name="CHAT_LIVE_SHARE_SHARE"><index-field name="shareId"/></index>
+    </entity>
+
     <entity entity-name="ChatInviteLink" package="moqui.chat" use="transactional" cache="never">
         <description>A room's invite link, /join/&lt;token&gt; (plans/Comms-Messaging.md §18.3 phase 17,
             org.moqui.chat.ChatInviteServices): a private room's moderators make them, any member of a public room. The token

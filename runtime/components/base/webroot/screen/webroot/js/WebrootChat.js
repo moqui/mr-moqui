@@ -2452,11 +2452,14 @@
      * browser's watchPosition, and at most one report a share's interval to the share's report transition. Its statuses
      * as Maps › Browse handles them (report#Position): 200 taken (its latest told to the listeners), 429 sent again after
      * retryAfterSeconds, 410 and 404 stop it (ended), 409 STALE and another 400 pass that fix over, CLOCK_AHEAD and
-     * BEFORE_SHARE send from then on with the server's time, OTHER_DEVICE stops it (another device sends it now), a lost
-     * sign-in (an answer that is not the transition's JSON) stops every one; a network failure tries again at the next
-     * interval. When the last chat view lets go, nothing is sent: the share stays on and its audience sees its age. No
-     * position is kept beyond the newest fix, logged or stored. env: {geolocation, post(url, params), now, setInterval,
-     * clearInterval, setTimeout, clearTimeout}, for the tests.
+     * BEFORE_SHARE send from then on with the server's time, OTHER_DEVICE stops it (another device sends it now, said),
+     * AUDIENCE_CHANGED reads the share's audience version again (info.reread) and goes on, or stops it, said, a lost
+     * sign-in (401 or 403, or an answer that is not the transition's JSON) stops every one, said; a network failure tries
+     * again at the next interval. When the last chat view lets go, or at a sign-out (moqui.beforeLogoutHooks), nothing is
+     * sent: the share stays on and its audience sees its age. While it sends, the app bar's live location chip says
+     * "sending here" (moqui.shellIndicators.noteFrom, beside Maps › Browse's own words). No position is kept beyond the
+     * newest fix, logged or stored. env: {geolocation, post(url, params), now, setInterval, clearInterval, setTimeout,
+     * clearTimeout, notify(text)}, for the tests.
      */
     chat.live.makeSender = (env) => {
         const given = env || {};
@@ -2465,11 +2468,17 @@
         const post = given.post || ((url, params) => moqui.request(url, { method: "POST", params }).then((result) => result.json));
         const every = given.setInterval || ((fn, ms) => setInterval(fn, ms));
         const stopEvery = given.clearInterval || ((id) => clearInterval(id));
+        const notify = given.notify || ((words) => { if (moqui.notifyMessages) moqui.notifyMessages(null, [words]); });
         const sender = { shares: {}, holders: 0, releaseTimer: null, watchId: null, watchExact: null, fix: null, fixAt: 0, lastAsk: 0, asking: false, generation: 0, timer: null,
             listeners: [], error: "" };
         const tell = (change) => sender.listeners.slice().forEach((fn) => { try { fn(change || { kind: "changed" }); } catch (err) { console.error(err); } });
         sender.on = (fn) => { sender.listeners.push(fn); return () => { sender.listeners = sender.listeners.filter((one) => one !== fn); }; };
         sender.sending = (shareId) => !!sender.shares[String(shareId)];
+        // the app bar's live location chip (the framework's shell indicator, LocationShares.js indicator) while this page sends
+        const noteChip = () => {
+            const indicators = moqui.shellIndicators;
+            if (indicators && typeof indicators.noteFrom === "function") indicators.noteFrom("locationSharing", "chat", Object.keys(sender.shares).length ? tr("sending here") : null);
+        };
         sender.list = () => Object.keys(sender.shares).map((id) => { const one = sender.shares[id]; return { shareId: id, thruDate: one.thruDate, label: one.label, note: one.note }; });
         const exactNeeded = () => Object.keys(sender.shares).some((id) => !sender.shares[id].approximate);
         const note = (shareId, text) => { const one = sender.shares[shareId]; if (one && one.note !== text) { one.note = text; tell(); } };
@@ -2525,8 +2534,12 @@
             sender.shares[id] = { url: it.url, intervalMillis: Math.max(1, liveNumber(it.intervalSeconds) || (it.approximate ? 60 : 5)) * 1000, approximate: !!it.approximate,
                 thruDate: liveNumber(it.thruDate), label: it.label || "", audienceVersion: liveNumber(it.audienceVersion), nextAt: 0, sentAt: 0, inFlight: false,
                 serverTime: false, notBefore: it.fresh ? now() - 1000 : 0, note: "" };
+            sender.shares[id].reread = typeof it.reread === "function" ? it.reread : null;
             watch();
             if (it.fresh) freshFix();
+            // a sign-out stops it (once added, for the page)
+            if (!sender.logoutHooked && moqui.beforeLogoutHooks) { sender.logoutHooked = true; moqui.beforeLogoutHooks.add(() => sender.stopAll("signedOut")); }
+            noteChip();
             tell({ kind: "started", shareId: id });
             return true;
         };
@@ -2536,7 +2549,35 @@
             delete sender.shares[id];
             if (!Object.keys(sender.shares).length) unwatch();
             else watch();
+            noteChip();
             tell({ kind: "stopped", shareId: id, reason: reason || null });
+        };
+        sender.stopAll = (reason) => Object.keys(sender.shares).forEach((id) => sender.stop(id, reason));
+        // a sign-in lost: every share stops, and the page says so
+        const signedOut = () => {
+            const had = Object.keys(sender.shares).length;
+            sender.stopAll("signedOut");
+            sender.error = tr("Your location is no longer sent from this page: sign in again, then choose Send from here");
+            if (had) notify(sender.error);
+            tell();
+        };
+        // the audience changed since the version this page sends: read again and go on, else stopped and said
+        const audienceChanged = (id, one) => {
+            const stopped = () => {
+                if (sender.shares[id] !== one) return;
+                sender.stop(id, "audienceChanged");
+                notify(tr("Who sees your live location changed: choose Send from here to send it again"));
+            };
+            if (!one.reread) { stopped(); return; }
+            one.inFlight = true;
+            Promise.resolve(one.reread()).then((version) => {
+                one.inFlight = false;
+                if (sender.shares[id] !== one) return;
+                const next = liveNumber(version);
+                if (next === null || next === one.audienceVersion) { stopped(); return; }
+                one.audienceVersion = next;
+                one.nextAt = now();
+            }, () => { one.inFlight = false; stopped(); });
         };
         // a chat view holds the sender from its mount to its unmount; with none left for a few seconds (not a room changed
         // for another, which mounts the next view at once) the page sends nothing more
@@ -2553,7 +2594,7 @@
                 if (sender.holders || sender.releaseTimer) return;
                 sender.releaseTimer = later(() => {
                     sender.releaseTimer = null;
-                    if (!sender.holders) Object.keys(sender.shares).forEach((id) => sender.stop(id, "closed"));
+                    if (!sender.holders) sender.stopAll("closed");
                 }, 3000);
             };
         };
@@ -2585,19 +2626,18 @@
                 const status = Number(json && json.statusCode);
                 const at = now();
                 const reason = json && json.reasonCode;
-                if (!Number.isFinite(status)) {
-                    Object.keys(sender.shares).forEach((other) => sender.stop(other, "signedOut"));
-                    sender.error = tr("Your location is no longer sent from this page: sign in again, then choose Send from here");
-                    tell();
-                } else if (status === 200) {
+                if (!Number.isFinite(status)) signedOut();
+                else if (status === 200) {
                     one.sentAt = fix.timestamp;
                     one.nextAt = at + one.intervalMillis;
                     if (!one.serverTime) note(id, "");
                     tell({ kind: "reported", shareId: id, latest: json.latest || null });
                 } else if (status === 429) one.nextAt = at + Math.max(1, Number(json.retryAfterSeconds) || 1) * 1000;
                 else if (status === 410 || status === 404) sender.stop(id, "ended");
-                else if (status === 409 && reason === "OTHER_DEVICE") sender.stop(id, "otherDevice");
-                else if (status === 409 && reason === "AUDIENCE_CHANGED") sender.stop(id, "audienceChanged");
+                else if (status === 409 && reason === "OTHER_DEVICE") {
+                    sender.stop(id, "otherDevice");
+                    notify(tr("Another device sends this live location now: choose Send from here to send it from this page"));
+                } else if (status === 409 && reason === "AUDIENCE_CHANGED") audienceChanged(id, one);
                 else if ((status === 409 && reason === "CLOCK_AHEAD") || (status === 400 && reason === "BEFORE_SHARE")) {
                     one.serverTime = true;
                     one.nextAt = at + 1000;
@@ -2607,9 +2647,11 @@
                     one.sentAt = fix.timestamp;
                     one.nextAt = at + one.intervalMillis;
                 }
-            }, () => {
-                // the network: tried again at the next interval
+            }, (err) => {
                 one.inFlight = false;
+                // a sign-in lost or refused: nothing more is sent from here
+                if (err && (err.status === 401 || err.status === 403)) { signedOut(); return; }
+                // the network: tried again at the next interval
                 one.nextAt = now() + one.intervalMillis;
             });
         };
