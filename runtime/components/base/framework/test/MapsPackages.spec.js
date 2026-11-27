@@ -1,17 +1,17 @@
 // Offline map packages (plans/Maps-Offline.md §2, OF1; org.moqui.maps.MapSourceServices, MapPackages.js, tools
 // screen/Maps/Offline.xml package): a package is cut from a small fixture archive (MapsArchiveLib's tiles) and built by
 // the MapPackageBuild job from what its owner may see, a basemap layer they may not see left out; its zip is served to
-// its owner by range with its SHA-256 as the strong ETag and refused another user, and a stale revision is 409; its
-// manifest lists every member with its size and SHA-256 and names no URL of this server; a package past
-// maps@package-max-bytes is refused at its estimate; one build at a time: a user's second refused while theirs is
-// building, another user's waiting its turn and started when the build ends; a cancel ends a build cancelled, a run
-// whose key the package does not hold writes nothing, and an archive registered again since the build was asked fails
-// it; the Offline page renders once in qvt and once in the terminal (its own template); the hourly clean removes an
-// expired package's file and a deleted one's; the owner's places and the overlays they read are packaged, another
-// user's places and an unshared overlay never, a shared one until its share is revoked; a dead build and a disabled
-// owner's build end failed and hold no turn, and a waiting build runs as its owner, who alone is told; a started run
-// silent for an hour is ended by the build's own clocks, its package row's fresh stamp aside. The cut's bounds, the
-// antimeridian and the writer are moqui-tools' and moqui-lib's Rust tests.
+// its owner by range with its SHA-256 as the strong ETag and refused another user, and a stale revision is 409, and
+// listed as JSON to its owner only (packageList, the apps' download); its manifest lists every member with its size and
+// SHA-256 and names no URL of this server; a package past maps@package-max-bytes is refused at its estimate; one build
+// at a time: a user's second refused while theirs is building, another user's waiting its turn and started when the
+// build ends; a cancel ends a build cancelled, a run whose key the package does not hold writes nothing, and an archive
+// registered again since the build was asked fails it; the Offline page renders once in qvt and once in the terminal
+// (its own template); the hourly clean removes an expired package's file and a deleted one's; the owner's places and
+// the overlays they read are packaged, another user's places and an unshared overlay never, a shared one until its
+// share is revoked; a dead build and a disabled owner's build end failed and hold no turn, and a waiting build runs as
+// its owner, who alone is told; a started run silent for an hour is ended by the build's own clocks, its package row's
+// fresh stamp aside. The cut's bounds, the antimeridian and the writer are moqui-tools' and moqui-lib's Rust tests.
 // Run: ./moq test framework --spec MapsPackages
 const S = "org.moqui.maps.MapSourceServices."
 const OWNER = "MAPS_PKG_OWNER"
@@ -97,6 +97,19 @@ function download(userId, packageId, revision, range) {
             cacheControl: String(res.header("Cache-Control") || ""),
             length: String(res.output || "").length
         }
+    })
+}
+// the packageList transition as the user, which the apps' download reads: its status and the packages it lists
+function packageList(userId) {
+    return as(userId, () => {
+        const res = ec.screen.makeTest().rootScreen("component://webroot/screen/webroot.xml").render("apps/maps/Offline/packageList", {}, "get")
+        let list = []
+        try {
+            list = JSON.parse(String(res.output || "{}")).packageList || []
+        } catch (e) {
+            list = []
+        }
+        return {status: res.status, list}
     })
 }
 // a package row of the owner's made here, as create#Package makes one, with no job started
@@ -254,6 +267,8 @@ feature("a package is cut from what its owner may see, its manifest lists every 
         out.row = {statusId: row.statusId, statusNote: row.statusNote, revision: row.revision, sha256: row.sha256, size: row.size,
             location: row.location}
         out.listed = (as(OWNER, () => invoke(S + "find#Packages").packageList) || []).find(entry => entry.packageId == out.created.packageId) || {}
+        out.ownerList = packageList(OWNER)
+        out.otherList = packageList(OTHER)
         out.owner = download(OWNER, out.created.packageId, row.revision, "bytes=0-99")
         out.whole = download(OWNER, out.created.packageId, row.revision)
         out.other = download(OTHER, out.created.packageId, row.revision, "bytes=0-99")
@@ -305,6 +320,9 @@ feature("a package is cut from what its owner may see, its manifest lists every 
         out.zipSha == out.row.sha256
         out.listed.downloadUrl == "/apps/maps/Offline/package?packageId=" + out.created.packageId + "&revision=1"
         out.listed.tag == "sha256-" + out.row.sha256
+        // the apps read the same list as JSON; another user's lists none of it
+        out.ownerList.status == 200 && out.ownerList.list.some(entry => entry.packageId == out.created.packageId && entry.tag == out.listed.tag)
+        out.otherList.status == 200 && !out.otherList.list.some(entry => entry.packageId == out.created.packageId)
         // its owner reads a range with the strong tag; another user is told nothing of it; another revision is 409
         out.owner.status == 206 && out.owner.etag == '"sha256-' + out.row.sha256 + '"'
         out.owner.contentRange == "bytes 0-99/" + out.row.size
