@@ -558,56 +558,55 @@ location share the person started, under its notification (below).
 
 ### Live location
 
-A live location share started in Maps (plans/Location-Sharing.md §3.4, LL3; [Maps, Live location](../tools/Maps.md#live-location))
-is sent from the phone by the app, also while it is in the background. The Kotlin is `LocationShare.kt` (the object and
-`LocationShareService`), `LocationStops.kt` (the stops kept until the server confirms them) and `LocationRules.kt`
-(JVM-tested); the Rust is `src/location.rs` with `moqui_client::location`. None of it was run on a device or the
-emulator yet (LL7's walk).
+A live location share started in Maps, a chat room or a record's page (Share my location with the customer) is sent from
+the phone by the app, also while it is in the background (plans/Location-Sharing.md §3.4). Who sees it, its reach,
+retention and precision are the guide [Maps, Live location](../tools/Maps.md#live-location); this is the app's part. The
+Kotlin is `LocationShare.kt` (the object and `LocationShareService`), `LocationStops.kt` (the stops kept until the
+server confirms them) and `LocationRules.kt` (JVM-tested); the Rust is `src/location.rs` with `moqui_client::location`.
+`location_allow` and `location_share_start` run on Tauri's blocking pool: the share's read is reqwest's blocking client,
+which panics on a runtime worker, and the person's answer is waited for there. The emulator walk
+`scripts/android-location-share.sh` drives it ([Tests](#tests)).
 
-- **Started by the person's Send in the app's own dialog.** A server page has `moquiDesktop.location` (`allow`, `start`, `stop`, `status`; the
-  host commands `location_allow`, `location_share_start`, `location_share_stop`, `location_share_status`, each for the
-  page's account while it is the current one). Browse's Share asks `allow` first: without the location permission the
-  app shows a dialog that says why (to send where you are to the people you chose, until the time you chose, with a
-  notification and Stop while it does), then Android's question: for an exact share precise and approximate (the person
-  may give either; given approximate only it sends the phone's approximate fixes; precise is asked again only after a
-  Not now), for an approximate share approximate alone, so where precise was never given the phone's own fixes are
-  approximate (about 3 km² on Android 12+) before the server rounds them. Not now, or the dialog dismissed, answers no
-  and no share is started. Once the share is made, `start` names it (its id alone): the host reads it from the server
-  with the account's device key (`/qapps/clientLocationShare`, `get#AppShare`: whom with, until when, exact or
-  approximate, its interval, its audience version, and that this device sends it), and the app asks in its own
-  dialog: "Send your location from this phone to Sam Smith (sam) and Family (4 members) until Fri 09:00? It goes on while
-  the app is in the background, with a notification and Stop.", Send or Not now. The words are the server's: each person
-  by name and unique username, a group with the members it reaches, "anyone with the guest link", and the end with its
-  weekday when it is not today. The dialog refuses touches through another app's window (`ObscuredTouches`, and Send's
-  own check of `FLAG_WINDOW_IS_PARTIALLY_OBSCURED`), hides other apps' overlays while it shows (Android 12+,
-  `HIDE_OVERLAY_WINDOWS`), keeps Send disabled for a second after it has the window's focus, marks its text sensitive
-  for accessibility services (Android 14+), and goes with no answer after a minute. **That native dialog is the
-  control**, and it guards two things: the start of sending from this phone, and the audience it sends to. A server
-  page's script can reach the app's IPC and ask for a start, but nothing is sent from the phone in the background
-  without the person's Send there. The share has an audience version (`LocationShare.audienceVersion`) that every
-  change of its audience that can reach someone new raises (an entry added, a group added again, whose snapshot is
+- **Started by the person's Send in the app's own dialog.** A server page has `moquiDesktop.location` (`allow`, `start`,
+  `stop`, `status`; the host commands `location_allow`, `location_share_start`, `location_share_stop`,
+  `location_share_status`, each for the page's account while it is the current one). Browse's Share asks `allow` first:
+  without the location permission the app shows a dialog that says why (to send where you are to the people you chose,
+  until the time you chose, with a notification and Stop while it does), then Android's question: for an exact share
+  precise and approximate (the person may give either; given approximate only it sends the phone's approximate fixes;
+  precise is asked again only after a Not now), for an approximate share approximate alone, so where precise was never
+  given the phone's own fixes are approximate (about 3 km² on Android 12+) before the server rounds them. Not now, or
+  the dialog dismissed, answers no and no share is started. Once the share is made, `start` names it (its id alone): the
+  host reads it from the server with the account's device key (`/qapps/clientLocationShare`, `get#AppShare`: whom with,
+  until when, exact or approximate, its interval, its audience version, and that this device sends it), and the app asks
+  in its own dialog: "Send your location from this phone to Sam Smith (sam) and Family (4 members) until Fri 09:00? It
+  goes on while the app is in the background, with a notification and Stop.", Send or Not now. The words are the
+  server's: each person by name and unique username, a group with the members it reaches, "anyone with the guest link",
+  and the end with its weekday when it is not today. The dialog refuses touches through another app's window
+  (`ObscuredTouches`, and Send's own check of `FLAG_WINDOW_IS_PARTIALLY_OBSCURED`), hides other apps' overlays while it
+  shows (Android 12+, `HIDE_OVERLAY_WINDOWS`), keeps Send disabled for a second after it has the window's focus, marks
+  its text sensitive for accessibility services (Android 14+), and goes with no answer after a minute. **That native
+  dialog is the control**, and it guards two things: the start of sending from this phone, and the audience it sends to.
+  A server page's script can reach the app's IPC and ask for a start, but nothing is sent from the phone in the
+  background without the person's Send there. The share has an audience version (`LocationShare.audienceVersion`) that
+  every change of its audience that can reach someone new raises (an entry added, a group added again, whose snapshot is
   written again; a revoke does not); the phone sends the version the person confirmed with each report, and the server
-  refuses a report of another version, or of none from a share sent from a device, with 409 `AUDIENCE_CHANGED` before
-  it writes or pushes anything. On that 409 the phone pauses the share, and a notification asks the person to open the
-  app (at once when it is in front), where the same dialog asks again with the server's words (Send sends it to that
+  refuses a report of another version, or of none from a share sent from a device, with 409 `AUDIENCE_CHANGED` before it
+  writes or pushes anything. On that 409 the phone pauses the share, and a notification asks the person to open the app
+  (at once when it is in front), where the same dialog asks again with the server's words (Send sends it to that
   version; Not now stops the share on the server; a share not read for want of a network stays paused for the next
-  time). So no position the phone sends reaches an audience the person did not confirm. And a person added sees only
-  what the server received after the audience reached them (the latest position and a kept trail, by the server's
-  receive time, from when their entry, or their group's snapshot by the same membership row, first held them), so no
-  position reported before a person was added, or while they were out of the group, reaches them. One exception, which
-  plans/Location-Sharing.md §3.1 accepts: a snapshot member whose own membership row is ended and reopened, or made
-  again with the same fromDate, keeps their first reach and sees what was received while they were out. It does not
-  guard what the server does with the reports it gets, nor the shares a browser or another device sends. Nor does it guard a page in front: with the location
-  permission given, a server page the app shows gets the WebView's geolocation with no prompt (`RustWebChromeClient`
-  answers for the app's own origins), as any browser page with the permission does, so a page in front can read the
-  position and send it itself while it is open (the `unavailable` path's own sending; its reports carry the version
-  the page read). Send starts `LocationShareService`, a foreground service of type `location`
-  (`FOREGROUND_SERVICE_LOCATION`), only while the app is in front (`LocationShare.foreground`), with the permission and
-  notifications allowed (`LocationRules.mayStart`); `start` answers `started`, `declined` (Not now: a share just made
-  is stopped, and the page sends nothing) or `unavailable` (the page sends while it is open, as a browser does). So the
-  app has no `ACCESS_BACKGROUND_LOCATION`: Android lets a foreground service started from the app in front keep reading
-  the location once the app goes to the background. The service is not sticky: a process Android ended does not start
-  it again, and the share goes stale until its end or a Stop.
+  time). So no position the phone sends reaches an audience the person did not confirm, and a person added sees only
+  what the server received after the audience reached them ([the reach rule](../tools/Maps.md#who-sees-what)). It does
+  not guard what the server does with the reports it gets, nor the shares a browser or another device sends. Nor does it
+  guard a page in front: with the location permission given, a server page the app shows gets the WebView's geolocation
+  with no prompt (`RustWebChromeClient` answers for the app's own origins), as any browser page with the permission
+  does, so a page in front can read the position and send it itself while it is open (the `unavailable` path's own
+  sending; its reports carry the version the page read). Send starts `LocationShareService`, a foreground service of
+  type `location` (`FOREGROUND_SERVICE_LOCATION`), only while the app is in front (`LocationShare.foreground`), with the
+  permission and notifications allowed (`LocationRules.mayStart`); `start` answers `started`, `declined` (Not now: a
+  share just made is stopped, and the page sends nothing) or `unavailable` (the page sends while it is open, as a
+  browser does). So the app has no `ACCESS_BACKGROUND_LOCATION`: Android lets a foreground service started from the app
+  in front keep reading the location once the app goes to the background. The service is not sticky: a process Android
+  ended does not start it again, and the share goes stale until its end or a Stop.
 - **The notification** (channel Location sharing, low importance, ongoing) lasts as long as the service sends: "Sharing
   your location with Sam and 2 others until 15:30" (several shares: the first's audience and the latest end), with
   Stop and a tap that opens the app. One the person dismisses (Android 14+ lets them) is posted again by its delete
@@ -755,3 +754,16 @@ What fills each gap of MT1 and MT2 is MT3's record ([Mobile-Desktop](../../plans
   and an address found; a place saved, waiting in the outbox and not on the server; the network back, the outbox
   sending it and the server listing it. Needs the debug APK, a `./moq build --debug` binary (or
   `MOQUI_WALK_PACKAGE=release`) and python3's websocket-client; the server's log is `target/maps-offline/server.log`.
+- `scripts/android-location-share.sh`: the phone half of the acceptance walk `LocationShareWalk` of live location
+  (plans/Location-Sharing.md LL7), on the emulator when asked (not in `./moq test-all` or `accept-all`; about 40 s once
+  the server's data is saved). It serves the tools acceptance spec `LocationShareWalkFixtures` (loc.walk.ann, ben and cy
+  in Walk family) with `moqui test --serve` on `127.0.0.1:18087`, reached through `adb reverse`; installs the debug APK
+  with its permissions granted and its data cleared; and drives the app over its WebView's DevTools socket and Android's
+  own UI (uiautomator, `scripts/android-location-share.py`): sign in as Ann, the drawer's Maps, Share my location with
+  Walk family (the emulator's position by `adb emu geo fix`), the app's confirmation dialog read and answered Send once
+  Send is enabled, Browse saying the phone sends it, the foreground notification naming Walk family, Ben's read given
+  the phone's position and, with the app in the background, the moved one; then the notification's Stop in the shade,
+  after which Ben's read lists nothing, the notification is gone and Ann has no active share. The browser half (three
+  browsers, the push, the extension, a member taken out) is `./moq accept tools --spec LocationShareWalk`. Needs the
+  debug APK, a `./moq build` binary (or `MOQUI_WALK_PACKAGE=debug`) and python3's websocket-client; the server's log is
+  `target/location-walk/server.log`.

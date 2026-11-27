@@ -217,28 +217,23 @@ refuse is `forbidden` too).
 ## User location
 
 User location (XEP-0080, `http://jabber.org/protocol/geoloc`) is mapped onto Moqui's live location shares
-([Maps, Live location](../tools/Maps.md#live-location), [plans/Location-Sharing.md](../../plans/Location-Sharing.md)
-§3.6; `session/geoloc.rs`). It is never kept as a PEP item: an items fetch, a retract, its configuration, a delete
-and a subscription are `forbidden`, and a location kept before is not served.
+(`session/geoloc.rs`). Who sees a share, the opt-in and what an XMPP contact gets beside the web's audience are in the
+guide, [Maps, Live location](../tools/Maps.md#live-location) (its Over XMPP); this is the protocol's side. It is never
+kept as a PEP item: an items fetch, a retract, its configuration, a delete and a subscription are `forbidden`, and a
+location kept before is not served.
 
-- **A publish from the user's own client** feeds only a share whose owner chose it in Moqui: "Also use my XMPP app's
-  location (sent to my XMPP contacts only)" in Share my location (`takeXmppLocation`, `create#Share` and
-  `update#Share`, in the audit log, also offered in Who sees my location and My location shares; turning it on raises
-  the share's `audienceVersion`, so a phone that sends the share pauses until its person confirms, and the phone's
-  dialog and notification add "(your XMPP app's location also goes to your XMPP contacts)" to its audience; turning it
-  on needs an XMPP contact in the share, else it is refused `XMPP_NO_CONTACT`; turning it off deletes the XMPP latest
-  and leaves the version; a revoke that takes out the last XMPP contact turns it off, "last XMPP contact revoked" in
-  its audit row, and a revoke of a person, group or link leaves it). A share the phone sends takes it too, so its XMPP
-  contacts may see the marker alternate between the phone and the XMPP app while those are different devices. It is
-  `LocationServices.report#XmppPosition`, taken by each of the user's active shares with the opt-in and an XMPP contact,
-  with each share's rules (the rate, the values, staleness, approximate rounding) against that share's XMPP latest
-  (`LocationXmppLatest`: its times, and for an approximate share the cell it holds; no coordinates for an exact one).
-  Such a position goes to the share's XMPP contacts only: it is never the share's latest position or trail, and never
-  reaches its users, groups or guest link, which see the page's or the phone's. With no such share the publish is
-  refused `not-allowed` (as is one for a share that ended meanwhile), so a client's setting alone never starts a share
-  or feeds one. The first position a share takes tells the owner's XMPP sessions by a headline ("Your XMPP app's
-  location is shared with jane@… until 15:30"); the owner's view in Maps and My location shares shows where the last
-  position came from ("from your XMPP app" or "from this page or phone"). Of the payload `lat`, `lon`, `accuracy`
+- **A publish from the user's own client** feeds only a share whose owner turned on "Also use my XMPP app's location
+  (sent to my XMPP contacts only)" for it in Moqui (`takeXmppLocation`; turning it on raises the share's
+  `audienceVersion`, so a phone that sends the share pauses until its person confirms). A share the phone sends takes
+  it too, so its XMPP contacts may see the marker alternate between the phone and the XMPP app while those are
+  different devices. It is `LocationServices.report#XmppPosition`, taken by each of the user's active shares with the
+  opt-in and an XMPP contact, with each share's rules (the rate, the values, staleness, approximate rounding) against
+  that share's XMPP latest (`LocationXmppLatest`: its times, and for an approximate share the cell it holds; no
+  coordinates for an exact one). Such a position goes to the share's XMPP contacts only: it is never the share's latest
+  position or trail, and never reaches its users, groups or guest link, which see the page's or the phone's. With no
+  such share the publish is refused `not-allowed` (as is one for a share that ended meanwhile), so a client's setting
+  alone never starts a share or feeds one. The first position a share takes tells the owner's XMPP sessions by a
+  headline ("Your XMPP app's location is shared with jane@… until 15:30"). Of the payload `lat`, `lon`, `accuracy`
   (metres) and `timestamp` are read, checked (in range, numbers, a time) before the service is called, and the rest
   (altitude, bearing, speed, the street) are left out; a bad one is `bad-request` (`invalid-payload`); one too soon
   after the last (the share's rate) or older than it is answered as taken, with nothing new kept, so a client that
