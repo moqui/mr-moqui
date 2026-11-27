@@ -401,7 +401,12 @@ function expireRoom(p) {
   const limit = Math.max(1, Number(p.limit) || 2000)
   const room = find(ROOM).condition('chatRoomId', chatRoomId).forUpdate(true).one()
   // events of a room that is gone: deleted, with nothing of the room to change
-  if (!room) return { deletedCount: find(EVENT).condition('chatRoomId', chatRoomId).condition('expireDate', 'less-equals', new Date(now)).deleteAll() }
+  if (!room) {
+    const deletedCount = find(EVENT).condition('chatRoomId', chatRoomId).condition('expireDate', 'less-equals', new Date(now)).deleteAll()
+    // a room that is gone takes nobody out of its live locations any more: their links go (plans/Location-Sharing.md §3.5)
+    find('moqui.chat.ChatLiveShare').condition('chatRoomId', chatRoomId).deleteAll()
+    return { deletedCount }
+  }
   const rotationMillis = Math.min(WEEK_MILLIS, (Number(room.messageTimerSeconds) || 0) * 1000 || WEEK_MILLIS)
   pendingSessions(chatRoomId, now)
   let due = Array.from(find(EVENT).condition('chatRoomId', chatRoomId).condition('expireDate', 'less-equals', new Date(now))
@@ -454,8 +459,6 @@ function expireRoom(p) {
     // a reminder of what went is not sent (phase 15's ChatMessageReminder: dropped, as for a message deleted)
     find(REMINDER).condition('chatRoomId', chatRoomId).condition('eventSeq', 'in', chunk).condition('statusEnumId', 'CrmPending')
       .updateAll({ statusEnumId: 'CrmDropped', reasonCode: 'messageGone' })
-    // a live location message's link to its share (plans/Location-Sharing.md §3.5) goes with it
-    find('moqui.chat.ChatLiveShare').condition('chatRoomId', chatRoomId).condition('eventSeq', 'in', chunk).deleteAll()
     deletedCount += find(EVENT).condition('chatRoomId', chatRoomId).condition('eventSeq', 'in', chunk).deleteAll()
   }
   // the thread roots that stand: their count and last reply

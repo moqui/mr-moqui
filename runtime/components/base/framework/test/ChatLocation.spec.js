@@ -271,13 +271,23 @@ feature("live location's audience: those left out when it starts; one taken out 
         const leftSees = as(B, MAPS + "get#Share", {shareId: sent.shareId})
         const blockedSeesOther = as(J, MAPS + "get#Share", {shareId: other.shareId})
         const ownerCard = as(A, LOC + "get#LiveLocation", {chatRoomId: crowd, eventSeq: sent.eventSeq})
+        // revoke#ChatAudience acts on a share of the owner its row names only: a row naming A for B's share takes nobody out
+        const wrongOwner = sys(() => ec.service.sync().name(MAPS + "revoke#ChatAudience").parameters({shareList: [{shareId: other.shareId, ownerUserId: A}],
+            userId: F}).call())
+        const wrongOwnerKept = as(F, MAPS + "get#Share", {shareId: other.shareId})
         as(A, MAPS + "stop#Share", {shareId: sent.shareId})
         as(B, MAPS + "stop#Share", {shareId: other.shareId})
-        // an ended share's link to its room goes with it
+        // an ended share keeps its link to the room (the end never waits on chat housekeeping) until the clean removes it
         const linkAfterStop = row("moqui.chat.ChatLiveShare", {chatRoomId: crowd, eventSeq: sent.eventSeq})
-        return {sent, started, linked, other, removed, blocked, left, after, removedSees, blockedSees, leftSees, blockedSeesOther, ownerCard, linkAfterStop}
+        sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", sent.shareId)
+            .updateAll({endedDate: new Date(Date.now() - 40 * 86400000), trailPurgeDate: null}))
+        sys(() => ec.service.sync().name(MAPS + "clean#LocationShares").call())
+        const linkAfterClean = row("moqui.chat.ChatLiveShare", {chatRoomId: crowd, eventSeq: sent.eventSeq})
+        return {sent, started, linked, other, removed, blocked, left, after, removedSees, blockedSees, leftSees, blockedSeesOther, ownerCard, wrongOwner,
+            wrongOwnerKept, linkAfterStop, linkAfterClean}
     },
-    then({sent, started, linked, other, removed, blocked, left, after, removedSees, blockedSees, leftSees, blockedSeesOther, ownerCard, linkAfterStop}) {
+    then({sent, started, linked, other, removed, blocked, left, after, removedSees, blockedSees, leftSees, blockedSeesOther, ownerCard, wrongOwner,
+            wrongOwnerKept, linkAfterStop, linkAfterClean}) {
         sent.errors == ""
         started == [B, I, J]
         linked.shareId == sent.shareId
@@ -297,6 +307,9 @@ feature("live location's audience: those left out when it starts; one taken out 
         // A's block of J takes J out of A's live locations only
         other.errors == ""
         blockedSeesOther.errors == ""
-        linkAfterStop == null
+        wrongOwner.revokedCount == 0
+        wrongOwnerKept.errors == ""
+        linkAfterStop.shareId == sent.shareId
+        linkAfterClean == null
     }
 })

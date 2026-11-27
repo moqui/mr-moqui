@@ -3815,9 +3815,6 @@ along with this software (see the LICENSE.md file). If not, see
                 // the activity of the edits and reactions that go (a message's own went with clear#MessageContent)
                 ec.entity.find('moqui.chat.ChatUserActivity').condition('chatRoomId', chatRoomId)
                         .condition('eventSeq', 'in', all.slice(start, start + 500)).deleteAll()
-                // a live location message's link to its share (plans/Location-Sharing.md §3.5) goes with it
-                ec.entity.find('moqui.chat.ChatLiveShare').condition('chatRoomId', chatRoomId)
-                        .condition('eventSeq', 'in', all.slice(start, start + 500)).deleteAll()
                 deletedCount += ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId)
                         .condition('eventSeq', 'in', all.slice(start, start + 500)).deleteAll()
             }

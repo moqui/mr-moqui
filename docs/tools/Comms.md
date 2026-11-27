@@ -388,36 +388,36 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   share's id, never a position (the room and message are kept with the share's id, `ChatLiveShare`). Its words are "Live
   location: Ann, for 1 h" (a time from now, which reads right in any zone; the person's full name, never a username,
   else "A member of the room") and "Live updates are in the app" with the room's link, so the room list, the push, the
-  terminal and every bridge (SMS, XMPP, Matrix and the others: a place without coordinates goes to no adapter's
-  location message) get those words and no position. Share live location again after a lost answer (the dialog keeps its
-  `clientRef`) answers the first message and its share, and starts sending it. In the Android app the app's own dialog confirms the share and its
-  location service sends it, also in the background; in a browser the page sends it while it is open, with a banner
-  above the room ("Sharing your live location until 15:30 · sent from this page while it is open", Stop) and "sending
-  here" on the app bar's chip (beside Maps' own words), and stops, said, when another device takes it over, when its
-  sign-in is lost (401 or 403) and at a sign-out; it reads the share again and goes on when its audience changed (a
-  device's share), and stops when no chat view stays open; a share no page sends goes stale and its age says so. The card shows the position with its
-  accuracy, "Updated 2 min ago" and the end while the share is on, moved by the share's `locationShare:<shareId>` pushes
-  (which the server sends to its audience only), with Open in maps and Copy, and "Live location ended" after. It reads
-  the share through `get#Share`, which checks the audience: a member who joined the room after it started, or who was
-  taken out of it, sees "This live location is not shared with you" and no position, and a position received before a
-  person was reached never reaches them; for such a reader of the room `get#ShareStatus` says only whether it has ended.
-  **Membership changes and the share** (the decisions of LL4): a new member is never added (to share with them, share
-  again); a person who leaves the room by themselves stays in its audience until you take them out in Who sees my
-  location (Maps, or My location shares); a person a moderator takes out of the room (`remove#Member`), or whom you block
-  after it started (`block#ChatUser`), is taken out of that room's live shares once that commits (`revoke#LiveAudience`, `LocationServices.revoke#ChatAudience`,
-  in a transaction of its own, logged and never failing the removal or the block). The owner's card says so ("Shared
-  with the members of the room when you started it"), names those no longer in the room who still see it, says where it
-  is sent from, and has Send from here (Send from this device in the app), Stop and Who sees my location. Deleting the
-  message does not stop the share: its dialog says so and has "Also stop sharing my live location", chosen.
-  **Not in an encrypted room** (the decision of LL4): the picker says "Live location is not offered in an encrypted room:
-  the server would see where you are", and `send#LiveLocation` refuses it (`encryptedRoom`). Sealing each report to the
-  room's devices instead (Megolm, as a message is sealed) would keep the server out, but the Android app's location
-  service sends from Rust with no page, and the room's keys live only in a page's crypto store (matrix-sdk-crypto in
-  IndexedDB), so the phone would send nothing in the background; the server could not apply the audience rule (who was
-  reached when), the rate, the approximate rounding or the end, each of which would move to every reader's device; and
-  a member who joined later would hold the room key. Sealed live location is a later step: the room's devices sealing
-  per report (or a session per share shared only with its audience's devices), with the phone's service given a crypto
-  store of its own.
+  terminal and every bridge (SMS, XMPP, Matrix and the others: a place without coordinates goes to no adapter's location
+  message) get those words and no position. Share live location again after a lost answer (the dialog keeps its
+  `clientRef`) answers the first message and its share, and starts sending it. In the Android app the app's own dialog
+  confirms the share and its location service sends it, also in the background; in a browser the page sends it while it
+  is open, with a banner above the room ("Sharing your live location until 15:30 · sent from this page while it is
+  open", Stop) and "sending here" on the app bar's chip (beside Maps' own words), and stops, said, when another device
+  takes it over, when its sign-in is lost (401 or 403) and at a sign-out; it reads the share again and goes on when its
+  audience changed (a device's share), and stops when no chat view stays open; a share no page sends goes stale and its
+  age says so. The card shows the position with its accuracy, "Updated 2 min ago" and the end while the share is on,
+  moved by the share's `locationShare:<shareId>` pushes (which the server sends to its audience only), with Open in maps
+  and Copy, and "Live location ended" after. It reads the share through `get#Share`, which checks the audience: a member
+  who joined the room after it started, or who was taken out of it, sees "This live location is not shared with you" and
+  no position, and a position received before a person was reached never reaches them; for such a reader of the room
+  `get#ShareStatus` says only whether it has ended. **Membership changes and the share** (the decisions of LL4): a new
+  member is never added (to share with them, share again); a person who leaves the room by themselves stays in its
+  audience until you take them out in Who sees my location (Maps, or My location shares); a person a moderator takes out
+  of the room (`remove#Member`), or whom you block after it started (`block#ChatUser`), is taken out of that room's live
+  shares once that commits (`revoke#LiveAudience`, `LocationServices.revoke#ChatAudience`, in a transaction of its own,
+  logged and never failing the removal or the block). The owner's card says so ("Shared with the members of the room
+  when you started it"), names those no longer in the room who still see it, says where it is sent from, and has Send
+  from here (Send from this device in the app), Stop and Who sees my location. Deleting the message does not stop the
+  share: its dialog says so and has "Also stop sharing my live location", chosen. **Not in an encrypted room** (the
+  decision of LL4): the picker says "Live location is not offered in an encrypted room: the server would see where you
+  are", and `send#LiveLocation` refuses it (`encryptedRoom`). Sealing each report to the room's devices instead (Megolm,
+  as a message is sealed) would keep the server out, but the Android app's location service sends from Rust with no
+  page, and the room's keys live only in a page's crypto store (matrix-sdk-crypto in IndexedDB), so the phone would send
+  nothing in the background; the server could not apply the audience rule (who was reached when), the rate, the
+  approximate rounding or the end, each of which would move to every reader's device; and a member who joined later
+  would hold the room key. Sealed live location is a later step: the room's devices sealing per report (or a session per
+  share shared only with its audience's devices), with the phone's service given a crypto store of its own.
 - **Photos: compressed or original** (phase 21). A photo you attach (JPEG, PNG or WebP) is now drawn again in your
   browser before it goes: a JPEG or WebP becomes a JPEG of at most 2048 px on its long side, also when that is no
   smaller, and a PNG stays a PNG (made smaller only past 2048 px, so a screenshot keeps its sharp text); either way its

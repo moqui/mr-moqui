@@ -9101,7 +9101,7 @@ const chatRoom = {
                 if (answer === 'started') { shared(); return 'phone'; }
                 if (answer === 'declined') {
                     if (info.created) {
-                        this.stopLive(shareId);
+                        this.stopLive(shareId).catch(() => {});
                         moqui.notifyMessages(null, [t('Your location was not shared')]);
                     } else moqui.notifyMessages(null, [t('Nothing sends this share now: its audience sees your last position until you send it again or stop it')]);
                     return 'declined';
