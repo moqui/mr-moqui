@@ -568,3 +568,103 @@ fn a_mounted_dashboard_links_its_apps_screens_and_an_unreadable_panel_says_so() 
         Some("/apps/dashboards/AlertRule")
     );
 }
+#[test]
+fn a_geomap_country_opens_in_maps_where_the_dashboard_offers_it() {
+    let sales = json!({"fields":[
+        {"name":"countryGeoId","type":"string","values":["USA","FRA","XYZ"]},
+        {"name":"sales","type":"number","values":[3,9,1]}
+    ]});
+    let dashboard = |links: Value| {
+        json!({"dashboard":{"definitionId":"d","appLinks":links,
+            "panels":{"sales":{"title":"Sales","visualization":"geomap"}}},"frames":{"sales":[sales]}})
+    };
+    let shown = |props: &Value, state: &ComponentState| {
+        ReportDashboard
+            .lines(props, state, 80, false)
+            .iter()
+            .map(crate::components::line_text)
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let offered = dashboard(json!({"maps":"/apps/maps/Browse"}));
+    let mut state = ComponentState::default();
+    let press =
+        |state: &mut ComponentState, key: Key| ReportDashboard.key(&offered, state, &KeyPress::plain(key), false);
+    assert!(
+        !shown(&offered, &state).contains("open in Maps"),
+        "the panel has no keys yet"
+    );
+    press(&mut state, Key::Char('g'));
+    assert!(shown(&offered, &state).contains("↑/↓ select a place, Enter: open in Maps"));
+    // France is listed first (the largest) and opens at its mainland extent, as the browser's page test has it
+    assert_eq!(
+        press(&mut state, Key::Enter),
+        Some(vec![Act::Follow(
+            "/apps/maps/Browse?extent=-4.5918%2C42.3433%2C8.0983%2C51.148".into()
+        )])
+    );
+    press(&mut state, Key::Down);
+    assert!(
+        matches!(press(&mut state, Key::Char('l')).as_deref(), Some([Act::Follow(url)]) if url.starts_with("/apps/maps/Browse?extent=-124.6854%2C")),
+        "the second place, the United States"
+    );
+    // a code with no known country is not followable
+    press(&mut state, Key::Down);
+    press(&mut state, Key::Down);
+    assert_eq!(
+        press(&mut state, Key::Enter),
+        Some(vec![Act::Message("This country's Maps link is unavailable".into())])
+    );
+    // without the maps link nothing changes: no hint, and Enter opens no place
+    let plain = dashboard(json!({"explore":"/apps/X/Explore"}));
+    let mut state = ComponentState::default();
+    let press = |state: &mut ComponentState, key: Key| ReportDashboard.key(&plain, state, &KeyPress::plain(key), false);
+    press(&mut state, Key::Char('g'));
+    assert!(!shown(&plain, &state).contains("open in Maps"));
+    let acts = press(&mut state, Key::Enter).unwrap_or_default();
+    assert!(
+        !acts
+            .iter()
+            .any(|act| matches!(act, Act::Follow(url) if url.contains("/apps/maps"))),
+        "{acts:?}"
+    );
+}
+#[test]
+fn a_geomap_point_opens_in_maps_only_where_the_panel_offers_it() {
+    let frame = json!({"fields":[
+        {"name":"city","type":"string","values":["Paris"]},
+        {"name":"lat","type":"number","values":[48.85]},
+        {"name":"lon","type":"number","values":[2.35]}
+    ]});
+    let props = json!({"frame":frame,"panel":{"title":"Cities","visualization":"geomap","appLinks":{"maps":"/apps/maps/Browse"}}});
+    let mut state = ComponentState::default();
+    assert_eq!(
+        ReportPanel.key(&props, &mut state, &KeyPress::plain(Key::Enter), false),
+        Some(vec![Act::Follow(
+            "/apps/maps/Browse?longitude=2.35&latitude=48.85".into()
+        )])
+    );
+    let lines = ReportPanel.lines(&props, &state, 80, false);
+    assert!(lines
+        .iter()
+        .flatten()
+        .any(|span| span.reverse && span.text.starts_with("Paris")));
+    // a panel with no maps link, or no appLinks at all, follows nothing and shows no selection
+    for panel in [
+        json!({"title":"Cities","visualization":"geomap","appLinks":{"explore":"/apps/X/Explore"}}),
+        json!({"title":"Cities","visualization":"geomap"}),
+    ] {
+        let props = json!({"frame":frame,"panel":panel});
+        let mut state = ComponentState::default();
+        assert_eq!(
+            ReportPanel.key(&props, &mut state, &KeyPress::plain(Key::Enter), false),
+            None
+        );
+        let lines = ReportPanel.lines(&props, &state, 80, false);
+        assert!(!lines.iter().flatten().any(|span| span.reverse));
+        assert!(!lines
+            .iter()
+            .map(crate::components::line_text)
+            .any(|line| line.contains("open in Maps")));
+    }
+}

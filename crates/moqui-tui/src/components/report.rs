@@ -585,7 +585,7 @@ fn is_metadata(field: &Value) -> bool {
 
 #[cfg(test)]
 fn panel_lines(frame: &Value, panel: &Value, width: u16) -> Vec<Line> {
-    panel_view(frame, panel, width, true, false)
+    panel_view(frame, panel, width, true, false, None)
 }
 
 /// The panel's annotations folded into one line, as the browser's details block; `open` (`a` on a single panel) lists
@@ -642,8 +642,16 @@ fn annotation_time(time: Option<&Value>) -> String {
 
 /// A panel's lines. A chart replaces the table unless `table` (a single panel, or a dashboard panel in table mode,
 /// whose cells take the arrows, links and filters); a chart that does not fit or has nothing to draw is the table.
-/// `annotations_open` lists the annotations under their folded line.
-fn panel_view(frame: &Value, panel: &Value, width: u16, table: bool, annotations_open: bool) -> Vec<Line> {
+/// `annotations_open` lists the annotations under their folded line; `place` is a geomap's selected place, where the
+/// panel's keys open it in Maps (`maps_key`).
+fn panel_view(
+    frame: &Value,
+    panel: &Value,
+    width: u16,
+    table: bool,
+    annotations_open: bool,
+    place: Option<usize>,
+) -> Vec<Line> {
     let mut lines = Vec::new();
     let title = panel["title"].as_str().unwrap_or("Report");
     lines.push(vec![Span::new(title, Role::Text).bold()]);
@@ -678,7 +686,7 @@ fn panel_view(frame: &Value, panel: &Value, width: u16, table: bool, annotations
     }
     lines.extend(annotation_lines(panel, annotations_open));
     let visual = panel["visualization"].as_str().unwrap_or("table");
-    if let Some(chart) = visual::chart(frame, panel, visual, usize::from(width)) {
+    if let Some(chart) = visual::chart(frame, panel, visual, usize::from(width), place) {
         lines.extend(chart);
         if !table || matches!(visual, "gauge" | "barGauge") {
             return lines;
@@ -758,6 +766,7 @@ impl Component for ReportPanel {
             width,
             true,
             state.closed.contains("__report_annotations"),
+            maps_place(&props["panel"], &props["panel"], state),
         );
         lines.insert(0, selection_line(&frame, &props["panel"], state));
         if state.closed.contains("__report_inspector") {
@@ -790,6 +799,11 @@ impl Component for ReportPanel {
             .or_else(|| data["frames"].get(0))
             .unwrap_or(data)
             .clone();
+        if let Some(maps) = maps_link(&props["panel"]) {
+            if let Some(acts) = maps_key(&frame, &props["panel"], &maps, state, press) {
+                return Some(acts);
+            }
+        }
         if let Some(acts) = table_key(&frame, &props["panel"], state, press, None) {
             return Some(acts);
         }
@@ -1256,6 +1270,50 @@ fn drill_link(dashboard: &Value) -> Option<String> {
     app_link(dashboard, "drill", "")
 }
 
+/// Maps' Browse screen, where a geomap's country or point opens (`appLinks.maps`, sent only to a viewer whose own grants
+/// open Maps): as `drill_link`, a dashboard or panel that names none offers none.
+fn maps_link(owner: &Value) -> Option<String> {
+    owner["appLinks"].as_object()?;
+    app_link(owner, "maps", "")
+}
+
+/// A geomap panel's selected place (`place` in its table state) where its owner (the dashboard, or a standalone panel)
+/// offers Maps; None otherwise, and the geomap is drawn with no selection.
+fn maps_place(owner: &Value, panel: &Value, state: &ComponentState) -> Option<usize> {
+    (panel["visualization"] == "geomap" && maps_link(owner).is_some())
+        .then(|| state.local["place"].as_u64().unwrap_or(0) as usize)
+}
+
+/// A geomap panel's keys where its owner offers Maps (`maps`): Up and Down move over the places it lists, as a table's
+/// rows, and Enter or `l` opens the selected one in Maps, as the browser's geomap does on a click. None for another key
+/// or a panel with no places, which the table keys then take.
+fn maps_key(
+    frame: &Value,
+    panel: &Value,
+    maps: &str,
+    state: &mut ComponentState,
+    press: &KeyPress,
+) -> Option<Vec<Act>> {
+    if !press.is_plain() || panel["visualization"] != "geomap" {
+        return None;
+    }
+    let targets = graph::geomap_targets(&table_frame(frame, state), panel);
+    let last = targets.len().checked_sub(1)?;
+    let at = (state.local["place"].as_u64().unwrap_or(0) as usize).min(last);
+    match press.key {
+        Key::Up => state.local["place"] = Value::from(at.saturating_sub(1)),
+        Key::Down => state.local["place"] = Value::from((at + 1).min(last)),
+        Key::Enter | Key::Char('l') => {
+            return Some(vec![match targets.get(at).copied().flatten() {
+                Some(place) => Act::Follow(graph::maps_url(maps, place)),
+                None => Act::Message("This country's Maps link is unavailable".into()),
+            }]);
+        }
+        _ => return None,
+    }
+    Some(Vec::new())
+}
+
 /// Explore over the panel's first query, with its filters and the dashboard's filters on the same dataset, and the range.
 fn explore_url(dashboard: &Value, panel: &Value) -> Option<String> {
     let query = panel["queries"].get(0)?;
@@ -1495,15 +1553,17 @@ impl Component for ReportDashboard {
                 ..Default::default()
             };
             let frame = table_frame(frame, &table);
-            if at == state.at && state.closed.contains("__table_mode") {
+            let keyed = at == state.at && state.closed.contains("__table_mode");
+            if keyed {
                 lines.push(selection_line(&frame, panel, &table));
             }
             lines.extend(panel_view(
                 &frame,
                 panel,
                 width,
-                at == state.at && state.closed.contains("__table_mode"),
+                keyed,
                 false,
+                maps_place(&data["dashboard"], panel, &table).filter(|_| keyed),
             ));
             if at == state.at && state.closed.contains("__report_inspector") {
                 lines.push(vec![Span::new("Inspector: authorized query requests and per-step input/output snapshots (native view capped at 1,200 lines; server sampling/truncation flags included)",Role::Muted)]);
@@ -1609,13 +1669,13 @@ impl Component for ReportDashboard {
                         local: state.local["tables"][id].clone(),
                         ..Default::default()
                     };
-                    if let Some(acts) = table_key(
-                        data["frames"][id].get(0).unwrap_or(&Value::Null),
-                        panel,
-                        &mut table,
-                        press,
-                        Some(dashboard),
-                    ) {
+                    let frame = data["frames"][id].get(0).unwrap_or(&Value::Null);
+                    let maps = maps_link(dashboard);
+                    let acts = match maps.and_then(|maps| maps_key(frame, panel, &maps, &mut table, press)) {
+                        Some(acts) => Some(acts),
+                        None => table_key(frame, panel, &mut table, press, Some(dashboard)),
+                    };
+                    if let Some(acts) = acts {
                         table.local["row"] = Value::from(table.at);
                         table.local["column"] = Value::from(table.choosing.unwrap_or(0));
                         state.local["tables"][id] = table.local;
