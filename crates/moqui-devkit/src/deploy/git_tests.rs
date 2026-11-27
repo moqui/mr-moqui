@@ -664,7 +664,11 @@ fn deploy_and_update_check_the_attested_component_and_commit() {
             ("status", "staged"),
             ("storage", "database"),
             ("commitId", COMMIT),
-            ("location", &location.join("site").display().to_string()),
+            // a deployed component's own directory under a components directory (SEC-TLS-104)
+            (
+                "location",
+                &location.join("components/addon/site").display().to_string(),
+            ),
         ],
     );
     let problems = |report: crate::deploy::load::LoadReport| report.problems.join("; ");
