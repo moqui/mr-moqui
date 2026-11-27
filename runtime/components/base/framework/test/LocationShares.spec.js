@@ -1,9 +1,9 @@
-// Shared live location (plans/Location-Sharing.md §3.2, LL1; org.moqui.maps.LocationServices, LocationShares.js), by the
-// grants of data/MapsLocationData.xml with authorization on: a share is read and pushed to its current audience only, a
-// group member taken out loses it at the next read, and a membership added or reopened after the owner added the group
-// (with a caller's dates and stamp, backdated, an ended row reopened, an ended row and a new one, a member removed and
-// added again) gives nothing until the owner adds it again, which names and tells only the people it lets in, never one
-// who blocked the owner; a blocked user and an audience or a share count past its limit are
+// Shared live location (plans/Location-Sharing.md §3.2, LL1; org.moqui.maps.LocationServices, LocationShares.js), by
+// the grants of data/MapsLocationData.xml with authorization on: a share is read and pushed to its current audience
+// only, a group member taken out loses it at the next read, and a membership added or reopened after the owner added
+// the group (with a caller's dates and stamp, backdated, an ended row reopened, an ended row and a new one, a member
+// removed and added again) gives nothing until the owner adds it again, which names and tells only the people it lets
+// in, never one who blocked the owner; a blocked user and an audience or a share count past its limit are
 // refused, on update too; an ended share shows nothing and its latest position is cleaned, a trail is kept only when
 // chosen and deleted or purged, only the owner reports, at most one a min-interval-seconds, a device clock ahead and a
 // time before the share told apart, an approximate share's cell (one fixed grid, the same for two shares, kept through
@@ -15,7 +15,8 @@ const S = "org.moqui.maps.LocationServices."
 const A = "LOC_SHARE_A"
 const B = "LOC_SHARE_B"
 const C = "LOC_SHARE_C"
-// D: a member of the group from before the share; F: an ended member whose row is reopened; G: an ended member given a new row
+// D: a member of the group from before the share; F: an ended member whose row is reopened; G: an ended member given a
+// new row
 const D = "LOC_SHARE_D"
 const F = "LOC_SHARE_F"
 const G = "LOC_SHARE_G"
@@ -141,7 +142,9 @@ spec({
                 .condition("thruDate", null)
                 .updateAll({thruDate: new Date(Date.now() - 1000)})
         )
-        sys(() => ec.entity.find("moqui.chat.ChatUserBlock").condition({userId: I, blockedUserId: A}).deleteAll())
+        sys(() =>
+            ec.entity.find("moqui.chat.ChatUserBlock").condition("userId", "in", [D, I]).condition("blockedUserId", A).deleteAll()
+        )
         ec.user.logoutUser()
     }
 })
@@ -274,7 +277,8 @@ feature(
                     .updateAll({thruDate: null})
             )
             make("moqui.security.UserGroupMember", {userGroupId: GROUP, userId: G, fromDate: new Date(shared.now - HOUR)})
-            // H with the dates and stamp a System › Access post may give: a start and a lastUpdatedStamp a day before the share
+            // H with the dates and stamp a System › Access post may give: a start and a lastUpdatedStamp a day before
+            // the share
             make("moqui.security.UserGroupMember", {
                 userGroupId: GROUP,
                 userId: H,
@@ -309,10 +313,13 @@ feature(
                     () => as(A, "update#Share", {shareId, addAudienceList: [toGroup(GROUP)]}).reasonCode
                 )
             }
-            // the owner adds the group again: B, C, F, G and H are let in, named to the owner and told; D, reached all along,
-            // is not told again, and I, who blocked A, is never reached
+            // the owner adds the group again: B, C, F, G and H are let in, named to the owner and told; D, reached
+            // until now but blocking A since, is left out and told; I, who blocked A from the start, is never reached
+            // D blocks A first: the re-add leaves D out and tells D so
             later(1000)
+            make("moqui.chat.ChatUserBlock", {userId: D, blockedUserId: A, blockedDate: new Date(shared.now)})
             const readded = as(A, "update#Share", {shareId, addAudienceList: [toGroup(GROUP)]})
+            sys(() => ec.entity.find("moqui.chat.ChatUserBlock").condition({userId: D, blockedUserId: A}).deleteAll())
             later(6000)
             report(shareId, "45.7", "-122.6")
             const told = userId =>
@@ -359,6 +366,8 @@ feature(
                 toldI: told(I),
                 readsNew: [B, C, F, G, H].map(userId => sharedWith(userId).filter(row => row.shareId === shareId).length),
                 readsI: sharedWith(I).filter(row => row.shareId === shareId).length,
+                droppedD: pushes(shareId).filter(one => one.event === "revoked" && one.userIds.join() === D).length,
+                readsD: sharedWith(D).filter(row => row.shareId === shareId).length,
                 pushedToC: pushes(shareId).filter(one => one.event === "position" && one.userIds.includes(C)).length,
                 restamps: restamp.filter(row => row.oldValueText != null).length
             }
@@ -380,6 +389,8 @@ feature(
             toldI,
             readsNew,
             readsI,
+            droppedD,
+            readsD,
             pushedToC,
             restamps
         }) {
@@ -404,6 +415,8 @@ feature(
             toldI == 0
             readsNew.every(count => count === 1)
             readsI == 0
+            droppedD == 1
+            readsD == 0
             pushedToC == 1
             restamps == 1
         }
@@ -461,8 +474,9 @@ feature(
                 report(shareId, String(cell.latitude + rows * CELL), String(cell.longitude))
                 jitter.push(Number(String(latestOf(shareId).latitude)))
             }
-            // a second approximate share of A, started while the first holds its cell, reports a fix just past the line: the
-            // same cell, the person's and not the share's, and the device's accuracy rounded up to the next 1000
+            // a second approximate share of A, started while the first holds its cell, reports a fix just past the
+            // line: the same cell, the person's and not the share's, and the device's accuracy rounded up to the next
+            // 1000
             const otherId = as(A, "create#Share", {
                 audienceList: [toUser(B)],
                 thruDate: new Date(shared.now + HOUR),

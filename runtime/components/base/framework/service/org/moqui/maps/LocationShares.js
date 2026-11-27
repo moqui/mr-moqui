@@ -1,12 +1,14 @@
-// Shared live location (plans/Location-Sharing.md §1, §3.2; LocationServices.xml): the owner's shares, the reads of their
-// current audience, the reports and the hourly clean. Every function checks the caller itself: the owner for a change or
-// a report, the current audience (a user whose entry is not revoked, a member of a group whose entry is not revoked whom
-// the owner's adding of the group reached and who is still a member) for a read, and answers anyone else, an ADMIN included, as not found. No position goes to a log, an error
-// message, an audited field or a cache: a refusal names its reason only.
+// Shared live location (plans/Location-Sharing.md §1, §3.2; LocationServices.xml): the owner's shares, the reads of
+// their current audience, the reports and the hourly clean. Every function checks the caller itself: the owner for a
+// change or a report, the current audience (a user whose entry is not revoked, a member of a group whose entry is not
+// revoked whom the owner's adding of the group reached, while that membership row is current) for a read, and answers
+// anyone else, an ADMIN included, as not found. No position goes to a log, an error message, an audited field or a
+// cache: a refusal names its reason only.
 
 const SHARE = "moqui.maps.LocationShare"
 const AUDIENCE = "moqui.maps.LocationShareAudience"
 const AUDIENCE_MEMBER = "moqui.maps.LocationShareAudienceMember"
+const OWNER_LOCK = "moqui.maps.LocationShareOwner"
 const LATEST = "moqui.maps.LocationLatest"
 const TRAIL = "moqui.maps.LocationTrailPoint"
 const ACCOUNT = "moqui.security.UserAccount"
@@ -85,11 +87,12 @@ function currentGroupIds(userId, groupIds) {
 const activeAudience = shareId => Array.from(find(AUDIENCE).condition("shareId", shareId).condition("revokedDate", null).list())
 
 /**
- * The users a group entry reaches: those of its snapshot (LocationShareAudienceMember, the members the owner's adding of
- * the group reached, written only by create#Share and update#Share) who are still members now. So whoever runs a
- * group's membership (an administrator, an app or household organizer, whatever dates or stamps a row is given) adds
- * nobody to a share; a member taken out of the group drops out at once, and one put back in only when the owner adds
- * the group again. With userId, that user only.
+ * The users a group entry reaches: those of its snapshot (LocationShareAudienceMember, the members the owner's adding
+ * of the group reached, written only by create#Share and update#Share) while the membership row the snapshot names is
+ * current. A membership row written by anyone else (an administrator, an app or household organizer, with whatever
+ * dates or stamps) adds nobody, and a member taken out drops out at once, with one exception: a snapshot member's own
+ * row, ended and reopened, or deleted and made again with the same fromDate (which System › Access lets an
+ * administrator do), lets that same person back. With userId, that user only.
  */
 function groupEntryUserIds(row, userId) {
     let snapshot = find(AUDIENCE_MEMBER).condition("shareId", row.shareId).condition("audienceSeqId", row.audienceSeqId)
@@ -120,10 +123,12 @@ const memberKey = row => row.userId + "|" + millis(row.fromDate)
 
 /**
  * The snapshot of a group entry, written at the owner's act: the group's current members but the owner, each with the
- * membership row that makes them one (its fromDate), less those the chat directory keeps the owner from
- * (ChatServices.get#RefusedUsers with blocks: one who blocked the owner is never reached, told or named). It replaces an
- * earlier snapshot of the entry. The caller is the owner. A member reaches the share only while that same membership row
- * is current: one removed and put back by a new row is not, until the owner adds the group again.
+ * membership row that makes them one (its fromDate), less every one the chat directory refuses the owner at this act
+ * (ChatServices.get#RefusedUsers with blocks: the chat-target hooks, the external-caller rule and the people who
+ * blocked the owner; one blocked later is applied at the next re-add, as for a direct user). It replaces an earlier
+ * snapshot of the entry. The caller is the owner. A member reaches the share only while that same membership row is
+ * current: one removed and put back by a new row is not, until the owner adds the group again. False when the
+ * directory's check failed, its error left in ec.message.
  */
 function snapshotGroup(share, row) {
     const since = {}
@@ -143,6 +148,7 @@ function snapshotGroup(share, row) {
             .name("org.moqui.chat.ChatServices.get#RefusedUsers")
             .parameters({userIdList: members, blocks: true, answerWithAuthzOff: true})
             .call()
+        if (ec.message.hasError()) return false
         refused = new Set(Array.from((out && out.refusedUserIdList) || []).map(String))
     }
     find(AUDIENCE_MEMBER).condition("shareId", share.shareId).condition("audienceSeqId", row.audienceSeqId).deleteAll()
@@ -151,7 +157,9 @@ function snapshotGroup(share, row) {
             .makeValue(AUDIENCE_MEMBER)
             .setAll({shareId: share.shareId, audienceSeqId: row.audienceSeqId, userId, memberFromDate: since[userId]})
             .create()
+    return true
 }
+const groupCheckFailed = () => ({reasonCode: "GROUP_CHECK_FAILED"})
 
 /** The users a share reaches now: its users whose entries are not revoked and its groups' members as above, but its owner. */
 function currentUserIds(share) {
@@ -242,8 +250,8 @@ function checkUsers(userIds, now) {
         const ended = row.terminateDate != null && millis(row.terminateDate) <= now
         if (row.disabled !== "Y" && !ended) open.add(row.userId)
     }
-    // the chat directory's rule (SEC-COM-01): the users the owner may not reach, and those who blocked the owner, answer
-    // as users that do not exist
+    // the chat directory's rule (SEC-COM-01): the users the owner may not reach, and those who blocked the owner,
+    // answer as users that do not exist
     const refused = ec.service
         .sync()
         .name("org.moqui.chat.ChatServices.get#RefusedUsers")
@@ -346,35 +354,42 @@ function addAudience(share, entries, now) {
             fields.failedTries = 0
         }
         const row = ec.entity.makeValue(AUDIENCE).setAll(fields).setSequencedIdSecondary().create()
-        if (entry.type === "LsaUserGroup") snapshotGroup(share, row)
+        if (entry.type === "LsaUserGroup" && !snapshotGroup(share, row)) return groupCheckFailed()
     }
     return {linkToken}
 }
 
 /**
- * Whether the share's audience stays within location@max-audience: its people (a group's members it reaches counted
- * each), XMPP contacts and link, once the entries asked for are added.
+ * Whether the share's audience, as written (its groups by their snapshots), stays within location@max-audience: the
+ * people it reaches, its XMPP contacts and its link. Checked after the writes, which a refusal rolls back.
  */
-function checkAudienceSize(share, entries) {
+function checkReach(share) {
     const max = setting("max-audience", 50)
-    const people = new Set(share ? currentUserIds(share) : [])
-    let others = share
-        ? activeAudience(share.shareId).filter(row => ["LsaXmpp", "LsaLink"].includes(row.audienceTypeEnumId)).length
-        : 0
-    for (const entry of entries) {
-        if (entry.type === "LsaUser") people.add(entry.key)
-        else if (entry.type === "LsaUserGroup") {
-            const members = find(GROUP_MEMBER)
-                .condition("userGroupId", entry.key)
-                .conditionDate("fromDate", "thruDate", null)
-                .selectField("userId")
-                .list()
-            for (const member of members) if (member.userId) people.add(member.userId)
-        } else others++
-    }
-    people.delete(ec.user.userId)
-    if (people.size + others > max) return refuse("AUDIENCE_TOO_LARGE", `A share is seen by at most ${max} people and links`)
+    const others = activeAudience(share.shareId).filter(row => ["LsaXmpp", "LsaLink"].includes(row.audienceTypeEnumId)).length
+    if (currentUserIds(share).length + others > max)
+        return refuse("AUDIENCE_TOO_LARGE", `A share is seen by at most ${max} people and links`)
     return {}
+}
+
+/**
+ * The owner's lock row (LocationShareOwner, which no foreign key names, so no audience insert's key check waits on it
+ * on any database), made on first use in its own transaction, then locked for the rest of the caller's.
+ */
+function lockOwner(userId) {
+    if (find(OWNER_LOCK).condition("ownerUserId", userId).forUpdate(true).one()) return
+    ec.message.pushErrors()
+    try {
+        ec.transaction.runRequireNew(10, "Could not make a location share lock row", () => {
+            if (!find(OWNER_LOCK).condition("ownerUserId", userId).one())
+                ec.entity.makeValue(OWNER_LOCK).setAll({ownerUserId: userId, createdDate: ec.user.nowTimestamp}).create()
+        })
+    } catch (err) {
+        // another request made it at the same moment
+    } finally {
+        ec.message.clearErrors()
+        ec.message.popErrors()
+    }
+    find(OWNER_LOCK).condition("ownerUserId", userId).forUpdate(true).one()
 }
 
 function checkTrail(p) {
@@ -400,12 +415,9 @@ function create(p) {
     const audience = checkAudience(p.audienceList, now)
     if (audience.reasonCode) return audience
     if (!audience.entries.length) return refuse("AUDIENCE_EMPTY", "Choose who sees your location")
-    const size = checkAudienceSize(null, audience.entries)
-    if (size.reasonCode) return size
     const maxShares = setting("max-active-shares", 20)
-    // counted under a lock of the owner's account row, so two creates at once cannot both pass the cap; FOR NO KEY UPDATE,
-    // which the foreign key check of another share's audience row naming this user (FOR KEY SHARE) does not wait on
-    find(ACCOUNT).condition("userId", me).forNoKeyUpdate(true).one()
+    // counted under the owner's lock row, so two creates at once cannot both pass the cap
+    lockOwner(me)
     const active = find(SHARE)
         .condition("ownerUserId", me)
         .condition("revokedDate", null)
@@ -430,6 +442,9 @@ function create(p) {
         .setSequencedIdPrimary()
         .create()
     const added = addAudience(share, audience.entries, now)
+    if (added.reasonCode) return added
+    const reach = checkReach(share)
+    if (reach.reasonCode) return reach
     notifyShared(share, currentUserIds(share), now)
     push(share, [me], {event: "started", thruDate: until.until})
     return {shareId: share.shareId, thruDate: until.until, linkToken: added.linkToken}
@@ -466,8 +481,6 @@ function update(p) {
         const fresh = audience.entries.filter(entry => !has(entry))
         if (audience.entries.some(entry => entry.type === "LsaLink") && rows.some(row => row.audienceTypeEnumId === "LsaLink"))
             return refuse("ONE_LINK", "A share has one guest link")
-        const size = checkAudienceSize(share, fresh.concat(audience.entries.filter(entry => entry.type === "LsaUserGroup")))
-        if (size.reasonCode) return size
         // a group added again is stamped now: its members who joined since the owner last added it are let in, and told
         for (const row of rows)
             if (
@@ -476,13 +489,23 @@ function update(p) {
             ) {
                 row.fromDate = new Date(now)
                 row.update()
-                snapshotGroup(share, row)
+                if (!snapshotGroup(share, row)) return groupCheckFailed()
             }
         added = addAudience(share, fresh, now)
+        if (added.reasonCode) return added
+        const reach = checkReach(share)
+        if (reach.reasonCode) return reach
     }
     share.update()
     const reached = currentUserIds(share)
     const fresh = reached.filter(id => !before.includes(id))
+    // a re-add that leaves someone out (who now blocks the owner, or has left the group) tells them, as revoke#Audience
+    // does
+    push(
+        share,
+        before.filter(id => !reached.includes(id)),
+        {event: "revoked"}
+    )
     notifyShared(share, fresh, now)
     const people = namesOf(fresh)
     const addedUserList = fresh.map(userId => ({userId, userName: (people[userId] || {}).name || userId}))
@@ -558,7 +581,8 @@ function checkPosition(p, now, share) {
 }
 
 const wrapLongitude = longitude => ((((longitude + 180) % 360) + 360) % 360) - 180
-// the longitude width of a cell at a latitude: about the same width in km, wider in degrees toward a pole, one cell at it
+// the longitude width of a cell at a latitude: about the same width in km, wider in degrees toward a pole, one cell at
+// it
 function longitudeStep(latitude) {
     const cos = Math.cos((latitude * Math.PI) / 180)
     return cos > APPROXIMATE_DEGREES ? APPROXIMATE_DEGREES / cos : 360

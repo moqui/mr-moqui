@@ -104,6 +104,16 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="LOC_SHARE_AUD_MEMBER_USER"><index-field name="userId"/></index>
     </entity>
 
+    <!-- An owner's lock row: create#Share locks it while it counts the owner's active shares against
+        location@max-active-shares. No foreign key names it, so no audience insert's key check waits on it, whatever the
+        database. Made on first use. -->
+    <entity entity-name="LocationShareOwner" package="moqui.maps" use="transactional" cache="never">
+        <field name="ownerUserId" type="id" is-pk="true"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one-nofk" title="Owner" related="moqui.security.UserAccount">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
+    </entity>
+
     <!-- A share's latest position, one row a share, replaced by each report and deleted when the share ends. accuracy
         is in metres as the device gives it (at least 1000 for an approximate share), heading in degrees from north,
         speed in metres a second; an approximate share has neither. Never cached, never audited, never in a log. -->

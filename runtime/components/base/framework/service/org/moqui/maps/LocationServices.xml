@@ -15,8 +15,10 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Shared live location (plans/Location-Sharing.md §1, §3.2): a person shares where they are, until a time they
     choose, with people they choose. Only the owner starts, changes, stops and reports a share; only the owner and the
     share's current audience read it (a user whose entry is not revoked; a member of a group whose entry is not revoked
-    who is in the snapshot of members the owner's adding of the group reached, LocationShareAudienceMember, and still a
-    member, so that whoever runs a group's membership gives nobody a share), and every read checks that again; another
+    who is in the snapshot of members the owner's adding of the group reached, LocationShareAudienceMember, while the
+    membership row it names is current, so that whoever runs a group's membership gives nobody new a share; only a
+    snapshot member's own row, ended and reopened or deleted and made again with the same fromDate, which an
+    administrator can do in System › Access, lets that same person back), and every read checks that again; another
     person's share, an ADMIN's request included, answers as not found. The model is entity/MapLocationEntities.xml, the
     logic LocationShares.js beside this file, the settings the conf's location element, the grants
     data/MapsLocationData.xml (LocationShareServices, every signed-in user).
@@ -38,15 +40,15 @@ along with this software (see the LICENSE.md file). If not, see
             {audienceTypeEnumId, userId, userGroupId, jid}: LsaUser a user the owner may message (the chat directory's
             rule, ChatServices.get#RefusedUsers with blocks; a user it refuses answers as one that does not exist),
             LsaUserGroup a group the owner is in now (never ALL_USERS or a group of external users), read by the members
-            it has now (a snapshot, less those who blocked the owner) while they stay members, LsaXmpp a contact of the
-            owner's XMPP
-            roster (username@xmpp-server@domain, XmppServices.get#Roster; kept for the XMPP server to deliver), LsaLink
-            a guest link (one a share), whose token is returned here once and kept only as its digest. Each audience
-            user is told who shares with them and until when (the LocationShared notification). At most
+            it has now (a snapshot, less every one the chat directory refuses the owner at this act: its hooks, the
+            external-caller rule and blocks) while their membership row stays current, LsaXmpp a contact of the owner's
+            XMPP roster (username@xmpp-server@domain, XmppServices.get#Roster; kept for the XMPP server to deliver),
+            LsaLink a guest link (one a share), whose token is returned here once and kept only as its digest. Each
+            audience user is told who shares with them and until when (the LocationShared notification). At most
             location@max-active-shares active shares an owner and location@max-audience people (a group's members
             counted each), contacts and links a share. Refused with a reasonCode: BAD_UNTIL, TOO_LONG, BAD_PRECISION,
             BAD_TRAIL_DAYS, AUDIENCE_EMPTY, BAD_AUDIENCE, USER_NOT_FOUND, GROUP_NOT_ALLOWED, XMPP_OFF, XMPP_NOT_CONTACT,
-            ONE_LINK, AUDIENCE_TOO_LARGE, TOO_MANY_SHARES.</description>
+            ONE_LINK, AUDIENCE_TOO_LARGE, TOO_MANY_SHARES, GROUP_CHECK_FAILED.</description>
         <in-parameters>
             <parameter name="audienceList" type="List" required="true"/>
             <parameter name="thruDate" type="Timestamp" required="true"/>
@@ -161,11 +163,10 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="find" noun="SharedWithMe">
         <description>The active shares of other people whose current audience holds the current user (as a user whose
-            entry is not revoked, or a member of a group whose entry is not revoked since before the owner added the
-            group, and still), soonest to end first, at most 200:
-            the owner's name, the label and purpose, the end, whether it is approximate, and the latest position with
-            its age. The audience is checked at this read, so a person taken out of a group sees nothing of
-            it.</description>
+            entry is not revoked, or as a member of a group whose entry is not revoked, held in that entry's snapshot by
+            a membership row that is still current), soonest to end first, at most 200: the owner's name, the label and
+            purpose, the end, whether it is approximate, and the latest position with its age. The audience is checked
+            at this read, so a person taken out of a group sees nothing of it.</description>
         <out-parameters><parameter name="shareList" type="List"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('findShared', context))</script></actions>
     </service>

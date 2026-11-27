@@ -109,6 +109,7 @@ const AUDIT_ENTITY_KEYS: &[&str] = &[
     "locationshare",
     "locationshareaudience",
     "locationshareaudiencemember",
+    "locationshareowner",
     "locationlatest",
     "locationtrailpoint",
 ];
@@ -702,6 +703,7 @@ mod tests {
             "moqui.maps.LocationShare",
             "moqui.maps.LocationShareAudience",
             "moqui.maps.LocationShareAudienceMember",
+            "moqui.maps.LocationShareOwner",
             "moqui.maps.LocationLatest",
             "moqui.maps.LocationTrailPoint",
         ] {
