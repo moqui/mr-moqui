@@ -1,6 +1,6 @@
 # Location sharing: explicitly shared live location
 
-Status 2026-11-26: plan; nothing built. It carries the "explicitly shared person-location feeds" item of
+Status 2026-11-26: LL0 and LL1 built (§4); LL2 next. It carries the "explicitly shared person-location feeds" item of
 [Maps §9, Later research](archive/Maps.md#9-delivery-and-acceptance) forward as work for now, on the user's decisions of
 November 26, 2026: a person shares where they are, for a time they choose, with people they choose (users, a group,
 their XMPP contacts, or a guest link for one record such as a delivery or a service visit); the Android app keeps
@@ -157,8 +157,8 @@ an ended share an empty `geoloc` item (the XEP's "stopped"). Approximate shares 
 
 | Phase | Deliverable |
 | --- | --- |
-| LL0 — the geoloc gap | The XMPP PEP `geoloc` node refused, nothing stored or pushed (built first, with the Maps leftovers) |
-| LL1 — model and services | §3.1 and §3.2, the `location` conf element. Regression `framework/test/LocationShares.spec.js`: seen by its audience only; a group member removed loses it; an expired share shows nothing and its latest row is cleaned; a trail kept only when chosen, and purged; a non-owner's report refused; the rate; approximate rounding; no ADMIN read; the audit rows hold no position |
+| LL0 — the geoloc gap | The XMPP PEP `geoloc` node refused, nothing stored or pushed (built first, with the Maps leftovers). Built November 26, 2026: refused in the XMPP session and in `XmppServices` (`get#PepNodeRefused`), a trimmed, case-insensitive name, `forbidden` on every path |
+| LL1 — model and services | §3.1 and §3.2, the `location` conf element. Regression `framework/test/LocationShares.spec.js`: seen by its audience only; a group member removed loses it; an expired share shows nothing and its latest row is cleaned; a trail kept only when chosen, and purged; a non-owner's report refused; the rate; approximate rounding; no ADMIN read; the audit rows hold no position. Built November 26, 2026, after five review rounds: six entities (`LocationShareAudienceMember`, the group snapshot; `LocationShareOwner`, the owner's lock row; all in the audit class, so no generic tool, REST, agent or import reaches them; the agent `data` tool now refuses restricted entities), one fixed grid with hysteresis held per person, minute-rounded times and a 60 s interval for approximate shares, caps on active shares and audience, an ordered, time-bounded clean; operator routes that can still see a share are stated in Maps and Privacy (login-as, the SQL runner, `NotificationCapture`, the database) |
 | LL2 — Maps | §3.3: the live layer, Browse's panels and dialog, the tray, the terminal list. A page test of the live layer (pushes moving a marker, stale, ended) |
 | LL3 — Android | §3.4. Kotlin unit tests of the service's stop rules; the host command's tests in `moqui-client` (newest point only, a 410 stopping) |
 | LL4 — chat | §3.5 with the encrypted-room decision recorded here |
