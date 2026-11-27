@@ -534,7 +534,10 @@ along with this software (see the LICENSE.md file). If not, see
             network is shown and changed only in Tools. The engine's rules hold: a change of the URL or the kind clears the
             key and disables the provider until a test passes, and a provider is enabled only after a passing test of its
             configuration as it is. The test is one GET with no credentials, following no redirect and reading at most
-            2 MB (a style document must parse and name only its own origin; a raster template must answer an image), to no
+            2 MB (a style document must parse and name only its own origin; a raster template must answer an image; a
+            raster provider whose URL is a Cloud Optimized GeoTIFF, a .tif or .tiff path with no tile placeholder, as a
+            bucket of COGs has, is read as registering one of its COGs reads it: one range of its first 64 KiB, a 206 this
+            site may read by CORS, its header one a map draws, never through the proxy or with a key), to no
             internal address unless the private network is allowed; an archive provider has no URL (ARCHIVE_ENDPOINT). While maps@external-requests is false a provider is neither tested nor enabled
             (EXTERNAL_REQUESTS_OFF). Needs ADMIN_CONNECTION_VIEW to read and ADMIN_CONNECTION_MANAGE to change or test; no
             group is authorized to call it directly.</description>

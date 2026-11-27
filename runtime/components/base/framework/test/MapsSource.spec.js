@@ -11,7 +11,8 @@
 // strips refused), read by range by a holder of its share and not by another user, and handed to the holder's map with its
 // projection's definition. Readiness's room to replace archives (archiveSpace) is checked on given filesystem rows: room,
 // too little on the runtime's or the database's filesystem or for the next backup alone, an external database not measured,
-// no filesystems reported and a status map not read.
+// no filesystems reported and a status map not read. A raster provider whose URL is a COG passes its test by one range of
+// it, and one whose URL is no COG, or answers the whole file, fails naming why.
 // Run: ./moq test framework --spec MapsSource
 const S = "org.moqui.maps.MapSourceServices."
 const HOLDER = "MAPS_SRC_HOLDER"
@@ -44,6 +45,8 @@ const COG_URL_LAYERS = {
     untested: COG_HOST + "/data/untested.tif",
     proxied: COG_HOST + "/data/proxied.tif"
 }
+// raster providers whose URL is a COG (a bucket of them): tested by one range of that COG
+const COG_BUCKETS = {cog: "MAPS_SRC_COGB", notCog: "MAPS_SRC_COGB_NOT", whole: "MAPS_SRC_COGB_WHOLE"}
 const cogUrlLayer = name => "MAPS_SRC_COGU_" + name.toUpperCase()
 const layers = {
     drive: "MAPS_SRC_DRIVE",
@@ -236,6 +239,8 @@ spec({
         del("moqui.maps.MapLayer", "layerId", Object.keys(COG_URL_LAYERS).map(cogUrlLayer))
         del("moqui.server.ConnectionCheck", "connectionKey", Object.values(COG_PROVIDERS))
         del("moqui.maps.MapProvider", "providerId", Object.values(COG_PROVIDERS))
+        del("moqui.server.ConnectionCheck", "connectionKey", Object.values(COG_BUCKETS))
+        del("moqui.maps.MapProvider", "providerId", Object.values(COG_BUCKETS))
         for (const location of [DRIVE_LOCATION, BAD_LOCATION, FILE_LOCATION, OUTSIDE_LOCATION, COG_LOCATION, COG_STRIPS])
             try {
                 ec.resource.getLocationReference(location).delete()
@@ -541,6 +546,59 @@ feature("a provider's COG is read by one range from its URL: a 206 this site may
         out.notProviders.applied === false && out.notProviders.reasonCode == "URL_NOT_PROVIDERS"
         out.untested.applied === false && out.untested.reasonCode == "PROVIDER_UNTESTED"
         out.proxied.applied === false && out.proxied.reasonCode == "PROVIDER_PROXIED"
+    }
+})
+
+feature("a raster provider whose URL is a COG is tested by one range of that COG, and a URL that is no COG fails by name", {
+    when() {
+        const urls = {
+            cog: COG_HOST + "/bucket/scene.tif",
+            notCog: COG_HOST + "/bucket/picture.tif",
+            whole: COG_HOST + "/bucket/whole.tiff"
+        }
+        http.clear()
+        const cors = {"Access-Control-Allow-Origin": "*"}
+        http.add({method: "GET", url: urls.cog, contentType: "image/tiff", body: lib.cog(), ranges: true, headers: cors})
+        http.add({
+            method: "GET",
+            url: urls.notCog,
+            contentType: "image/tiff",
+            body: Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13]),
+            ranges: true,
+            headers: cors
+        })
+        http.add({method: "GET", url: urls.whole, contentType: "image/tiff", body: lib.cog(), headers: cors})
+        const out = {}
+        for (const [key, providerId] of Object.entries(COG_BUCKETS)) {
+            make("moqui.maps.MapProvider", {
+                providerId,
+                providerName: "Spec COG bucket " + key,
+                providerKindEnumId: "MPK_RASTER_TILES",
+                endpointUrl: urls[key],
+                proxyRequests: "N",
+                disabled: "N"
+            })
+            const tested = as(null, () =>
+                invoke("org.moqui.admin.ConfigurationServices.test#Connection", {
+                    adapterKey: "mapProvider",
+                    connectionKey: providerId
+                })
+            )
+            out[key] = {
+                passed: tested.passed,
+                texts: Array.from(tested.checkList || [])
+                    .map(row => String(row.text))
+                    .join(" | ")
+            }
+        }
+        out.asked = http.requests().filter(request => request.url == urls.cog)
+        return out
+    },
+    then({cog, notCog, whole, asked}) {
+        cog.passed === true && cog.texts.includes("Cloud Optimized GeoTIFF") && cog.texts.includes("EPSG:32633")
+        asked.length == 1 && asked[0].headers.Range == "bytes=0-65535" && !asked[0].headers.Cookie
+        notCog.passed === false && notCog.texts.includes("(COG_INVALID)")
+        whole.passed === false && whole.texts.includes("(NO_RANGES)")
     }
 })
 

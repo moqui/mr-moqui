@@ -14,7 +14,10 @@
 // the private network (allowPrivateNetwork, which is shown here and changed only in Tools, as for every kind): a hosted
 // style must parse as a MapLibre style (version 8, sources, layers) and name its sources, tiles, sprite and glyphs on its
 // own origin (scheme, host and port) only, so the map's allowed origins (the provider's) cover all it fetches; a raster
-// template must answer an image for tile 0/0/0, a TileJSON name its tiles on its own origin; a geocoder must answer its
+// template must answer an image for tile 0/0/0, a TileJSON name its tiles on its own origin, and a raster provider whose
+// endpoint is a Cloud Optimized GeoTIFF (cogEndpoint: a .tif or .tiff path with no tile placeholder; a bucket of COGs, P4c)
+// is read as registering one of its COGs reads it, by one range of its header (MapSources.js readCogHead: a 206 this site
+// may read by CORS, a header a map draws), never through the proxy and never with a key; a geocoder must answer its
 // service's fixed test search (MapGeocoders.js test: a public address or a city, never a user's text); an archive
 // provider has no URL (store#Connection refuses one, ARCHIVE_ENDPOINT) and is sent nothing. Its texts are a fixed
 // vocabulary (an origin only when it is a host name or an IP literal, a status, a kind of failure), never the
@@ -339,6 +342,44 @@ function rasterTest(url, context) {
         hostsRow(strangeOrigins(tiles, url), url, L("The TileJSON"))
     ]
 }
+// A raster provider's endpoint that is a Cloud Optimized GeoTIFF rather than a tile template or a TileJSON: a path ending
+// in .tif or .tiff, with no placeholder
+const cogEndpoint = url => !/[{}]/.test(url) && /\.tiff?$/i.test(url.split(/[?#]/)[0])
+function cogTest(provider, url, context) {
+    const place = shownOrigin(mapConfig.originOf(url))
+    if (proxied(provider) || text(provider.apiKey))
+        return [
+            {
+                check: "GeoTIFF",
+                ok: false,
+                text: L("A COG is read by the browser itself, so its provider has no key and is not reached through this server")
+            }
+        ]
+    const hadError = ec.message.hasError()
+    const sources = ec.resource.script("component://framework/service/org/moqui/maps/MapSources.js")
+    const read = sources.readCogHead(url, context.denyInternal)
+    // the header reader's error is this row's, not the test's
+    if (!hadError && ec.message.hasError()) ec.message.clearErrors()
+    if (!read.ok)
+        return [
+            {
+                check: "GeoTIFF",
+                ok: false,
+                text: say("${place}: ${reason} (${code})", {place, reason: read.reason, code: read.reasonCode})
+            }
+        ]
+    const cog = read.header?.cog || {}
+    return [
+        {
+            check: "GeoTIFF",
+            ok: true,
+            text: say(
+                "${place} answered a range of a Cloud Optimized GeoTIFF this site may read (${bands} bands, ${crs}); no credentials were sent",
+                {place, bands: cog.bands, crs: text(cog.epsg)}
+            )
+        }
+    ]
+}
 function providerTest(parts, context) {
     const provider = parts.main
     const kind = text(provider.providerKindEnumId)
@@ -356,6 +397,8 @@ function providerTest(parts, context) {
     try {
         // an OGC service: its capabilities, recorded with the proxy's rules when it passes
         if (ogc().isOgcKind(kind)) return ogcTest(provider, context)
+        // a raster provider of COGs: one range of its COG, as a map's browser reads it (never proxied)
+        if (kind === "MPK_RASTER_TILES" && cogEndpoint(url)) return cogTest(provider, url, context)
         // a proxied provider is tested as the proxy asks it, and the paths it and its layers name recorded for the proxy
         if (proxied(provider) && (kind === "MPK_VECTOR_STYLE" || kind === "MPK_RASTER_TILES"))
             return proxiedTest(provider, url, kind, context)

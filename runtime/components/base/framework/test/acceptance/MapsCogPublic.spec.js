@@ -1,15 +1,13 @@
 // MapsCogPublic (plans/Maps.md §4.1, P4c): a real public Cloud Optimized GeoTIFF at a provider's URL, nothing proxied and no
 // key: the true-colour image (TCI.tif, about 224 MiB, 10980 pixels square, three bands of 8 bits) of a Sentinel-2 L2A scene
 // in the Sentinel-2 COGs bucket on AWS Open Data, the one OpenLayers' own COG example draws (examples/cog.js), which answers
-// ranges and CORS for any origin. A raster-tiles provider for the bucket's host is tested, the layer registered from the URL
-// (register#ArchiveLayer: one range of its first 64 KiB, its header read in Rust), and the recorded header checked (tiled,
+// ranges and CORS for any origin. A raster-tiles provider whose URL is that COG is tested (one range of its header, as a COG
+// provider's test reads it), the layer registered from the URL (register#ArchiveLayer: one range of its first 64 KiB, its
+// header read in Rust), both once before the features, and the recorded test and header checked (tiled,
 // with overviews, in its UTM zone's EPSG code, which the projection registry has, CORS allowed); the effective configuration
 // hands the layer with the provider's URL and its projection's definition; then the full image's first tile is read by
 // range through the outbound HTTP client, its offset and length taken from the file's first image directory. Times and sizes
 // are logged; the rows are removed afterwards.
-//
-// The provider's test asks a raster-tiles provider for tile 0/0/0 as an image, and the bucket serves COGs, not tiles: the
-// provider here names the scene's thumbnail (a JPEG on the same host) as its tile template, so that its test passes.
 // Run when asked: ./moq accept framework --spec MapsCogPublic
 const http = ec.factory.getTool("HttpFixtures")
 const C = "org.moqui.admin.ConfigurationServices."
@@ -22,7 +20,12 @@ const COG_URL = SCENE + "TCI.tif"
 const PROVIDER = "MAPS_COG_PUBLIC"
 const LAYER = "MAPS_COG_PUBLIC_TCI"
 const log = (label, value) => ec.logger.warn("MapsCogPublic: " + label + " " + JSON.stringify(value))
-const providerRow = () => ec.entity.find("moqui.maps.MapProvider").condition("providerId", PROVIDER).useCache(false).one()
+const checkRow = () =>
+    ec.entity
+        .find("moqui.server.ConnectionCheck")
+        .condition({adapterKey: "mapProvider", connectionKey: PROVIDER})
+        .useCache(false)
+        .one()
 const layerRow = () => ec.entity.find("moqui.maps.MapLayer").condition("layerId", LAYER).useCache(false).one()
 function admin(action) {
     ec.user.internalLoginUser("john.doe")
@@ -102,7 +105,7 @@ spec({
                 providerId: PROVIDER,
                 providerName: "Spec Sentinel-2 COGs on AWS",
                 providerKindEnumId: "MPK_RASTER_TILES",
-                endpointUrl: SCENE + "thumbnail.jpg?tile={z}/{x}/{y}",
+                endpointUrl: COG_URL,
                 attribution: "Contains modified Copernicus Sentinel data 2020",
                 allowPrivateNetwork: "N",
                 proxyRequests: "N",
@@ -121,21 +124,7 @@ spec({
                 disabled: "Y"
             })
             .createOrUpdate()
-    },
-    cleanupSpec() {
-        http.reset()
-        ec.message.clearErrors()
-        ec.user.internalLoginUser("john.doe")
-        ec.artifactExecution.disableAuthz()
-        const del = (entity, field, values) => ec.entity.find(entity).condition(field, "in", values).deleteAll()
-        del("moqui.maps.MapLayer", "layerId", [LAYER])
-        del("moqui.server.ConnectionCheck", "connectionKey", [PROVIDER])
-        del("moqui.maps.MapProvider", "providerId", [PROVIDER])
-    }
-})
-
-feature("a Sentinel-2 COG: its provider tested, the layer registered from its URL with its header recorded", {
-    when() {
+        // the provider tested and the layer registered once, as an administrator does, for both features
         let started = Date.now()
         const tested = call(C + "test#Connection", {adapterKey: "mapProvider", connectionKey: PROVIDER})
         log("provider test", {passed: tested.passed, ms: Date.now() - started, checks: tested.checkList})
@@ -152,17 +141,34 @@ feature("a Sentinel-2 COG: its provider tested, the layer registered from its UR
             bounds: [row.minLongitude, row.minLatitude, row.maxLongitude, row.maxLatitude].map(Number),
             raster: Object.assign({}, raster, {statistics: undefined, defaults: undefined})
         })
+        ec.message.clearErrors()
+        ec.artifactExecution.disableAuthz()
+    },
+    cleanupSpec() {
+        http.reset()
+        ec.message.clearErrors()
+        ec.user.internalLoginUser("john.doe")
+        ec.artifactExecution.disableAuthz()
+        const del = (entity, field, values) => ec.entity.find(entity).condition(field, "in", values).deleteAll()
+        del("moqui.maps.MapLayer", "layerId", [LAYER])
+        del("moqui.server.ConnectionCheck", "connectionKey", [PROVIDER])
+        del("moqui.maps.MapProvider", "providerId", [PROVIDER])
+    }
+})
+
+feature("a Sentinel-2 COG: its provider passed its test by a range of the COG, the layer is registered with its header", {
+    when() {
+        const row = layerRow()
         const projection = row.crs
             ? ec.entity.find("moqui.maps.MapProjection").condition("projectionId", row.crs).useCache(false).one()
             : null
-        return {tested, registered, row, raster, projection}
+        return {check: checkRow(), row, raster: JSON.parse(String(row.rasterJson || "{}")), projection}
     },
-    then({tested, registered, row, raster, projection}) {
-        tested.passed == true
-        registered.applied === true && row.disabled == "N"
+    then({check, row, raster, projection}) {
+        check.lastCheckPassed == "Y" && !!check.testedConfigHash
+        row.disabled == "N" && !!row.sourceRegisteredDate
         // nothing of a provider's COG is pinned: no revision, no location
         !row.sourceRevision && !row.resourceLocation
-        registered.size > 100 * 1024 * 1024
         // Sentinel-2 tiles are in their UTM zone: 36QWD is zone 36 north
         raster.epsg == row.crs && /^EPSG:32[67]\d\d$/.test(row.crs) && row.crs == "EPSG:32636"
         projection != null && projection.disabled != "Y" && String(projection.proj4Definition).includes("+zone=36")

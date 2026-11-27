@@ -459,6 +459,64 @@ function cogFields(cog, extra) {
 }
 const production = () => text(ec.factory.getConfValue("instance@purpose")) === "production"
 const privateAllowed = row => row?.allowPrivateNetwork === "Y" || (row?.allowPrivateNetwork !== "N" && !production())
+// One range of a provider's COG at its URL, its first COG_HEAD bytes, as a browser's geotiff.js asks it: with an Origin of
+// this site, no credentials, no redirect, ten seconds, to no internal address when denyInternal. It must be a 206
+// (NO_RANGES) that this site may read by CORS (* or its origin: NO_CORS), and its header, read in Rust (read#CogHeader), one a
+// map draws (COG_INVALID, with its problems). {ok: true, header} or {ok: false, reasonCode, reason, problems}. Registering a
+// provider's COG reads it so, and so does the test of a raster provider whose endpoint is a COG (MapProviders.js).
+function readCogHead(url, denyInternal) {
+    const no = (reasonCode, reason, extra) => Object.assign({ok: false, reasonCode, reason}, extra || {})
+    const mapConfig = ec.resource.script("component://framework/service/org/moqui/maps/MapConfig.js")
+    // this site's own origin, which a browser sends with its range requests; with none known only * passes
+    const pageOrigin = mapConfig.originOf(text(ec.web ? ec.web.getWebappRootUrl(true, null) : "")) || ""
+    let response
+    try {
+        let client = ec.service
+            .rest()
+            .method("GET")
+            .uri(url)
+            .timeout(10)
+            .followRedirects(false)
+            .addHeader("Range", "bytes=0-" + (COG_HEAD - 1))
+            .addHeader("Origin", pageOrigin || "https://moqui.invalid")
+        client = denyInternal ? client.denyInternal() : client.allowInternal()
+        response = client.send()
+    } catch (error) {
+        return no("SOURCE_UNREAD", say("Its URL did not answer: ${error}", {error: text(error?.message ?? error).slice(0, 200)}))
+    }
+    const status = Number(response.getStatusCode())
+    if (status !== 206)
+        return no(
+            "NO_RANGES",
+            status >= 200 && status < 300
+                ? L("Its URL answered the whole file, not the range asked: a COG is read by range")
+                : say("Its URL answered HTTP ${status}", {status})
+        )
+    const allowed = text(response.headerFirst("access-control-allow-origin"))
+    if (!(allowed === "*" || (pageOrigin && allowed.toLowerCase().replace(/\/+$/, "") === pageOrigin)))
+        return no(
+            "NO_CORS",
+            L("Its URL does not let this site read it (CORS: * or this site's origin), so a browser cannot draw it")
+        )
+    const range = /\/(\d+)\s*$/.exec(text(response.headerFirst("content-range")))
+    let bytes
+    try {
+        bytes = response.bytes(COG_HEAD + 1024)
+    } catch (error) {
+        return no("NO_RANGES", L("Its URL answered more than the range asked"))
+    }
+    const header = ec.service
+        .sync()
+        .name("org.moqui.maps.MapSourceServices.read#CogHeader")
+        .parameters({bytes, size: range ? Number(range[1]) : bytes.length})
+        .disableAuthz()
+        .call()
+    if (ec.message.hasError()) return no("HEADER_UNREAD", ec.message.getErrorsString())
+    const problems = Array.from(header?.problems || []).map(text)
+    if (problems.length)
+        return no("COG_INVALID", say("A map cannot draw this GeoTIFF: ${problems}", {problems: problems.join("; ")}), {problems})
+    return {ok: true, header}
+}
 // A provider's COG: its URL on the provider's own origin, the provider enabled and tested and outside requests on; one range
 // of its start, which must be a 206 the page's origin may read by CORS, then its header read in Rust from those bytes
 function registerCogUrl(layer, refused) {
@@ -481,59 +539,9 @@ function registerCogUrl(layer, refused) {
     const providers = ec.resource.script("component://framework/service/org/moqui/maps/MapProviders.js")
     if (!providers.tested(provider))
         return refused("PROVIDER_UNTESTED", L("Its provider has not passed a test as it is configured now"))
-    // this site's own origin, which a browser sends with its range requests; with none known only * passes
-    const pageOrigin = mapConfig.originOf(text(ec.web ? ec.web.getWebappRootUrl(true, null) : "")) || ""
-    let response
-    try {
-        let client = ec.service
-            .rest()
-            .method("GET")
-            .uri(url)
-            .timeout(10)
-            .followRedirects(false)
-            .addHeader("Range", "bytes=0-" + (COG_HEAD - 1))
-            .addHeader("Origin", pageOrigin || "https://moqui.invalid")
-        client = privateAllowed(provider) ? client.allowInternal() : client.denyInternal()
-        response = client.send()
-    } catch (error) {
-        return refused(
-            "SOURCE_UNREAD",
-            say("Its URL did not answer: ${error}", {error: text(error?.message ?? error).slice(0, 200)})
-        )
-    }
-    const status = Number(response.getStatusCode())
-    if (status !== 206)
-        return refused(
-            "NO_RANGES",
-            status >= 200 && status < 300
-                ? L("Its URL answered the whole file, not the range asked: a COG is read by range")
-                : say("Its URL answered HTTP ${status}", {status})
-        )
-    const allowed = text(response.headerFirst("access-control-allow-origin"))
-    if (!(allowed === "*" || (pageOrigin && allowed.toLowerCase().replace(/\/+$/, "") === pageOrigin)))
-        return refused(
-            "NO_CORS",
-            L("Its URL does not let this site read it (CORS: * or this site's origin), so a browser cannot draw it")
-        )
-    const range = /\/(\d+)\s*$/.exec(text(response.headerFirst("content-range")))
-    let bytes
-    try {
-        bytes = response.bytes(COG_HEAD + 1024)
-    } catch (error) {
-        return refused("NO_RANGES", L("Its URL answered more than the range asked"))
-    }
-    const header = ec.service
-        .sync()
-        .name("org.moqui.maps.MapSourceServices.read#CogHeader")
-        .parameters({bytes, size: range ? Number(range[1]) : bytes.length})
-        .disableAuthz()
-        .call()
-    if (ec.message.hasError()) return refused("HEADER_UNREAD", ec.message.getErrorsString())
-    const problems = Array.from(header?.problems || []).map(text)
-    if (problems.length)
-        return refused("COG_INVALID", say("A map cannot draw this GeoTIFF: ${problems}", {problems: problems.join("; ")}), {
-            problems
-        })
+    const read = readCogHead(url, !privateAllowed(provider))
+    if (!read.ok) return refused(read.reasonCode, read.reason, read.problems ? {problems: read.problems} : null)
+    const header = read.header
     const fields = Object.assign(
         {layerId: layer.layerId, sourceRegisteredDate: ec.user.nowTimestamp, disabled: "N"},
         cogFields(header.cog || {}, {cors: true})
@@ -1197,5 +1205,7 @@ const operations = {sourceAccess, archiveTile, register, findArchives, readiness
     tileUrl,
     // the room to replace archives, from given rows (MapsSource.spec.js)
     archiveSpace,
+    // a provider's COG read by one range (MapProviders.js, the test of a COG provider)
+    readCogHead,
     SOURCE_PATH
 })
