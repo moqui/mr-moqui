@@ -27,10 +27,22 @@ along with this software (see the LICENSE.md file). If not, see
         LocationTrailPoint for trailKeepDays (at most location@trail-max-days) after the share ends, until
         trailPurgeDate. An approximate share's positions are cells of one fixed grid that every share uses
         (LocationShares.js). A guest share for a record names it as MapAdapter does (recordAdapterKey, recordKey), set
-        only by the service that checks the caller may act on the record. -->
+        only by the service that checks the caller may act on the record. The device it is sent from, userLoginKeyId,
+        is the owner's app that started it, or none for a browser page. -->
     <entity entity-name="LocationShare" package="moqui.maps" use="transactional" cache="never">
         <field name="shareId" type="id" is-pk="true"/>
         <field name="ownerUserId" type="id" not-null="true"/>
+        <field name="userLoginKeyId" type="text-medium"><description>The device it is sent from: the
+            UserLoginKey (its stored hash, ec.user.loginKeyId) of the owner's device whose request started it or last took
+            it over (update#Share sendFromHere); none for a browser page, whose requests carry no device key. A share with a
+            device takes reports from that device's requests only, and one with none from no device's; the key's renewal
+            moves it (plans/Location-Sharing.md §3.1, §3.4)</description></field>
+        <field name="audienceVersion" type="number-integer"><description>Raised by every change of the audience that can
+            reach someone new (an entry added, a group added again with a new snapshot): a share sent from a device takes
+            reports only with the version its person confirmed there (plans/Location-Sharing.md §3.4)</description></field>
+        <field name="renewedFromKeyId" type="text-medium"><description>The device key the last renewal replaced (its
+            stored hash): a report on its way as the key was renewed is taken from it while it still signs in (its few
+            minutes' grace); cleared when another device or page takes the share over</description></field>
         <field name="label" type="text-medium"><description>What the audience sees: the owner's name by default</description></field>
         <field name="purposeText" type="text-medium"><description>Why or until what, in the owner's words (an ETA)</description></field>
         <field name="fromDate" type="date-time"/>
@@ -99,6 +111,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="userId" type="id" is-pk="true"/>
         <field name="memberFromDate" type="date-time"><description>The fromDate of the membership row that made the user
             a member at the snapshot: the user reaches the share only while that row is current</description></field>
+        <field name="reachedDate" type="date-time"><description>When this entry's snapshot first held the user, kept when
+            the group is added again: the user sees the latest position and the trail observed from then on only
+            (plans/Location-Sharing.md §3.4)</description></field>
         <relationship type="one" related="moqui.maps.LocationShareAudience"/>
         <relationship type="one" related="moqui.security.UserAccount"/>
         <index name="LOC_SHARE_AUD_MEMBER_USER"><index-field name="userId"/></index>
@@ -142,6 +157,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="accuracy" type="number-float" ai-opt-out="true"/>
         <field name="heading" type="number-float" ai-opt-out="true"/>
         <field name="speed" type="number-float" ai-opt-out="true"/>
+        <field name="receivedDate" type="date-time"><description>When the server received it: a viewer reads the trail
+            from when the audience first reached them on, by this time, never the device's (plans/Location-Sharing.md
+            §3.4)</description></field>
         <relationship type="one" related="moqui.maps.LocationShare"/>
+        <index name="LOC_TRAIL_RECEIVED"><index-field name="shareId"/><index-field name="receivedDate"/></index>
     </entity>
 </entities>

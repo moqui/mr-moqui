@@ -479,6 +479,23 @@ the same as in a browser ([Comms, Boards and the stage](../tools/Comms.md)).
 
 The live checks for each OS are in [Testing-Needed](../../plans/Testing-Needed.md#desktop-and-mobile-apps).
 
+## Live location
+
+A live location share started in Maps (plans/Location-Sharing.md §3.4, [Maps, Live location](../tools/Maps.md#live-location))
+is sent from the desktop as from a browser: Browse's own `watchPosition` while its window is open, and nothing once it
+closes (the share stays on and goes stale; the desktop has no background sender and no `moquiDesktop.location`). Its
+requests carry the account's device key, so a share started here is bound to this computer, and Send from here takes
+one over from another device. Its reports carry the share's audience version the page read; on a change (409
+`AUDIENCE_CHANGED`) the page reads the shares again and goes on with the new version, shown in its banner: it is
+read again, not confirmed as the phone's own dialog confirms it. A server's page gets `Permissions-Policy`
+`geolocation=(self)` (`moqui_client_tauri::scheme::PAGE_PERMISSIONS_POLICY`), which lets Browse, the window's own document, ask and keeps a
+frame of another origin from it. The permission is left to CEF (`bridge::on_permission` answers the camera, the
+microphone and screen capture only): Chrome style (Linux, Windows) asks the person with Chromium's prompt; macOS's Alloy
+style takes it. Whether a position comes is Chromium's location providers' and is not yet tried on a built app: Linux's
+network provider wants a Google API key CEF builds lack, and macOS wants a location entitlement and purpose text the app
+does not declare ([proofs](../security/proofs/clients/README.md), MASVS-PRIVACY-1); with none, Browse says the browser
+gave no location and the share goes stale.
+
 ## Offline in the screens
 
 From `moqui.connection`, inert on the web: offline is the host's own unreachable answer

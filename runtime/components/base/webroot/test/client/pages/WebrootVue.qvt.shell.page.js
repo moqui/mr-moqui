@@ -593,6 +593,38 @@ test("the server's indicators: set from /shellIndicators, one no longer answered
     }
 });
 
+test("in the Android app the location chip says sending from this phone while the app's service sends, and not once it stops", async () => {
+    const indicators = moqui.shellIndicators;
+    indicators.clear();
+    const vm = makeRoot({}, { userId: "U1" });
+    const had = Object.getOwnPropertyDescriptor(window, "moquiDesktop");
+    let sending = ["S1"];
+    Object.defineProperty(window, "moquiDesktop", { configurable: true, value: { location: { status: () => Promise.resolve(sending) } } });
+    const request = moqui.request;
+    moqui.request = () => Promise.resolve({ json: { indicators: [{ key: "locationSharing", label: "Sharing location" }], refreshOn: [] } });
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+    try {
+        await vm.loadShellIndicators();
+        await settle();
+        assert.equal(indicators.get("locationSharing") && indicators.list()[0].text, "Sharing location · sending from this phone");
+        // the service stopped with Maps closed: the next load takes the note off
+        sending = [];
+        await vm.loadShellIndicators();
+        await settle();
+        assert.equal(indicators.list()[0].text, "Sharing location");
+        // a note of a page's own (Browse's "sending here") is left as it is
+        indicators.note("locationSharing", "sending here");
+        await vm.loadShellIndicators();
+        await settle();
+        assert.equal(indicators.list()[0].text, "Sharing location · sending here");
+    } finally {
+        moqui.request = request;
+        clearTimeout(vm.indicatorTimer);
+        if (had) Object.defineProperty(window, "moquiDesktop", had); else delete window.moquiDesktop;
+        indicators.clear();
+    }
+});
+
 test("the shell components compile and the header has each element of the design", () => {
     const shell = qvt.components["m-qapps-root"].template;
     ["m-launcher", "m-app-screens", "m-search", "m-quick-create-menu", "m-account"].forEach((id) => assert.match(shell, new RegExp('id="' + id + '"'), id));
