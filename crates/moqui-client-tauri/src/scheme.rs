@@ -449,7 +449,10 @@ pub fn answer(
 }
 
 /// A file of an offline map package on the device for the shell's page `label` (`moqui_client::packages::serve`): one
-/// range as a 206 slice read from the file, never the whole file in memory; 404 on the app origin.
+/// range as a 206 slice read from the file, never the whole file in memory. Only the shell's own page asks: 404 on the
+/// app origin, and on the shell's origin for a webview that shows a server page (every webview has the schemes, so a
+/// server page could embed a shell-origin URL as an image or a font) or a request that says it is another origin's
+/// (`Origin`, `Sec-Fetch-Site`), whatever the URL says.
 pub fn package_file(
     state: &ClientState,
     label: &str,
@@ -457,13 +460,18 @@ pub fn package_file(
     bare: &str,
     origin: &str,
 ) -> Response<Vec<u8>> {
-    if origin != SHELL_ORIGIN {
+    let text = |name: &str| request.headers().get(name).and_then(|value| value.to_str().ok());
+    let other_origin = text("origin").is_some_and(|sent| !sent.trim().eq_ignore_ascii_case(SHELL_ORIGIN));
+    let other_site = text("sec-fetch-site").is_some_and(|site| {
+        let site = site.trim();
+        !site.eq_ignore_ascii_case("same-origin") && !site.eq_ignore_ascii_case("none")
+    });
+    if origin != SHELL_ORIGIN || !state.host.is_shell(label) || other_origin || other_site {
         return plain(StatusCode::NOT_FOUND, "Not found");
     }
     let Some((account, _)) = state.account_of(label) else {
         return plain(StatusCode::NOT_FOUND, "No account is signed in");
     };
-    let text = |name: &str| request.headers().get(name).and_then(|value| value.to_str().ok());
     let served = moqui_client::packages::serve(
         state.core.packages(),
         &account.id,

@@ -4,6 +4,7 @@ package org.moqui.mobile
 
 import androidx.work.NetworkType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -33,6 +34,9 @@ class PackageDownloadRulesTest {
     val last = PackageDownloadRules.MAX_ATTEMPTS - 1
     assertEquals(PackageDownloadRules.Outcome.RETRY, PackageDownloadRules.outcome(PackageDownloadRules.RETRY, last - 1, false))
     assertEquals(PackageDownloadRules.Outcome.FAILURE, PackageDownloadRules.outcome(PackageDownloadRules.RETRY, last, false))
+    // the last run is told to Rust, which makes its failure final and answers done
+    assertTrue(PackageDownloadRules.isLast(last))
+    assertFalse(PackageDownloadRules.isLast(last - 1))
   }
 
   @Test

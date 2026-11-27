@@ -976,11 +976,11 @@ The Android app and the desktop client keep downloaded packages beside each acco
   Android `PackageDownloadWorker` (WorkManager) runs it, resumable, on any network or only on Wi-Fi; on the desktop a
   task of the app.
 - **Serving to the offline screen.** The app's scheme answers `/__moqui-app/maps/<packageId>/<path>` on the shell's
-  origin only (no server page reads it) from the current account's installed revision: HEAD, GET and one `Range` as
-  a 206 slice read from the file, at most 16 MiB a slice (a file past 16 MiB is asked by range); the member's SHA-256
-  is its `ETag`, a path the manifest does not list is 404. The package's own `manifest.json` is served too. Android's
-  WebView reads an intercepted body's length as a 32-bit number, hence the 2 GiB member bound, within the server's
-  `maps@package-max-bytes` of 2 GiB.
+  origin, to the shell's own webview only (no server page reads it, nor embeds it) from the current account's installed
+  revision, never kept by the webview (`no-store`): HEAD, GET and one `Range` as a 206 slice read from the file, at most
+  16 MiB a slice (a file past 16 MiB is asked by range); the member's SHA-256 is its `ETag`, a path the manifest does
+  not list is 404. The package's own `manifest.json` is served too. Android's WebView reads an intercepted body's length
+  as a 32-bit number, hence the 2 GiB member bound, within the server's `maps@package-max-bytes` of 2 GiB.
 - **The shell's commands**: `packages_list` (the server's list and the device's), `packages_download` (a revision;
   `wifiOnly` on the phone), `packages_cancel`, `packages_delete` and `packages_status`; ids, names, revisions, sizes
   and states, never a path on the device.

@@ -362,5 +362,31 @@ fn a_packages_file_is_the_shells_by_range_and_no_server_pages() {
     );
     let page = crate::scheme::package_file(&state, "remote-1", &request(None), path, crate::APP_ORIGIN);
     assert_eq!(page.status(), 404);
+    // a server page's webview asking the shell's origin (an image or a font it embeds): nothing
+    let embedded = crate::scheme::package_file(&state, "remote-1", &request(None), path, crate::SHELL_ORIGIN);
+    assert_eq!(embedded.status(), 404);
+    // the shell's webview, but a request that says it is another origin's
+    for (name, value) in [
+        ("Origin", "http://moqui-app.localhost"),
+        ("Sec-Fetch-Site", "cross-site"),
+    ] {
+        let mut asked = request(None);
+        asked
+            .headers_mut()
+            .insert(name, tauri::http::HeaderValue::from_static(value));
+        let refused = crate::scheme::package_file(&state, "main", &asked, path, crate::SHELL_ORIGIN);
+        assert_eq!(refused.status(), 404, "{name}");
+    }
+    let mut own = request(None);
+    own.headers_mut().insert(
+        "Origin",
+        tauri::http::HeaderValue::from_static("http://moqui-shell.localhost"),
+    );
+    let own = crate::scheme::package_file(&state, "main", &own, path, crate::SHELL_ORIGIN);
+    assert_eq!(own.status(), 200);
+    assert_eq!(
+        own.headers().get("cache-control").and_then(|value| value.to_str().ok()),
+        Some("no-store")
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

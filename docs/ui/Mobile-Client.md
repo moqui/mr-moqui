@@ -114,14 +114,18 @@ The phone keeps downloaded map regions as the desktop does ([Desktop-Client](Des
 the store under `client/data/`, `packages-max-mb`, the checks, the shell's `/__moqui-app/maps/` path and the
 commands); what differs is who runs the download (plans/Maps-Offline.md §2.4).
 
-- **`PackageDownloadWorker`** (WorkManager, `PackageDownloadWorker.kt`): `packages_download` hands it the account,
+- **`PackageDownloadWorker`** (WorkManager, `PackageDownloadWorker.kt`, a `ListenableWorker` on a thread of its own,
+  so one map download runs at a time and WorkManager's threads stay for `FlushWorker` and `RegisterWorker`):
+  `packages_download` hands it the account,
   package and revision (`MobileHost::start_package_download`, `PackageDownloadWorker.start` through JNI), one work per
   account and package, a new revision replacing the work of another. It waits for a network, an unmetered one when the
   shell asks `wifiOnly` ("only on Wi-Fi"), and storage not low, and calls Rust (`Native.packageDownload`,
   `native::package_download`) with the process's client, made from the store when WorkManager started the process. A
   cut, a server error or WorkManager's stop (the network or Wi-Fi gone, its ten minutes up: `onStopped` pauses the run
-  at its next range, `Native.packagePause`) keeps the part file, and the next run, backing off from 30 seconds, goes on
-  from its length; after 20 runs it gives up, the part kept for the next download asked. A cancel, a delete, and an
+  at its next range, `Native.packagePause`, its own run only: the work's id is the run's) keeps the part file, and the
+  next run, backing off from 30 seconds, goes on from its length; its 20th run tells Rust it is the last, so a failure
+  then is final (`retry` false) and the shell does not show a download nothing will run again, the part kept for the
+  next download asked. A cancel, a delete, and an
   account's data deleted cancel its works (`cancelUniqueWork`, `cancelAllWorkByTag`).
 - **The bridge:** `moquiDesktop.packages` on the shell's page only (`list`, `download(packageId, revision, wifiOnly)`,
   `cancel`, `remove`, `status`), with the load's nonce.

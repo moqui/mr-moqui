@@ -73,7 +73,7 @@ pub fn run_task(
         .name("map-package".to_string())
         .spawn(move || {
             let ended = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                core.download_package(Some(host.as_ref()), &account, &package_id, revision)
+                core.download_package(Some(host.as_ref()), &account, &package_id, revision, None)
             }));
             if ended.is_err() {
                 tracing::error!("The download of the offline map {package_id} panicked");
@@ -122,8 +122,9 @@ pub fn packages_download(
     if !state.shell.network_ready() {
         return Err("This app cannot make secure connections on this device".to_string());
     }
-    let queued = state.core.packages().queue(&account, &package_id, revision)?;
-    if matches!(queued, Status::Queued { .. }) {
+    let (queued, new) = state.core.packages().queue(&account, &package_id, revision)?;
+    // a download already queued or running is not started again
+    if new {
         let started = state.shell.start_package_download(
             &state.core,
             &state.host,

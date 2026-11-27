@@ -51,11 +51,19 @@ object Native {
     /**
      * Download `revision` of an account's offline map package ([PackageDownloadWorker], plans/Maps-Offline.md §2.4), on
      * the worker's thread: [PackageDownloadRules.DONE] when it ended (installed, refused, cancelled, stale), or
-     * [PackageDownloadRules.RETRY] to be tried again from its kept part.
+     * [PackageDownloadRules.RETRY] to be tried again from its kept part. `runner` is the work's id; on its `last` run a
+     * failure is told as final.
      */
-    @JvmStatic external fun packageDownload(dataDir: String, account: String, packageId: String, revision: Long): Int
-    /** WorkManager stopped a package's download: Rust stops at its next range and keeps its part. */
-    @JvmStatic external fun packagePause(account: String, packageId: String)
+    @JvmStatic external fun packageDownload(
+        dataDir: String,
+        account: String,
+        packageId: String,
+        revision: Long,
+        runner: String,
+        last: Boolean,
+    ): Int
+    /** WorkManager stopped the work `runner`: Rust stops its download at its next range and keeps its part. */
+    @JvmStatic external fun packagePause(account: String, packageId: String, runner: String)
 
     /**
      * The app's screen went (the phone locked, or another app came to the front): every vault session locks
