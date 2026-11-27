@@ -21,7 +21,7 @@ All new desktop code goes in `crates/moqui-desktop/src/code/`, one file per area
 
 - A local node and client accounts can be on at the same time (T3: primary plus saved environments). The node is the
   `primary` environment. The tray item **Use as a client of a server** turns the node off (thin client).
-- `agent_code_home` on the desktop node is the app data directory `agent-code/`
+- The Agent Code home on the desktop node (`agent-code@home` left empty) is the app data directory's `agent-code/`
   ([02 §2](02-Orchestration.md#2-thread-creation-and-launch)).
 - Login to the local node: the in-process window uses the node's own session (cookie in the host), so approvals stay a
   person's. Agent Code keeps that rule. No login key header on the in-process window.

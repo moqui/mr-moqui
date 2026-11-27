@@ -13,7 +13,7 @@ Code goes in `crates/moqui-code/src/scm/`, one module per host, behind the trait
 | source-control-github | GitHub, GitHub Enterprise | 1. token in Settings (secret); 2. `GH_TOKEN` (`GH_ENTERPRISE_TOKEN` + `GH_HOST`); 3. `gh` CLI 2.81.0+. Per-host account pick; a host can be off. | `scm/github` (REST and GraphQL over the Rust HTTP client; `gh` only for its stored token) |
 | source-control-gitlab | GitLab merge requests | `glab auth login` | `scm/gitlab` |
 | source-control-forgejo | Forgejo, Gitea, Codeberg | `fj` first, `tea` 0.16+; subpath URLs use `tea` | `scm/forgejo` |
-| source-control-bitbucket | Bitbucket | Access token, or Atlassian email + API token (`read:user:bitbucket`, `read:workspace:bitbucket`); env `MOQUI_BITBUCKET_ACCESS_TOKEN` or email + token | `scm/bitbucket` |
+| source-control-bitbucket | Bitbucket | Access token, or Atlassian email + API token (`read:user:bitbucket`, `read:workspace:bitbucket`), kept as the user's host account credential (below), never an environment variable or a conf default | `scm/bitbucket` |
 | source-control-azure-devops | Azure DevOps | `az login` with `azure-devops` | `scm/azure` |
 | source-control-gitcafe | GitCafe | `cafe auth login`, token, or `CAFE_TOKEN` / `CAFE_HOST` | `scm/gitcafe` |
 | source-control-tanstack-source | TanStack Source (private beta) | flag; `src auth login --web`, token, `SRC_TOKEN` | `scm/tanstack` (behind a Labs flag) |
@@ -23,6 +23,13 @@ Code goes in `crates/moqui-code/src/scm/`, one module per host, behind the trait
 
 - Accounts: `AgentCodeHostAccount` per user and host. Tokens are secret refs. CLI-held tokens are read through the
   CLI at use time and never stored.
+- A token typed into Settings (GitHub's, Bitbucket's access token or email and API token, Linear's API key) is stored
+  as the account's `credentialRef`: an `AgentSecretSource` whose value is an encrypted field, or a reference such as
+  `op://...` ([07 §1.1](07-Secrets-Guest-Voice-Usage.md#11-store)), as the framework keeps an LLM endpoint's key
+  (`LlmEndpoint.apiKey`) and an MCP server's credentials (`AgentMcpServer.authJson`) in encrypted fields. A secret is
+  never a conf setting with a default, and the server reads no host token from its own environment (T3's `GH_TOKEN`,
+  `CAFE_TOKEN`, `SRC_TOKEN` and the Bitbucket token variable are not ported); a CLI's own sign-in is read through the
+  CLI as above.
 - **Rescan** runs discovery again (`discover#SourceControl`).
 - Contract enums kept as T3: auth status `authenticated`, `unauthenticated`, `unknown`; clone protocol `auto`, `ssh`,
   `https`; visibility `private`, `public`; publish status `pushed`, `remote_added`; discovery `available`,

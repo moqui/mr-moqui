@@ -256,8 +256,8 @@ and gains a link, so one worktree shows in both apps.
 
 | T3 | MR Moqui | How |
 |---|---|---|
-| environment id (`userdata/environment-id`) | property `agent_code_environment_id`, generated once into `runtime/db/agent_code_environment_id`; one per cluster | conf |
-| environment label | `InstanceSetting` `agentCode.label` | **Use** |
+| environment id (`userdata/environment-id`) | the `AgentCodeSetting` row `environment.id`, generated once and cached on each node in `runtime/db/agent_code_environment_id`; one per cluster | **New** |
+| environment label | the `AgentCodeSetting` row `environment.label` | **New** |
 | environment descriptor (`/.well-known/t3/environment`) | `/.well-known/moqui/agent-code` | route ([09](09-Wire-API.md)) |
 | auth session (cookie, bearer, DPoP; 30 days) | Moqui `HttpSession` for browsers; `UserLoginKey` for devices and links | **Use** |
 | session scopes | `UserLoginKey.scope`: space-separated scope list (§14) | **Ext** (values) |
@@ -353,7 +353,7 @@ and gains a link, so one worktree shows in both apps.
 
 | Entity | New fields |
 |---|---|
-| `AgentConversation` | engineEnumId, projectId, workRootId, branch, providerInstanceId, harnessThreadId, harnessModel, reasoningLevel, modelOptionsJson, runtimeModeEnumId, interactionModeEnumId, titleSourceEnumId, parentConversationId, rootConversationId, relationEnumId, forkPointJson, delegatedFromRunId, delegatedFromToolCallId, createdByKindEnumId, creationSourceEnumId, linkId, remoteConversationId, autoSettleDisabled, streamingModeEnumId, hostInstanceId, archivedDate, deletedDate, plus the four service names from branch `external-conversation-support` |
+| `AgentConversation` | engineEnumId, projectId, workRootId, branch, providerInstanceId, harnessThreadId, harnessModel, reasoningLevel, modelOptionsJson, runtimeModeEnumId, interactionModeEnumId, titleSourceEnumId, parentConversationId, rootConversationId, relationEnumId, forkPointJson, delegatedFromRunId, delegatedFromToolCallId, createdByKindEnumId, creationSourceEnumId, linkId, remoteConversationId, autoSettleDisabled, streamingModeEnumId, hostInstanceId, archivedDate, deletedDate, plus the four service names of `external-conversation-support` (`startServiceName`, `cancelServiceName`, `inputServiceName`, `eventsServiceName`; ported with P0 in PR #213) |
 | `AgentRun` | runOrdinal, providerInstanceId, harnessThreadId, harnessModel, reasoningLevel, runtimeModeEnumId, interactionModeEnumId, dispatchModeEnumId, queueOrderKey, queueHeld, outputSchemaJson, checkpointId, handoffId, sourcePlanArtifactId, continuationOfRunId, continuationKindEnumId, limitResetDate, freshContext, idleCompaction, senderConversationId, guestMessageId, notifyOnDone, hostInstanceId |
 | `AgentToolCall`, `AgentMessagePart`, `AgentApproval`, `AgentQuestion`, `AgentArtifact`, `AgentMessage` | see §3.2 |
 | `AgentTrigger` | prompt, intervalSeconds, timeOfDay, weekdays, runAtDate, projectId, conversationId, threadModeEnumId, workspaceStrategyJson, providerInstanceId, modelId, harnessModel, runtimeModeEnumId, interactionModeEnumId, createdByUserId, creationSourceEnumId, nextRunDate, lastRunStatusEnumId, runCount |

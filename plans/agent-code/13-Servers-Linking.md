@@ -4,7 +4,7 @@ Part of [Agent Code](README.md). T3 sources: `t3:apps/server/src/{bin,binCli,con
 `t3:apps/server/src/cli/*.ts`, `t3:apps/server/src/{auth,peer,cloud,relay,environment}/**`, `t3:packages/{ssh,tailscale}`,
 `t3:packages/client-runtime/src/connection/**`, `t3:docs/internals/{remote,environment-auth,server-updates,t3-connect}.md`,
 `t3:docs/user/{remote-access,background-service,install,updating}.md`. MR Moqui sources:
-[plans/Edge-Node2.md](../Edge-Node2.md), [plans/Vault-Instances.md](../Vault-Instances.md),
+[plans/Edge-Node2.md](../Edge-Node2.md), [plans/archive/Vault-Instances.md](../archive/Vault-Instances.md),
 [docs/ui/Desktop-Client.md](../../docs/ui/Desktop-Client.md), `crates/moqui-host/src/{edge_link,ssh,cluster_edge}`.
 
 Boundary rule (kept from T3): work runs in the environment that owns the workspace. A client never puts its own files,
@@ -15,13 +15,13 @@ provider credentials or machine state in place of the server's.
 | T3 | MR Moqui |
 |---|---|
 | One user per environment | One MR Moqui instance (a single server or a cluster) is one environment with many users. Each user sees the projects they are members of ([§5](#5-users-on-one-environment)). |
-| `environment-id` file, atomic, recovery file | `runtime/db/agent_code_environment_id`, written once with a temp file and rename. A cluster shares one id (the first node writes it to `AgentCodeSetting` `environmentId`; the file is a cache). |
-| `label` | `InstanceSetting` `agentCode.label`; default the instance name. |
-| `platform {os, arch, machine}` | From the host. `machine` from `agentCode.machineKind` (server, cloud, desktop, laptop, ...). Desktop nodes report `desktop` or `laptop`. |
+| `environment-id` file, atomic, recovery file | `runtime/db/agent_code_environment_id`, written once with a temp file and rename. A cluster shares one id (the first node writes it to the `AgentCodeSetting` row `environment.id`; the file is a cache). |
+| `label` | The `AgentCodeSetting` row `environment.label`; default the host name. |
+| `platform {os, arch, machine}` | From the host. `machine` from the conf setting `agent-code@machine-kind` (empty: found from the host; server, cloud, desktop, laptop, ...). Desktop nodes report `desktop` or `laptop`. |
 | `serverVersion`, `orchestrationProtocolVersion` | `moquiVersion`, `AGENT_CODE_PROTOCOL` ([09 §7](09-Wire-API.md#7-versioning)). |
 | `capabilities` (about 90 booleans) | Same names where the feature exists, in the descriptor ([09 §6](09-Wire-API.md#6-environment-descriptor)). Clients check them because servers can be older. |
 | `RepositoryIdentity` (canonical key follows `upstream`) | `AgentProject.repositoryKey` (same rule). It groups clones across environments, never routes work. |
-| Advertised endpoints | New descriptor field `endpoints[]`: `{kind: lan, tailnet, vpn, public, edge, url}`. Filled from `agentCode.advertise` (auto: LAN interfaces when the HTTP port is open to them, Tailscale name when found, the web address, the edge host). |
+| Advertised endpoints | New descriptor field `endpoints[]`: `{kind: lan, tailnet, vpn, public, edge, url}`. Filled from the conf setting `agent-code@advertise` (default `auto`: LAN interfaces when the HTTP port is open to them, Tailscale name when found, the web address, the edge host). |
 
 Descriptor and well-known routes:
 
@@ -36,9 +36,9 @@ Descriptor and well-known routes:
 | T3 | MR Moqui |
 |---|---|
 | `t3` / `t3 start` (open the browser) | `moqui` (existing) prints the URL; `moqui code open` opens `/qapps/code`. |
-| `t3 serve` (headless, print pairing) | `moqui serve` (existing). With `agent_code_enabled=true` it prints a pairing QR at start when no user has a device yet and the console is a TTY. |
-| `--host`, `--port`, `--lan` | Existing listener conf (`webapp` host and port). `--lan` = bind `0.0.0.0` with `private_network_only=true` (new): close a connection unless both ends are loopback, private, or tailnet addresses. |
-| `--base-dir` (`~/.t3`) | `runtime/` (existing). Agent Code data under `agent_code_home` ([02 §2](02-Orchestration.md#2-thread-creation-and-launch)). |
+| `t3 serve` (headless, print pairing) | `moqui serve` (existing). When Agent Code is on (`agent-code@enabled`, [14 §1](14-Security.md#1-permissions-and-groups)) it prints a pairing QR at start when no user has a device yet and the console is a TTY. |
+| `--host`, `--port`, `--lan` | Existing listener conf (`webapp` host and port). `--lan` = bind `0.0.0.0` with `webapp-list/webapp[webroot]@private-network-only="true"` (new framework setting, default false, in `MoquiDefaultConf.xml` with its XSD attribute and conf schema entry): close a connection unless both ends are loopback, private, or tailnet addresses. |
+| `--base-dir` (`~/.t3`) | `runtime/` (existing). Agent Code data under `agent-code@home` ([02 §2](02-Orchestration.md#2-thread-creation-and-launch)). |
 | `server-runtime.json` (PID, origin, port) | `runtime/db/server-runtime.json` (new): pid, origin, port, environment id, start time. The SSH launch and the CLI read it. |
 | Refuse a second interactive server on the same base dir | Existing lock on the runtime directory. The message names `moqui pair`. |
 | HTTP only; HTTPS from Tailscale Serve, the relay, or a proxy | MR Moqui has TLS (existing ACME and certificate conf). Tailscale Serve and the edge node are extra ways (§8). |
@@ -81,6 +81,8 @@ image, `./moq` for source). The SSH launch (§7) can install a release archive i
   (desktop, mobile, tablet, bot, unknown), `client_os?`.
 - The answer is a `UserLoginKey` for the code's user with `deviceName` = label and `scope` = the granted scopes
   (narrowed by `scope?`, never widened; unknown names dropped; no scope left = refused before the code is spent).
+  This is T3's shape; master keeps one scope per login key, so how the granted scopes are stored is designed with P6
+  on that model ([14 §2](14-Security.md#2-scopes), "Key scopes on master").
 - The apps then use the key as they do today (`login_key` header, renewal every six hours, server ends the old key
   ten minutes later). So pairing is one more way to get the same device key that a password sign-in gets.
 - DPoP (optional, T3 mobile uses it): the client sends a `DPoP` proof at exchange; the key gets
@@ -246,7 +248,7 @@ Open decision: a hosted relay (moqui.org) for users with no edge node. Not in th
   streams forward as a channel per stream.
 - A harness process belongs to one node. When that node goes down, its runs are marked `interrupted`; resume needs
   that node back or a move of the work root ([02 §5](02-Orchestration.md#5-interrupt-stop-recovery)).
-- New projects pick the host node by a setting `agentCode.hostNodes` (list) and free disk; the user can choose.
+- New projects pick the host node by the `AgentCodeSetting` row `hostNodes` (a list) and free disk; the user can choose.
 - Effects (`AgentCodeEffect`) are leased per node; harness effects only on the work-root node.
 - Schedulers (automations, PR watch, cleanup) run on one node by the existing ServiceJob lease.
 - **Edge**: a local node behind an edge node is a normal environment at its edge host name. Through an edge node in

@@ -22,9 +22,15 @@ the machine. MR Moqui cannot. This file lists every gate.
 - `AgentCodeHost` and `AgentCodeAdmin` are **sealed** permissions: only a holder can grant them
   (`assertSealedPermissionGrant`). `AgentCodeHost` is code execution as the server's OS user, like `TERMINAL_HOST`.
 - Agent Code also needs `AgentUse` (the agent runtime) for the native engine. A user without `AgentUse` can still use
-  outside harnesses (Codex, Claude) when the admin allows it (`agentCode.harnessWithoutAgentUse`, default false).
-- The component is off unless `agent_code_enabled=true` (conf). On a production instance the admin turns it on;
-  on a dev instance it is on by default.
+  outside harnesses (Codex, Claude) when the admin allows it (the `AgentCodePolicy` row `harnessWithoutAgentUse`,
+  default false).
+- The component is off unless the conf turns it on: `agent-code@enabled` (`true`, `false`, or `dev`, the default: on
+  only on a dev instance; [10 §9.5](10-Web-UI.md#95-conf-settings)). On a production instance the admin sets it to
+  `true`. The `/agentws` socket and the descriptor have their own switch as well, the webroot's
+  `endpoint[/agentws]@enabled` (same values, default `dev`), and are open only when both allow them. Both switches
+  follow [Runtime-Config](../Runtime-Config.md#38-services-carried-on-a-listener): the route stays mounted and reads
+  its switch on each request, so turning one off takes effect while the server runs (404, open sockets closed), with
+  no restart ([09 §2.1](09-Wire-API.md#21-route-and-auth)).
 
 ## 2. Scopes
 
@@ -65,6 +71,18 @@ Rules (kept from T3):
   permissions allow, so the existing app keys keep working.
 - Scope table in code: `crates/moqui-code/src/ws/scopes.rs`, one entry per method, checked by a test that every
   method has one.
+
+**Key scopes on master (to design P6 on).** The table above is T3's model, a list of scopes per key. MR Moqui's
+login keys now hold one scope each: `UserLoginKey.scope` is empty (the full account) or one name, a key of one
+scope is made by `create#UserScopedKey` for a name in `KEY_SCOPES` (`gateway`, `git`, `tasks`;
+`crates/moqui-core/src/user/login.rs`), and it signs in only where that scope is declared: a REST resource by its
+`key-scope` attribute (for it and the resources below it), a service's own login by `login_user_key_for(key,
+scope)` (df3a194e3). A request a scoped key signs in takes no web session (f66acffcf). The pairing, exchange and link
+keys of P6 ([13 §3](13-Servers-Linking.md#3-pairing-and-sessions), [16](16-Phases.md#2-phases)) are designed on that
+model before they are built: a new key scope (for example `code`) added to `KEY_SCOPES`, declared by Agent Code's
+REST resources and checked by `/agentws` at upgrade, with the finer `code:*` rows of the table becoming checks of the
+user's permissions and the key's grants inside that one scope, not a list in `UserLoginKey.scope`. Until that design
+is written, the `code:*` rules above are T3's and not a storage format.
 
 ## 3. Runtime modes and access levels
 
@@ -110,10 +128,10 @@ Rules (kept from T3):
   `env_clear()` and only the variables the instance and the provider instance set (`AgentProviderInstanceEnv`),
   plus `HOME` = the provider account home. This avoids SEC-AI-12 (the external agent adapter inherits the server
   environment); Agent Code fixes the old adapter in the same phase.
-- Each user's provider home is separate (`agent_code_home/homes/<userId>/<instance>/`, mode 0700), so one user's
+- Each user's provider home is separate (`<agent-code@home>/homes/<userId>/<instance>/`, mode 0700), so one user's
   Codex or Claude login is not another user's.
-- Work roots are under `agent_code_home/worktrees/` or a project root the admin allowed (`agentCode.projectRoots`,
-  list). Opening a project elsewhere needs `AgentCodeHost`.
+- Work roots are under `<agent-code@home>/worktrees/` or a project root the admin allowed (the `AgentCodePolicy` row
+  `projectRoots`, a list). Opening a project elsewhere needs `AgentCodeHost`.
 - Lower priority: `nice 10`, and on Linux a cgroup per thread (`agent-code.slice/<conversationId>`) with memory and
   CPU limits from settings when systemd is present.
 - The runtime directory (`runtime/conf`, `runtime/db`, keys, `.env`) is not readable from a work root by path rules in
@@ -124,9 +142,9 @@ Rules (kept from T3):
 
 | Option | What it gives | Cost |
 |---|---|---|
-| Landlock (Linux 5.13+) | Write only to the work root, `agent_code_home/homes/<user>`, `/tmp/<thread>`; read deny for `runtime/conf`, `runtime/db`, `.env` | Small; no root; per process at spawn. Needs a fallback on older kernels and macOS. |
+| Landlock (Linux 5.13+) | Write only to the work root, `<agent-code@home>/homes/<user>`, `/tmp/<thread>`; read deny for `runtime/conf`, `runtime/db`, `.env` | Small; no root; per process at spawn. Needs a fallback on older kernels and macOS. |
 | bubblewrap namespaces | Own mount view: only the work root, the home, system dirs read-only; no `runtime/` at all | Needs `bwrap` installed; harder with provider CLIs that need `~/.config`. |
-| Separate OS user (`agent_code_run_as`, setuid helper `moqui-code-runas`) | Real OS boundary from the server's files | Needs root setup; file ownership of work roots. |
+| Separate OS user (`agent-code@run-as`, setuid helper `moqui-code-runas`) | Real OS boundary from the server's files | Needs root setup; file ownership of work roots. |
 | Container per thread | Strongest | Heavy; not for desktop. |
 
 Recommendation: Landlock on Linux in phase 2, the separate OS user as an admin option in phase 5. macOS and Windows

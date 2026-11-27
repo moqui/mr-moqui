@@ -28,7 +28,7 @@ bell), flow control and the phone key bar. Agent Code uses it. It does not add a
 | Retention 5,000 lines and 8 MiB UTF-8 per terminal; oldest evicted on code-point edges; client buffer 512 KiB | Thread terminals keep a history file (`historyLocation`) with these limits. Other kinds keep `replay-kb` (2 MiB). |
 | Coalesced persistence; clear, restart and close drain first; restore skips an incomplete UTF-8 prefix | Port into `crates/moqui-host/src/term/ring.rs` and a new `history.rs`. |
 | Terminal query and response traffic stripped from history | Same filter in `history.rs`. |
-| Shell from `T3CODE_TERMINAL_SHELL`, with fallbacks | Property `agent_code_terminal_shell`, else the user's login shell, else `/bin/bash`, else `/bin/sh`. Not used for provider commands or setup scripts. |
+| Shell from `T3CODE_TERMINAL_SHELL`, with fallbacks | Conf setting `agent-code@terminal-shell` (empty by default), else the user's login shell, else `/bin/bash`, else `/bin/sh`. Not used for provider commands or setup scripts. |
 | fish starts with `no-query-term` | Same flag for fish. |
 | Keys Shift+PageUp/PageDown, Ctrl(Cmd)+Shift+Home/End, Select all, **Jump to latest** | Add to `moqui.keymap` defaults for the terminal view. |
 | iPhone/iPad long-press paste or **Select Text** | Same in the phone terminal. |
@@ -38,7 +38,7 @@ bell), flow control and the phone key bar. Agent Code uses it. It does not add a
 
 - A thread terminal is a host session. Today host sessions need `TERMINAL_HOST` and a dev instance.
 - New rule: a thread terminal needs `AgentCodeHost` ([14](14-Security.md)) and the project's work root. It does not
-  need a dev instance. It runs as the account of `agent_code_run_as` (14 §5), not as the server user when that is set.
+  need a dev instance. It runs as the account of `agent-code@run-as` (14 §5), not as the server user when that is set.
 - Remote use keeps the remote rules: HTTPS, `terminal_remote`, and a recent sign-in ticket. The desktop and phone
   apps ask **Confirm it is you** as today.
 - The directory is always inside the thread's work root. `cwd` outside it is refused.
@@ -67,8 +67,8 @@ bell), flow control and the phone key bar. Agent Code uses it. It does not add a
 | Phone **Open on this device** opens a host `localhost` page in the phone's web view through the tunnel; floating preview can go picture-in-picture | Android: a WebView with a proxy override to a local tunnel listener in the Kotlin host. PiP on Android 8+. iOS with MD7. |
 | Setting **Preview tunnel** (`enablePreviewTunnel`, default true); policy `allowsPreviewTunnel` | Same names in `AgentCodeSetting` and `AgentCodePolicy`. |
 | **Take control** / release: a human takes control before typing in an agent tab; read-only connections watch only; with control, clipboard, file picker and downloads go to the user's device | `AgentPreviewTab.controlUserId`. Input frames from others are dropped. Downloads go to the controlling device through `/agentws` `preview.download`. |
-| **Local servers** list: ports held by terminal and agent processes; project script **Preview URL**; `T3CODE_PORT_DISCOVERY=0` off; stream `subscribeDiscoveredLocalServers` | `crates/moqui-code/src/preview/ports.rs` reads listening sockets of the process tree of each session (Linux `/proc`, macOS `lsof -p`). Property `agent_code_port_discovery`. Stream `preview.localServers`. |
-| Linux host setup `sudo t3 browser setup` (AppArmor, libraries, fonts); `T3CODE_SERVER_BROWSER_SANDBOX=0` | `moqui code browser setup` prints and runs the same steps. Property `agent_code_browser_sandbox` (default true; false needed as root, with a warning). |
+| **Local servers** list: ports held by terminal and agent processes; project script **Preview URL**; `T3CODE_PORT_DISCOVERY=0` off; stream `subscribeDiscoveredLocalServers` | `crates/moqui-code/src/preview/ports.rs` reads listening sockets of the process tree of each session (Linux `/proc`, macOS `lsof -p`). Conf setting `agent-code@port-discovery` (default true). Stream `preview.localServers`. |
+| Linux host setup `sudo t3 browser setup` (AppArmor, libraries, fonts); `T3CODE_SERVER_BROWSER_SANDBOX=0` | `moqui code browser setup` prints and runs the same steps. Conf setting `agent-code@browser-sandbox` (default true; false needed as root, with a warning). |
 
 ### 2.2 Contracts (kept as T3)
 
@@ -148,7 +148,7 @@ The existing OpenUI canvas of Assist stays for native runs. An HTML render is a 
 
 | T3 host | MR Moqui `AgentDeviceHost.kindEnumId` | Notes |
 |---|---|---|
-| Local: `expo-device-hub` streams, `agent-device` drives; npm-installed at pinned versions; supervised | `local` | Needs Node 22.12+ on that host, for devices only (open decision O9: a Rust device hub). Installed into `agent_code_home/devices/` at pinned versions. Run by the process host of [03 §4](03-Providers.md#4-the-process-host). |
+| Local: `expo-device-hub` streams, `agent-device` drives; npm-installed at pinned versions; supervised | `local` | With T3's hub: Node 22.12+ on that host, for devices only; open decision O9 ([16 §3](16-Phases.md#3-open-decisions)) weighs that against O3's no Node at runtime and a Rust device hub. Installed into `<agent-code@home>/devices/` at pinned versions. Run by the process host of [03 §4](03-Providers.md#4-the-process-host). |
 | iOS needs macOS + Xcode; Android needs Platform-Tools, Emulator, Command-line Tools, an AVD, `ANDROID_HOME`; video needs `ffmpeg` with libx264 | same | Checks in `check#DeviceHost`. |
 | **SSH device host**: alias or `user@host`, identity file, port; no password prompts; macOS or Linux; Node 22.12+; **Test connection**; both endpoints forwarded to server loopback | `ssh` with `AgentSshHost` | Needs a local port forward. `russh` has no `direct-tcpip` client use in MR Moqui yet: add it in `crates/moqui-code/src/ssh/forward.rs` (client side only; the SSH server stays without forwarding). |
 | **Expo host**: billed Expo Simulators sessions with limits | `expo` | Later phase. Token in the secret store. |

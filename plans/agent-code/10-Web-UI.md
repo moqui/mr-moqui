@@ -321,6 +321,7 @@ twice within 500 ms (`confirmQuit` direct, hold, double-click). iPad keyboard (M
 | Managed policy | `AgentCodePolicy` | environment, `AgentCodeAdmin` only |
 | Provider instances | `AgentProviderInstance` | environment |
 | Keybindings | `UserPreference` `code.keybindings` | user |
+| Environment variables and process options (`T3CODE_*`) | The `agent-code` conf element ([§9.5](#95-conf-settings)) | node (deployment) |
 
 The settings service (`get#Settings`, `update#Settings`) validates each name and type against one schema file,
 `service/org/moqui/code/settings-schema.json`, a port of `t3:settings.ts`. Unknown names are refused.
@@ -444,6 +445,45 @@ claude are on when found. The native engine is on when an `LlmEndpoint` exists.
 - Each page shows project overrides inline where a project is selected.
 - tui: every settings page is an XML form, so tui gets them free. The `.qvue` editors have XML fallbacks (raw JSON
   field for keybindings, list for the map).
+
+### 9.5 Conf settings
+
+What a deployment sets for a node, such as where files go, which OS account runs harnesses and the process limits,
+is conf, not a setting row (AGENTS.md, Conf settings;
+[Practices-App-Dev](../../docs/dev/Practices-App-Dev.md#conf-settings)). Each is an attribute of the component's own
+top-level element `agent-code` in `runtime/components/base/agent-code/MoquiConf.xml`, with its default written there
+and a comment saying what it does; there is no `default-property` and no `${name}`. A script reads one by selector
+(`ec.factory.getConfValue('agent-code@home')`), Rust by `conf_env::setting("agent-code@home")`, a spec sets one with
+`setConf` or `withConf`, and the environment sets one by the name built from its path
+(`moqui_conf__agent_code__home`, [Run-Deploy](../../docs/Run-Deploy.md#settings-and-the-environment)). T3's
+`T3CODE_*` environment variables become these attributes; none is read from the environment by its own name.
+
+```xml
+<agent-code enabled="dev" home="" run-as="" max-sessions="16" session-idle-minutes="30" terminal-shell=""
+        port-discovery="true" browser-sandbox="true" handoff-token-cap="16000" machine-kind="" advertise="auto">
+    <!-- probe-timeout-ms: T3's value, written here when P1 builds the driver -->
+    <codex probe-timeout-ms="..."/>
+</agent-code>
+```
+
+| Selector | Default | What it does |
+|---|---|---|
+| `agent-code@enabled` | `dev` | `true`, `false`, or `dev` (on only on a dev instance): the component's screens, services, REST and MCP tools. The `/agentws` socket also needs its endpoint on ([14 §1](14-Security.md#1-permissions-and-groups), [09 §2.1](09-Wire-API.md#21-route-and-auth)) |
+| `agent-code@home` | empty | The Agent Code home: `runtime/agent-code/` on a server and the app data directory's `agent-code/` on desktop when empty ([02 §2](02-Orchestration.md#2-thread-creation-and-launch)) |
+| `agent-code@run-as` | empty | A separate OS account for harnesses, terminals and scripts, through `moqui-code-runas`, Linux only; empty runs them as the server's user ([14 §5](14-Security.md#5-process-isolation)) |
+| `agent-code@max-sessions` | `16` | Harness processes per cluster member ([03 §4](03-Providers.md#4-the-process-host)) |
+| `agent-code@session-idle-minutes` | `30` | Idle harness processes with no pending work are stopped after this |
+| `agent-code@terminal-shell` | empty | A thread terminal's shell; empty is the user's login shell, then `/bin/bash`, then `/bin/sh` ([06 §1](06-Terminal-Preview-Devices.md#1-terminal)) |
+| `agent-code@port-discovery` | `true` | The preview's list of local servers held by session processes (T3 `T3CODE_PORT_DISCOVERY`) |
+| `agent-code@browser-sandbox` | `true` | The preview browser's sandbox; false only where it must run as root, with a warning (T3 `T3CODE_SERVER_BROWSER_SANDBOX`) |
+| `agent-code@handoff-token-cap` | `16000` | The portable handoff's budget, 1,024 to 64,000 ([02 §8.4](02-Orchestration.md#84-portable-handoff)) |
+| `agent-code@machine-kind` | empty | The descriptor's `platform.machine` (server, cloud, desktop, laptop); empty is found from the host ([13 §1](13-Servers-Linking.md#1-environment)) |
+| `agent-code@advertise` | `auto` | The descriptor's advertised endpoints ([13 §1](13-Servers-Linking.md#1-environment)) |
+| `agent-code/codex@probe-timeout-ms` | T3's | How long the Codex driver's probe waits ([03 §5](03-Providers.md#5-per-driver-plan)) |
+
+A secret is never one of these. A provider's or a code host's credential is a secret source
+([07 §1.1](07-Secrets-Guest-Voice-Usage.md#11-store), [04 §1](04-Git.md#1-code-hosts)). Settings an admin changes
+for the whole environment while it runs stay `AgentCodeSetting` and `AgentCodePolicy` rows (§9.1, §9.3).
 
 ## 10. Responsive layout
 

@@ -8,9 +8,9 @@ usage}.md`, `t3:packages/contracts/src/{secretRequest,secretReference,guestShare
 
 ### 1.1 Store
 
-- MR Moqui has one field key for all `encrypt="true"` fields today. The sealed-secret plan
-  ([plans/Sealed-Secrets.md](../Sealed-Secrets.md)) and vaults ([plans/Vault-Instances.md](../Vault-Instances.md))
-  are not built.
+- MR Moqui has one field key for all `encrypt="true"` fields today. The sealed-secret store
+  ([plans/Sealed-Secrets.md](../Sealed-Secrets.md) S1) is not built; vaults
+  ([plans/archive/Vault-Instances.md](../archive/Vault-Instances.md)) were built and archived on 2026-11-25.
 - Agent Code does not wait for them. It adds one interface, `SecretStore` in `crates/moqui-code/src/secret/`, with
   these backends:
 
@@ -36,7 +36,7 @@ usage}.md`, `t3:packages/contracts/src/{secretRequest,secretReference,guestShare
 | Card: the user types the value and picks **Save securely**, **Decline**, or a provider reference; answerable from web, desktop and phone | `AgentSecretRequest` row plus an `AgentQuestion` with kind secret. Card in the thread on all surfaces. |
 | `SecretRequestAnswerInput {threadId, turnItemId, answer}`; answer `save {secret}`, `save {values}` (several fields), `decline`, `reference {reference}` (servers that advertise `secretRequestReferences`) | `answer#SecretRequest` with the same shapes. The descriptor ([09](09-Wire-API.md)) advertises `secretRequestReferences`. |
 | The value goes under a one-use `SecretRef`; the thread learns only the status; the value never appears in the conversation | `secretRef` = 128-bit random id, value in the store of §1.1, spent by the first tool that reads it. The answer service never writes the value to `AgentMessage`, `AgentRunEvent`, logs or the change feed. |
-| `delivery: file`: a private file the agent's commands can read for about 24 h | `fileLocation` in `agent_code_home/secrets/<requestId>` mode 0600 owned by the run-as account (14 §5). `fileExpireDate` = 24 h. A job deletes expired files. |
+| `delivery: file`: a private file the agent's commands can read for about 24 h | `fileLocation` in `<agent-code@home>/secrets/<requestId>` mode 0600 owned by the run-as account (14 §5). `fileExpireDate` = 24 h. A job deletes expired files. |
 | Notes to the agent: declined ("Don't ask for it in chat..."), cancelled ("Ask again with a new clientRequestId only if...") | Same texts as tool results. |
 | A card may open an http(s) page (`secretRequestPageUrl`) | `pageUrl` (https only, or http to loopback). |
 | RPC `secrets.answerRequest` | `/agentws` `secrets.answerRequest`. |

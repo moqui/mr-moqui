@@ -23,6 +23,11 @@ environment,auth,clientRpcPermissions}.ts`, `t3:apps/server/src/ws.ts`, `t3:apps
 - Auth, as `/notws`: origin check, then the session cookie, else a `login_key` (device or link key). For a browser on
   another origin (none allowed by default) or for a peer link: a ticket from `POST /rest/s1/code/wsTicket` (5 min, one
   use, names its use `rpc` or `media`), passed as `?ticket=`.
+- The gate: the webroot's `endpoint[/agentws]@enabled` (`true`, `false`, or `dev`, the default) and
+  `agent-code@enabled` ([14 §1](14-Security.md#1-permissions-and-groups)). It follows
+  [Runtime-Config](../Runtime-Config.md#38-services-carried-on-a-listener) §3.8: the route stays mounted and checks
+  its switch on each request, from state built from the conf and built again after a reload, so an admin turns
+  `/agentws` off or on while the server runs. Off answers 404 and ends the open sockets.
 - A DPoP-bound key (`UserLoginKey.dpopThumbprint`) needs a fresh proof in the `dpop` query parameter at upgrade. The
   proof `jti` is spent.
 - Query `protocol=<n>` (T3 `orchestrationProtocol`). Current `AGENT_CODE_PROTOCOL` = 1. Header
@@ -192,7 +197,7 @@ Every new route is added to `docs/security/Attack-Surface-Routes.md` with its au
 ```
 
 - `environmentId`: [13 §1](13-Servers-Linking.md#1-environment).
-- `label`: `InstanceSetting` `agentCode.label`, else the host name.
+- `label`: the `AgentCodeSetting` row `environment.label`, else the host name.
 - Capabilities: the T3 list ([t3:environment.ts]) is kept by name, so a T3-trained client reads them. Agent Code
   answers true only for what it has built. A capability added in a later phase starts false.
 - Agent Code extras: `moquiNativeEngine`, `moquiHosting`, `edgeLink`, `clusterNodes`.

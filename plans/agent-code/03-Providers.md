@@ -144,12 +144,12 @@ Traps to keep in the driver guide (`docs/dev/Agent-Code-Drivers.md`): apply sett
 |---|---|
 | Unit | One process per (instance, cwd, user) by default; drivers with one server per instance (OpenCode 2.x) share it per (instance, user). See open decision O5. |
 | Where | On the cluster member that holds the work root (`AgentWorkRoot.hostInstanceId`). The run lease is taken on that member. |
-| OS user | The server's OS user. A server can set `agent_code_run_as` to a separate OS account, started through a setuid helper (`moqui-code-runas`), on Linux only. See [14 §5](14-Security.md#5-process-isolation). |
+| OS user | The server's OS user. A server can set `agent-code@run-as` (empty by default) to a separate OS account, started through a setuid helper (`moqui-code-runas`), on Linux only. See [14 §5](14-Security.md#5-process-isolation). |
 | Environment | A clean environment: `PATH`, `HOME` (the account home), `LANG`, the instance's env rows, the driver's own variables. Ambient credentials are removed (for example `GEMINI_API_KEY` for Antigravity, `OPENCODE_SERVER_PASSWORD` for an external OpenCode). |
-| Stdio | Piped. Stderr goes to `agent_code_home/logs/<instance>/<session>.log`, 64 KiB diagnostics budget per session in the UI. |
-| Limits | `agent_code_max_sessions` (default 16 per member), idle reaper after `agent_code_session_idle_minutes` (default 30) when no work is pending. |
+| Stdio | Piped. Stderr goes to `<agent-code@home>/logs/<instance>/<session>.log`, 64 KiB diagnostics budget per session in the UI. |
+| Limits | `agent-code@max-sessions` (default 16 per member), idle reaper after `agent-code@session-idle-minutes` (default 30) when no work is pending ([10 §9.5](10-Web-UI.md#95-conf-settings)). |
 | Stop | Close stdin, wait 5 s, SIGTERM, wait 5 s, SIGKILL (the same steps as the desktop sidecar). |
-| Sandbox | Codex sandbox modes map from the runtime mode. Others run in the work root with the OS user's rights. Linux can add a Landlock rule set that limits writes to the work root and `agent_code_home` (open decision O7). |
+| Sandbox | Codex sandbox modes map from the runtime mode. Others run in the work root with the OS user's rights. Linux can add a Landlock rule set that limits writes to the work root and `agent-code@home` (open decision O7). |
 | Health | `providerHealthRefreshInterval` (default 5 min) runs `probe`. |
 | Keep awake | Desktop holds a sleep inhibitor while sessions run. |
 
@@ -159,7 +159,7 @@ Each row lists the T3 behaviour to keep. All drivers write through §2.1.
 
 | Driver | Process and protocol | Adapter module | Notes to keep |
 |---|---|---|---|
-| Codex | `codex app-server` plus launch args; JSON-RPC over stdio | `driver/codex` | `setupMode` managed or existing; CODEX_HOME per account; shadow home for several accounts; probe timeout `MOQUI_CODEX_PROBE_TIMEOUT_MS`; image generation launch arg; async questions answered by a new user message; app access approvals; MCP sign-in; `/goal` runs own several native turns; `/feedback` → `upload_feedback`; opts out of `turn/diff/updated` (diffs from checkpoints); native `thread/rollback`; native history injection. |
+| Codex | `codex app-server` plus launch args; JSON-RPC over stdio | `driver/codex` | `setupMode` managed or existing; CODEX_HOME per account; shadow home for several accounts; probe timeout `agent-code/codex@probe-timeout-ms` (a conf setting, default T3's; not an environment variable); image generation launch arg; async questions answered by a new user message; app access approvals; MCP sign-in; `/goal` runs own several native turns; `/feedback` → `upload_feedback`; opts out of `turn/diff/updated` (diffs from checkpoints); native `thread/rollback`; native history injection. |
 | Claude | `claude` CLI in stream-JSON mode both ways (`--input-format stream-json --output-format stream-json --verbose`), permission prompts through the Agent Code MCP permission tool | `driver/claude` | T3 runs the Agent SDK in process; MR Moqui has no Node runtime, so it uses the CLI (open decision O3). `CLAUDE_CONFIG_DIR` per account; `autoCompactWindow` 100,000-1,000,000; `idleCompaction` default, onReturn, beforeCacheExpires, off; Compact chip; usage limits read; steering waits for running tool calls; skills from `.claude/skills` and plugins in the `$` menu; `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`; MCP sign-in; `--chrome` allowed; goal state from the transcript. |
 | Cursor | `@cursor/sdk` local-agent runtime in a Node worker (`cursor-worker.mjs` shipped in the component) | `driver/cursor` | Needs Node 22.13+ on the host, only for this driver. `auto` → SDK `default`; MCP from `.cursor/mcp.json`, `~/.cursor/mcp.json`, `~/.cursor/plugins`; "Restart agent session"; per-instance login; Change account and Sign out stop the instance's threads. |
 | Grok | `grok agent stdio`; Auto adds `--permission-mode auto`; Full access `agent --always-approve stdio`; ACP | `driver/grok` (ACP flavor) | Probes skip auth and sessions. |
@@ -211,7 +211,7 @@ Port of `providerMaintenanceRunner.ts` into `driver/common/maintenance.rs`.
 - Extra usage source: CLIProxy (`AgentUsageLimitSource`: label, url, management key as a secret, enabled).
 - Limits per account in `AgentProviderAccount.limitsJson`; shown on the Usage page and in the composer.
 - `provider.consumeResetCredit` → service `consume#ResetCredit` where the driver offers it.
-- Attachments live outside the work root, in `agent_code_home/attachments/<conversationId>/` (or `ContentBlob`).
+- Attachments live outside the work root, in `<agent-code@home>/attachments/<conversationId>/` (or `ContentBlob`).
   The attachment prompt names the file paths the harness may read.
 
 ## 8. Text generation

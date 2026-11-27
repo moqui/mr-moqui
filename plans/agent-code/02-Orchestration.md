@@ -75,11 +75,11 @@ Internal-only commands, as in T3: `run.output.submit`, `thread.guest-share.open|
 | Placeholder title, replaced by the first message | `titleSourceEnumId` AgtsPlaceholder, then effect `title.generate` ([03 §8](03-Providers.md#8-text-generation)). |
 | Fork title uses inherited history | Same, in the title prompt. |
 | `threadTitleInstructions` (project override) | `AgentCodeSetting` plus `AgentProjectSetting`. |
-| Scratch threads: folder `<home>/scratch/<date>-<first-words>-<8-hex>`; delete keeps folder; no git controls; "Turn into project" | `AgentWorkRoot` AgwkScratch under `agent_code_home/scratch`. "Turn into project" is `adopt#ScratchFolder` (internal command `thread.project.adopt-folder`). Not offered when the data dir is inside a git checkout. Key `mod+alt+n`. |
+| Scratch threads: folder `<home>/scratch/<date>-<first-words>-<8-hex>`; delete keeps folder; no git controls; "Turn into project" | `AgentWorkRoot` AgwkScratch under `<agent-code@home>/scratch`. "Turn into project" is `adopt#ScratchFolder` (internal command `thread.project.adopt-folder`). Not offered when the data dir is inside a git checkout. Key `mod+alt+n`. |
 | Agent-created threads (`create_threads`, `t3_thread_launch`) | Same service, `creationSourceEnumId` AgcsMcp, recorded on the parent run. |
 
-`agent_code_home` is a new property: default `runtime/agent-code/` on a server, the app data directory on desktop.
-It holds `scratch/`, `worktrees/`, `projects/`, `artifacts/`, `browser/`, `voice/` and `logs/`.
+The Agent Code home is a new conf setting, `agent-code@home` ([10 §9.5](10-Web-UI.md#95-conf-settings)): empty by
+default, which is `runtime/agent-code/` on a server and the app data directory's `agent-code/` on desktop. It holds `scratch/`, `worktrees/`, `projects/`, `artifacts/`, `browser/`, `voice/` and `logs/`.
 
 ## 3. Settle, snooze, pin, tags, unread
 
@@ -199,7 +199,7 @@ Port of `CheckpointService.ts`, `CheckpointCaptureService.ts`, `CheckpointRestor
 | Baseline | Before the root execution, write the work tree as a tree object and keep it under a hidden ref `refs/moqui-code/checkpoints/<conversationId>/<checkpointId>`. Untracked files are included; ignored files are not. |
 | Capture | After the run (completion barrier), capture again. Write `AgentCheckpoint` and one `AgentFileChange` per changed path, with the diff in a `ContentBlob`. |
 | Child scopes | A subagent or tool scope is a child checkpoint (`parentCheckpointId`). Only root-run checkpoints advance the run count. |
-| Scratch folders | Checkpointed the same way with a private git dir under `agent_code_home/checkpoints/`. |
+| Scratch folders | Checkpointed the same way with a private git dir under `<agent-code@home>/checkpoints/`. |
 | Turn diff | Diff against the prior checkpoint. Files brought in by pull, merge or rebase are left out unless the turn edited, committed or fixed a conflict in them. |
 | Rollback `checkpoint.rollback {scopeId, checkpointId, restoreFiles}` | Safety check (no running work, no foreign changes since, or the user confirms), restore files, harness rollback if supported (Codex `thread/rollback`), later runs AgrRolledBack. Failure: internal `checkpoint.rollback.fail`. |
 | Retention | Hidden refs are removed with the thread or by the cleanup job. |
@@ -236,7 +236,7 @@ Port of `ContextHandoffService.ts` into `crates/moqui-code/src/handoff.rs`.
 | Rule | Value |
 |---|---|
 | Items | user and assistant messages, command executions, file changes, checkpoints, earlier handoffs |
-| Budget | `agent_code_handoff_token_cap`, default 16,000 (1,024-64,000); 1 token per UTF-8 byte |
+| Budget | `agent-code@handoff-token-cap`, default 16000 (1,024-64,000); 1 token per UTF-8 byte |
 | Imported history ceiling | 64,000 bytes |
 | Fallback window | 128,000 tokens; reserve max(16,000, 25%) |
 | Attachments | images 8,192 tokens each; other files 4,096 |
@@ -252,7 +252,7 @@ Port of `ContextHandoffService.ts` into `crates/moqui-code/src/handoff.rs`.
 | `defaultThreadEnvMode` (null inherits `t3.json`, then local) | Same resolution: project setting, environment setting, project file, built-in. |
 | `newWorktreesStartFromOrigin` (true) | Same. Fetch before the worktree is made. |
 | `worktreeSubmodules` recursive, top-level, none | Same, on `moqui-git` submodule support (or the `git` CLI when the crate lacks it; see open decision O6 in [16](16-Phases.md)). |
-| `worktreesDirectory` (default `<home>/worktrees`) | `agent_code_home/worktrees/<project-slug>/<branch>`. |
+| `worktreesDirectory` (default `<home>/worktrees`) | `<agent-code@home>/worktrees/<project-slug>/<branch>`. |
 | `fastWorktreeCheckout` (APFS clone cache, Git >= 2.42) | Desktop on macOS only. |
 | Sparse checkout from `worktreeSparsePatternsPath` | Same field in the project file. |
 | Branch naming `branchNamingMode` static (prefix `t3`), semantic, custom; `branchNameInstructions`; keep the temporary name when generation fails | Same modes. Static prefix default `moqui`. |
