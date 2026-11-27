@@ -779,6 +779,31 @@ pub fn login_ssh_key_user(username: &str, client_ip: &str) -> Result<(), Error> 
     with_client_ip(client_ip, || recorded_login(username, true))
 }
 
+/// Whether `username`'s account may sign in now, read only: it is known, not disabled or locked, not terminated, not a
+/// display account, and owes no password change. Unlike [`internal_login_user`] it changes nothing: no session, no
+/// failed-login count, no visit, so a check at each request of an open connection (SSH, SEC-FIL-11) leaves the counts
+/// a password guess is held to as they are.
+///
+/// # Errors
+///
+/// Returns the entity facade's error.
+pub fn account_may_sign_in(username: &str) -> Result<bool, Error> {
+    if username.is_empty() {
+        return Ok(false);
+    }
+    let _authz = without_authz();
+    let facade = entity_facade()?;
+    let Some(account) = find_username_cached(&facade, username)? else {
+        return Ok(false);
+    };
+    let now = now_millis();
+    Ok(!still_disabled(&account, now)
+        && !terminated(&account, now)
+        && !is_display_account(&account)
+        && text_field(&account, "requirePasswordChange") != "Y"
+        && !password_expired(&account, now))
+}
+
 /// Whether the account is a display account (`UserAccount.displayAccount`, shared devices): it stands for no person
 /// and nothing signs it in. Only a device credential runs as it, for one request at a time (`user/device.rs`).
 pub(crate) fn is_display_account(account: &EntityValue) -> bool {

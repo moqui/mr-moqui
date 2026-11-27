@@ -849,6 +849,35 @@ fn sftp_and_the_admin_shell_run_on_the_built_in_server() {
     })
     .unwrap();
     assert!(first.is_ok(), "{first:?}");
+    // the check at each request reads the account and changes nothing: the failed-login count a web password guess
+    // is held to stays as it is
+    let failed_logins = |set: Option<i64>| {
+        let mut account = entity
+            .find("moqui.security.UserAccount")
+            .unwrap()
+            .disable_authz()
+            .eq("username", Value::string("john.doe"))
+            .one()
+            .unwrap()
+            .unwrap();
+        if let Some(count) = set {
+            account.set("successiveFailedLogins", Value::I64(count));
+            account.update(&entity).unwrap();
+        }
+        account
+            .get("successiveFailedLogins")
+            .map(moqui_lib::object::to_plain_string)
+            .unwrap_or_default()
+    };
+    failed_logins(Some(2));
+    let (handle, counted) = moqui_host::edge::block_on(async move {
+        let result = run(&handle, "help").await;
+        (handle, result)
+    })
+    .unwrap();
+    assert!(counted.is_ok(), "{counted:?}");
+    assert_eq!(failed_logins(None), "2", "a channel request leaves the count");
+    failed_logins(Some(0));
     let set_disabled = |disabled: &str| {
         let mut account = entity
             .find("moqui.security.UserAccount")

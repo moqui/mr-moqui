@@ -861,9 +861,11 @@ fn ssh_permissions() -> Result<Permissions, CoreError> {
 
 /// The SSH permissions of `username` now, read again at each channel request (SEC-FIL-11), so a permission taken away
 /// refuses what an open connection asks for next; `None` for an account that is gone or may no longer sign in
-/// (disabled, locked, terminated, a display account: the gate of every internal login).
+/// (disabled, locked, terminated, a display account, a password change due: [`moqui_core::user::account_may_sign_in`],
+/// which changes nothing).
 fn permissions_of(factory: &ExecutionContextFactory, username: &str) -> Result<Option<Permissions>, CoreError> {
-    if moqui_core::user::internal_login_user(username).is_err() {
+    // read only: an internal login would reset the account's failed-login count at every request (SEC-FIL-11)
+    if !moqui_core::user::account_may_sign_in(username)? {
         return Ok(None);
     }
     let _authz =
