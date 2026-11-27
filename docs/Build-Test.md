@@ -730,7 +730,7 @@ help and their helpers, and `scripts/moq-test.sh` tests them all.
 ./moq test-apps                # the application tests: the specs of runtime/components/addon, no cargo
 ./moq test-framework           # the framework tests: cargo, moq, the specs of components/base and components/dev
 ./moq test-all                 # the whole regression suite: test-framework, then test-apps
-./moq accept mr-boss           # a component's acceptance suite (test/acceptance/), only when asked
+./moq accept mr-boss           # a component's acceptance suite (test/acceptance/), only with the user's permission
 ./moq accept-all               # every acceptance test, with the Rust opt-in and ignored tests
 sudo scripts/call-network.sh   # calls on shaped networks (tc netem in namespaces; root): docs/interfaces/WebRTC.md
 ./moq save-db before-upgrade   # and later: ./moq reload-save before-upgrade
@@ -765,7 +765,7 @@ its rows; a check named twice runs once.
 | Something a golden or generated file holds: a host member (`moqui-host.d.ts`), a proto, the bundled screens, a typegen fixture | the file rewritten by its variable and its diff read: `UPDATE_GOLDEN=1 cargo test -p moqui-devkit --lib typegen`, `MOQUI_REGENERATE_PROTO=1 cargo test -p moqui-host --lib the_checked_in_code_is_what_the_proto_generates`, `UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled` |
 | The framework's components (`runtime/components/base`, `runtime/components/dev`), the conf (`MoquiDefaultConf.xml`, the XSDs, `runtime/conf/**`), `moq` or `scripts/` | `./moq test-framework` (its cargo run holds the conf tests: every runtime conf parsed, merged and checked against the XSD) |
 | An application (`runtime/components/addon/*`, `runtime/components/test`) | `./moq test-apps`; for a changed screen `moqui lint --screens` with a report file (`./moq run lint --screens <file>`), its idiom count not grown |
-| An acceptance test you added or changed | that test (`./moq accept <component> --spec Name`), then its component's acceptance suite |
+| An acceptance test you added or changed | that test alone (`./moq accept <component> --spec Name`); its component's whole acceptance suite only with the user's permission |
 | Docs only (`docs/`, `plans/`, READMEs) | no build or test; the relative links still resolve |
 
 While working, run less: the specs of what you touch (`./moq test <component> --spec ...`) and `cargo test -p <crate>`
@@ -903,7 +903,8 @@ Acceptance tests can be deleted freely, since nothing depends on them.
   regression command does.
 - **Who runs it.** `./moq accept-all` on a schedule (nightly, or weekly while it is long) and before a release, with
   `--junit` for a dated summary. An agent runs an acceptance test only when the user asks, or when it adds or changes
-  one (then that test, and its component's acceptance suite), never because code it uses changed (AGENTS.md).
+  one (then that test alone), never because code it uses changed; a component's whole acceptance suite, or
+  `./moq accept-all`, only with the user's permission (AGENTS.md).
 - **In CI.** A server that hosts the repository runs the suites as pipelines ([Pipelines](interfaces/Pipelines.md)):
   the `ci.xml` at this repository's root runs the lints and `./moq test-framework` on every push and merge request,
   `./moq test-all` on main, and `./moq accept-all --junit` nightly, in the `moqui-build` image. `#[cfg(windows)]` is

@@ -282,7 +282,8 @@ framework-code commit use `./moq test-framework`. There is no addon application 
 
 Complete journeys, access/phone walks and screen sweeps belong in acceptance, at most one sweep per app per mode;
 retain the existing single golden-path regression walk where present. Run acceptance only when requested, or when
-adding/changing an acceptance test (that test and its component's acceptance suite). Never add a full regression
+adding/changing an acceptance test (that test alone; a component's whole acceptance suite only with the user's
+permission). Never add a full regression
 screen walk or run `accept-all` merely to finish a review. Reuse existing assertions, respect budgets and use the
 existing binary unless a changed embedded generator or Rust implementation requires rebuilding. Lint changed screens
 with a report output path, never a screen path as the lint argument. Documentation-only validation does not need a
