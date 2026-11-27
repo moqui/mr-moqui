@@ -85,3 +85,24 @@ fn a_foreign_key_or_a_view_to_another_database_is_warned_of() {
         .any(|line| line.contains("moqui.test.CrossNote") && line.contains("one-nofk")));
     assert!(crossing.iter().any(|line| line.contains("moqui.test.CrossNoteAndEnum")));
 }
+
+/// A field type the database has no `database-type` of its own for (text-short on Postgres) takes the dictionary's
+/// `default-sql-type`, in a planned type change and in the entity view's SQL types (DEVA-UI-003 in
+/// plans/ui-review-dev-aide-authoring.md).
+#[test]
+fn a_type_without_a_database_override_takes_the_dictionary_default() {
+    let facade = testing::open();
+    let planned = facade
+        .plan_ddl("moqui.basic.Geo", "change-type", "geoCodeAlpha2", "")
+        .unwrap();
+    assert_eq!(
+        planned,
+        [r#"ALTER TABLE "geo" ALTER COLUMN "geo_code_alpha2" TYPE VARCHAR(63) USING "geo_code_alpha2"::VARCHAR(63)"#]
+    );
+    let detail = crate::entity::info::entity_detail(&facade, "moqui.basic.Geo").unwrap();
+    let sql_type = match detail.get("sqlTypes") {
+        Some(moqui_lib::object::Value::Map(types)) => types.get("geoCodeAlpha2").and_then(|sql| sql.as_str()),
+        _ => None,
+    };
+    assert_eq!(sql_type, Some("VARCHAR(63)"));
+}

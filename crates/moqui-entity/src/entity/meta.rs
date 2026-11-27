@@ -24,7 +24,7 @@ use std::sync::{Mutex, RwLock};
 
 use moqui_db::dialect::Dialect;
 use moqui_db::sql::{
-    add_column, create_fk_index, create_foreign_key, create_index, create_table, drop_fts_index,
+    add_column, create_fk_index, create_foreign_key, create_index, create_table, drop_fts_index, field_sql_type,
     foreign_key_index_name, foreign_key_name, fts_index_name, fts_index_sql, fts_old_index_name, is_mysql, is_sqlite,
     legacy_name, physical_column_name, physical_name, quote_ident,
 };
@@ -165,9 +165,8 @@ impl EntityFacade {
                 "drop-column" => Ok(vec![format!("ALTER TABLE {table} DROP COLUMN {}", raw_column(column)?)]),
                 "change-type" => {
                     let field = field_of(field)?;
-                    let sql_type = dialect.sql_type(&field.field_type).ok_or_else(|| {
-                        Error::new(format!("no SQL type for {} on {}", field.field_type, dialect.name))
-                    })?;
+                    // The type create table and add column give it: the database's override, else the dictionary's.
+                    let sql_type = field_sql_type(model, dialect, field)?;
                     let name = column_ident(&field.column_name);
                     if is_sqlite(dialect) {
                         return Err(Error::new(
