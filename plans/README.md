@@ -30,6 +30,10 @@ results. The [shared review protocol](ui-review-shared-gallery.md#common-review-
 
 **Phase 13: LLM, A2A and Assist**
 - [LLM-A2A-Assist.md](LLM-A2A-Assist.md): the design and implementation plan for the agent runtime, the Assist drawer, chat and triggered agents, A2A, MCP and the OpenAI-compatible gateway, with the review of the Java prototype it replaces and the ideas taken from other assistants. Built: 13.1 to 13.14. The Constitution default JSON has English, Spanish, Simplified Chinese and 37 anchored references for review; its localized runtime, Assist rules view, on-demand references, trusted viewer and Admin integration (13.15, §7.10) are proposed. Open work is in Remaining-Work.
+- [agent-code/](agent-code/README.md): the features and UI of T3 Code (a coding-agent workbench) on the agent runtime
+  (design, Nov 22, 2026, not built): T3's threads, runs, turn items, projects, worktrees, checkpoints, providers and
+  scheduled tasks mapped onto `AgentConversation`, `AgentRun` and the other agent entities; provider adapters for
+  Claude Code, Codex and ACP agents that mirror every harness event; the `/qapps/code` screens; web, desktop, mobile and server surfaces; phases P0 to P10.
 
 **Reference** (long-lived, kept current)
 - [Parity-Mapping.md](Parity-Mapping.md): every Rust module mapped to the Java, Groovy, XML and FreeMarker it was ported from, and the reverse index; what is excluded on purpose; the cross-cutting threads a review carries.
