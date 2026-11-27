@@ -67,8 +67,9 @@ In the framework (`entity/MapEntities.xml`, package `moqui.maps`):
   back: accepted).
 - **`LocationLatest`**: one row a share (`shareId`), `latitude`, `longitude`, `accuracy` (metres, as the device gives
   it), `heading`, `speed`, `observedDate`, `receivedDate`. Not cached.
-- **`LocationTrailPoint`**: `shareId`, `observedDate`, the same values, indexed by share and date. A share's trail is Each point keeps the server's `receivedDate` (LL3 review), and a viewer sees only points received after they were reached.
-  read in bounded pages.
+- **`LocationTrailPoint`**: `shareId`, `observedDate`, the same values, indexed by share and date. A share's trail is
+  read in bounded pages. Each point keeps the server's `receivedDate` (LL3 review), and a viewer sees only points
+  received after they were reached.
 - Settings on a new `location` element of `MoquiDefaultConf.xml` (each with its XSD attribute and `conf_schema.rs`
   entry): `max-share-hours` (24), `trail-max-days` (30), `min-interval-seconds` (5), `link-max-views-per-minute` (30).
 
