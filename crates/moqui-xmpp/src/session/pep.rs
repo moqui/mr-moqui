@@ -39,10 +39,11 @@ use crate::registry::Inbound;
 const REFUSED_NODES: &[&str] = &["http://jabber.org/protocol/geoloc"];
 
 /// Whether `node` is one this service refuses: no publish, fetch, configure or delete, and no `+notify` interest. It is
-/// compared trimmed and in any ASCII case, so a variant spelling cannot reach a stored row on a case-insensitive
-/// collation.
+/// compared with ASCII whitespace trimmed (space, tab, LF, FF, CR: what the services trim too, so both sides agree on a
+/// node such as one led by U+FEFF) and in any ASCII case, so a variant spelling cannot reach a stored row on a
+/// case-insensitive collation.
 pub(super) fn refused_node(node: &str) -> bool {
-    let node = node.trim();
+    let node = node.trim_matches(|ch: char| ch.is_ascii_whitespace());
     REFUSED_NODES.iter().any(|refused| refused.eq_ignore_ascii_case(node))
 }
 
@@ -112,6 +113,10 @@ impl Session {
             Ok(found) => found,
             Err(_) => return self.refuse(iq, "cancel", "item-not-found", None),
         };
+        // a node the services refuse (get#PepNodeRefused), as the check above answers one
+        if backend::flag(&found, "refused") {
+            return self.refuse(iq, "auth", "forbidden", None);
+        }
         if backend::flag(&found, "denied") {
             return self.pubsub_error(iq, "auth", "forbidden", "presence-subscription-required");
         }
@@ -151,6 +156,10 @@ impl Session {
             Ok(found) => found,
             Err(_) => return self.refuse(iq, "wait", "internal-server-error", None),
         };
+        // a node the services refuse (get#PepNodeRefused): forbidden, as the check before the call answers one
+        if backend::flag(&found, "refused") {
+            return self.refuse(iq, "auth", "forbidden", None);
+        }
         if backend::flag(&found, "preconditionFailed") {
             return self.pubsub_error(iq, "cancel", "conflict", "precondition-not-met");
         }

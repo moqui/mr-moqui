@@ -279,17 +279,26 @@ feature("user location (XEP-0080) is refused at the services too, in any spellin
             ec.entity.find("moqui.xmpp.XmppPepItem").condition("userId", A).condition("node", GEOLOC).deleteAll()
             ec.entity.find("moqui.xmpp.XmppPepNode").condition("userId", A).condition("node", GEOLOC).deleteAll()
         })
-        return {published, variant, kept, own, coMember, ordinary}
+        // ASCII whitespace alone is trimmed, as the XMPP session trims it (Rust's trim keeps U+FEFF, JavaScript's strips it)
+        const check = (name) => as(null, "get#PepNodeRefused", {node: name}).refused
+        const spaced = check("\t" + GEOLOC + "\r\n"), marked = check("﻿" + GEOLOC)
+        return {published, variant, kept, own, coMember, ordinary, spaced, marked}
     },
-    then({published, variant, kept, own, coMember, ordinary}) {
-        published.errors.includes("not kept here")
-        variant.errors.includes("not kept here")
+    then({published, variant, kept, own, coMember, ordinary, spaced, marked}) {
+        // refused (the session answers forbidden), not an error (which it would answer internal-server-error)
+        published.errors == ""
+        published.refused == true
+        variant.refused == true
         kept == 0
+        own.refused == true
         own.denied == true
         own.itemList.length == 0
         coMember.denied == true
         coMember.itemList.length == 0
         ordinary.errors == ""
+        ordinary.refused == false
+        spaced == true
+        marked == false
     }
 })
 
