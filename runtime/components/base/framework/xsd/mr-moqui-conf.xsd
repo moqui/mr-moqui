@@ -1931,6 +1931,10 @@ along with this software (see the LICENSE.md file). If not, see
                 The most rows of a find made from a request's search parameters with pageNoLimit=true (a screen's CSV,
                 XLSX, print or text export): pageNoLimit asks for no page, and gets this many rows at most (SEC-DAT-09).
                 No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-reply-bytes" type="non-neg-int-expandable" default="1073741824"><xs:annotation><xs:documentation>
+                The most bytes of rows one Postgres reply may bring to this server: past it the rest of the reply is read
+                and dropped and the query fails, so a server (or a query) cannot hold this process's memory with one
+                result (SEC-DAT-94). Read when a connection opens. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

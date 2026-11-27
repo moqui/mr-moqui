@@ -168,6 +168,9 @@ pub(super) struct Wire {
     /// Requests went out since the last read that waited, so the next one is a waited round trip
     /// ([`moqui_core::driver::note_round_trip`]).
     sent: bool,
+    /// The most bytes of rows one reply may bring ([`max_reply_bytes`]); past it the rest are read and dropped and
+    /// the request fails (SEC-DAT-94).
+    max_reply_bytes: usize,
 }
 
 /// What failed a request: the server, or this side while reading the reply (a cell that does not decode).
@@ -526,6 +529,7 @@ impl Wire {
             handshake_deadline: Some(deadline),
             read_timeout: None,
             sent: false,
+            max_reply_bytes: max_reply_bytes(),
         };
         if !matches!(wire.stream, Stream::Tls(_)) {
             wire.stream
@@ -864,11 +868,25 @@ impl Wire {
     /// the next reply starts where it should.
     fn read_reply(&mut self, mut each: impl FnMut(Message) -> Result<(), Error>) -> Result<Option<Failure>, Error> {
         let mut failure: Option<Failure> = None;
+        let mut row_bytes: usize = 0;
         loop {
             match self.read_message()? {
                 Message::ReadyForQuery(_) => return Ok(failure),
                 Message::ErrorResponse(body) => {
                     failure.get_or_insert_with(|| Failure::Db(DbError::parse(body.fields())));
+                }
+                Message::DataRow(body)
+                    if failure.is_none() && {
+                        row_bytes = row_bytes.saturating_add(body.buffer().len());
+                        row_bytes > self.max_reply_bytes
+                    } =>
+                {
+                    // the rest of the reply is read and dropped, so the connection stays in step with the server
+                    failure = Some(Failure::Local(Error::new(format!(
+                        "postgres reply: its rows are over the most one reply may bring (entity-facade max-reply-bytes, \
+                         {} bytes)",
+                        self.max_reply_bytes
+                    ))));
                 }
                 message => {
                     if failure.is_none() {
@@ -1453,6 +1471,15 @@ pub(super) fn cancel_within(
 
 /// The most bytes one backend message may claim: Postgres keeps a field under 1 GiB.
 const MAX_MESSAGE_BYTES: usize = 1024 * 1024 * 1024 + 5;
+
+/// The most bytes of rows one reply may bring: `entity-facade@max-reply-bytes`, 1 GiB when it does not read.
+fn max_reply_bytes() -> usize {
+    moqui_core::context::conf_env::setting("entity-facade@max-reply-bytes")
+        .parse::<usize>()
+        .ok()
+        .filter(|max| *max > 0)
+        .unwrap_or(1 << 30)
+}
 
 /// The length a buffered backend message's header claims (its four-byte length after the type byte), when it is over
 /// [`MAX_MESSAGE_BYTES`]; None while the header has not all come or the length is in bounds.

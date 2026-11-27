@@ -714,6 +714,13 @@ moqui_conf__entity_facade__datasource__TRANSACTIONAL__password=...
 | `schema-name` | | Empty for the default schema |
 | `user`, `password` | `moqui`, ... | |
 | `sslmode` | | Empty is verified TLS. `verify-full` checks the authority and the name, `verify-ca` the authority only and needs `sslrootcert` (it trusts that file alone, as libpq does; without it the connection is refused), `require` encrypts without checking, and `disable` turns TLS off (for a local dev server only) |
+
+On MySQL (`mysql`, `mysql8`) the same `sslmode` and `sslrootcert` apply (SEC-DAT-97). An upgrade from a build before
+this changes two things: `sslmode=require` now encrypts without checking the certificate, where before the mode was
+ignored and the certificate checked in full (set `verify-full` to keep that); and a conf connection with no mode
+(`database-conf` `jdbc-uri` style, no `sslmode`) is `verify-full` to a server off loopback and plain to `127.0.0.1`,
+`localhost` or `::1`. A MySQL server with no TLS needs `sslmode=disable`, a database extract from it too
+(`jdbc_extract`).
 | `sslrootcert` | `/etc/moqui/db-ca.pem` | A PEM file of the authorities to trust instead of the public ones |
 
 `entity-facade@crypt-pass`, made into `seal.json` by `moqui operator init`, is the key of encrypted fields; it moves
@@ -2564,7 +2571,10 @@ The get tasks take `-t git|current|release|binary` and `-r <repository>`. `--dev
 `runtime/components/dev`. A component with a `Cargo.toml` is linked into the binary on the next build
 ([Native-Components](dev/Native-Components.md)). A new component loads at the next start. System › Components can also
 load it on a running server, with its data, when it has no Rust code
-([Component-Deploy](tools/Component-Deploy.md#loading-a-component)).
+([Component-Deploy](tools/Component-Deploy.md#loading-a-component)). A component deployed that way is updated, moved aside and removed
+only in its own directory under a directory named `components` (`runtime/components/addon/<name>` by default): a conf
+whose `component-dir` is not named `components` (Moqui Java's `runtime/component`) has its deploys and removals refused
+(plans/Security-Review-Low.md SEC-TLS-104).
 
 ## Moving from Moqui Java
 

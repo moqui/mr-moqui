@@ -615,3 +615,53 @@ fn a_db_errors_detail_is_left_out_of_the_client_text() {
     assert!(shown.contains("violates not-null constraint"), "{shown}");
     assert!(!shown.contains("secret-value") && !shown.contains("HINT"), "{shown}");
 }
+
+/// SEC-DAT-94: the rows of one reply are at most `max-reply-bytes`: past it the query fails, the rest of the reply is
+/// read and dropped, and the connection answers the next query in step.
+#[test]
+fn a_reply_whose_rows_pass_the_limit_fails_and_the_connection_stays_in_step() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut tcp, _) = listener.accept().unwrap();
+        let mut len = [0u8; 4];
+        tcp.read_exact(&mut len).unwrap();
+        let mut startup = vec![0u8; u32::from_be_bytes(len) as usize - 4];
+        tcp.read_exact(&mut startup).unwrap();
+        let mut reply = message(b'R', &0_i32.to_be_bytes());
+        reply.extend(message(b'K', &[0, 0, 0, 7, 0, 0, 0, 9]));
+        reply.extend(message(b'Z', b"I"));
+        tcp.write_all(&reply).unwrap();
+        // one cell of 100 bytes a row
+        let mut row = 1_i16.to_be_bytes().to_vec();
+        row.extend(100_i32.to_be_bytes());
+        row.extend([b'x'; 100]);
+        for rows in [10, 1] {
+            let (tag, _) = read_message(&mut tcp);
+            assert_eq!(tag, b'Q');
+            let mut answer = Vec::new();
+            for _ in 0..rows {
+                answer.extend(message(b'D', &row));
+            }
+            answer.extend(message(b'C', format!("SELECT {rows}\0").as_bytes()));
+            answer.extend(message(b'Z', b"I"));
+            tcp.write_all(&answer).unwrap();
+        }
+        let mut rest = Vec::new();
+        let _ = tcp.read_to_end(&mut rest);
+    });
+    let endpoint = Endpoint::Tcp {
+        guard: AddressGuard::Off,
+        host: "127.0.0.1".to_string(),
+        port,
+        tls: None,
+    };
+    let mut wire = Wire::connect(&endpoint, "moqui", "moqui", None, None).unwrap();
+    wire.max_reply_bytes = 500;
+    let err = wire.simple("SELECT x", "query").expect_err("over the limit");
+    assert!(err.to_string().contains("max-reply-bytes"), "{err}");
+    assert!(!wire.is_dead());
+    wire.simple("SELECT x", "query").unwrap();
+    drop(wire);
+    server.join().unwrap();
+}

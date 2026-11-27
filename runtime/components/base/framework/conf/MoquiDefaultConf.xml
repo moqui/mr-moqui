@@ -1615,7 +1615,7 @@
             default-group-name="transactional" entity-eca-enabled="true" sequenced-id-prefix=""
             distributed-cache-invalidate="false" dci-topic-factory="" query-stats="false"
             database-locale="" database-time-zone="UTC"
-            rest-max-page-size="1000" screen-max-rows="100000"
+            rest-max-page-size="1000" screen-max-rows="100000" max-reply-bytes="1073741824"
             crypt-salt="20201202" crypt-iter="10" crypt-algo="PBEWithHmacSHA256AndAES_128"
             crypt-pass="MoquiDefaultPassword:CHANGEME" crypt-pass-old="MoquiDefaultPassword:CHANGEME"
             crypt-read-plain="false"
