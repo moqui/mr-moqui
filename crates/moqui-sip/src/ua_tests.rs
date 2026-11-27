@@ -1720,8 +1720,12 @@ fn a_contact_naming_a_stream_transport_over_udp_is_refused() {
         .unwrap()
     };
     assert!(!contact_transport_differs(&request("<sip:p@192.0.2.1:5060>")));
-    assert!(!contact_transport_differs(&request("<sip:p@192.0.2.1:5060;transport=UDP>")));
-    assert!(contact_transport_differs(&request("<sip:p@127.0.0.1:5432;transport=tcp>")));
+    assert!(!contact_transport_differs(&request(
+        "<sip:p@192.0.2.1:5060;transport=UDP>"
+    )));
+    assert!(contact_transport_differs(&request(
+        "<sip:p@127.0.0.1:5432;transport=tcp>"
+    )));
     assert!(contact_transport_differs(&request("\"Sips\" <sips:p@10.0.0.1>")));
     assert!(contact_transport_differs(&request("sip:p@10.0.0.1;transport=tls")));
 }

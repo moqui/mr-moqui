@@ -682,7 +682,9 @@ fn known_source(
 ) -> bool {
     // by the source as the gate counts it (an IPv6 /64 is one), so a known phone's neighbours in its /64 are known too
     let key = crate::guard::source_key(ip);
-    lock(authenticated).iter().any(|addr| crate::guard::source_key(addr.ip()) == key)
+    lock(authenticated)
+        .iter()
+        .any(|addr| crate::guard::source_key(addr.ip()) == key)
         || registrar.is_some_and(|registrar| lock(registrar).has_flow_from(ip))
         || inner
             .get()

@@ -329,7 +329,9 @@ impl RequestGate {
         };
         (self.limits.max_connections == 0 || self.connections <= self.limits.max_connections)
             && (per_source == 0 || from_source <= per_source)
-            && (known || self.limits.max_unknown_connections == 0 || self.unknown <= self.limits.max_unknown_connections)
+            && (known
+                || self.limits.max_unknown_connections == 0
+                || self.unknown <= self.limits.max_unknown_connections)
     }
 
     /// A stream connection closed; `known` as it was told to [`Self::connection_opened`].

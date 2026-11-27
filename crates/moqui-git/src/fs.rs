@@ -405,7 +405,9 @@ pub(crate) fn token_offered_to(url: &str) -> bool {
         return scheme == "https" || scheme == "ssh";
     }
     // scp-like: user@host:path, with no slash before the colon
-    lower.split_once(':').is_some_and(|(host, _)| !host.is_empty() && !host.contains('/'))
+    lower
+        .split_once(':')
+        .is_some_and(|(host, _)| !host.is_empty() && !host.contains('/'))
 }
 
 /// Fetch `url` into the bare repository at `path` (created when it is not there), replacing local refs with the
@@ -469,7 +471,10 @@ pub(crate) fn fetch(
     // rule included (SEC-FIL-101)
     let token = match credentials.token.clone() {
         Some(_) if !token_offered_to(url) => {
-            let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
             tracing::warn!(
                 "Mirror {name}: its access token is not offered to {}, which is not https or ssh",
                 moqui_core::outbound::redacted(url)

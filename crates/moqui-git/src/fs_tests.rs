@@ -124,10 +124,19 @@ fn under_the_guard_only_a_network_address_is_fetched() {
 #[test]
 fn a_mirrors_token_is_offered_only_over_https_or_ssh() {
     use super::token_offered_to;
-    for url in ["https://git.example.com/a.git", "SSH://git@host/a.git", "git@git.example.com:team/a.git"] {
+    for url in [
+        "https://git.example.com/a.git",
+        "SSH://git@host/a.git",
+        "git@git.example.com:team/a.git",
+    ] {
         assert!(token_offered_to(url), "{url}");
     }
-    for url in ["http://git.example.com/a.git", "git://git.example.com/a.git", "file:///srv/a.git", "/srv/a.git"] {
+    for url in [
+        "http://git.example.com/a.git",
+        "git://git.example.com/a.git",
+        "file:///srv/a.git",
+        "/srv/a.git",
+    ] {
         assert!(!token_offered_to(url), "{url}");
     }
 }

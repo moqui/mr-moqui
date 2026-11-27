@@ -839,7 +839,11 @@ fn sftp_and_the_admin_shell_run_on_the_built_in_server() {
     let (handle, first) = moqui_host::edge::block_on(async move {
         let config = Arc::new(russh::client::Config::default());
         let mut handle = russh::client::connect(config, address, Accept).await.unwrap();
-        assert!(handle.authenticate_password("john.doe", "moqui").await.unwrap().success());
+        assert!(handle
+            .authenticate_password("john.doe", "moqui")
+            .await
+            .unwrap()
+            .success());
         let first = run(&handle, "help").await;
         (handle, first)
     })

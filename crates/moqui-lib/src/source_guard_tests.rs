@@ -141,7 +141,10 @@ fn an_unknown_source_holds_fewer_connections() {
     assert!(gate.connection_opened(stranger(1), false));
     assert!(gate.connection_opened(stranger(2), false));
     assert!(gate.connection_opened(stranger(3), false));
-    assert!(!gate.connection_opened(stranger(4), false), "past the unknown sources' total");
+    assert!(
+        !gate.connection_opened(stranger(4), false),
+        "past the unknown sources' total"
+    );
     assert!(gate.connection_opened(Some(office), true));
     gate.connection_closed(stranger(4), false);
     gate.connection_closed(stranger(1), false);

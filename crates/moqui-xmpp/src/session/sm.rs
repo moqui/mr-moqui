@@ -256,7 +256,9 @@ impl Session {
     /// Whether sending `stanza` would take the unacknowledged stanzas past their bounds (none with no stream
     /// management).
     pub(crate) fn unacked_would_overflow(&self, stanza: &Element) -> bool {
-        self.sm.as_ref().is_some_and(|sm| sm.would_overflow(stanza_bytes(stanza)))
+        self.sm
+            .as_ref()
+            .is_some_and(|sm| sm.would_overflow(stanza_bytes(stanza)))
     }
 }
 

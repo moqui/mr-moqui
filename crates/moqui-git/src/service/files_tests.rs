@@ -3238,14 +3238,22 @@ fn a_link_ends_when_its_maker_loses_the_drive() {
     login("alice");
     ok(
         "add#DriveMember",
-        &[("driveId", text(&team)), ("userId", text("dave")), ("permissionEnumId", text("RdpManage"))],
+        &[
+            ("driveId", text(&team)),
+            ("userId", text("dave")),
+            ("permissionEnumId", text("RdpManage")),
+        ],
     );
     let daves = link_of("dave");
     assert!(valid(&daves));
     login("alice");
     ok(
         "add#DriveMember",
-        &[("driveId", text(&team)), ("userId", text("dave")), ("permissionEnumId", text("RdpView"))],
+        &[
+            ("driveId", text(&team)),
+            ("userId", text("dave")),
+            ("permissionEnumId", text("RdpView")),
+        ],
     );
     assert!(!valid(&daves), "a maker who only views now");
     login("alice");

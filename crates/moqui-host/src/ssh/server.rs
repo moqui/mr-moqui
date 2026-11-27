@@ -976,7 +976,10 @@ impl Connection {
         self.can_shell = shell;
         self.can_git = git;
         if !signs_in {
-            tracing::info!("SSH connection from {}: its account may no longer sign in; refused", self.peer);
+            tracing::info!(
+                "SSH connection from {}: its account may no longer sign in; refused",
+                self.peer
+            );
         }
         signs_in
     }

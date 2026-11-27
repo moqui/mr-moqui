@@ -92,15 +92,17 @@ pub fn packet_valid(packet: &[u8]) -> bool {
         0 => rest.len() <= MAX_FRAME_BYTES,
         1 => rest.len().is_multiple_of(2) && rest.len() / 2 <= MAX_FRAME_BYTES,
         2 => length(rest).is_some_and(|(first, used)| {
-            first <= MAX_FRAME_BYTES
-                && first <= rest.len() - used
-                && rest.len() - used - first <= MAX_FRAME_BYTES
+            first <= MAX_FRAME_BYTES && first <= rest.len() - used && rest.len() - used - first <= MAX_FRAME_BYTES
         }),
         _ => {
             let Some(&count_byte) = rest.first() else {
                 return false;
             };
-            let (vbr, padded, count) = (count_byte & 0x80 != 0, count_byte & 0x40 != 0, usize::from(count_byte & 0x3f));
+            let (vbr, padded, count) = (
+                count_byte & 0x80 != 0,
+                count_byte & 0x40 != 0,
+                usize::from(count_byte & 0x3f),
+            );
             // the frames' total duration is at most 120 ms (R5), in units of 2.5 ms
             let config = toc >> 3;
             let units = match config {
@@ -197,7 +199,9 @@ impl OpusDecoder {
             return Err(CodecError("an empty opus packet".to_string()));
         }
         if self.stopped() {
-            return Err(CodecError("opus decode: this leg's packets are no longer decoded".to_string()));
+            return Err(CodecError(
+                "opus decode: this leg's packets are no longer decoded".to_string(),
+            ));
         }
         if !packet_valid(packet) {
             self.failed("an opus packet that is not one by RFC 6716 was refused");
