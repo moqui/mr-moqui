@@ -66,7 +66,11 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="shareId"/>
             <parameter name="thruDate" type="Timestamp"/>
-            <parameter name="linkToken"><description>The guest link's token, returned this once</description></parameter>
+            <parameter name="linkToken"><description>The guest link's token, returned this once: its selector, a dot and
+                its secret</description></parameter>
+            <parameter name="linkPath"><description>The guest page's link, returned this once: /location/selector#secret,
+                the secret in the fragment only (plans/Location-Sharing.md §3.7); the caller puts its site root before
+                it</description></parameter>
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('create', context))</script></actions>
@@ -95,6 +99,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="thruDate" type="Timestamp"/>
             <parameter name="linkToken"/>
+            <parameter name="linkPath"/>
             <parameter name="addedUserList" type="List"><description>The users the change lets in, each {userId,
                 userName}</description></parameter>
             <parameter name="reasonCode"/>
@@ -287,5 +292,77 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="failedCount" type="Integer"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('clean', context))</script></actions>
+    </service>
+
+    <!-- Guest links (plans/Location-Sharing.md §3.7): the public page Maps/SharedLocation.xml, at /location/<selector> by
+        the token-route location of tools MoquiConf.xml, the link's secret in its fragment (/location/selector#secret),
+        posted by the page so that no request line, log or Referer holds it. -->
+    <service verb="check" noun="LinkKey" authenticate="anonymous-all" allow-remote="false">
+        <description>The token check of the /location/&lt;selector&gt; route: valid when the selector (the route's token,
+            the first part of a guest link's token) names a guest link that is there, whether its share is on or not, so
+            that the page can say it has ended. routeContext is empty: nothing of the share is read for the route. A
+            selector that names no link is refused, which the route counts against the client.</description>
+        <in-parameters>
+            <parameter name="token" required="true"/>
+            <parameter name="routeName"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="routeContext" type="Map"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('linkCheck', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="LinkShare" authenticate="anonymous-all" allow-remote="false" no-remember-parameters="true">
+        <description>The guest page's read of a share by its link, with no sign-in: linkKey (the selector, the page's
+            path) and linkSecret (the fragment the page posts). Answers statusCode 200 with share {label, purposeText,
+            approximate}, latest {latitude, longitude, accuracy, ageSeconds} (none before a position the server received
+            after the link was added; an approximate share's is its cell, as stored) and map (the outline, or the one
+            basemap the installation marks public: MapLayer isPublic), and nothing else; 404 LINK_NOT_FOUND for a selector
+            that names no link or a wrong secret (counted on the link, failedTries, and against the client); 403
+            LINK_LOCKED from location@link-max-failed-tries wrong secrets on; 410 SHARE_ENDED once the share has ended or
+            the link was taken out; 429 RATE_LIMITED (retryAfterSeconds) past location@link-max-views-per-minute reads of
+            the link in a minute. A refusal adds no error, so its counts are kept, and names no value.</description>
+        <in-parameters>
+            <parameter name="linkKey" required="true"/>
+            <parameter name="linkSecret"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="statusCode" type="Integer"/>
+            <parameter name="reasonCode"/>
+            <parameter name="retryAfterSeconds" type="Integer"/>
+            <parameter name="share" type="Map"/>
+            <parameter name="latest" type="Map"/>
+            <parameter name="map" type="Map"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('linkRead', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="ShareRecord" allow-remote="false">
+        <description>The record a guest share is for, as MapAdapter names records (recordAdapterKey, recordKey), on an
+            active or ended share of the caller's own. Only for a service that has checked the caller may act on that
+            record (Mantle's mantle.other.LocationShareServices.create#RecordGuestShare), which calls it with
+            authorization off: no group is granted it. Refused: SHARE_NOT_FOUND (not the caller's),
+            BAD_RECORD.</description>
+        <in-parameters>
+            <parameter name="shareId" required="true"/>
+            <parameter name="recordAdapterKey" required="true"/>
+            <parameter name="recordKey" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('shareRecord', context))</script></actions>
+    </service>
+
+    <service verb="stop" noun="RecordShares" authenticate="anonymous-all" allow-remote="false" transaction="ignore">
+        <description>A record completed or cancelled (Mantle's EECA, plans/Location-Sharing.md §3.7): every share still on
+            for it (recordAdapterKey, recordKey) is stopped as stop#Share does, its audience told, each in a transaction of
+            its own (one that fails is logged by its id and the rest go on), whoever's it is. No group is granted it: only
+            the framework and a component's own services call it. Out: stoppedCount.</description>
+        <in-parameters>
+            <parameter name="recordAdapterKey" required="true"/>
+            <parameter name="recordKey" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="stoppedCount" type="Integer"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('recordShares', context))</script></actions>
     </service>
 </services>

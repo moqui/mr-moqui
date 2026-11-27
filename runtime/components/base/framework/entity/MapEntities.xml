@@ -178,6 +178,10 @@ along with this software (see the LICENSE.md file). If not, see
             [[band, min, max]]}, and its default band settings {rgb [r, g, b] or band, min, max, colormap}, which a
             user's preferences or saved view override</description></field>
         <field name="isBasemap" type="text-indicator"/>
+        <field name="isPublic" type="text-indicator"><description>Y: a basemap the installation marks public, drawn on a
+            page a visitor opens with no sign-in (a guest location link, Maps/SharedLocation.xml; plans/Location-Sharing.md
+            §3.7) when it has no viewPermission, no registered resource and no proxied provider; else that page draws the
+            country outline</description></field>
         <field name="adapterKey" type="id"><description>A dynamic layer: the registered adapter whose
             find#LayerFeatures answers a viewport, after its own access check</description></field>
         <field name="viewPermission" type="id"><description>A permission a viewer must hold to be offered the

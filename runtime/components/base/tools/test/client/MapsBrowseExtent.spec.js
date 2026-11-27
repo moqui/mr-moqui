@@ -60,7 +60,7 @@ feature("Browse is the MapsBrowse component with its map, opened on an extent ac
                 vm.shareForm.link = true
                 vm.shareForm.label = "Spec walk"
                 const shareId = await vm.createShare()
-                return { configured, shareId, token: vm.shareMade ? String(vm.shareMade.linkToken || "").length : 0,
+                return { configured, shareId, link: vm.shareMade ? String(vm.shareMade.linkUrl || "") : "",
                     geo: vm.geoUri({ label: "Sam & Co", position: { lat: 45.5, lon: -122.6 } }) }
             })()`)
             // the m-map-view component of the page (WebrootMap.js), whose live layer holds the shares
@@ -74,7 +74,7 @@ feature("Browse is the MapsBrowse component with its map, opened on an extent ac
                 const banner = document.querySelector('[data-maps-sharing="' + ${JSON.stringify(started.shareId)} + '"]')
                 return share && share.latest && banner ? { lat: share.latest.lat, role: share.role, label: share.label, banner: banner.textContent,
                     feature: !!(view.liveSource && view.liveSource.getFeatureById("live:" + share.shareId)) } : null })()`, {timeout: 10})
-            // the dialog shows the guest link's token this once, until Done
+            // the dialog shows the guest link (its page, the secret in the fragment; plans/Location-Sharing.md §3.7) this once, until Done
             shown = page.locator("#MapsShareLinkToken").text()
             // the app bar's chip (the shell's indicator of the framework's live-location shell-indicator provider): Sharing location, sending here;
             // and an indicator's label is text, whatever it holds
@@ -148,7 +148,7 @@ feature("Browse is the MapsBrowse component with its map, opened on an extent ac
         }
         started.configured == true
         started.shareId != null
-        started.token == 32
+        /\/location\/[A-Za-z0-9_-]{16}#[A-Za-z0-9_-]{32}$/.test(started.link)
         shown.includes("shown this once")
         started.geo == "geo:45.500000,-122.600000?q=45.500000,-122.600000(Sam%20%26%20Co)"
         drawn.lat == 45.52

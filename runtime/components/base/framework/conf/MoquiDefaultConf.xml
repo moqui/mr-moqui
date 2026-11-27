@@ -174,9 +174,10 @@
         share takes (5: a sooner one is answered 429 and dropped), approximate-interval-seconds that of an approximate
         share (60); max-active-shares the most shares one person has on at once (20); max-audience the most people (a
         group's members counted each), XMPP contacts and links one share has (50); link-max-views-per-minute the most reads
-        a minute of a guest link's page (30). -->
+        a minute of a guest link's page (30); link-max-failed-tries the wrong secrets after which a guest link is refused
+        (10). -->
     <location max-share-hours="24" trail-max-days="30" min-interval-seconds="5" approximate-interval-seconds="60"
-            max-active-shares="20" max-audience="50" link-max-views-per-minute="30"/>
+            max-active-shares="20" max-audience="50" link-max-views-per-minute="30" link-max-failed-tries="10"/>
 
     <!-- This server as a cluster member (plans/archive/Cluster.md). tls-cert and tls-key: the cluster TLS pair, base64 DER
         on one line each, generated together into runtime/.env (moqui_conf__cluster_member__tls_cert and _tls_key) and

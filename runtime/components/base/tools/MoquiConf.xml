@@ -1,6 +1,18 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!-- No copyright or license for configuration file, details here are not considered a creative work. -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
+    <!-- A location share's guest link (plans/Location-Sharing.md §3.7): /location/<selector>#<secret>, the guest page
+        screen/Maps/SharedLocation.xml in the public shell after org.moqui.maps.LocationServices.check#LinkKey accepted the
+        selector; the secret stays in the fragment and the page posts it to read, a few times a minute from a client. -->
+    <webapp-list>
+        <webapp name="webroot">
+            <token-route name="location" screen-location="component://tools/screen/Maps/SharedLocation.xml"
+                    token-service="org.moqui.maps.LocationServices.check#LinkKey" title="Shared location"/>
+            <web-protection>
+                <rate-limit name="shared-location-read" path="/location/*/read" methods="POST" requests="60" seconds="60" burst="10"/>
+            </web-protection>
+        </webapp>
+    </webapp-list>
     <screen-facade>
         <screen location="component://webroot/screen/webroot/apps.xml">
             <subscreens-item name="dashboards" menu-title="Dashboards" menu-index="96" location="component://tools/screen/Dashboards.xml"/>

@@ -73,7 +73,8 @@ along with this software (see the LICENSE.md file). If not, see
         members of its snapshot (LocationShareAudienceMember) who are still members now (fromDate is stamped again, and
         audited, when the owner adds the group again), an XMPP contact of the owner's roster (LsaXmpp, jid; delivered by
         the XMPP server) or a guest link (LsaLink), whose token is shown once and kept only as its digest (tokenDigest,
-        as ResourceShare's linkTokenHash). Every read rechecks the audience: a row revoked, or a group the viewer has
+        as ResourceShare's linkTokenHash) and its selector (tokenSelector), read by the public guest page
+        Maps/SharedLocation.xml at most location@link-max-views-per-minute a minute. Every read rechecks the audience: a row revoked, or a group the viewer has
         left, reads nothing. The audience added and revoked is in the entity audit log. -->
     <entity entity-name="LocationShareAudience" package="moqui.maps" use="transactional" cache="never">
         <field name="shareId" type="id" is-pk="true"/>
@@ -82,10 +83,19 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="userId" type="id" enable-audit-log="true"/>
         <field name="userGroupId" type="id" enable-audit-log="true"/>
         <field name="jid" type="text-medium" enable-audit-log="true"><description>A bare JID, in lower case</description></field>
-        <field name="tokenDigest" type="text-medium"><description>The link token's digest (ec.user.singleUseCodeHash);
-            the token itself is never kept</description></field>
-        <field name="failedTries" type="number-integer"/>
+        <field name="tokenDigest" type="text-medium"><description>The link token's digest (ec.user.singleUseCodeHash of
+            its selector, a dot and its secret); the token itself is never kept</description></field>
+        <field name="tokenSelector" type="id"><description>The link's selector, the first part of its token: the guest
+            page's path (/location/selector), which names the link without being its credential, so a wrong secret is
+            counted on it (failedTries); the secret is in the link's fragment only (plans/Location-Sharing.md
+            §3.7)</description></field>
+        <field name="failedTries" type="number-integer"><description>Wrong secrets given with the link's selector: the link
+            is refused from location@link-max-failed-tries on</description></field>
         <field name="lastViewedDate" type="date-time"/>
+        <field name="viewMinuteDate" type="date-time"><description>When the guest page's current minute of reads began, for
+            location@link-max-views-per-minute</description></field>
+        <field name="viewMinuteCount" type="number-integer"><description>The reads of the guest page in that
+            minute</description></field>
         <field name="fromDate" type="date-time" enable-audit-log="true"/>
         <field name="revokedDate" type="date-time" enable-audit-log="true"/>
         <relationship type="one" related="moqui.maps.LocationShare"/>
@@ -96,6 +106,7 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="LOC_SHARE_AUD_USER"><index-field name="userId"/></index>
         <index name="LOC_SHARE_AUD_GROUP"><index-field name="userGroupId"/></index>
         <index name="LOC_SHARE_AUD_TOKEN"><index-field name="tokenDigest"/></index>
+        <index name="LOC_SHARE_AUD_SELECTOR"><index-field name="tokenSelector"/></index>
     </entity>
 
     <!-- The members a group entry reached at the owner's act: written only by create#Share and by update#Share when the

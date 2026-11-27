@@ -1,0 +1,108 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- SharedLocation (SharedLocation.xml), in the public shell: a location share's guest link (plans/Location-Sharing.md
+    §3.7). The secret is the URL's fragment: taken once, cleared from the address bar (so a copy of the address or a
+    bookmark has no secret) and kept in this page and this tab's session storage only (a reload reads it), posted in the body of the read transition under the route's path
+    ($root.basePath), every 20 seconds while the page is visible (within location@link-max-views-per-minute). It shows
+    the label, the purpose text and the position's age, the latitude and longitude as text, and a map (m-map: the
+    outline or the installation's public basemap) with the one point; a map that cannot draw leaves the text. -->
+<template><div class="row justify-center q-pa-md m-shared-location">
+    <q-card flat bordered class="q-pa-md" style="width:640px;max-width:100%">
+        <template v-if="share">
+            <div class="text-h6" id="SharedLocationLabel">{{share.label || t('Shared location')}}</div>
+            <div v-if="share.purposeText" class="text-body2 q-mt-xs" id="SharedLocationPurpose">{{share.purposeText}}</div>
+            <div class="text-body2 q-mt-sm" id="SharedLocationAge">
+                <template v-if="latest">{{ageText}}<span v-if="share.approximate"> · {{t('approximate, about 1 km')}}</span>
+                    <span class="m-muted"> · {{coordinates}}</span></template>
+                <template v-else>{{t('No position has come yet. This page looks again every few seconds.')}}</template>
+            </div>
+            <div v-if="latest && mapConfig" class="q-mt-md" style="height:360px">
+                <m-map :config="mapConfig" style="height:100%"></m-map>
+            </div>
+        </template>
+        <div v-else-if="message" class="text-body1 text-center q-pa-md" role="alert" id="SharedLocationMessage">{{message}}</div>
+        <div v-else class="row justify-center q-pa-md"><q-spinner size="2em"></q-spinner></div>
+    </q-card>
+</div></template>
+
+<script>
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+// the page's secret, read once from the fragment: kept in this module's closure, never in a URL again
+let pageSecret = null;
+module.exports = {
+    name: 'SharedLocation',
+    data() { return { share: null, latest: null, map: null, message: null, readAt: 0, now: Date.now(), timer: null, ticker: null }; },
+    computed: {
+        ageSeconds() { return this.latest ? Number(this.latest.ageSeconds || 0) + Math.round((this.now - this.readAt) / 1000) : null; },
+        ageText() {
+            const age = this.ageSeconds;
+            if (age == null) return '';
+            if (age < 60) return t('Updated just now');
+            if (age < 3600) return t('Updated') + ' ' + Math.round(age / 60) + ' ' + t('min ago');
+            return t('Updated') + ' ' + Math.round(age / 3600) + ' ' + t('h ago');
+        },
+        coordinates() { return this.latest ? Number(this.latest.latitude).toFixed(5) + ', ' + Number(this.latest.longitude).toFixed(5) : ''; },
+        mapConfig() {
+            if (!this.latest || !this.map) return null;
+            const point = { id: 'shared', lon: Number(this.latest.longitude), lat: Number(this.latest.latitude), label: (this.share && this.share.label) || '' };
+            return { profileId: 'PUBLIC', profile: { profileId: 'PUBLIC', profileName: '', basemaps: this.map.basemaps || [], basemap: this.map.basemap,
+                allowedOrigins: this.map.allowedOrigins || [] }, points: [point], center: [point.lon, point.lat], zoom: this.share && this.share.approximate ? 12 : 15 };
+        },
+    },
+    methods: {
+        t,
+        read() {
+            if (!pageSecret) { this.message = t('This link has expired or was not found.'); return; }
+            moqui.request(this.$root.basePath + '/read', { method: 'POST', params: { linkSecret: pageSecret } }).then((result) => result.json || {}).then((json) => {
+                if (json.statusCode === 200) {
+                    this.share = json.share || {};
+                    this.latest = json.latest || null;
+                    this.map = json.map || null;
+                    this.readAt = Date.now();
+                    this.now = this.readAt;
+                    this.message = null;
+                    return;
+                }
+                if (json.statusCode === 429) return;
+                this.share = null;
+                this.stop();
+                this.message = json.statusCode === 410 ? t('This location share has ended.') : t('This link has expired or was not found.');
+            }, () => {});
+        },
+        stop() {
+            if (this.timer) clearInterval(this.timer);
+            if (this.ticker) clearInterval(this.ticker);
+            this.timer = null;
+            this.ticker = null;
+        },
+    },
+    mounted() {
+        const hash = String(window.location.hash || '').replace(/^#/, '');
+        // kept for this tab alone (its session storage), so that a reload still reads it
+        const key = 'moqui.sharedLocation:' + this.$root.basePath;
+        if (hash) {
+            pageSecret = hash;
+            try { window.sessionStorage.setItem(key, hash); } catch (err) { /* this page alone */ }
+            // the address without its secret: a copy, a bookmark or the history has none
+            if (window.history && window.history.replaceState) window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        } else if (!pageSecret) {
+            try { pageSecret = window.sessionStorage.getItem(key); } catch (err) { pageSecret = null; }
+        }
+        this.read();
+        this.timer = setInterval(() => { if (!document.hidden) this.read(); }, 20000);
+        this.ticker = setInterval(() => { this.now = Date.now(); }, 15000);
+    },
+    beforeUnmount() { this.stop(); },
+};
+</script>

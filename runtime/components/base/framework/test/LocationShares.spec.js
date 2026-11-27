@@ -755,7 +755,8 @@ feature("a guest link's token is returned once and only its digest is kept; a sh
     },
     then({made, link, mine, leaked, twoLinks, secondLink}) {
         made.errors == ""
-        made.linkToken.length == 32
+        // its selector, a dot and its secret (LL6, plans/Location-Sharing.md §3.7): 16 and 32 characters
+        made.linkToken.length == 49 && made.linkToken.split(".")[0] == link.tokenSelector
         link.tokenDigest == ec.user.singleUseCodeHash(made.linkToken)
         link.tokenDigest != made.linkToken
         mine.audienceList.find(row => row.audienceTypeEnumId == "LsaLink").hasLink == true

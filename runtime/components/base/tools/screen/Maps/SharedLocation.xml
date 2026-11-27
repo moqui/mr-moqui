@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- SharedLocation (plans/Location-Sharing.md §3.7, LL6): the public page of a location share's guest link, for a person
+    with no account, at /location/<selector>#<secret>: the token-route "location" of tools MoquiConf.xml renders it in the
+    public shell after org.moqui.maps.LocationServices.check#LinkKey accepted the selector. The selector names the link and
+    is not its credential; the secret is in the URL's fragment, which no request line, server log or Referer carries: the
+    page (SharedLocation.qvue) takes it from the fragment, clears it from the address bar and posts it to the read
+    transition, in the body. It shows only the share's label, its purpose text (an ETA the sender wrote) and its latest
+    position with its age, on the country outline or the one basemap the installation marks public (MapLayer isPublic),
+    and as text with no map where none draws; it answers nothing else. No session is needed. The read is
+    get#LinkShare's: at most location@link-max-views-per-minute a minute, a wrong secret counted on the link and the
+    link refused after location@link-max-failed-tries of them or once its share has ended. No terminal twin is needed
+    (no terminal guest): the tui text says to open it in a browser. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
+        require-authentication="false" default-menu-include="false" default-menu-title="Shared location" render-modes="qvue,tui" server-static="qvue">
+
+    <!-- the read: the selector is the route's token (the route gives it, whatever the request says), the secret the
+        body's linkSecret; a secret in the request line is refused before anything is read, so no client puts it there -->
+    <transition name="read" method="post" require-session-token="false">
+        <actions><script><![CDATA[
+            const query = String((ec.web && ec.web.request && ec.web.request.queryString) || '')
+            const out = /(^|&)linkSecret=/.test(query) ? {statusCode: 400, reasonCode: 'SECRET_IN_URL'}
+                : ec.service.sync().name('org.moqui.maps.LocationServices.get#LinkShare')
+                    .parameters({linkKey: typeof token === 'undefined' ? '' : String(token || ''), linkSecret: String(context.linkSecret || '')})
+                    .requireNewTransaction(true).call() || {}
+            ec.message.clearErrors()
+            ec.web.response.setHeader('Cache-Control', 'no-store')
+            ec.web.sendJsonResponse({statusCode: out.statusCode || 500, reasonCode: out.reasonCode || null,
+                retryAfterSeconds: out.retryAfterSeconds || null, share: out.share || null, latest: out.latest || null, map: out.map || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <widgets>
+        <render-mode><text type="qvue" location="component://tools/screen/Maps/SharedLocation.qvue" template="false"/>
+            <text type="tui" template="false"><![CDATA[[{"t": "text", "id": "SharedLocation", "text": "A shared location link: open it in a browser to see where the person is."}]]]></text></render-mode>
+    </widgets>
+</screen>

@@ -2454,6 +2454,9 @@ along with this software (see the LICENSE.md file). If not, see
                 has.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="link-max-views-per-minute" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>
                 The most reads a minute of a guest link's page, for one link.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="link-max-failed-tries" type="non-neg-int-expandable" default="10"><xs:annotation><xs:documentation>
+                The wrong secrets given with a guest link's selector after which the link is refused (plans/Location-Sharing.md
+                §3.7); its owner adds a new link.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="cluster-member">

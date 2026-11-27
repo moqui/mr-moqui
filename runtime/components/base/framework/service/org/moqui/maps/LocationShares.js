@@ -29,6 +29,11 @@ const MINUTE = 60000
 const CLEAN_BATCH = 500
 const CLEAN_STAGE_MILLIS = 2 * 60000
 const PRECISIONS = ["LspExact", "LspApproximate"]
+// a guest link (plans/Location-Sharing.md §3.7): the public page's route (tools MoquiConf.xml token-route location), the
+// selector's length, and what a selector or a secret may be (randomString's URL-safe letters)
+const LINK_ROUTE = "/location/"
+const LINK_SELECTOR_LENGTH = 16
+const LINK_PART = /^[A-Za-z0-9_-]{8,64}$/
 
 const find = entity => ec.entity.find(entity).disableAuthz()
 const blank = value => value == null || String(value).trim() === ""
@@ -404,9 +409,14 @@ function checkAudience(list, now) {
     return {entries}
 }
 
-/** The entries written: a link's token made here, returned once, and only its digest kept. */
+/**
+ * The entries written: a link's token made here, returned once, and only its digest and selector kept. The token is the
+ * selector, a dot and the secret; the guest page's link is linkPath, /location/<selector>#<secret>, the secret in the
+ * fragment only, which the page posts and no request line, log or Referer carries (plans/Location-Sharing.md §3.7).
+ */
 function addAudience(share, entries, now) {
     let linkToken = null
+    let linkPath = null
     for (const entry of entries) {
         const fields = {shareId: share.shareId, audienceTypeEnumId: entry.type, fromDate: new Date(now)}
         if (entry.type === "LsaUser") {
@@ -416,14 +426,18 @@ function addAudience(share, entries, now) {
         } else if (entry.type === "LsaXmpp") {
             fields.jid = entry.key
         } else if (entry.type === "LsaLink") {
-            linkToken = ec.user.randomString(32)
+            const selector = ec.user.randomString(LINK_SELECTOR_LENGTH)
+            const secret = ec.user.randomString(32)
+            linkToken = selector + "." + secret
+            linkPath = LINK_ROUTE + selector + "#" + secret
+            fields.tokenSelector = selector
             fields.tokenDigest = ec.user.singleUseCodeHash(linkToken)
             fields.failedTries = 0
         }
         const row = ec.entity.makeValue(AUDIENCE).setAll(fields).setSequencedIdSecondary().create()
         if (entry.type === "LsaUserGroup" && !snapshotGroup(share, row)) return groupCheckFailed()
     }
-    return {linkToken}
+    return {linkToken, linkPath}
 }
 
 /**
@@ -527,7 +541,7 @@ function create(p) {
     if (reach.reasonCode) return reach
     notifyShared(share, currentUserIds(share), now)
     push(share, [me], {event: "started", thruDate: until.until})
-    return {shareId: share.shareId, thruDate: until.until, linkToken: added.linkToken}
+    return {shareId: share.shareId, thruDate: until.until, linkToken: added.linkToken, linkPath: added.linkPath}
 }
 
 /** update#Share: an active share of the caller's own, extended, shortened, relabeled or given more audience. */
@@ -551,7 +565,7 @@ function update(p) {
         share.userLoginKeyId = deviceKeyId()
         share.renewedFromKeyId = null
     }
-    let added = {linkToken: null}
+    let added = {linkToken: null, linkPath: null}
     const before = currentUserIds(share)
     if (Array.from(p.addAudienceList || []).length) {
         const audience = checkAudience(p.addAudienceList, now)
@@ -607,7 +621,7 @@ function update(p) {
     push(share, reached, {event: "changed", thruDate})
     // the owner's devices are told whom the change lets in, and when another device sends it now
     push(share, [share.ownerUserId], Object.assign({event: "changed", thruDate, addedUserList}, moved ? {sentFromMoved: true} : {}))
-    return {thruDate, linkToken: added.linkToken, addedUserList}
+    return {thruDate, linkToken: added.linkToken, linkPath: added.linkPath, addedUserList}
 }
 
 /** A share's end acted on: its latest position deleted, the audience and the owner told. */
@@ -1308,7 +1322,147 @@ function deviceShares(p) {
     return {stoppedCount}
 }
 
-const operations = {create, update, stop, revoke, report, findMine, findShared, get, deleteTrail, clean, indicator, appShare, deviceShares}
+// ----- guest links (plans/Location-Sharing.md §3.7): the public page Maps/SharedLocation.xml at /location/<selector>, its
+// secret in the link's fragment, posted by the page. The page answers the share's label, its purpose text and its latest
+// position with its age, on the outline or a basemap the installation marks public, and nothing else. -----
+
+/** A link's row by its selector, or null; a selector that is not one is none. */
+function linkRow(selector, forUpdate) {
+    const key = text(selector)
+    if (!LINK_PART.test(key)) return null
+    const found = Array.from(
+        find(AUDIENCE).condition("tokenSelector", key).condition("audienceTypeEnumId", "LsaLink").forUpdate(!!forUpdate).limit(2).list()
+    )
+    return found.length === 1 ? found[0] : null
+}
+
+/** A wrong credential, counted against the client by the web protection as a wrong password is; nothing outside a request. */
+function noteAuthFailure() {
+    if (ec.web && typeof ec.web.noteAuthFailure === "function") ec.web.noteAuthFailure()
+}
+
+/**
+ * check#LinkKey, the token check of the /location/<selector> route: valid when the selector names a guest link that is
+ * there, active or not, so that the page can say a share has ended; nothing of it is answered (routeContext is empty).
+ * A selector that names none is a wrong credential to the route, which counts it.
+ */
+function linkCheck(p) {
+    return {valid: linkRow(p.token, false) != null, routeContext: {}}
+}
+
+/** The guest page's answer for a refused read: a status and a reason, no error (the counts written stay). */
+const linkRefused = (statusCode, reasonCode, extra) => Object.assign({statusCode, reasonCode}, extra || {})
+
+/**
+ * get#LinkShare, the guest page's read: the link by its selector, its secret checked against the token's digest (a wrong
+ * one counted on the link, failedTries, and against the client; the link refused from location@link-max-failed-tries
+ * on), refused once the share has ended or the link was taken out, and at most location@link-max-views-per-minute
+ * reads a minute. A position received before the link was added is not answered (the reach rule), and an approximate
+ * share's is its cell, as it was stored. Never an error message: a refusal is its status and reason only, and nothing
+ * here logs the selector, the secret or a position.
+ */
+function linkRead(p) {
+    const now = nowMillis()
+    const secret = text(p.linkSecret)
+    const row = linkRow(p.linkKey, true)
+    if (!row || !LINK_PART.test(secret)) {
+        noteAuthFailure()
+        return linkRefused(404, "LINK_NOT_FOUND")
+    }
+    const maxFailed = setting("link-max-failed-tries", 10)
+    if ((Number(row.failedTries) || 0) >= maxFailed) return linkRefused(403, "LINK_LOCKED")
+    if (ec.user.singleUseCodeHash(row.tokenSelector + "." + secret) !== row.tokenDigest) {
+        row.failedTries = (Number(row.failedTries) || 0) + 1
+        row.update()
+        noteAuthFailure()
+        return linkRefused(row.failedTries >= maxFailed ? 403 : 404, row.failedTries >= maxFailed ? "LINK_LOCKED" : "LINK_NOT_FOUND")
+    }
+    const share = shareOf(row.shareId)
+    if (row.revokedDate != null || !isActive(share, now)) return linkRefused(410, "SHARE_ENDED")
+    // the reads of the current minute, on the link's own row
+    const maxViews = setting("link-max-views-per-minute", 30)
+    const windowStart = millis(row.viewMinuteDate)
+    if (windowStart != null && now - windowStart < MINUTE) {
+        if ((Number(row.viewMinuteCount) || 0) >= maxViews)
+            return linkRefused(429, "RATE_LIMITED", {retryAfterSeconds: Math.max(1, Math.ceil((windowStart + MINUTE - now) / 1000))})
+        row.viewMinuteCount = (Number(row.viewMinuteCount) || 0) + 1
+    } else {
+        row.viewMinuteDate = new Date(now)
+        row.viewMinuteCount = 1
+    }
+    row.lastViewedDate = new Date(now)
+    row.update()
+    // the reach rule: what the server received from when the link was added on
+    const latestRow = find(LATEST).condition("shareId", share.shareId).one()
+    const latest = latestSince(receivedPositionOf(latestRow, now), millis(row.fromDate) ?? now)
+    return {
+        statusCode: 200,
+        share: {
+            label: share.label || null,
+            purposeText: share.purposeText || null,
+            approximate: share.precisionEnumId === "LspApproximate"
+        },
+        latest: latest
+            ? {latitude: latest.latitude, longitude: latest.longitude, accuracy: latest.accuracy, ageSeconds: latest.ageSeconds}
+            : null,
+        // the outline, or the one basemap the installation marks public (MapConfig.js publicBasemap)
+        map: ec.resource.script("component://framework/service/org/moqui/maps/MapConfig.js").publicBasemap()
+    }
+}
+
+/**
+ * store#ShareRecord: the record a guest share is for (recordAdapterKey and recordKey, as MapAdapter names records), on a
+ * share of the caller's own; called only by a service that has checked the caller may act on the record (Mantle's
+ * create#RecordGuestShare), never remotely (plans/Location-Sharing.md §3.1, §3.7).
+ */
+function shareRecord(p) {
+    const share = ownShare(p.shareId, true)
+    if (!share) return notFound()
+    if (blank(p.recordAdapterKey) || blank(p.recordKey)) return refuse("BAD_RECORD", "A guest share names its record")
+    share.recordAdapterKey = text(p.recordAdapterKey)
+    share.recordKey = text(p.recordKey)
+    share.update()
+    return {}
+}
+
+/**
+ * stop#RecordShares: every active share for a record (recordAdapterKey and recordKey) stopped as stop#Share does, when
+ * the record completes or is cancelled (Mantle's EECA; plans/Location-Sharing.md §3.7). Each share in a transaction of
+ * its own: one that fails is logged by its id and the rest go on.
+ */
+function recordShares(p) {
+    if (blank(p.recordAdapterKey) || blank(p.recordKey)) return {stoppedCount: 0}
+    let stoppedCount = 0
+    const listed = Array.from(
+        find(SHARE)
+            .condition("recordAdapterKey", text(p.recordAdapterKey))
+            .condition("recordKey", text(p.recordKey))
+            .condition("endedDate", null)
+            .selectField("shareId")
+            .limit(LIST_MAX)
+            .list()
+    )
+    for (const each of listed) {
+        try {
+            let ended = false
+            ec.transaction.runRequireNew(30, "Error stopping location share " + each.shareId, () => {
+                const now = nowMillis()
+                const share = shareOf(each.shareId, true)
+                if (!share || share.endedDate != null) return
+                if (share.revokedDate == null && millis(share.thruDate) > now) share.revokedDate = new Date(now)
+                endShare(share, now)
+                ended = true
+            })
+            if (ended) stoppedCount++
+        } catch (err) {
+            ec.logger.error(`Location share ${each.shareId} of an ended record was not stopped: ${err && err.message ? err.message : err}`)
+        }
+    }
+    return {stoppedCount}
+}
+
+const operations = {create, update, stop, revoke, report, findMine, findShared, get, deleteTrail, clean, indicator, appShare, deviceShares,
+    linkCheck, linkRead, shareRecord, recordShares}
 
 function execute(op, parameters) {
     if (!operations[op]) throw new Error("Unknown location share operation " + op)

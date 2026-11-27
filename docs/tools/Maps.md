@@ -996,8 +996,8 @@ A person shares where they are, until a time they choose, with people they choos
 entities `LocationShare`, `LocationShareAudience`, `LocationShareAudienceMember`, `LocationShareOwner` (the lock of an
 owner's share count), `LocationLatest` and `LocationTrailPoint` (`moqui.maps`,
 `framework/entity/MapLocationEntities.xml`) and the hourly clean, Maps shows them (below, "In Maps"), and the Android
-app sends a share from the phone, also in the background (below, "From the Android app"). Chat's live location, XMPP
-and the guest page for a link are still to come.
+app sends a share from the phone, also in the background (below, "From the Android app"). The guest page of a link
+is built (below, "Guest links"); chat's live location and XMPP are still to come.
 
 **In Maps** (Browse; LL2):
 
@@ -1022,8 +1022,7 @@ and the guest page for a link are still to come.
   group to `update#Share` (a new snapshot: who joined since is let in and told, who left or blocked the owner is left
   out).
 - **Share my location** (the panel's button): people the user may message (as Chat finds them), groups the user is in,
-  XMPP contacts when the server has XMPP, a guest link (its token shown once, in the dialog; the guest page that opens it
-  is still to come), until (15 minutes to `location@max-share-hours`), exact or approximate, and a trail or not. Each
+  XMPP contacts when the server has XMPP, a guest link (its page's link shown once, in the dialog: below, "Guest links"), until (15 minutes to `location@max-share-hours`), exact or approximate, and a trail or not. Each
   person is told by the `LocationShared` notification.
 - **Sending from a browser.** A share started on Browse is sent from that page while it is open: the browser's
   `watchPosition`, at most one report a share's interval (`location@min-interval-seconds`, or
@@ -1099,6 +1098,18 @@ and the guest page for a link are still to come.
 - **The terminal.** Browse's twin lists, under its map, the user's own shares (with whom, until, the last position's age
   and coordinates, Stop) and those shared with them (`Maps/LocationSharesTui.xml`).
 
+- **Guest links** (LL6; plans/Location-Sharing.md §3.7). A link's token is a selector and a secret; its page is
+  `/location/<selector>#<secret>` (`Maps/SharedLocation.xml`, the token route `location` of tools' `MoquiConf.xml`, in the
+  public shell, no sign-in), the secret in the fragment only, which the page takes, clears from the address bar and posts
+  in the body of its read (`get#LinkShare`), so no request line, server log or `Referer` holds it. The page shows the
+  share's label, its purpose text (an ETA its owner wrote) and its latest position with its age, on the country outline
+  or the one basemap an administrator marks public (`MapLayer.isPublic` Y, with no `viewPermission`, registered resource
+  or proxied provider), and as text where no map draws; it reads again every 20 seconds and answers nothing else: no
+  position received before the link was added, an approximate share's cell, at most `location@link-max-views-per-minute`
+  reads a minute for the link. A wrong secret is counted on the link and against the client, and the link is refused
+  from `location@link-max-failed-tries` (10) of them, and once its share ends. A share for a record (Mantle's
+  `create#RecordGuestShare`, a technician's visit) names the record (`store#ShareRecord`), and the record's end stops it
+  (`stop#RecordShares`).
 - **The owner's acts.** `create#Share` (the audience, the end, exact or approximate, a trail or not), `update#Share`
   (extend or shorten, add to the audience, change the label or purpose), `stop#Share`, `revoke#Audience` (one person,
   group, XMPP contact or the link), `report#Position` and `delete#Trail` are the owner's alone; another person's share,
@@ -1172,7 +1183,8 @@ and the guest page for a link are still to come.
 - **Settings**, on the conf's `location` element (`moqui_conf__location__max_share_hours` and the rest):
   `location@max-share-hours` (24), `location@trail-max-days` (30), `location@min-interval-seconds` (5),
   `location@approximate-interval-seconds` (60), `location@max-active-shares` (20), `location@max-audience` (50) and
-  `location@link-max-views-per-minute` (30, the reads a minute of a guest link's page).
+  `location@link-max-views-per-minute` (30, the reads a minute of a guest link's page) and
+  `location@link-max-failed-tries` (10, the wrong secrets after which a guest link is refused).
 
 ## Tests
 

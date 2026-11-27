@@ -439,6 +439,23 @@ function resolveLayer(layer, layerId, asBasemap) {
     const origins = [urls.url, urls.styleUrl].flatMap(originsOf)
     return {ok: true, entry, origins}
 }
+// The basemap of a page a visitor opens with no sign-in, a guest location link's (Maps/SharedLocation.xml;
+// plans/Location-Sharing.md §3.7): the first enabled basemap the installation marks public (MapLayer isPublic Y) that has
+// no viewPermission, no registered resource (its map-source transition is a signed-in user's) and no proxied provider
+// (the proxy is for signed-in users), resolved as for anyone (resolveLayer: outside requests and the provider's test
+// hold); else the built-in country outline. Nothing of the installation's profiles, other layers or providers is
+// answered: {basemaps: [entry], basemap, allowedOrigins}.
+function publicBasemap() {
+    for (const layer of find(LAYER, {isPublic: "Y", isBasemap: "Y"}).orderBy("layerId").limit(20).list()) {
+        if (layer.disabled === "Y" || text(layer.viewPermission) || text(layer.resourceLocation)) continue
+        const provider = text(layer.providerId) ? one(PROVIDER, {providerId: layer.providerId}) : null
+        if (provider && provider.proxyRequests === "Y") continue
+        const resolved = resolveLayer(layer, layer.layerId, true)
+        if (!resolved.ok || resolved.entry.kind === "cog") continue
+        return {basemaps: [resolved.entry], basemap: resolved.entry.id, allowedOrigins: Array.from(new Set(resolved.origins))}
+    }
+    return {basemaps: [Object.assign({}, BUILT_IN_OUTLINE)], basemap: BUILT_IN_OUTLINE.id, allowedOrigins: []}
+}
 // ===== projections and rasters (P4c) =====
 // A projection a map may be drawn in or read a COG in: EPSG:3857 and EPSG:4326, which every map has, or an enabled row of
 // the registry with a definition; null otherwise. The rows a configuration uses are collected for its projections list.
@@ -2053,6 +2070,8 @@ const operations = {
     // for the readiness checks and the provider kind (MapProviders.js)
     resolveProfile,
     resolveLayer,
+    // a guest location link's page (LocationShares.js linkRead)
+    publicBasemap,
     installationProfileId,
     originOf,
     templateUrls,
