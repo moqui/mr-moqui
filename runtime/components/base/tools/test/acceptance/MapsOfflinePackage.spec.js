@@ -27,12 +27,16 @@ const MAX_ZOOM = 12
 const S = "org.moqui.maps.MapSourceServices."
 const lib = ec.resource.script("component://framework/test/MapsArchiveLib.js")
 const one = (entityName, fields) => ec.entity.find(entityName).condition(fields).disableAuthz().useCache(false).one()
+// the rows ensure made in this run, in order: the cleanup removes these (last first) and no row that was there before,
+// such as a real import's postal code 02110 on a database of its own (--db existing)
+const created = []
 const ensure = (entityName, key, fields) => {
-    if (!one(entityName, key))
-        ec.entity
-            .makeValue(entityName)
-            .setAll(Object.assign({}, key, fields || {}))
-            .create()
+    if (one(entityName, key)) return
+    ec.entity
+        .makeValue(entityName)
+        .setAll(Object.assign({}, key, fields || {}))
+        .create()
+    created.push([entityName, key])
 }
 const packageOf = () =>
     ec.entity
@@ -72,6 +76,26 @@ function del(entityName, fields, values) {
         ec.logger.warn("MapsOfflinePackage cleanup: " + entityName + " not removed: " + (err?.message ?? err))
     }
 }
+// one step of the cleanup: a failure is logged and the rest goes on
+function quietly(what, run) {
+    try {
+        run()
+    } catch (err) {
+        ec.message.clearErrors()
+        ec.logger.warn("MapsOfflinePackage cleanup: " + what + " not removed: " + (err?.message ?? err))
+    }
+}
+const BUSY = ["MapPkgPending", "MapPkgBuilding"]
+// the rows of a drive by its driveId (framework ResourceEntities.xml), removed before the drive
+const DRIVE_CHILDREN = [
+    "ResourceDriveMember",
+    "ResourceDriveRecordFolder",
+    "ResourceFavorite",
+    "ResourceRecent",
+    "ResourceShare",
+    "ResourceTagMember",
+    "ResourceTrash"
+]
 function removeTree(location) {
     try {
         const ref = location ? ec.resource.getLocationReference(location) : null
@@ -305,77 +329,89 @@ spec({
             )
         // the MapPackageBuild job runs after the create commits
         const deadline = Date.now() + 60000
-        while (Date.now() < deadline && ["MapPkgPending", "MapPkgBuilding"].includes(String(packageOf()?.statusId))) sleep(200)
+        while (Date.now() < deadline && BUSY.includes(String(packageOf()?.statusId))) sleep(200)
         ec.artifactExecution.disableAuthz()
     },
     cleanupSpec() {
         if (served()) return
         ec.message.clearErrors()
         ec.artifactExecution.disableAuthz()
-        // the package as its owner deletes it: its row, its download records and its file
-        const row = packageOf()
-        if (row) {
+        // the package as its owner deletes it (its row, its download records and its file), cancelled first if its build
+        // has not ended, as a package being built is not deleted (PACKAGE_BUSY)
+        quietly("the package", () => {
+            const row = packageOf()
+            if (!row) return
+            if (BUSY.includes(String(row.statusId))) {
+                as(USERNAME, () => call(S + "cancel#Package", {packageId: row.packageId}))
+                const deadline = Date.now() + 30000
+                while (Date.now() < deadline && BUSY.includes(String(packageOf()?.statusId))) sleep(200)
+            }
             const out = as(USERNAME, () => call(S + "delete#Package", {packageId: row.packageId}))
             if (!out.applied)
                 ec.logger.warn(
                     "MapsOfflinePackage cleanup: package " + row.packageId + " not deleted: " + (out.reason || out.error)
                 )
-        }
+        })
         removeTree(SCRATCH)
         removeTree(LOCATION)
         // the user's places: their overlay rows and their personal drive with its files
-        const drives = Array.from(ec.entity.find("moqui.resource.ResourceDrive").condition("ownerUserId", USER).list())
-        for (const drive of drives) removeTree(String(drive.rootLocation || ""))
-        const driveIds = drives.map(drive => drive.driveId)
-        del("moqui.maps.MapOverlay", {ownerUserId: USER})
-        if (driveIds.length)
-            for (const entity of [
-                "ResourceDriveMember",
-                "ResourceFavorite",
-                "ResourceRecent",
-                "ResourceShare",
-                "ResourceTagMember",
-                "ResourceTrash"
-            ])
-                del("moqui.resource." + entity, "driveId", driveIds)
-        del("moqui.resource.ResourceDrive", {ownerUserId: USER})
+        quietly("the places drive", () => {
+            const drives = Array.from(
+                ec.entity.find("moqui.resource.ResourceDrive").condition("ownerUserId", USER).disableAuthz().list()
+            )
+            for (const drive of drives) removeTree(String(drive.rootLocation || ""))
+            const driveIds = drives.map(drive => drive.driveId)
+            del("moqui.maps.MapOverlay", {ownerUserId: USER})
+            if (driveIds.length) for (const entity of DRIVE_CHILDREN) del("moqui.resource." + entity, "driveId", driveIds)
+            del("moqui.resource.ResourceDrive", {ownerUserId: USER})
+        })
+        // the user's notifications, and a message only when the user was its only recipient
+        quietly("the notifications", () => {
+            const notices = Array.from(
+                ec.entity.find("moqui.security.user.NotificationMessageUser").condition("userId", USER).disableAuthz().list()
+            ).map(notice => notice.notificationMessageId)
+            del("moqui.security.user.NotificationMessageUser", {userId: USER})
+            for (const notificationMessageId of new Set(notices))
+                if (
+                    !Number(
+                        ec.entity
+                            .find("moqui.security.user.NotificationMessageUser")
+                            .condition({notificationMessageId})
+                            .disableAuthz()
+                            .count()
+                    )
+                )
+                    del("moqui.security.user.NotificationMessage", {notificationMessageId})
+        })
+        del("moqui.security.UserGroupMember", {userId: USER})
+        // the rows ensure made, last first; then any of this spec's own ids an earlier run left (never the postal code's)
+        for (const [entityName, key] of created.slice().reverse()) del(entityName, key)
         del("moqui.maps.OverturePlace", {importId: "MAPS_OFFLINE_WALK_PLACES"})
         del("moqui.maps.OvertureAddress", {importId: "MAPS_OFFLINE_WALK_ADDRESSES"})
         del("moqui.maps.OvertureRegionTheme", {regionId: "MAPS_OFFLINE_WALK"})
         del("moqui.maps.OvertureImport", {regionId: "MAPS_OFFLINE_WALK"})
         del("moqui.maps.OvertureRegion", {regionId: "MAPS_OFFLINE_WALK"})
-        del("moqui.basic.GeoPostalCodePlace", {geoId: "USA_Z_02110", sourceKey: "GN_POSTAL", placeName: "Boston"})
-        del("moqui.basic.GeoPointAssoc", {geoId: "USA_Z_02110", geoPointId: "USA_Z_02110_CENSUS_ZCTA"})
-        del("moqui.basic.GeoPoint", {geoPointId: "USA_Z_02110_CENSUS_ZCTA"})
-        del("moqui.basic.GeoPostalCode", {geoId: "USA_Z_02110"})
-        del("moqui.basic.Geo", {geoId: "USA_Z_02110"})
         del("moqui.security.UserPreference", {userId: USER})
         del("moqui.maps.MapProfile", {profileId: PROFILE})
         del("moqui.maps.MapLayer", {layerId: LAYER})
-        const notices = Array.from(
-            ec.entity.find("moqui.security.user.NotificationMessageUser").condition("userId", USER).list()
-        ).map(notice => notice.notificationMessageId)
-        del("moqui.security.user.NotificationMessageUser", {userId: USER})
-        if (notices.length) del("moqui.security.user.NotificationMessage", "notificationMessageId", notices)
-        del("moqui.security.UserGroupMember", {userId: USER})
         del("moqui.security.UserAccount", {userId: USER})
         ec.message.clearErrors()
-        ec.cache.getCache("maps.postal.lookup").clear()
-        const left = [
-            ["moqui.security.UserAccount", {userId: USER}],
-            ["moqui.maps.MapPackage", {ownerUserId: USER}],
-            ["moqui.maps.MapLayer", {layerId: LAYER}],
-            ["moqui.maps.OvertureRegion", {regionId: "MAPS_OFFLINE_WALK"}],
-            ["moqui.resource.ResourceDrive", {ownerUserId: USER}]
-        ].filter(([entityName, fields]) => Number(ec.entity.find(entityName).condition(fields).disableAuthz().count()) > 0)
-        if (left.length || ec.resource.getLocationReference(LOCATION).getExists())
-            ec.logger.warn(
-                "MapsOfflinePackage cleanup: left " +
-                    JSON.stringify(left.map(([entityName]) => entityName)) +
-                    ", archive " +
-                    LOCATION
-            )
-        else ec.logger.info("MapsOfflinePackage cleanup: its user, layer, Overture region, package and archive removed")
+        quietly("the postal lookup cache", () => ec.cache.getCache("maps.postal.lookup").clear())
+        quietly("the check of what is left", () => {
+            const left = [
+                ["moqui.security.UserAccount", {userId: USER}],
+                ["moqui.maps.MapPackage", {ownerUserId: USER}],
+                ["moqui.maps.MapLayer", {layerId: LAYER}],
+                ["moqui.maps.OvertureRegion", {regionId: "MAPS_OFFLINE_WALK"}],
+                ["moqui.resource.ResourceDrive", {ownerUserId: USER}]
+            ]
+                .concat(created)
+                .filter(([entityName, fields]) => Number(ec.entity.find(entityName).condition(fields).disableAuthz().count()) > 0)
+                .map(([entityName]) => entityName)
+            if (ec.resource.getLocationReference(LOCATION).getExists()) left.push(LOCATION)
+            if (left.length) ec.logger.warn("MapsOfflinePackage cleanup: left " + JSON.stringify(left))
+            else ec.logger.info("MapsOfflinePackage cleanup: left []")
+        })
     }
 })
 

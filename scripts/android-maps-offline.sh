@@ -31,7 +31,10 @@ app=org.moqui.mobile
 serial=${ANDROID_SERIAL:-$("$adb_bin" devices | sed -n 's/^\([^[:space:]]*\)[[:space:]]*device$/\1/p' | head -1)}
 [ -n "$serial" ] || { echo "no device: ./moq android emulator, or a phone over adb" >&2; exit 1; }
 [ -f "$apk" ] || { echo "no APK at $apk: ./moq android build --target x86_64 --apk" >&2; exit 1; }
-python3 -P -c 'import websocket' 2>/dev/null || { echo "python3 needs websocket-client (pip install websocket-client)" >&2; exit 1; }
+# -P (Python 3.11 and later) leaves the script's directory off sys.path and keeps the user's site-packages
+python=(python3 -P)
+"${python[@]}" -c '' 2>/dev/null || python=(python3)
+"${python[@]}" -c 'import websocket' 2>/dev/null || { echo "python3 needs websocket-client (pip install websocket-client)" >&2; exit 1; }
 # fd 3 (the server's standard input, below) closed for each child, so none holds it open past this script
 adb() { "$adb_bin" -s "$serial" "$@" 3>&-; }
 elapsed() { echo "$(($(date +%s) - started))"; }
@@ -46,8 +49,10 @@ echo "== the server half: moqui test framework tools --acceptance --spec MapsOff
 server=$!
 exec 3>"$out/stdin"
 # however the script ends (a signal to the walk too): the device's network on again, the forwards gone, and the server
-# stopped by the end of its standard input, or killed when it has not stopped in 30 seconds
+# stopped by the end of its standard input, else by SIGTERM after 30 seconds and SIGKILL 10 seconds later; a second
+# signal does not cut the cleanup short
 cleanup() {
+    trap '' INT TERM HUP
     exec 3>&-
     adb shell cmd connectivity airplane-mode disable >/dev/null 2>&1 || true
     adb shell svc wifi enable >/dev/null 2>&1 || true
@@ -59,6 +64,11 @@ cleanup() {
         sleep 1
     done
     kill "$server" 2>/dev/null || true
+    for _ in $(seq 1 10); do
+        kill -0 "$server" 2>/dev/null || break
+        sleep 1
+    done
+    kill -KILL "$server" 2>/dev/null || true
     wait "$server" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -90,7 +100,7 @@ adb shell pidof "$app" >/dev/null || { echo "FAILED: the app is not running" >&2
 
 echo "== the device half (after $(elapsed) s)" >&2
 status=0
-python3 -P scripts/android-maps-offline.py --devtools "$devtools" --serial "$serial" --adb "$adb_bin" --port "$port" \
+"${python[@]}" scripts/android-maps-offline.py --devtools "$devtools" --serial "$serial" --adb "$adb_bin" --port "$port" \
     --user maps.offline --password 'MapsOffline1!!' 3>&- || status=$?
 adb exec-out screencap -p >"$out/last.png" || true
 if [ "$status" -ne 0 ]; then
