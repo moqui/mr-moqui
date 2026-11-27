@@ -1298,8 +1298,10 @@ feature("a person added sees no position reported before they were added: no lat
 feature("the time the audience reached a viewer is the server's receive time: an approximate share's first position is read, a fast clock before an add is not, and a member out and back by a new row sees nothing from while out", {
     when() {
         const out = {}
-        // an approximate share: its stored time is the minute, before the share began, yet its audience reads it
+        // an approximate share: its stored time is the minute, before the share began, yet its audience reads it (the clock
+        // moved off the minute first, so the stored minute is before the share's start in every run)
         later(6000)
+        if (shared.now % MINUTE < 2000) later(2000 - (shared.now % MINUTE))
         const rough = as(A, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR), precisionEnumId: "LspApproximate"}).shareId
         report(rough, "43.1", "-111.9")
         out.roughSeen = (sharedWith(B).find(row => row.shareId === rough) || {}).latest || null
