@@ -539,6 +539,25 @@ fn a_later_report_counts_for_the_recorded_recipients_and_bounces_when_all_failed
         "partial",
         "ed@example.org has not failed"
     );
+
+    // a row of before envelopeJson: its recipientsJson may be a part of them, so its item is never bounced
+    let mut old = facade.make_value(crate::mx::DELIVERY).unwrap();
+    old.set("mailDeliveryId", Value::string("d-old"));
+    old.set("pairedNodeId", Value::string("local-a"));
+    old.set("queueItemId", Value::string("item3"));
+    old.set("domain", Value::string("example.net"));
+    old.set("recipientsJson", Value::string(r#"["fy@example.net"]"#));
+    old.set("statusEnumId", Value::string("EmdSent"));
+    old.create(&facade).unwrap();
+    let older = BounceScope {
+        item: "item3".to_string(),
+        domain: "example.net".to_string(),
+        recipients: vec!["fy@example.net".to_string()],
+    };
+    assert_eq!(
+        reported(&facade, &older, &failure_of("fy@example.net")).unwrap()["status"],
+        "partial"
+    );
 }
 
 /// The scope of the relay's VERP address of `item`, as the listener reads it with the right tag.

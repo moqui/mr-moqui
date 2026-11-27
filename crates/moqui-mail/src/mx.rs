@@ -969,7 +969,8 @@ pub(crate) fn record_relayed(
 }
 
 /// The recipients a row of an item was recorded for ([`record`], [`record_relayed`]): `envelopeJson`, else (a row of
-/// before it) `recipientsJson`.
+/// before it) `recipientsJson`, which may hold only some of them (those still waiting at its last try), so such a row's
+/// item is never bounced ([`note_failed`]).
 pub(crate) fn envelope_of(row: &EntityValue) -> Vec<String> {
     let envelope = field_text(row, "envelopeJson");
     let text = if envelope.is_empty() {
@@ -1020,6 +1021,9 @@ pub(crate) fn note_failed(facade: &EntityFacade, item: &str, failed: &[String]) 
                         )])?;
                 }
                 recorded += envelope.len();
+                // a row of before `envelopeJson` holds in `recipientsJson` only those still waiting at its last try:
+                // its recipients are not known whole, so its item is never bounced, only partial
+                all_failed &= !field_text(row, "envelopeJson").is_empty();
                 all_failed &= envelope
                     .iter()
                     .all(|recipient| marked.iter().any(|seen| seen.eq_ignore_ascii_case(recipient)));
