@@ -301,15 +301,17 @@ fn geo_fields<'a>(fields: &'a [Value], panel: &Value) -> Option<Geo<'a>> {
     })
 }
 
-/// A row's point (longitude, latitude), when it is one the map draws (90°N to 60°S).
-fn row_point(lat: &Value, lon: &Value, row: usize) -> Option<(f64, f64)> {
+/// A row's point (longitude, latitude), when it is WGS84 degrees and no further south than `south`: the drawing's edge
+/// (`world::SOUTH_EDGE`) for the map and its list, -90 for where the row opens in Maps (McMurdo opens, though it is
+/// not drawn).
+fn row_point(lat: &Value, lon: &Value, row: usize, south: f64) -> Option<(f64, f64)> {
     let (Some(y), Some(x)) = (
         values(lat).get(row).and_then(number),
         values(lon).get(row).and_then(number),
     ) else {
         return None;
     };
-    ((-60.0..=90.0).contains(&y) && (-180.0..=180.0).contains(&x)).then_some((x, y))
+    ((south..=90.0).contains(&y) && (-180.0..=180.0).contains(&x)).then_some((x, y))
 }
 
 /// A geomap's places by value, the largest first: its points (latitude and longitude fields), or its countries.
@@ -320,7 +322,7 @@ fn places(frame: &Value, panel: &Value) -> Option<Vec<Place>> {
     match geo_fields(&fields, panel)? {
         Geo::Points { lat, lon, value } => {
             for row in 0..values(lat).len().min(5000) {
-                let Some((x, y)) = row_point(lat, lon, row) else {
+                let Some((x, y)) = row_point(lat, lon, row, crate::components::world::SOUTH_EDGE) else {
                     continue;
                 };
                 let amount = value
@@ -371,7 +373,7 @@ fn places(frame: &Value, panel: &Value) -> Option<Vec<Place>> {
 pub(super) fn row_place(frame: &Value, panel: &Value, row: usize) -> Option<MapsPlace> {
     let fields = fields(frame, panel);
     match geo_fields(&fields, panel)? {
-        Geo::Points { lat, lon, .. } => row_point(lat, lon, row).map(|(lon, lat)| MapsPlace::Point { lon, lat }),
+        Geo::Points { lat, lon, .. } => row_point(lat, lon, row, -90.0).map(|(lon, lat)| MapsPlace::Point { lon, lat }),
         Geo::Countries { country, .. } => {
             crate::components::world::country_extent(&text_of(values(country).get(row))).map(MapsPlace::Extent)
         }

@@ -596,10 +596,10 @@ fn a_geomap_row_opens_in_maps_where_the_dashboard_offers_it_and_the_table_keeps_
         "the panel has no keys yet"
     );
     press(&mut state, Key::Char('g'));
-    assert!(shown(&offered, &state).contains("Enter opens data link, o: open in Maps)"));
+    assert!(shown(&offered, &state).contains("Enter opens data link, M: open in Maps)"));
     // the first row, the United States, opens at its extent
     assert!(
-        matches!(press(&mut state, Key::Char('o')).as_deref(), Some([Act::Follow(url)]) if url.starts_with("/apps/maps/Browse?extent=-124.6854%2C")),
+        matches!(press(&mut state, Key::Char('M')).as_deref(), Some([Act::Follow(url)]) if url.starts_with("/apps/maps/Browse?extent=-124.6854%2C")),
         "the first row, the United States"
     );
     // Down moves the table's row: France, highlighted in the list, opens at its mainland extent as the browser's page
@@ -613,10 +613,15 @@ fn a_geomap_row_opens_in_maps_where_the_dashboard_offers_it_and_the_table_keeps_
         "{selected:?}"
     );
     assert_eq!(
-        press(&mut state, Key::Char('o')),
+        press(&mut state, Key::Char('M')),
         Some(vec![Act::Follow(
             "/apps/maps/Browse?extent=-4.5918%2C42.3433%2C8.0983%2C51.148".into()
         )])
+    );
+    assert_eq!(
+        press(&mut state, Key::Char('o')),
+        None,
+        "o stays the shell's Open in browser"
     );
     // the table's data link and bucket filter still act on that row
     assert_eq!(
@@ -630,7 +635,7 @@ fn a_geomap_row_opens_in_maps_where_the_dashboard_offers_it_and_the_table_keeps_
     // a code with no known country is not followable
     press(&mut state, Key::Down);
     assert_eq!(
-        press(&mut state, Key::Char('o')),
+        press(&mut state, Key::Char('M')),
         Some(vec![Act::Message("This row's Maps link is unavailable".into())])
     );
     // a panel that is not a geomap keeps its rows, and o opens nothing
@@ -642,41 +647,61 @@ fn a_geomap_row_opens_in_maps_where_the_dashboard_offers_it_and_the_table_keeps_
     press(&mut state, Key::Down);
     assert_eq!(state.local["tables"]["sales"]["row"], 2);
     assert!(!shown(&table, &state).contains("open in Maps"));
-    assert_eq!(press(&mut state, Key::Char('o')), None);
+    assert_eq!(press(&mut state, Key::Char('M')), None);
     // without the maps link nothing changes: no hint, and o opens nothing
     let plain = dashboard(json!({"explore":"/apps/X/Explore"}), "geomap");
     let mut state = ComponentState::default();
     let press = |state: &mut ComponentState, key: Key| ReportDashboard.key(&plain, state, &KeyPress::plain(key), false);
     press(&mut state, Key::Char('g'));
     assert!(!shown(&plain, &state).contains("open in Maps"));
-    assert_eq!(press(&mut state, Key::Char('o')), None);
+    assert_eq!(press(&mut state, Key::Char('M')), None);
 }
 #[test]
 fn a_geomap_point_opens_in_maps_only_where_the_panel_offers_it() {
     let frame = json!({"fields":[
-        {"name":"city","type":"string","values":["Paris"]},
-        {"name":"lat","type":"number","values":[48.85]},
-        {"name":"lon","type":"number","values":[2.35]}
+        {"name":"city","type":"string","values":["Paris","McMurdo"],"link":"/apps/x/City?name=${value}"},
+        {"name":"lat","type":"number","values":[48.85,-77.85]},
+        {"name":"lon","type":"number","values":[2.35,166.67]}
     ]});
     let props = json!({"frame":frame,"panel":{"title":"Cities","visualization":"geomap","appLinks":{"maps":"/apps/maps/Browse"}}});
-    // a row index from a refresh with more rows stays within the rows there are now
-    let mut state = ComponentState {
+    // a row index from a refresh with more rows is brought within the rows there are now, for the whole table: the
+    // selection line, the highlighted place, the data link and Maps all take the last row
+    let stale = ComponentState {
         at: 5,
         ..Default::default()
     };
+    let lines = ReportPanel.lines(&props, &stale, 80, false);
+    assert_eq!(
+        crate::components::line_text(&lines[0]),
+        "Row 2, column 1: city = McMurdo  (arrows select, s sorts, Enter opens data link, M: open in Maps)"
+    );
+    let mut state = stale.clone();
+    assert_eq!(
+        ReportPanel.key(&props, &mut state, &KeyPress::plain(Key::Enter), false),
+        Some(vec![Act::Follow("/apps/x/City?name=McMurdo".into())])
+    );
+    assert_eq!(state.at, 1);
+    // south of the drawing's edge (not drawn or listed), a row still opens in Maps
+    let mut state = stale.clone();
+    assert_eq!(
+        ReportPanel.key(&props, &mut state, &KeyPress::plain(Key::Char('M')), false),
+        Some(vec![Act::Follow(
+            "/apps/maps/Browse?longitude=166.67&latitude=-77.85".into()
+        )])
+    );
+    // the first row, Paris: highlighted in the list, and opened at its point
+    let mut state = ComponentState::default();
     let lines = ReportPanel.lines(&props, &state, 80, false);
     assert!(lines
         .iter()
         .flatten()
         .any(|span| span.reverse && span.text.starts_with("Paris")));
-    assert!(crate::components::line_text(&lines[0]).ends_with("o: open in Maps)"));
     assert_eq!(
-        ReportPanel.key(&props, &mut state, &KeyPress::plain(Key::Char('o')), false),
+        ReportPanel.key(&props, &mut state, &KeyPress::plain(Key::Char('M')), false),
         Some(vec![Act::Follow(
             "/apps/maps/Browse?longitude=2.35&latitude=48.85".into()
         )])
     );
-    assert_eq!(state.at, 0);
     // a panel with no maps link, or no appLinks at all, follows nothing and shows no selection
     for panel in [
         json!({"title":"Cities","visualization":"geomap","appLinks":{"explore":"/apps/X/Explore"}}),
@@ -685,7 +710,7 @@ fn a_geomap_point_opens_in_maps_only_where_the_panel_offers_it() {
         let props = json!({"frame":frame,"panel":panel});
         let mut state = ComponentState::default();
         assert_eq!(
-            ReportPanel.key(&props, &mut state, &KeyPress::plain(Key::Char('o')), false),
+            ReportPanel.key(&props, &mut state, &KeyPress::plain(Key::Char('M')), false),
             None
         );
         let lines = ReportPanel.lines(&props, &state, 80, false);
