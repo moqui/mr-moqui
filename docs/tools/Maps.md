@@ -264,6 +264,8 @@ tiles in view (plans/Maps.md §4.1). It is either:
   is allowed the private network), which must answer 206 (`NO_RANGES`) and allow other origins by CORS (`NO_CORS`: the
   browser reads it directly, with no credentials of the page); it is drawn only while its provider is enabled and tested
   and outside requests are on, as any provider layer, never through this server's proxy, and nothing of it is pinned.
+  A host that serves only COGs (a bucket) has no tile for a raster-tiles provider's test, which asks tile 0/0/0 as an
+  image: give the provider a tile template of an image on that host (`MapsCogPublic` names a scene's thumbnail).
 
 **The header** is read in Rust (`MapSourceServices.read#CogHeader`, `moqui-lib` `geo/tiff.rs`), never a tile: the TIFF or
 BigTIFF header, in either byte order, and its image directories, at most 64 of them (one seen twice is a loop, refused), at
@@ -882,7 +884,8 @@ found by authority, name or parameters); a COG's header (`geo/tiff_tests.rs`: cl
 what a map cannot draw, and hostile files: a loop, a directory past the end, a count that overflows, too many directories
 or entries); `MapsSource` registers a COG of a drive, refuses one in strips and reads its ranges for a holder of its share
 and not another user, with its projection in the holder's configuration and the holder's own band settings kept (a band
-it lacks refused); `MapsOverlays` converts a UTM and a British
+it lacks refused), and a real public Sentinel-2 COG (the bucket OpenLayers' COG example reads) registered from its
+provider's URL, its header recorded and its full image's first tile read by range is the acceptance test `MapsCogPublic`; `MapsOverlays` converts a UTM and a British
 National Grid overlay and the tiler's (`geo/tiles_tests.rs`:
 the budgets against a pathological file, a stop within a zoom, points, the poles and the antimeridian;
 `geo/simplify_tests.rs`, `geo/mvt_tests.rs`); the geocoder: `framework/test/MapsGeocoder.spec.js`
