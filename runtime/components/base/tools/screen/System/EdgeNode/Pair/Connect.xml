@@ -30,7 +30,10 @@ along with this software (see the LICENSE.md file). If not, see
             if (!pairingCode) { ec.message.addError(ec.l10n.localize('Enter the pairing code made on the edge node')); return }
             ec.service.sync().name('org.moqui.edge.EdgeServices.pair#EdgeNode')
                 .parameters({url: url, code: pairingCode, expectFingerprint: expectFingerprint}).call()
-            if (!ec.message.hasError()) { ec.web.sessionAttributes.remove('edgePairingCode'); ec.web.sessionAttributes.remove('edgeCheck') }
+            // the code is kept in the session row in clear: gone after a try, failed or not, so an abandoned pairing does
+            // not leave it there for the session's life (SEC-CLU-94); a failed try enters it again
+            ec.web.sessionAttributes.remove('edgePairingCode')
+            if (!ec.message.hasError()) ec.web.sessionAttributes.remove('edgeCheck')
         ]]></script>
             <if condition="!ec.message.hasError()"><message type="success">Paired with the edge node</message></if>
         </actions>

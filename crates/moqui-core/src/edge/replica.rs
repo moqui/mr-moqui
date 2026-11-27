@@ -701,14 +701,29 @@ pub fn note_all_applied(facade: &EntityFacade) {
     });
 }
 
+/// The most bytes of one replicated record, its key and fields together (SEC-CLU-92): far above any replicated
+/// set's fields, so the pairing's record cap bounds its bytes too.
+pub const MAX_RECORD_BYTES: usize = 64 * 1024;
+
 /// Why the edge node refuses a batch before it applies it (SEC-CLU-02), or `None`: more records than a sender puts in
-/// one ([`BATCH`]), a set this node's `<replicate>` conf (`sets`) does not name, or an entity that set does not have.
-/// A paired node then cannot write rows of any set or entity it names into the edge node's database.
+/// one ([`BATCH`]), a record over [`MAX_RECORD_BYTES`], a set this node's `<replicate>` conf (`sets`) does not name, or
+/// an entity that set does not have. A paired node then cannot write rows of any set or entity it names into the edge
+/// node's database, nor large ones.
 pub fn batch_refused(sets: &[ReplicaSet], batch: &Batch) -> Option<String> {
     if batch.changes.len() > BATCH {
         return Some(format!(
             "a batch carries at most {BATCH} records, and this one {}",
             batch.changes.len()
+        ));
+    }
+    if let Some(large) = batch
+        .changes
+        .iter()
+        .find(|change| change.pk_json.len() + change.fields_json.as_ref().map_or(0, String::len) > MAX_RECORD_BYTES)
+    {
+        return Some(format!(
+            "a replicated record is at most {MAX_RECORD_BYTES} bytes, and one of {} is larger",
+            large.entity_name
         ));
     }
     let Some(set) = sets.iter().find(|set| set.name == batch.set_name) else {
