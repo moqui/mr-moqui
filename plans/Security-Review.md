@@ -814,8 +814,8 @@ Map file: [Attack-Surface-Mail.md](../docs/security/Attack-Surface-Mail.md). Rev
 | SEC-MAIL-65 | runtime/components/base/framework/service/org/moqui/impl/UserServices.xml:441-459 | Reset passwords and verification tokens are kept in clear in EmailMessage.body | Low | fixed |
 | SEC-MAIL-66 | crates/moqui-mail/src/mx.rs:977-1010 (`hosts`), 1053-1075, 1138-1160 (`session`), 1313-1326 (`sts::fetch`) | Edge MX delivery connects to whatever address a recipient domain's DNS names, and falls back to clear text | Low | fixed |
 | SEC-MAIL-67 | crates/moqui-mail/src/auth.rs:405-418 (`signing_domain`), 493-512 (`sign_for`), 763-790 (`verify_internal`) | A mail user's hosted domain is one the node signs for and then verifies as its own | Low | fixed |
-| SEC-MAIL-10 | `runtime/components/base/basic-comms/screen/BasicComms/Inbox/Mail.qvue:1880` | Mail forged as from the reader loads remote images without asking | Info | reported (to check) |
-| SEC-MAIL-68 | runtime/components/base/framework/service/org/moqui/mail/EmailClientServices.xml:5002-5034 (`create#EmailIdentity`), 3357-3359 (`save#Draft`) | An identity's address is any text with an @ | Info | reported (confirmed in code) |
+| SEC-MAIL-10 | `runtime/components/base/basic-comms/screen/BasicComms/Inbox/Mail.qvue:1880` | Mail forged as from the reader loads remote images without asking | Info | fixed |
+| SEC-MAIL-68 | runtime/components/base/framework/service/org/moqui/mail/EmailClientServices.xml:5002-5034 (`create#EmailIdentity`), 3357-3359 (`save#Draft`) | An identity's address is any text with an @ | Info | fixed |
 | SEC-MAIL-81 | `crates/moqui-mail/src/auth.rs:643-665` (`verify_with`), `crates/moqui-host/src/smtp.rs:1946-1956`, `crates/moqui-mail/src/store.rs:128-137` | A message whose From names two domains, or none, is not held to DMARC | Medium | fixed |
 | SEC-MAIL-82 | `crates/moqui-mail/src/implementation.rs:1663-1677` (`lettre_send`), `crates/moqui-mail/src/auth.rs:408-417` (`signing_domain`), `crates/moqui-mail/src/edge_mail.rs:629-634`, `EmailClientServices.xml:5107-5122` (`create#EmailIdentity`) | A mail user gets the node's DKIM signature on mail From any address of a hosted domain | Medium | fixed |
 | SEC-MAIL-83 | `crates/moqui-mail/src/mx.rs:1161-1288` (`session`), 1149-1155 (`Target::step`), 442-491 | A recipient domain's mail server holds an MX delivery session without end and makes the node buffer an unbounded line | Medium | fixed |
@@ -824,16 +824,16 @@ Map file: [Attack-Surface-Mail.md](../docs/security/Attack-Surface-Mail.md). Rev
 | SEC-MAIL-86 | `crates/moqui-core/src/edge/queue.rs:273-397` (`enqueue`), 1234-1266 (`fail_over_cap`), `crates/moqui-host/src/smtp_queue.rs:418-439` | Mail the edge node answered 250 for is failed, oldest first, when a pairing's queue passes its size cap | Low | fixed |
 | SEC-MAIL-87 | `crates/moqui-mail/src/edge_mail.rs:284-308` (`inbound_item_trusting`), `crates/moqui-core/src/edge/queue.rs:308-329` | On an edge node a second message with a known Message-ID and the same recipients is answered 250 and dropped (SEC-MAIL-08's fix does not cover the queue) | Low | fixed |
 | SEC-MAIL-88 | `crates/moqui-mail/src/auth.rs:666-677` | A trusted ARC sealer overrides DMARC whatever that sealer recorded about the message | Low | fixed |
-| SEC-MAIL-89 | `crates/moqui-mail/src/auth.rs:385-403` (`from_address`), `crates/moqui-mail/src/edge_mail.rs:810-835` (`refused_sender`), 908-960 (`deliver_own`), `crates/moqui-mail/src/store.rs:128-130` | On an all-in-one node the sender rule and the mailbox read different From fields | Low | reported (likely) |
+| SEC-MAIL-89 | `crates/moqui-mail/src/auth.rs:385-403` (`from_address`), `crates/moqui-mail/src/edge_mail.rs:810-835` (`refused_sender`), 908-960 (`deliver_own`), `crates/moqui-mail/src/store.rs:128-130` | On an all-in-one node the sender rule and the mailbox read different From fields | Low | fixed |
 | SEC-MAIL-90 | `crates/moqui-mail/src/auth.rs:408-417`, `crates/moqui-mail/src/edge_mail.rs:618-634` | With `mail_dkim_domains` set, an edge node signs one pairing's mail for another pairing's domain | Low | fixed |
-| SEC-MAIL-91 | `crates/moqui-mail/src/edge_mail.rs:92-106`, 121-180, 1035-1072, 1111-1142; `crates/moqui-host/src/smtp_queue.rs:177-194`, 394-417 | Anyone who has seen a relayed message's Return-Path can report it bounced | Low | reported (likely) |
+| SEC-MAIL-91 | `crates/moqui-mail/src/edge_mail.rs:92-106`, 121-180, 1035-1072, 1111-1142; `crates/moqui-host/src/smtp_queue.rs:177-194`, 394-417 | Anyone who has seen a relayed message's Return-Path can report it bounced | Low | fixed |
 | SEC-MAIL-92 | `crates/moqui-mail/src/auth.rs:599-608`, 660-665 | A DMARC check that ends in a DNS error accepts the message | Low | fixed |
-| SEC-MAIL-93 | `crates/moqui-mail/src/sync.rs:3292-3324` (`sync_due_accounts`), 1045-1119 (`run_sync`), 2793-2844 (`store_new`), `crates/moqui-mail/src/inbound.rs:1070-1071` | A slow mail server holds the one sync job, and a sync stores without any size or quota limit | Low | reported (likely) |
+| SEC-MAIL-93 | `crates/moqui-mail/src/sync.rs:3292-3324` (`sync_due_accounts`), 1045-1119 (`run_sync`), 2793-2844 (`store_new`), `crates/moqui-mail/src/inbound.rs:1070-1071` | A slow mail server holds the one sync job, and a sync stores without any size or quota limit | Low | fixed |
 | SEC-MAIL-94 | `crates/moqui-mail/src/sync.rs:486-492`, 444-457, 905-906, 1155-1176; `EmailClientServices.xml:133` | A sync shows the remote server's own text, which the test was changed to hide (SEC-MAIL-02's fix does not cover the sync) | Low | fixed |
-| SEC-MAIL-95 | `crates/moqui-mail/src/edge_mail.rs:967-1010` (`queue_back`) | Mail queued back to the local node keeps any Authentication-Results that claims the edge node's name | Info | reported (to check) |
-| SEC-MAIL-96 | `crates/moqui-host/src/smtp_queue.rs:490-496`, 508-519, 108-131 | Every RCPT and every message of an edge node's listener waits on one lock held across database work | Info | reported (confirmed in code) |
-| SEC-MAIL-97 | `crates/moqui-mail/src/oauth.rs:1360`, 1799-1803, 1817; `EmailClientServices.xml:263-267` | The OAuth callback makes an account with authorization disabled, so a shared account needs no mail administrator when the provider row has no IMAP host | Info | reported (to check) |
-| SEC-MAIL-98 | `crates/moqui-mail/src/oauth.rs:1517-1525`, `:1548-1570`, `:1592-1600` | The mail OAuth sign-in reads the ID token's claims without checking its signature, and nothing holds the token endpoint to https | Info | confirmed (second check) |
+| SEC-MAIL-95 | `crates/moqui-mail/src/edge_mail.rs:967-1010` (`queue_back`) | Mail queued back to the local node keeps any Authentication-Results that claims the edge node's name | Info | fixed |
+| SEC-MAIL-96 | `crates/moqui-host/src/smtp_queue.rs:490-496`, 508-519, 108-131 | Every RCPT and every message of an edge node's listener waits on one lock held across database work | Info | fixed |
+| SEC-MAIL-97 | `crates/moqui-mail/src/oauth.rs:1360`, 1799-1803, 1817; `EmailClientServices.xml:263-267` | The OAuth callback makes an account with authorization disabled, so a shared account needs no mail administrator when the provider row has no IMAP host | Info | fixed |
+| SEC-MAIL-98 | `crates/moqui-mail/src/oauth.rs:1517-1525`, `:1548-1570`, `:1592-1600` | The mail OAuth sign-in reads the ID token's claims without checking its signature, and nothing holds the token endpoint to https | Info | accepted |
 
 ### Files, DAV, SSH and the terminal
 
@@ -854,11 +854,11 @@ Map file: [Attack-Surface-Files.md](../docs/security/Attack-Surface-Files.md). R
 | SEC-FIL-63 | crates/moqui-host/src/command/shell.rs:185 | Admin shell error text and C1 controls reach the administrator's terminal unescaped | Low | fixed |
 | SEC-FIL-67 | crates/moqui-dav/src/pim/rrule.rs:35 | Calendar and contact objects have no parser limit of their own; the bound is the 256 MiB DAV body | Low | fixed |
 | SEC-FIL-09 | `runtime/components/addon/mr-boss/screen/PublicShare.xml:28,56` | `PublicShare.xml` `open` and `upload` name no method | Info | fixed |
-| SEC-FIL-10 | `FileServices.xml:2649-2655` | A link or share stays valid after its maker loses access | Info | reported (confirmed in code) |
-| SEC-FIL-11 | `crates/moqui-host/src/ssh/server.rs:746-763`, `:1073`, `:1196` | SSH permissions are fixed for the life of a connection | Info | reported (confirmed in code) |
-| SEC-FIL-64 | crates/moqui-host/src/term/registry.rs:96 | A terminal ticket is reusable for 300 seconds and travels in the `/termws` query string | Info | reported (confirmed in code) |
+| SEC-FIL-10 | `FileServices.xml:2649-2655` | A link or share stays valid after its maker loses access | Info | fixed |
+| SEC-FIL-11 | `crates/moqui-host/src/ssh/server.rs:746-763`, `:1073`, `:1196` | SSH permissions are fixed for the life of a connection | Info | fixed |
+| SEC-FIL-64 | crates/moqui-host/src/term/registry.rs:96 | A terminal ticket is reusable for 300 seconds and travels in the `/termws` query string | Info | fixed |
 | SEC-FIL-65 | crates/moqui-host/src/term/access.rs:247 | `terminal` `command-line` and `host-sessions` are on in production for any value but `dev` or `false` | Info | fixed |
-| SEC-FIL-66 | crates/moqui-host/src/term/hold.rs:139 | The `term-hold` socket checks file modes only; a connection starts any program | Info | reported (confirmed in code) |
+| SEC-FIL-66 | crates/moqui-host/src/term/hold.rs:139 | The `term-hold` socket checks file modes only; a connection starts any program | Info | fixed |
 | SEC-FIL-81 | `crates/moqui-host/src/ssh/server.rs:765-772`; `crates/moqui-host/src/term/apps.rs:343-344` | An SSH client sets a terminal size of up to 10 million cells, and each `apps` session draws frames that large | Medium | fixed |
 | SEC-FIL-82 | `crates/moqui-dav/src/pim/ics.rs:31-36`, `:54-98` | A calendar file of nested `BEGIN` lines overflows the stack when its parse tree is dropped, which ends the server process | Medium | fixed |
 | SEC-FIL-83 | `crates/moqui-dav/src/dav/files.rs:319-337`; `crates/moqui-dav/src/dav/locks.rs:99-158` | Any user a drive is listed for locks any path of it over WebDAV, the whole drive included, and holds every other writer | Medium | fixed |
@@ -869,17 +869,17 @@ Map file: [Attack-Surface-Files.md](../docs/security/Attack-Surface-Files.md). R
 | SEC-FIL-88 | `crates/moqui-host/src/ssh/server.rs:1108-1128`, `:1321-1341` | A connection's per-channel maps are never cleared, so repeated channels grow the server's memory | Low | fixed |
 | SEC-FIL-89 | `crates/moqui-host/src/ssh/server.rs:1035-1045`; `crates/moqui-core/src/user/login.rs:527-529` | An SSH key login does not check `ipAllowed` and writes no login history | Low | fixed |
 | SEC-FIL-90 | `crates/moqui-host/src/command/line.rs:142-147`; `crates/moqui-host/src/command/mod.rs:143-178` | The prompt's history stores whole command lines, with service parameters and `js` code, as a user preference | Low | fixed |
-| SEC-FIL-91 | `crates/moqui-host/src/ssh/agent.rs:79-84`, `:194-204` | `agent-apps <id>` waits on a blocking lock on the async runtime while another command runs in that session | Low | reported (likely) |
-| SEC-FIL-92 | `crates/moqui-host/src/ssh/server.rs:979-983`, `:1049` | The SSH login lines write the client's username to the log as sent | Low | reported (likely) |
+| SEC-FIL-91 | `crates/moqui-host/src/ssh/agent.rs:79-84`, `:194-204` | `agent-apps <id>` waits on a blocking lock on the async runtime while another command runs in that session | Low | fixed |
+| SEC-FIL-92 | `crates/moqui-host/src/ssh/server.rs:979-983`, `:1049` | The SSH login lines write the client's username to the log as sent | Low | fixed |
 | SEC-FIL-93 | `crates/moqui-dav/src/pim/rrule.rs:227`, `:268-270`; `crates/moqui-dav/src/pim/ics.rs:296-297` | The calendar parsers panic on three malformed values | Low | fixed |
-| SEC-FIL-94 | `crates/moqui-dav/src/pim/ics.rs:893-896`, `:928-930`; `crates/moqui-dav/src/pim/line.rs:160-165` | The iCalendar writer writes RRULE and URL values as stored, so a stored line break adds content lines | Low | reported (likely) |
-| SEC-FIL-95 | `crates/moqui-dav/src/dav/xml.rs:73-84`; `crates/moqui-dav/src/pim/vcard.rs:134-143` | Two parses of a 1 MiB DAV body are quadratic | Low | reported (likely) |
+| SEC-FIL-94 | `crates/moqui-dav/src/pim/ics.rs:893-896`, `:928-930`; `crates/moqui-dav/src/pim/line.rs:160-165` | The iCalendar writer writes RRULE and URL values as stored, so a stored line break adds content lines | Low | fixed |
+| SEC-FIL-95 | `crates/moqui-dav/src/dav/xml.rs:73-84`; `crates/moqui-dav/src/pim/vcard.rs:134-143` | Two parses of a 1 MiB DAV body are quadratic | Low | fixed |
 | SEC-FIL-96 | `crates/moqui-host/src/ssh/client.rs:508-511`; `crates/moqui-core/src/service/system_sync/sftp.rs:358-359` | The SFTP client reads a remote file whole, with no size bound | Low | fixed |
-| SEC-FIL-97 | `crates/moqui-host/src/term/access.rs:179-189`; `crates/moqui-host/src/command/host.rs:51` | Over SSH a loopback peer is the server's own machine, and a recent sign-in is never asked | Info | reported (confirmed in code) |
-| SEC-FIL-98 | `runtime/components/base/framework/service/org/moqui/resource/FileServices.xml:1545-1551`, `:1476-1481` | A drive's `.trash` is guarded in four services only | Info | reported (confirmed in code) |
+| SEC-FIL-97 | `crates/moqui-host/src/term/access.rs:179-189`; `crates/moqui-host/src/command/host.rs:51` | Over SSH a loopback peer is the server's own machine, and a recent sign-in is never asked | Info | fixed |
+| SEC-FIL-98 | `runtime/components/base/framework/service/org/moqui/resource/FileServices.xml:1545-1551`, `:1476-1481` | A drive's `.trash` is guarded in four services only | Info | fixed |
 | SEC-FIL-99 | `crates/moqui-tui/src/decode.rs:72-76`, `:91-104`; `crates/moqui-host/src/term/apps.rs:304`, `:389-393` | A bracketed paste is kept in memory with no cap and no deadline, over SSH before a login | Medium | fixed |
 | SEC-FIL-100 | `crates/moqui-tui/src/decode.rs:300-305`; `crates/moqui-tui/src/ui/session_loop.rs:240-241`, `:251-257`; `crates/moqui-host/src/termws.rs:274-284` | The browser terminal's 500 by 500 limit does not hold: the session takes a window size from its input bytes, which brings SEC-FIL-81 to every signed-in user | Medium | fixed |
-| SEC-FIL-101 | `runtime/components/base/framework/service/org/moqui/resource/FileServices.xml:328-333`, `:417-419`; `crates/moqui-git/src/fs.rs:440-454` | A drive mirror's URL may be plain `http://`, and the mirror's stored token is offered to it | Low | likely (second check) |
+| SEC-FIL-101 | `runtime/components/base/framework/service/org/moqui/resource/FileServices.xml:328-333`, `:417-419`; `crates/moqui-git/src/fs.rs:440-454` | A drive mirror's URL may be plain `http://`, and the mirror's stored token is offered to it | Low | fixed |
 
 ### Calls, chat and messaging
 
