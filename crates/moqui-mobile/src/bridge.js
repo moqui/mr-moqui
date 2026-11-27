@@ -367,6 +367,17 @@
         ssoStart: (server, authFlowId, deviceMode) => shellAsk("client_sso_start", { server: String(server || ""), authFlowId: String(authFlowId || ""),
             deviceMode: deviceMode ? String(deviceMode) : null }),
         ssoCancel: () => shellAsk("client_sso_cancel"),
+        // the offline map packages on this phone (plans/Maps-Offline.md §2.4): the server's list and the phone's, a
+        // download (WorkManager; wifiOnly waits for Wi-Fi), its cancel, a delete and the states; never a path. A
+        // package's files are read at /__moqui-app/maps/<packageId>/<path> on this origin.
+        packages: Object.freeze({
+            list: () => shellAsk("packages_list"),
+            download: (packageId, revision, wifiOnly) => shellAsk("packages_download", { packageId: String(packageId || ""),
+                revision: Number(revision), wifiOnly: wifiOnly === true }),
+            cancel: (packageId) => shellAsk("packages_cancel", { packageId: String(packageId || "") }),
+            remove: (packageId) => shellAsk("packages_delete", { packageId: String(packageId || "") }),
+            status: () => shellAsk("packages_status")
+        }),
         // the shell's call joined or over (WebrootCall.js): the phone's native call (MT2) is kept while it lasts
         callState: (callSessionId, state, name) => shellAsk("call_state", { callSessionId: String(callSessionId || ""), state: String(state || ""),
             name: name ? String(name) : null })

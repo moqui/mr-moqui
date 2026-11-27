@@ -43,6 +43,17 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
 
+    <!-- The user's packages as JSON ({packageList}, find#Packages), for the apps' download (plans/Maps-Offline.md §2.4):
+        each with its revision, size, strong tag and download path. -->
+    <transition name="packageList" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.maps.MapSourceServices.find#Packages').requireNewTransaction(true).call()
+            if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonError(400, errors) }
+            else ec.web.sendJsonResponse({packageList: out?.packageList || []})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
     <!-- New package's Estimate and Build: the form's region, zooms and contents; an unchecked box posts nothing, so is N -->
     <transition name="createPackage">
         <actions>

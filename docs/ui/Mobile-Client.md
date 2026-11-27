@@ -108,6 +108,32 @@ own `/qapps`), never both:
   (`account::base_url`), so the debug app reaches `http://localhost:8080` through `adb reverse tcp:8080 tcp:8080`. Start the server with the loopback HTTP settings in [Build-Test](../Build-Test.md#android-app). When the verifier cannot start the app makes no request, answers from the store, and the
   commands that need the server say so.
 
+## Offline map packages
+
+The phone keeps downloaded map regions as the desktop does ([Desktop-Client](Desktop-Client.md#offline-map-packages):
+the store under `client/data/`, `packages-max-mb`, the checks, the shell's `/__moqui-app/maps/` path and the
+commands); what differs is who runs the download (plans/Maps-Offline.md §2.4).
+
+- **`PackageDownloadWorker`** (WorkManager, `PackageDownloadWorker.kt`, a `ListenableWorker` on a thread of its own, so
+  one map download runs at a time and WorkManager's threads stay for `FlushWorker` and `RegisterWorker`; a second
+  package's download waits until the first's run ends): `packages_download` hands it the account, package and revision
+  (`MobileHost::start_package_download`, `PackageDownloadWorker.start` through JNI), one work per account and package, a
+  new revision replacing the work of another, and a tap on Download again replacing a work that has not run (its "only
+  on Wi-Fi" choice with it). It waits for a network, an unmetered one when the shell asks `wifiOnly` ("only on Wi-Fi"),
+  and storage not low, and calls Rust (`Native.packageDownload`, `native::package_download`) with the process's client,
+  made from the store when WorkManager started the process. A cut, a server error or WorkManager's stop (the network or
+  Wi-Fi gone, its ten minutes up: `onStopped` pauses the run at its next range, `Native.packagePause`, its own run only:
+  the work's id is the run's) keeps the part file, and the next run, backing off from 30 seconds, goes on from its
+  length. Its 20th run tells Rust it is the last: a failure then (but a pause, which WorkManager runs again), no
+  network, or an exception in the worker (`Native.packageGiveUp`) is made final (`retry` false), so the shell does not
+  show a download nothing will run again; the part is kept for the next download asked. A cancel, a delete, and an
+  account's data deleted cancel its works (`cancelUniqueWork`, `cancelAllWorkByTag`).
+- **The bridge:** `moquiDesktop.packages` on the shell's page only (`list`, `download(packageId, revision, wifiOnly)`,
+  `cancel`, `remove`, `status`), with the load's nonce.
+- **Android's WebView and ranges:** the patched `RustWebViewClient.kt` hands a 206 body on as it starts at its range,
+  and reads an intercepted body's length as an Int32, so no member past 2 GiB less a byte is unpacked (on every device,
+  so a package is the same everywhere); the server's `maps@package-max-bytes` (2 GiB) keeps packages under it.
+
 ## Back
 
 Android's back (the gesture or the button) asks the page first (`MainActivity.kt`'s back callback, added after
@@ -574,7 +600,7 @@ What fills each gap of MT1 and MT2 is MT3's record ([Mobile-Desktop](../../plans
 - `cd crates/moqui-client-tauri && cargo test`: the schemes' answer, with no network.
 - `scripts/check-android.sh`: clippy for both Android targets.
 - `./gradlew :app:testUniversalDebugUnitTest` in `gen/android` (`ANDROID_HOME` set): the Kotlin rules' JVM tests
-  (`CallRules`: the ring's time, the audio route, the screen at the ear, picture-in-picture, the service's types, the
+  (`PackageDownloadRules`: the map download's constraints and its resume; `CallRules`: the ring's time, the audio route, the screen at the ear, picture-in-picture, the service's types, the
   calling account's state, a contact's number, the contacts' question once; `ChatRules`: channels, tags, links, mute).
 - Instrumented, on the emulator when asked: `CallTelecomTest` (a joined call in Telecom, held and resumed by the page,
   its audio on the earpiece for voice and the speaker for video, the page's choice holding, left); `DialAccountTest`

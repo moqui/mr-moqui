@@ -16,7 +16,8 @@
 //! `<client-conf>` element, which the host reads from its merged conf and hands over (this crate has no framework).
 //!
 //! ```xml
-//! <client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"/>
+//! <client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"
+//!     packages-max-mb="4096"/>
 //! ```
 
 use moqui_lib::node::MNode;
@@ -72,6 +73,9 @@ pub struct ClientConf {
     /// `store-max-mb`: the size cap of an account's store in MB; 512 by default, room for months of chat and mail
     /// text on a phone. At least 1.
     pub store_max_mb: u64,
+    /// `packages-max-mb`: the size cap of an account's offline map packages on the device in MB, outside the store's
+    /// (plans/Maps-Offline.md §2.4); 4096 by default, a few regions at their zooms. At least 1.
+    pub packages_max_mb: u64,
 }
 
 impl Default for ClientConf {
@@ -82,6 +86,7 @@ impl Default for ClientConf {
             prefetch_rooms: 20,
             prefetch_mail: 100,
             store_max_mb: 512,
+            packages_max_mb: 4096,
         }
     }
 }
@@ -116,6 +121,7 @@ impl ClientConf {
             "prefetch-rooms" => number(name, value, 0, &mut conf.prefetch_rooms),
             "prefetch-mail" => number(name, value, 0, &mut conf.prefetch_mail),
             "store-max-mb" => number(name, value, 1, &mut conf.store_max_mb),
+            "packages-max-mb" => number(name, value, 1, &mut conf.packages_max_mb),
             _ => tracing::warn!("client-conf attribute {name} is not known, ignored"),
         });
         conf
@@ -124,6 +130,11 @@ impl ClientConf {
     /// The store's size cap in bytes.
     pub fn store_max_bytes(&self) -> u64 {
         self.store_max_mb.saturating_mul(1024 * 1024)
+    }
+
+    /// The offline map packages' size cap in bytes.
+    pub fn packages_max_bytes(&self) -> u64 {
+        self.packages_max_mb.saturating_mul(1024 * 1024)
     }
 }
 

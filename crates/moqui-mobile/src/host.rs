@@ -822,6 +822,48 @@ impl ShellHost for MobileHost {
         #[cfg(not(target_os = "android"))]
         log::info!("The server pages' storage is cleared");
     }
+
+    /// An offline map package's download goes to `PackageDownloadWorker` (WorkManager: resumable, with a network,
+    /// unmetered with `wifi_only`; plans/Maps-Offline.md §2.4), which calls Rust back (`native::package_download`);
+    /// off Android, a thread as on the desktop.
+    fn start_package_download(
+        &self,
+        core: &Arc<Client>,
+        host: &Arc<dyn ClientHost>,
+        account: &str,
+        package_id: &str,
+        revision: i64,
+        wifi_only: bool,
+    ) -> Result<(), String> {
+        #[cfg(target_os = "android")]
+        {
+            let _ = (core, host);
+            crate::android::package_worker_start(account, package_id, revision, wifi_only)
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = wifi_only;
+            moqui_client_tauri::packages::run_task(core, host, account, package_id, revision)
+        }
+    }
+
+    fn cancel_package_download(&self, account: &str, package_id: &str) {
+        #[cfg(target_os = "android")]
+        if let Err(err) = crate::android::package_worker_cancel(Some(package_id), account) {
+            log::warn!("The offline map's worker was not cancelled: {err}");
+        }
+        #[cfg(not(target_os = "android"))]
+        let _ = (account, package_id);
+    }
+
+    fn cancel_package_downloads(&self, account: &str) {
+        #[cfg(target_os = "android")]
+        if let Err(err) = crate::android::package_worker_cancel(None, account) {
+            log::warn!("The account's offline map workers were not cancelled: {err}");
+        }
+        #[cfg(not(target_os = "android"))]
+        let _ = account;
+    }
 }
 
 /// The chat notifications, conversation shortcuts and shown room of `account`, signed out, go
