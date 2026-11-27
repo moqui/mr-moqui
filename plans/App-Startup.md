@@ -55,6 +55,26 @@ The causes, from the code:
 4. **Data comes last.** The page shows, its scripts run, then it asks for its data. Nothing shows the last-known data.
 5. **The WebView paints black** before the first page paints (the mobile app and the PWA's WebAPK both).
 
+## Quick test
+
+A test of S2 and S3 alone, on 2026-11-27: a local server with fixed delays (400 ms for the page, 300 ms for the
+data), headless Chromium 1248, CPU slowed 4 times, 10 runs. A is the page and data from the network, as now. B is the
+shell document from the service worker and the last data from IndexedDB first. Cold is a new browser process; reload
+is the same process. Numbers are from navigation start, median / p90, in ms.
+
+| Variant | Content, cold | Content, reload | Fresh data, cold |
+|---|---|---|---|
+| A, now | 761 / 768 | 758 / 759 | 761 / 769 |
+| B, S2 and S3 | 133 / 144 | 80 / 91 | 444 / 459 |
+
+What it shows:
+
+- S2 and S3 show content about 6 times sooner, and the time no longer depends on the network.
+- The web path alone does not reach 30 ms. The service worker start and the IndexedDB read cost about 50 to 120 ms.
+  So 30 ms content needs a resume with no reload (S6), and a cold start needs S7.
+- A desktop browser is not a phone. The Android emulator check did not run: the device panel needs an ffmpeg with
+  libx264 on this machine. S0 measures on a phone.
+
 ## Work
 
 Do the steps in order. Each step has its check. S0 comes first, so each later step has a before and after number.
@@ -103,7 +123,7 @@ document is the same for two users.
 - Logout, an account switch and a 401 delete the user's store. The store has an age limit per app.
 - The mobile app already keeps each account's data in a store for offline use. Use the same contract, so one page
   code runs in both.
-- This is private data on the device, which SEC-CLI-02 does not allow now. It needs decision D1.
+- This is private data on the device, which SEC-CLI-02 does not allow now. Decision D1 allows it.
 
 **Check:** a cold start in airplane mode shows the last content. A spec checks that logout empties the store.
 
@@ -156,8 +176,10 @@ document is the same for two users.
 
 ## Decisions
 
-| ID | Question | Proposal |
-|---|---|---|
-| D1 | May a page keep a user's last data on the device (S3)? | Yes, per user and server, deleted on logout, account switch and 401, with an age limit. It changes SEC-CLI-02. |
-| D2 | A manifest per app, or one manifest with shortcuts? | Per app: each app gets its own icon, colors and splash. |
-| D3 | Session that survives restarts, or a device key (S4)? | Decide after the S4 finding. |
+Decided 2026-11-27.
+
+| ID | Question | Decision | Why |
+|---|---|---|---|
+| D1 | May a page keep a user's last data on the device (S3, S7)? | Yes. Per user and server, deleted on logout, account switch and 401, with an age limit per app. Update SEC-CLI-02 to say so. | Without it no cold start shows content before the network answers. |
+| D2 | A manifest per app, or one manifest with shortcuts? | A manifest per app. | Each app gets its own icon, colors and splash. Shortcuts still start the one `/qapps` app. |
+| D3 | A session that survives restarts, or a device key (S4)? | A device key per installed app, as the mobile app's device login keys. | It also covers a long idle phone and an expired session, and the server keeps no more session state. |
