@@ -229,20 +229,20 @@ and a subscription are `forbidden`, and a location kept before is not served.
   on needs an XMPP contact in the share, else it is refused `XMPP_NO_CONTACT`; turning it off deletes the XMPP latest
   and leaves the version; a revoke that takes out the last XMPP contact turns it off, "last XMPP contact revoked" in
   its audit row, and a revoke of a person, group or link leaves it). A share the phone sends takes it too, so its XMPP
-  contacts may see the marker alternate between the phone and the XMPP app while those are different devices. It is `LocationServices.report#XmppPosition`, taken by each of the user's active
-  shares with the opt-in and an XMPP contact, with each share's rules (the rate, the values, staleness, approximate
-  rounding) against that share's XMPP latest (`LocationXmppLatest`: its times, and for an approximate share the cell
-  it holds; no coordinates for an exact one). Such a position goes to the share's XMPP contacts
-  only: it is never the share's latest position or trail, and never reaches its users, groups or guest link, which see
-  the page's or the phone's. With no such share the publish is refused `not-allowed` (as is one for a share that ended
-  meanwhile), so a client's setting alone never starts a share or feeds one. The first position a share takes tells the
-  owner's XMPP sessions by a headline ("Your XMPP app's location is shared with jane@… until 15:30"); the owner's view in
-  Maps and My location shares shows where the last position came from ("from your XMPP app" or "from this page or
-  phone"). Of the payload `lat`, `lon`, `accuracy` (metres) and `timestamp` are read, checked (in range, numbers, a
-  time) before the service is called, and the rest (altitude, bearing, speed, the street) are left out; a bad one is
-  `bad-request` (`invalid-payload`); one too soon after the last (the share's rate) or older than it is answered as
-  taken, with nothing new kept, so a client that publishes on every move sees no error; a timestamp more than a minute
-  ahead is taken as now.
+  contacts may see the marker alternate between the phone and the XMPP app while those are different devices. It is
+  `LocationServices.report#XmppPosition`, taken by each of the user's active shares with the opt-in and an XMPP contact,
+  with each share's rules (the rate, the values, staleness, approximate rounding) against that share's XMPP latest
+  (`LocationXmppLatest`: its times, and for an approximate share the cell it holds; no coordinates for an exact one).
+  Such a position goes to the share's XMPP contacts only: it is never the share's latest position or trail, and never
+  reaches its users, groups or guest link, which see the page's or the phone's. With no such share the publish is
+  refused `not-allowed` (as is one for a share that ended meanwhile), so a client's setting alone never starts a share
+  or feeds one. The first position a share takes tells the owner's XMPP sessions by a headline ("Your XMPP app's
+  location is shared with jane@… until 15:30"); the owner's view in Maps and My location shares shows where the last
+  position came from ("from your XMPP app" or "from this page or phone"). Of the payload `lat`, `lon`, `accuracy`
+  (metres) and `timestamp` are read, checked (in range, numbers, a time) before the service is called, and the rest
+  (altitude, bearing, speed, the street) are left out; a bad one is `bad-request` (`invalid-payload`); one too soon
+  after the last (the share's rate) or older than it is answered as taken, with nothing new kept, so a client that
+  publishes on every move sees no error; a timestamp more than a minute ahead is taken as now.
 - **An empty `geoloc`** (the XEP's "stopped") is answered and is no report: it ends no share. A share's start and end
   are the owner's acts in Moqui, where every active share shows (the app bar's chip, Maps, the phone's notification),
   and another source (a page, the phone) may still be sending it; a client sends the empty item on its own setting, at

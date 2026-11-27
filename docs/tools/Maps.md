@@ -1119,9 +1119,9 @@ one from Chat's Share live location (below, "In chat"), and a share's XMPP conta
   raised version pauses the phone until its person confirms. Turning it on needs an XMPP contact in the share (else it
   is refused, `XMPP_NO_CONTACT`); turning it off leaves the version; a revoke that takes out the last XMPP contact turns
   it off (its audit row says so), while taking out a person, group or link leaves it. While the phone or page and the
-  XMPP app are on different devices, the XMPP contacts may see the marker alternate between the two. The toggle is in Share my location, Who sees my location and My location
-  shares; turning it off deletes the XMPP app's last position. XMPP contacts are users of this server only: there is no
-  federation.
+  XMPP app are on different devices, the XMPP contacts may see the marker alternate between the two. The toggle is in
+  Share my location, Who sees my location and My location shares; turning it off deletes the XMPP app's last position.
+  XMPP contacts are users of this server only: there is no federation.
 - **In chat** (LL4; [Comms, Live location](Comms.md#live-location)). Chat's Share a location has Share live location:
   `ChatLocationServices.send#LiveLocation` makes an ordinary share through `create#Share` (no trail, purpose "In chat:
   the room's name") whose audience is the room's members of that moment as `LsaUser` entries, after the same directory
