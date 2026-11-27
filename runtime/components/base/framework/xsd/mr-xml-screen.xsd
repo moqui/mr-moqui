@@ -607,6 +607,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:element ref="call-target"/>
             <xs:element ref="chat-target"/>
             <xs:element ref="chat-calendar"/>
+            <xs:element ref="shell-indicator"/>
         </xs:choice>
     </xs:complexType></xs:element>
     <xs:attributeGroup name="provider-attributes">
@@ -664,6 +665,11 @@ along with this software (see the LICENSE.md file). If not, see
         user's calendar, changes or removes it (org.moqui.comms.ProviderInterfaces.chat#CalendarEntry, called by
         org.moqui.chat.ChatCalServices): given only the event's room, message and an action, it reads the event and the
         user's answer itself. With no provider a chat event is offered as an .ics file.</xs:documentation></xs:annotation></xs:element>
+    <xs:element name="shell-indicator" type="provider-type"><xs:annotation><xs:documentation>The status chips of the shell's
+        app bar for the current user, on every screen (the /shellIndicators transition, asked when the page starts and again
+        when a push its answer names comes or at its refreshAt): called with no parameters, it answers indicators, each
+        {key, label, icon, tone, url, title, refreshAt (epoch millis)}, an empty list when there is nothing to show, and
+        refreshOn [{topicPrefix, events}], the pushes on which the shell asks again (Maps' live location: "Sharing location" while the user shares theirs).</xs:documentation></xs:annotation></xs:element>
 
     <!-- ================ Declared actions and panels ================ -->
     <xs:attributeGroup name="ext-item-attributes">

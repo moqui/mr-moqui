@@ -63,8 +63,19 @@
  *     layerErrors: [{id, label, reasonCode, message}]  what the server did not resolve (id "record": the record's place),
  *                  each named under the map, with Retry (the configuration asked again) when it came from config-url,
  *     featuresTruncated: true when a record layer had more features than were sent, units: "metric" | "imperial" (the
- *                  scale line's)
+ *                  scale line's),
+ *     locationShares: [{shareId, role, label, ownerName, thruDate, approximate, keepTrail, latest {latitude, longitude,
+ *                  accuracy, ageSeconds}, trail [[lon, lat]]}]  the live layer's shares (get#EffectiveConfig with
+ *                  locationShares, as Maps › Browse asks for it; map.normalizeLiveShares)
  *   }
+ * The live layer (plans/Location-Sharing.md §3.3): each share with a position is a marker labelled with its label and the
+ * position's age (canvas text, never markup), its accuracy a ring and a kept trail a line; one with no report for
+ * map.LIVE_STALE_SECONDS is drawn grey and dashed, and listed as stale under the map with the rest (label, age, latitude,
+ * longitude, approximate). The map follows each share it shows on the topic locationShare:<shareId> of the shell's
+ * notification socket (registerListener), from when it is listed until it is no longer listed, ends or is revoked for this
+ * viewer, or the map unmounts: a position push moves its marker, ring and trail; changed takes a new end; ended (and a
+ * viewer's revoked) takes it off for as long as the map is mounted. A configuration whose shares alone changed changes the
+ * layer without drawing the map again; a position newer than the read's is kept (map.mergeLiveShares).
  * The network contracts of the bundle (build/libs/refresh.mjs, OPENLAYERS_HOSTS; plans/archive/Maps.md §3.2): a mapbox:// URL is
  * refused before it reaches the library; a style is loaded here, checked, its sources' attributions escaped, and its
  * metadata['ol:webfonts'] replaced with the local fonts' absolute template (map.webfonts), which is also the webfonts option;
@@ -88,7 +99,8 @@
  * Events: pick ({lon, lat}, also the DOM event m-map-pick with that detail, which bubbles), select (a place or a feature:
  * {id, lon, lat, label}, with layerId for a record layer's feature; an overlay layer's feature is kind "overlay" with its
  * layerId, layerLabel and description, label and description plain text (map.plainText), shown as text, never as markup)
- * and view-change ({center, zoom, extent}). A feature is selected by a click, or from the keyboard by Enter on the map,
+ * and view-change ({center, zoom, extent}), and live-change ({shares}: the live shares, as held, after each change; a live
+ * share selected is a select of kind liveShare with its shareId). A feature is selected by a click, or from the keyboard by Enter on the map,
  * which selects the feature at its center (map.nearestFeature, 12 pixels; a map that asks for a choice takes the center
  * instead); the selection is announced. Each place listed has Copy, which puts its latitude, longitude on the clipboard.
  */
@@ -469,7 +481,9 @@
             addressPurpose: text(given.addressPurpose),
             layerErrors: map.normalizeLayerErrors(given.layerErrors),
             featuresTruncated: given.featuresTruncated === true || given.featuresTruncated === "true",
-            units: text(given.units).toLowerCase() === "imperial" ? "imperial" : text(given.units).toLowerCase() === "metric" ? "metric" : ""
+            units: text(given.units).toLowerCase() === "imperial" ? "imperial" : text(given.units).toLowerCase() === "metric" ? "metric" : "",
+            // the live layer's shares (plans/Location-Sharing.md §3.3), held apart from the drawing: see map.normalizeLiveShares
+            locationShares: map.normalizeLiveShares(given.locationShares)
         };
     };
     // What the server did not resolve, each {id, label, reasonCode, message} as text; one without an id is left out.
@@ -495,6 +509,7 @@
         out.points = map.normalizePoints(server.points.concat(local.points));
         const knownLayers = new Set(server.layers.map((layer) => layer.id));
         out.layers = server.layers.concat(local.layers.filter((layer) => !knownLayers.has(layer.id)));
+        if (!server.locationShares.length) out.locationShares = local.locationShares;
         return out;
     };
 
@@ -735,6 +750,103 @@
         return true;
     };
 
+    // ---- live location (plans/Location-Sharing.md §3.3) ----
+
+    // The shares a map shows live: the effective configuration's locationShares (the viewer's own active shares and those
+    // shared with them, which the server checked against each share's current audience), at most LIVE_MAX. Each, checked:
+    // {shareId, role (owner or viewer), label (plain text, shown as text), ownerName, thruDate (epoch millis), approximate,
+    // keepTrail, latest {lon, lat, accuracy, observedDate} or null, seenAt (this page's clock when that position was taken:
+    // latest.seenAt as the parent stamped it at its read, else the read's ageSeconds before now, or a push's arrival), trail [[lon, lat]] (at most LIVE_TRAIL_MAX, the latest)}.
+    const LIVE_MAX = 100;
+    const LIVE_TRAIL_MAX = 500;
+    // a share with no report for this long is drawn stale: its owner's page closed, or the device lost its fix
+    map.LIVE_STALE_SECONDS = 300;
+    const livePoint = (value) => {
+        if (!value || typeof value !== "object") return null;
+        const lon = num(first(value, "longitude", "lon")), lat = num(first(value, "latitude", "lat"));
+        if (!lonOk(lon) || !latOk(lat)) return null;
+        const accuracy = num(value.accuracy);
+        return { lon, lat, accuracy: accuracy !== null && accuracy >= 0 && accuracy <= 1e7 ? accuracy : null, observedDate: num(value.observedDate) };
+    };
+    const liveTrail = (trail) => (Array.isArray(trail) ? trail : []).map((pair) => (Array.isArray(pair) ? [num(pair[0]), num(pair[1])] : [null, null]))
+        .filter((pair) => lonOk(pair[0]) && latOk(pair[1])).slice(-LIVE_TRAIL_MAX);
+    map.normalizeLiveShare = (row, now) => {
+        if (!row || typeof row !== "object") return null;
+        const shareId = shortText(row.shareId, 60);
+        if (!shareId) return null;
+        const latest = livePoint(row.latest);
+        const age = latest ? num(row.latest.ageSeconds) : null;
+        // the page's clock at its read, when the parent stamped it (Maps › Browse does, once a read): a configuration
+        // normalized again later keeps it, so a share that stopped reporting goes stale
+        const stamped = latest ? num(row.latest.seenAt) : null;
+        return { shareId, role: row.role === "owner" ? "owner" : "viewer", label: map.plainText(row.label, 100) || map.plainText(row.ownerName, 100) || L("Shared location"),
+            ownerName: map.plainText(row.ownerName, 100), thruDate: num(row.thruDate), approximate: row.approximate === true, keepTrail: row.keepTrail === true,
+            latest, seenAt: !latest ? null : stamped !== null ? stamped : now - Math.max(0, age === null ? 0 : age) * 1000, trail: row.keepTrail === true ? liveTrail(row.trail) : [] };
+    };
+    map.normalizeLiveShares = (list, now) => {
+        const at = now === undefined ? Date.now() : now;
+        const seen = new Set();
+        return (Array.isArray(list) ? list : []).map((row) => map.normalizeLiveShare(row, at)).filter((share) => share && !seen.has(share.shareId) && seen.add(share.shareId))
+            .slice(0, LIVE_MAX);
+    };
+    // The seconds since a share's position was taken, null with none; stale past LIVE_STALE_SECONDS.
+    map.liveAgeSeconds = (share, now) => (share && share.seenAt !== null && share.seenAt !== undefined ? Math.max(0, Math.round((now - share.seenAt) / 1000)) : null);
+    map.liveStale = (share, now) => { const age = map.liveAgeSeconds(share, now); return age !== null && age > map.LIVE_STALE_SECONDS; };
+    // The age as words ("just now", "4 min ago"); an approximate share's by the minute, as its time is kept.
+    map.liveAgeText = (seconds) => (seconds === null || seconds === undefined ? L("No position yet") : seconds < 60 ? L("just now")
+        : seconds < 3600 ? Math.floor(seconds / 60) + " " + L("min ago") : seconds < 86400 ? Math.floor(seconds / 3600) + " " + L("h ago")
+        : Math.floor(seconds / 86400) + " " + L("d ago"));
+    // The message of a push on a share's topic (locationShare:<shareId>: the NotificationMessage's message, an object or its
+    // JSON), or null.
+    map.liveMessage = (jsonObj) => {
+        let message = jsonObj && typeof jsonObj === "object" ? jsonObj.message : null;
+        if (typeof message === "string") { try { message = JSON.parse(message); } catch (err) { message = null; } }
+        return message && typeof message === "object" && text(message.shareId) ? message : null;
+    };
+    // A push applied to the shares (LocationShares.js push): position moves the share's marker, its accuracy and its trail
+    // (when kept) and makes it fresh; changed takes a new end; ended, and revoked for a viewer (who is out of its audience),
+    // takes it off (a revoke the owner is told of ends an entry, not the share). {shares (a new list when changed),
+    // changed, removed (the shareId taken off, or null)}.
+    map.applyLiveMessage = (shares, message, now) => {
+        const index = message ? shares.findIndex((share) => share.shareId === text(message.shareId)) : -1;
+        if (index < 0) return { shares, changed: false, removed: null };
+        const share = shares[index];
+        const event = text(message.event);
+        if (event === "ended" || (event === "revoked" && share.role === "viewer"))
+            return { shares: shares.filter((one, at) => at !== index), changed: true, removed: share.shareId };
+        let next = null;
+        if (event === "position") {
+            const latest = livePoint(message);
+            if (!latest) return { shares, changed: false, removed: null };
+            const trail = share.keepTrail ? share.trail.concat([[latest.lon, latest.lat]]).slice(-LIVE_TRAIL_MAX) : share.trail;
+            next = Object.assign({}, share, { latest, seenAt: now, trail, approximate: message.approximate === true ? true : share.approximate });
+        } else if (event === "changed" && num(message.thruDate) !== null) next = Object.assign({}, share, { thruDate: num(message.thruDate) });
+        if (!next) return { shares, changed: false, removed: null };
+        return { shares: shares.map((one, at) => (at === index ? next : one)), changed: true, removed: null };
+    };
+    // A configuration's shares over those held: a share the read no longer lists is gone; one taken off by a push (gone)
+    // stays off; the held position is kept when the read's is the same one (its time when it was first seen stays, so a
+    // configuration read or normalized again never makes an old position fresh) or older (a push came since).
+    const samePosition = (a, b) => !!a && !!b && a.lon === b.lon && a.lat === b.lat && a.observedDate === b.observedDate;
+    map.mergeLiveShares = (held, given, gone) => given.filter((share) => !(gone && gone.has(share.shareId))).map((share) => {
+        const before = held.find((one) => one.shareId === share.shareId);
+        const keep = before && before.seenAt !== null && (samePosition(before.latest, share.latest) || share.seenAt === null || before.seenAt > share.seenAt);
+        return keep ? Object.assign({}, share, { latest: before.latest, seenAt: before.seenAt, trail: before.trail.length > share.trail.length ? before.trail : share.trail }) : share;
+    });
+    // The ring of a position's accuracy: count points metres around it, in WGS84 degrees (closed), for a polygon in any
+    // view's projection.
+    map.accuracyRing = (lon, lat, metres, count) => {
+        const steps = count || 48;
+        const north = metres / 111320;
+        const east = metres / (111320 * Math.max(Math.cos((lat * Math.PI) / 180), 1e-6));
+        const ring = [];
+        for (let i = 0; i <= steps; i++) {
+            const angle = (2 * Math.PI * (i % steps)) / steps;
+            ring.push([lon + east * Math.cos(angle), Math.max(-90, Math.min(90, lat + north * Math.sin(angle)))]);
+        }
+        return ring;
+    };
+
     // ---- the component ----
 
     const h = (...args) => root.Vue.h(...args);
@@ -749,10 +861,11 @@
     const mapView = {
         name: "mMapView",
         props: { id: String, config: [Object, String], configUrl: String, height: String, pick: Boolean, libraryError: String },
-        emits: ["pick", "select", "view-change", "edit-change"],
+        emits: ["pick", "select", "view-change", "edit-change", "live-change"],
         data() {
             return { effective: null, loadError: "", fallback: "", drawn: false, layerStatus: [], readout: "", picked: null, pickText: "", pickError: "",
-                locating: false, located: "", basemapId: "", selectedId: "", announced: "", focused: false, editing: false, projectionNote: "" };
+                locating: false, located: "", basemapId: "", selectedId: "", announced: "", focused: false, editing: false, projectionNote: "",
+                liveShares: [], liveNow: Date.now() };
         },
         computed: {
             local() {
@@ -767,14 +880,25 @@
             failedLayers() { return this.layerStatus.filter((status) => status.state === "failed"); }
         },
         watch: {
-            // a parent's render makes its bound object again: only a configuration that changed draws the map again
-            config(value, before) { if (JSON.stringify(value) !== JSON.stringify(before)) this.load(); }
+            // a parent's render makes its bound object again: only a configuration that changed draws the map again, and one
+            // whose live shares alone changed (a parent's read of them again) changes the live layer without drawing it again
+            config(value, before) {
+                if (JSON.stringify(value) === JSON.stringify(before)) return;
+                const others = (config) => {
+                    let given = config;
+                    if (typeof given === "string") { try { given = JSON.parse(given); } catch (err) { given = {}; } }
+                    return JSON.stringify(Object.assign({}, given || {}, { locationShares: null }));
+                };
+                if (others(value) === others(before)) this.setLiveShares(this.local.locationShares);
+                else this.load();
+            }
         },
         mounted() { this.load(); },
         beforeUnmount() {
             this.editSnapshot = null;
             this.editor = null;
             if (this.decoderListener) decoderListeners.delete(this.decoderListener);
+            this.stopLive();
             this.teardown();
         },
         methods: {
@@ -799,6 +923,8 @@
             start(config) {
                 this.teardown();
                 this.effective = config;
+                // the live shares are listed, and followed on their topics, whether or not the map can be drawn
+                this.setLiveShares(config.locationShares);
                 this.basemapId = config.profile.basemap && config.profile.basemaps.some((b) => b.id === config.profile.basemap) ? config.profile.basemap :
                     (config.profile.basemaps[0] || {}).id || "";
                 const O = root.MoquiOl;
@@ -835,6 +961,7 @@
                 // the map drawn again keeps what is being edited (build starts it again)
                 if (this.editor) { this.editSnapshot = this.editSnapshotOf(); this.editor = null; }
                 if (this.olMap) { this.olMap.setTarget(null); this.olMap.dispose(); this.olMap = null; }
+                this.liveSource = null;
                 this.drawn = false;
                 this.layerStatus = [];
             },
@@ -870,6 +997,10 @@
                 olMap.addLayer(this.overlayGroup);
                 this.markerSource = new O.VectorSource();
                 olMap.addLayer(new O.VectorLayer({ source: this.markerSource, style: (feature) => this.markerStyle(O, feature), zIndex: 10 }));
+                // the live layer, over the places (plans/Location-Sharing.md §3.3)
+                this.liveSource = new O.VectorSource();
+                olMap.addLayer(new O.VectorLayer({ source: this.liveSource, style: (feature) => this.liveStyle(O, feature), zIndex: 11 }));
+                this.drawLive(O);
                 this.drawBasemap(O);
                 config.layers.forEach((layer) => this.drawLayer(O, layer));
                 this.drawPlaces(O, config);
@@ -895,8 +1026,9 @@
                     if (this.editor) return;
                     // a place, a record's or a record layer's feature, or a feature of an overlay layer (not the basemap's)
                     const hit = olMap.forEachFeatureAtPixel(event.pixel, (found, layer) => (found.get("place") || found.get("recordFeature") ||
-                        (layer && layer.get("overlayLayerId")) ? { feature: found, layer } : null), { hitTolerance: 4 });
-                    if (hit && hit.feature.get("place")) this.select(hit.feature.get("place"));
+                        found.get("liveMarker") || (layer && layer.get("overlayLayerId")) ? { feature: found, layer } : null), { hitTolerance: 4 });
+                    if (hit && hit.feature.get("liveMarker")) this.selectLive(hit.feature.get("shareId"));
+                    else if (hit && hit.feature.get("place")) this.select(hit.feature.get("place"));
                     else if (hit) this.selectFeature(hit.feature, hit.layer, this.toLonLat(event.coordinate));
                     else if (this.shown.pick) this.choose(this.toLonLat(event.coordinate));
                 });
@@ -1423,6 +1555,108 @@
                     this.located = L("Your location is not available") + (error && error.message ? ": " + error.message : "");
                 }, { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 });
             },
+            // ---- live location (plans/Location-Sharing.md §3.3) ----
+            // The page's one notification socket (the shell root's notificationClient), or null without one.
+            liveClient() {
+                const shell = this.$root && this.$root.notificationClient ? this.$root : moqui.webrootVue;
+                return shell && shell.notificationClient ? shell.notificationClient : null;
+            },
+            // The shares of a configuration over those held (map.mergeLiveShares), each followed on its topic while shown.
+            setLiveShares(given) {
+                this.liveGone = this.liveGone || new Set();
+                this.liveShares = map.mergeLiveShares(this.liveShares, Array.isArray(given) ? given : [], this.liveGone);
+                this.liveChanged();
+            },
+            // After a change of the shares: the topics followed, the layer drawn, the ticking of ages, and live-change emitted.
+            liveChanged() {
+                this.syncLiveTopics();
+                if (root.MoquiOl && this.liveSource) this.drawLive(root.MoquiOl);
+                if (this.liveShares.length && !this.liveTimer) {
+                    // the ages and the stale style move on with the clock, twice a minute
+                    this.liveTimer = setInterval(() => { this.liveNow = Date.now(); if (this.liveSource) this.liveSource.changed(); }, 30000);
+                } else if (!this.liveShares.length && this.liveTimer) { clearInterval(this.liveTimer); this.liveTimer = null; }
+                this.liveNow = Date.now();
+                this.$emit("live-change", { shares: this.liveShares.map((share) => Object.assign({}, share)) });
+            },
+            // Subscribes to locationShare:<shareId> of each share shown, and unsubscribes from a share no longer shown.
+            syncLiveTopics() {
+                const client = this.liveClient();
+                const held = this.liveTopics = this.liveTopics || {};
+                const wanted = new Set(this.liveShares.map((share) => "locationShare:" + share.shareId));
+                Object.keys(held).filter((topic) => !wanted.has(topic)).forEach((topic) => { held[topic](); delete held[topic]; });
+                if (!client) return;
+                wanted.forEach((topic) => {
+                    if (held[topic]) return;
+                    const listener = (jsonObj) => this.onLivePush(topic.slice("locationShare:".length), jsonObj);
+                    const stop = client.registerListener(topic, listener);
+                    held[topic] = typeof stop === "function" ? stop : () => client.unregisterListener(topic, listener);
+                });
+            },
+            // A push on a share's topic: its message must name that share
+            onLivePush(shareId, jsonObj) {
+                const message = map.liveMessage(jsonObj);
+                if (!message || text(message.shareId) !== shareId) return;
+                const applied = map.applyLiveMessage(this.liveShares, message, Date.now());
+                if (!applied.changed) return;
+                if (applied.removed) this.liveGone = (this.liveGone || new Set()).add(applied.removed);
+                this.liveShares = applied.shares;
+                this.liveChanged();
+            },
+            stopLive() {
+                if (this.liveTimer) { clearInterval(this.liveTimer); this.liveTimer = null; }
+                const held = this.liveTopics || {};
+                Object.keys(held).forEach((topic) => { held[topic](); delete held[topic]; });
+            },
+            // The layer's features: each share with a position as a marker (its label and age drawn as canvas text), its
+            // accuracy as a ring and its kept trail as a line, all in the map's projection.
+            drawLive(O) {
+                const source = this.liveSource;
+                if (!source) return;
+                source.clear();
+                const format = new O.GeoJSON();
+                const geometry = (value) => format.readGeometry(value, { dataProjection: "EPSG:4326", featureProjection: this.projection() });
+                this.liveShares.forEach((share) => {
+                    if (!share.latest) return;
+                    const { lon, lat, accuracy } = share.latest;
+                    if (share.trail.length > 1) source.addFeature(new O.Feature({ geometry: geometry({ type: "LineString", coordinates: share.trail }), shareId: share.shareId, liveKind: "trail" }));
+                    if (accuracy) source.addFeature(new O.Feature({ geometry: geometry({ type: "Polygon", coordinates: [map.accuracyRing(lon, lat, accuracy)] }),
+                        shareId: share.shareId, liveKind: "accuracy" }));
+                    const marker = new O.Feature({ geometry: new O.Point(this.toMap(lon, lat)), shareId: share.shareId, liveKind: "marker", liveMarker: true });
+                    marker.setId("live:" + share.shareId);
+                    source.addFeature(marker);
+                });
+            },
+            liveShare(shareId) { return this.liveShares.find((share) => share.shareId === shareId) || null; },
+            // A share's look: teal for one shared with the viewer, green for the viewer's own, grey and dashed once stale; the
+            // label and the age are drawn on the canvas, so no markup in a label is read.
+            liveStyle(O, feature) {
+                const share = this.liveShare(feature.get("shareId"));
+                if (!share) return null;
+                const stale = map.liveStale(share, Date.now());
+                const rgb = stale ? "117,117,117" : share.role === "owner" ? "46,125,50" : "0,121,107";
+                const kind = feature.get("liveKind");
+                if (kind === "trail") return new O.Style({ stroke: new O.Stroke({ color: "rgba(" + rgb + ",0.7)", width: 3, lineDash: stale ? [6, 6] : undefined }) });
+                if (kind === "accuracy") return new O.Style({ fill: new O.Fill({ color: "rgba(" + rgb + ",0.12)" }), stroke: new O.Stroke({ color: "rgba(" + rgb + ",0.5)", width: 1 }) });
+                const label = share.label + " · " + map.liveAgeText(map.liveAgeSeconds(share, Date.now()));
+                return new O.Style({
+                    image: new O.CircleStyle({ radius: 8, fill: new O.Fill({ color: "rgba(" + rgb + "," + (stale ? "0.6" : "1") + ")" }),
+                        stroke: new O.Stroke({ color: "#fff", width: 2, lineDash: stale ? [3, 3] : undefined }) }),
+                    text: this.labelText(O, label)
+                });
+            },
+            goToLive(share) {
+                if (!share.latest) return;
+                this.selectedId = "";
+                if (this.olMap) this.olMap.getView().animate({ center: this.toMap(share.latest.lon, share.latest.lat), zoom: Math.max(this.olMap.getView().getZoom() || 0, 14), duration: 250 });
+            },
+            // A share chosen on the map or in the list: emitted as select with kind liveShare and its shareId.
+            selectLive(shareId) {
+                const share = this.liveShare(shareId);
+                if (!share || !share.latest) return;
+                this.highlight(null);
+                this.announced = L("Selected") + ": " + share.label + ", " + map.liveAgeText(map.liveAgeSeconds(share, Date.now()));
+                this.$emit("select", { id: "live:" + share.shareId, kind: "liveShare", shareId: share.shareId, lon: share.latest.lon, lat: share.latest.lat, label: share.label });
+            },
             onCanvasKey(event) {
                 // only on the map itself: Enter on one of OpenLayers' controls inside it is that control's. Enter chooses the
                 // center on a map that asks for a choice, and selects the feature there on any other; while editing, Enter adds
@@ -1644,6 +1878,19 @@
                     (this.drawn ? [h("button", { type: "button", class: "m-map-place-button", title: L("Show on the map"),
                         onClick: () => { this.goTo(place); this.select(place); } }, body)] : body).concat([" ", copy]));
             },
+            // A live share in the list under the map: its label, the age of its position (stale marked), where it is and whether
+            // it is approximate, all as text; on a drawn map a button that goes to it
+            liveItem(share) {
+                const age = map.liveAgeSeconds(share, this.liveNow);
+                const stale = map.liveStale(share, this.liveNow);
+                const body = [h("span", { class: "m-map-live-label" }, share.label), " ",
+                    h("span", { class: "m-map-live-age" }, map.liveAgeText(age) + (stale ? " (" + L("stale") + ")" : "")),
+                    share.latest ? [" ", h("span", { class: "m-map-live-coordinates" }, map.formatCoordinates(share.latest.lon, share.latest.lat))] : null,
+                    share.approximate ? [" ", h("span", { class: "m-map-live-details" }, L("approximate, about 1 km"))] : null];
+                return h("li", { key: share.shareId, class: { "m-map-live-share": true, "m-map-live-stale": stale }, "data-share-id": share.shareId },
+                    this.drawn && share.latest ? [h("button", { type: "button", class: "m-map-live-button", title: L("Show on the map"),
+                        onClick: () => { this.goToLive(share); this.selectLive(share.shareId); } }, body)] : body);
+            },
             toolbar() {
                 const button = root.Vue.resolveComponent("q-btn");
                 const items = [h(button, { dense: true, flat: true, noCaps: true, size: "sm", icon: "my_location", label: L("Locate me"), loading: this.locating,
@@ -1700,6 +1947,7 @@
                 this.located ? h("div", { class: "m-map-located", "aria-live": "polite" }, this.located) : null,
                 shown.pick ? this.pickForm() : null,
                 this.picked ? h("div", { class: "m-map-picked", "aria-live": "polite" }, L("Chosen") + ": " + map.formatCoordinates(this.picked.lon, this.picked.lat)) : null,
+                this.liveShares.length ? h("ul", { class: "m-map-live", "aria-label": L("Live location") }, this.liveShares.map((share) => this.liveItem(share))) : null,
                 this.points.length ? h("ul", { class: "m-map-places", "aria-label": L("Places") }, this.points.map((place) => this.placeItem(place))) : null,
                 this.fallback && !this.points.length && shown.center ? h("div", { class: "m-map-center" }, L("Center") + ": " + map.formatCoordinates(shown.center[0], shown.center[1])) : null
             ]);

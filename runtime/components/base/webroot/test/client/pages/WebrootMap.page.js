@@ -3,7 +3,8 @@
 // m-map's pure helpers in the page (moqui.map of /js/WebrootMap.js), and its list of places when the map cannot be drawn. The
 // OpenLayers bundle (an ES module, imported as m-map imports it) is loaded for its formats and vector sources only, and its
 // raster part for the projections and the lookup it refuses: drawing the map is a browser walk, not a regression test. The
-// page is https://moqui.test.
+// live layer (plans/Location-Sharing.md §3.3) is its features on a vector source, with a stand-in notification socket for
+// its topics. The page is https://moqui.test.
 "use strict";
 
 const map = moqui.map;
@@ -525,5 +526,159 @@ test("the build's files are named by their hash, and its decoder worker inflates
         assert.deepEqual(Array.from(new Uint8Array(answer.decoded)), Array.from(pixels));
     } finally {
         worker.terminate();
+    }
+});
+
+// ---- the live layer (plans/Location-Sharing.md §3.3) ----
+
+// A stand-in for the shell's notification socket: listeners by topic, and a push that calls them as MoquiLib's does.
+const fakeNotifications = () => {
+    const listeners = {};
+    return {
+        registerListener(topic, callback) {
+            (listeners[topic] = listeners[topic] || []).push(callback);
+            return () => { listeners[topic] = (listeners[topic] || []).filter((one) => one !== callback); if (!listeners[topic].length) delete listeners[topic]; };
+        },
+        push(topic, message) { (listeners[topic] || []).slice().forEach((callback) => callback({ topic, message: JSON.stringify(message) })); },
+        topics() { return Object.keys(listeners).sort(); }
+    };
+};
+const liveConfig = (ageSeconds) => [
+    { shareId: "S1", role: "viewer", label: "Sam <b>Lee</b>", ownerName: "Sam Lee", thruDate: Date.now() + 3600000, keepTrail: true,
+        latest: { latitude: 45.5, longitude: -122.6, accuracy: 30, ageSeconds }, trail: [[-122.61, 45.49], [-122.6, 45.5]] },
+    { shareId: "S2", role: "owner", label: "Me", thruDate: Date.now() + 3600000, latest: null },
+    { shareId: "", label: "no id" }, { shareId: "S3", latest: { latitude: 95, longitude: 0 } }];
+
+test("a live share is checked: its label plain text, a position in range, its age from the read, stale past five minutes", () => {
+    const now = 1764000000000;
+    const shares = map.normalizeLiveShares(liveConfig(30), now);
+    assert.deepEqual(shares.map((share) => share.shareId), ["S1", "S2", "S3"], "a share with no id is left out");
+    assert.equal(shares[0].label, "Sam Lee", "markup is not kept");
+    assert.deepEqual(shares[0].latest, { lon: -122.6, lat: 45.5, accuracy: 30, observedDate: null });
+    assert.equal(shares[0].seenAt, now - 30000);
+    assert.equal(shares[0].trail.length, 2);
+    assert.equal(shares[2].latest, null, "a latitude out of range is no position");
+    assert.equal(map.liveAgeText(map.liveAgeSeconds(shares[0], now)), "just now");
+    assert.equal(map.liveAgeText(map.liveAgeSeconds(shares[0], now + 5 * 60000)), "5 min ago");
+    assert.equal(map.liveStale(shares[0], now + 4 * 60000), false);
+    assert.equal(map.liveStale(shares[0], now + 6 * 60000), true);
+    assert.equal(map.liveAgeText(map.liveAgeSeconds(shares[1], now)), "No position yet");
+    // a ring of the accuracy, closed, the metres north as degrees of latitude
+    const ring = map.accuracyRing(-122.6, 45.5, 1113.2, 4);
+    assert.equal(ring.length, 5);
+    assert.deepEqual(ring[0], ring[4]);
+    assert.ok(Math.abs(ring[1][1] - 45.51) < 1e-9);
+});
+
+test("a share read at 200 s old goes stale after 300 s, however often its configuration is read or normalized again", () => {
+    const readAt = 1764000000000;
+    const row = { shareId: "S9", role: "viewer", label: "Quiet", latest: { latitude: 45.5, longitude: -122.6, observedDate: readAt - 200000, ageSeconds: 200 } };
+    let held = [];
+    const stale = [];
+    // the same read normalized again every 30 s (a parent's render, a report of another share, a layer shown), with its
+    // ageSeconds unchanged: the position's first-seen time stays
+    for (let step = 0; step <= 5; step++) {
+        const now = readAt + step * 30000;
+        held = map.mergeLiveShares(held, map.normalizeLiveShares([row], now), new Set());
+        stale.push(map.liveStale(held[0], now));
+    }
+    assert.deepEqual(stale, [false, false, false, false, true, true], "past 300 s at 120 s after the read");
+    assert.equal(held[0].seenAt, readAt - 200000);
+    // a parent's stamp at its read is the time used, wherever it is normalized again
+    const stamped = map.normalizeLiveShares([Object.assign({}, row, { latest: Object.assign({}, row.latest, { seenAt: readAt - 200000 }) })], readAt + 600000)[0];
+    assert.equal(stamped.seenAt, readAt - 200000);
+    assert.equal(map.liveStale(stamped, readAt + 150000), true);
+    // a newer position read takes over
+    const moved = Object.assign({}, row, { latest: { latitude: 45.6, longitude: -122.6, observedDate: readAt + 170000, ageSeconds: 10 } });
+    held = map.mergeLiveShares(held, map.normalizeLiveShares([moved], readAt + 180000), new Set());
+    assert.equal(held[0].seenAt, readAt + 170000);
+    assert.equal(map.liveStale(held[0], readAt + 180000), false);
+});
+
+test("the live layer follows each share's topic: a push moves its marker, a stale one is drawn grey, ended takes it off", async () => {
+    const O = await olLoad;
+    const methods = map.components["m-map-view"].methods;
+    const client = fakeNotifications();
+    const emitted = [];
+    // a stand-in for the component: its own methods, a vector source as the drawn map's, no map drawn
+    const self = { liveShares: [], liveNow: Date.now(), liveSource: new O.VectorSource(), $root: { notificationClient: client },
+        $emit: (name, value) => emitted.push([name, value]), projection: () => "EPSG:3857", toMap: (lon, lat) => O.fromLonLat([lon, lat], "EPSG:3857") };
+    for (const name of ["liveClient", "setLiveShares", "liveChanged", "syncLiveTopics", "onLivePush", "stopLive", "drawLive", "liveShare", "liveStyle", "labelText"])
+        self[name] = methods[name].bind(self);
+    try {
+        self.setLiveShares(map.normalizeLiveShares(liveConfig(10)));
+        assert.deepEqual(client.topics(), ["locationShare:S1", "locationShare:S2", "locationShare:S3"]);
+        const at = (id) => self.liveSource.getFeatureById(id).getGeometry().getCoordinates();
+        const near = (a, b) => Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
+        assert.ok(near(at("live:S1"), O.fromLonLat([-122.6, 45.5])));
+        assert.equal(self.liveSource.getFeatureById("live:S2"), null, "a share with no position yet has no marker");
+        const kinds = () => self.liveSource.getFeatures().filter((feature) => feature.get("shareId") === "S1").map((feature) => feature.get("liveKind")).sort();
+        assert.deepEqual(kinds(), ["accuracy", "marker", "trail"]);
+        const marker = () => self.liveStyle(O, self.liveSource.getFeatureById("live:S1"));
+        assert.equal(marker().getText().getText(), "Sam Lee · just now", "the label and the age, as canvas text");
+        assert.equal(marker().getImage().getFill().getColor(), "rgba(0,121,107,1)");
+        assert.equal(emitted[emitted.length - 1][0], "live-change");
+        // a position pushed: the marker moves, the trail grows
+        client.push("locationShare:S1", { shareId: "S1", event: "position", latitude: 45.6, longitude: -122.5, accuracy: 8 });
+        assert.ok(near(at("live:S1"), O.fromLonLat([-122.5, 45.6])));
+        assert.equal(self.liveShare("S1").trail.length, 3);
+        assert.equal(self.liveShare("S1").latest.accuracy, 8);
+        client.push("locationShare:S1", { shareId: "S2", event: "ended" });
+        assert.ok(self.liveShare("S2"), "a message for another share on this topic is not taken");
+        // no report for over five minutes: grey and dashed
+        self.liveShares = self.liveShares.map((share) => (share.shareId === "S1" ? Object.assign({}, share, { seenAt: Date.now() - 6 * 60000 }) : share));
+        assert.equal(marker().getImage().getFill().getColor(), "rgba(117,117,117,0.6)");
+        assert.deepEqual(marker().getImage().getStroke().getLineDash(), [3, 3]);
+        assert.ok(/6 min ago$/.test(marker().getText().getText()));
+        // revoked tells the owner of an entry gone, not the share; ended takes it off, and so does revoked for a viewer
+        client.push("locationShare:S2", { shareId: "S2", event: "revoked" });
+        assert.ok(self.liveShare("S2"));
+        client.push("locationShare:S1", { shareId: "S1", event: "ended" });
+        assert.equal(self.liveShare("S1"), null);
+        assert.equal(self.liveSource.getFeatureById("live:S1"), null);
+        assert.deepEqual(client.topics(), ["locationShare:S2", "locationShare:S3"], "its topic is no longer followed");
+        client.push("locationShare:S3", { shareId: "S3", event: "revoked" });
+        assert.deepEqual(client.topics(), ["locationShare:S2"]);
+        // a read again that still lists an ended share does not bring it back; a pushed position newer than the read's is kept
+        client.push("locationShare:S2", { shareId: "S2", event: "position", latitude: 10, longitude: 20 });
+        self.setLiveShares(map.normalizeLiveShares(liveConfig(600)));
+        assert.deepEqual(self.liveShares.map((share) => share.shareId), ["S2"]);
+        assert.deepEqual(self.liveShare("S2").latest, { lon: 20, lat: 10, accuracy: null, observedDate: null });
+    } finally {
+        self.stopLive();
+    }
+    assert.deepEqual(client.topics(), [], "every topic is let go when the map unmounts");
+});
+
+test("the live shares are listed under the map as text, followed while it is mounted and let go when it unmounts", async () => {
+    const client = fakeNotifications();
+    const before = moqui.webrootVue;
+    moqui.webrootVue = { notificationClient: client };
+    const holder = document.createElement("div");
+    document.body.appendChild(holder);
+    const app = Vue.createApp({ render: () => Vue.h(map.components["m-map-view"], { id: "Live", libraryError: "fixture bundle unavailable",
+        config: { locationShares: [{ shareId: "L1", role: "viewer", label: "<img src=x onerror=alert(1)>Pat & Co", approximate: true,
+            latest: { latitude: 41.8781, longitude: -87.6298, ageSeconds: 0 } }] } }) });
+    try {
+        app.mount(holder);
+        await Vue.nextTick();
+        await Vue.nextTick();
+        const item = () => holder.querySelector("#Live .m-map-live-share");
+        assert.equal(item().querySelector(".m-map-live-label").textContent, "Pat & Co");
+        assert.equal(holder.querySelector("#Live .m-map-live img"), null, "a label is never markup");
+        assert.equal(item().querySelector(".m-map-live-coordinates").textContent, "41.87810, -87.62980");
+        assert.ok(item().textContent.includes("approximate"));
+        assert.deepEqual(client.topics(), ["locationShare:L1"]);
+        client.push("locationShare:L1", { shareId: "L1", event: "position", latitude: 41.9, longitude: -87.7 });
+        await Vue.nextTick();
+        assert.equal(item().querySelector(".m-map-live-coordinates").textContent, "41.90000, -87.70000");
+        client.push("locationShare:L1", { shareId: "L1", event: "ended" });
+        await Vue.nextTick();
+        assert.equal(item(), null);
+        app.unmount();
+        assert.deepEqual(client.topics(), []);
+    } finally {
+        moqui.webrootVue = before;
+        holder.remove();
     }
 });

@@ -24,6 +24,56 @@
     Object.keys(moqui.qvtComponents || {}).forEach((name) => component(name, moqui.qvtComponents[name]));
 
     moqui.urlExtensions = { js: "qjs", vue: "qvue", qvt: "qvt" };
+    // What a screen forgets of the user in this browser at a sign-out (the account menu's Logout, logoutClick): functions,
+    // each called once (a promise waited on), added by the screen (Maps › Browse's live location shares this tab sends)
+    moqui.beforeLogoutHooks = moqui.beforeLogoutHooks || new Set();
+
+    // Shell indicators (docs/ui/Qvt-Client.md, Shell indicators): status chips in the app bar on every screen, kept by the
+    // shell, which outlives the screens (Maps' "Sharing location", plans/Location-Sharing.md §3.3). set(key, {label, icon,
+    // tone, title, action, sequence}) adds or replaces one (key: letters, digits, _ and -; tone: primary, positive, warning,
+    // negative or info; action: a path of this site the shell goes to, {url}, or a function, {onClick}); remove(key) takes
+    // it off; note(key, text) puts a screen's few words after its label, kept until note(key, null) or clear(); clear()
+    // takes every one off, which a sign-out does (beforeLogoutHooks). Reactive; the label, note and title are plain text, cut
+    // short and shown as text. The indicators the server's shell-indicator providers answer are the shell's own
+    // (loadShellIndicators).
+    const INDICATOR_TONES = ["primary", "positive", "warning", "negative", "info"];
+    const indicatorText = (value, max) => (value === null || value === undefined || typeof value === "object" ? "" : String(value))
+        .replace(/[\u0000-\u001f\u007f-\u009f‪-‮⁦-⁩]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+    const indicatorPath = (url) => (typeof url === "string" && /^\/(?![\/\\])/.test(url) && !/[\u0000-\u001f\s]/.test(url) ? url : null);
+    const indicatorState = root.Vue && root.Vue.reactive ? root.Vue.reactive({ items: {}, notes: {} }) : { items: {}, notes: {} };
+    moqui.shellIndicators = {
+        state: indicatorState,
+        set(key, given) {
+            const id = /^[A-Za-z0-9_-]{1,60}$/.test(String(key || "")) ? String(key) : null;
+            const value = given && typeof given === "object" ? given : {};
+            const label = indicatorText(value.label, 60);
+            if (!id || !label) return false;
+            const action = value.action;
+            const onClick = typeof action === "function" ? action : action && typeof action.onClick === "function" ? action.onClick : null;
+            const url = onClick ? null : indicatorPath(typeof action === "string" ? action : action && action.url);
+            indicatorState.items[id] = { key: id, label, icon: /^[a-z0-9_]{1,60}$/.test(String(value.icon || "")) ? value.icon : "sym_o_info",
+                tone: INDICATOR_TONES.indexOf(value.tone) >= 0 ? value.tone : "primary", title: indicatorText(value.title, 200), url, onClick,
+                sequence: Number(value.sequence) || 0, source: indicatorText(value.source, 60) };
+            return true;
+        },
+        remove(key) { delete indicatorState.items[key]; },
+        note(key, text) {
+            const words = indicatorText(text, 40);
+            if (words) indicatorState.notes[key] = words; else delete indicatorState.notes[key];
+        },
+        get(key) { return indicatorState.items[key] || null; },
+        // in sequence then key order, each with its text: its label and its note
+        list() {
+            return Object.keys(indicatorState.items).map((key) => indicatorState.items[key])
+                .sort((a, b) => a.sequence - b.sequence || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+                .map((item) => Object.assign({}, item, { text: item.label + (indicatorState.notes[item.key] ? " · " + indicatorState.notes[item.key] : "") }));
+        },
+        clear() {
+            Object.keys(indicatorState.items).forEach((key) => { delete indicatorState.items[key]; });
+            Object.keys(indicatorState.notes).forEach((key) => { delete indicatorState.notes[key]; });
+        }
+    };
+    moqui.beforeLogoutHooks.add(() => moqui.shellIndicators.clear());
 
     moqui.getQuasarColor = (bootstrapColor) => {
         // Quasar colors: primary, secondary, accent, dark, positive, negative, info, warning
@@ -8230,8 +8280,10 @@
     // by its definition (as m-diagram-zoom draws m-pan-zoom). The bundle failing is passed on as library-error, so m-map-view lists the places in its place; until the file
     // has loaded, and when it cannot, the places are listed here, so a record's actions stay usable. config is the map's
     // configuration (an object or its JSON; the shape is in js/WebrootMap.js), config-url a transition answering the effective
-    // one. Emits pick ({lon, lat}), select, view-change and edit-change; editCommand(name, value) is m-map-view's (the editing
-    // of an overlay, js/WebrootMap.js), answering null until the map has loaded.
+    // one. Emits pick ({lon, lat}), select, view-change and edit-change; a live-change listener (the live layer's shares,
+    // plans/Location-Sharing.md §3.3) is passed on to m-map-view with the other attributes it does not declare, and
+    // m-map-view emits it. editCommand(name, value) is m-map-view's (the editing of an overlay, js/WebrootMap.js),
+    // answering null until the map has loaded.
     let mapLoad = null;
     // The bundle is imported by js/WebrootMap.js's map.loadOpenLayers (its entries by the hashed names ol-map.json gives); a
     // library that did not load is not kept, so the next map tries again.
@@ -9943,6 +9995,12 @@
         "\n" +
         "        <q-space></q-space>\n" +
         "\n" +
+        // the shell indicators (moqui.shellIndicators): a chip each, its label from 600 px and its icon alone below, its text as text
+        "        <q-chip v-for=\"indicator in shellIndicatorList\" :key=\"indicator.key\" :id=\"'m-indicator-' + indicator.key\" dense square clickable\n" +
+        "                class=\"m-shell-indicator q-mx-xs\" :color=\"indicator.tone\" text-color=\"white\" :icon=\"indicator.icon\" :aria-label=\"indicator.text\" @click=\"indicatorClick(indicator)\">\n" +
+        "            <span class=\"m-shell-indicator-label gt-xs\">{{indicator.text}}</span>\n" +
+        "            <q-tooltip>{{indicator.title ? indicator.text + ': ' + indicator.title : indicator.text}}</q-tooltip>\n" +
+        "        </q-chip>\n" +
         // Search opens the palette (Ctrl+K or Cmd+K anywhere); a label and the key from 1024 px, the icon alone below
         "        <template v-if=\"!handheld\">\n" +
         "        <q-btn flat dense no-caps id=\"m-search\" icon=\"sym_o_search\" :aria-label=\"labels.search\" :round=\"!$q.screen.gt.sm\" :label=\"$q.screen.gt.sm ? labels.search : undefined\" @click=\"openPalette()\">\n" +
@@ -10338,7 +10396,44 @@
                     this.shellCounts = moqui.isPlainObject(data.counts) ? data.counts : {};
                     this.registerProviderKeys();
                     this.restoreTray();
+                    this.loadShellIndicators();
                 }, moqui.handleAjaxError);
+            },
+            // The indicators of the server (/shellIndicators: the apps' shell-indicator providers), set as the shell's own:
+            // asked when the shell data is, again at the soonest refreshAt they name, and on a push whose topic starts with a
+            // refreshOn topicPrefix of a provider and whose event is one of its events; one no longer answered is taken off
+            loadShellIndicators() {
+                if (!this.userId) return null;
+                clearTimeout(this.indicatorTimer);
+                return moqui.request(this.appRootPath + "/shellIndicators").then((result) => {
+                    const json = result.json && moqui.isPlainObject(result.json) ? result.json : {};
+                    const keys = [];
+                    let next = null;
+                    (Array.isArray(json.indicators) ? json.indicators : []).forEach((given) => {
+                        if (!moqui.isPlainObject(given) || !moqui.shellIndicators.set(given.key, Object.assign({}, given, { action: { url: given.url }, source: "server" }))) return;
+                        keys.push(String(given.key));
+                        const at = Number(given.refreshAt);
+                        if (Number.isFinite(at) && (next === null || at < next)) next = at;
+                    });
+                    moqui.shellIndicators.list().filter((item) => item.source === "server" && keys.indexOf(item.key) < 0).forEach((item) => moqui.shellIndicators.remove(item.key));
+                    this.indicatorRules = (Array.isArray(json.refreshOn) ? json.refreshOn : []).filter((rule) => moqui.isPlainObject(rule) && moqui.isString(rule.topicPrefix) && rule.topicPrefix)
+                        .map((rule) => ({ topicPrefix: rule.topicPrefix, events: Array.isArray(rule.events) ? rule.events.map(String) : null }));
+                    if (next !== null) this.indicatorTimer = setTimeout(() => this.loadShellIndicators(), Math.min(Math.max(next - Date.now() + 1000, 5000), 86400000));
+                }, (err) => console.info("shell indicators not loaded", err && err.status));
+            },
+            indicatorClick(indicator) {
+                const item = moqui.shellIndicators.get(indicator.key);
+                if (!item) return;
+                if (item.onClick) { try { item.onClick(item); } catch (err) { console.warn("A shell indicator's action failed", err); } return; }
+                if (item.url) this.setUrl(item.url);
+            },
+            // whether a push names a topic and an event an indicator provider asked to be read again on
+            indicatorRefreshFor(topic, jsonObj) {
+                if (!this.indicatorRules || !this.indicatorRules.length) return false;
+                let message = jsonObj.message;
+                if (moqui.isString(message)) { try { message = JSON.parse(message); } catch (err) { message = null; } }
+                const event = moqui.isPlainObject(message) && message.event !== undefined ? String(message.event) : "";
+                return this.indicatorRules.some((rule) => topic.indexOf(rule.topicPrefix) === 0 && (!rule.events || rule.events.indexOf(event) >= 0));
             },
             // the counts alone, for the poll while the notification socket is down; nothing without a counts service
             loadShellCounts() {
@@ -10364,6 +10459,10 @@
             onShellNotification(jsonObj) {
                 const topic = jsonObj && jsonObj.topic ? String(jsonObj.topic) : "";
                 if (!topic) return;
+                if (this.indicatorRefreshFor(topic, jsonObj)) {
+                    clearTimeout(this.indicatorDebounce);
+                    this.indicatorDebounce = setTimeout(() => this.loadShellIndicators(), 500);
+                }
                 if (topic === "shellCounts") {
                     let counts = jsonObj.message;
                     if (moqui.isString(counts)) { try { counts = JSON.parse(counts); } catch (err) { counts = null; } }
@@ -10564,14 +10663,18 @@
                     .catch(moqui.handleAjaxError);
             },
             // Logout ends this browser's Web Push subscription first, so the next user of the device gets none of this
-            // user's pushes; bounded by moqui.push.beforeLogout. It closes the page's crypto store too (WebrootCrypto.js).
+            // user's pushes; bounded by moqui.push.beforeLogout. It closes the page's crypto store too (WebrootCrypto.js), and
+            // runs each of moqui.beforeLogoutHooks (what a screen forgets of the user in this browser: Maps › Browse's live
+            // location shares this tab sends), a failing one passed over.
             logoutClick(event) {
-                if ((!moqui.push && !moqui.crypto) || event.defaultPrevented) return;
+                const hooks = Array.from(moqui.beforeLogoutHooks || []);
+                if ((!moqui.push && !moqui.crypto && !hooks.length) || event.defaultPrevented) return;
                 event.preventDefault();
                 const href = this.shell.logoutUrl;
                 const crypto = moqui.crypto ? moqui.crypto.close().catch(() => null) : Promise.resolve();
                 const push = moqui.push ? moqui.push.beforeLogout() : Promise.resolve();
-                Promise.all([crypto, push]).then(() => { root.location.href = href; });
+                const forgotten = hooks.map((hook) => Promise.resolve().then(hook).catch((err) => { console.warn("A before-logout hook failed", err); }));
+                Promise.all([crypto, push].concat(forgotten)).then(() => { root.location.href = href; });
             },
             appearanceAllowed(key) { return moqui.appearanceAllowed(key); },
             themeMenuAllowed() { return !!this.userId && moqui.themeChoiceAllowed(); },
@@ -10874,6 +10977,7 @@
             // 600 px Mail and Messages are one button to the mail screen with the two counts summed, and the tray tabs one tray button
             // (key tray, any: it opens the tray on its last tab, whose tabs switch) with their counts summed, so a phone header does not
             // overflow. The updates count has no button: the Notifications tab shows it.
+            shellIndicatorList() { return moqui.shellIndicators.list(); },
             headerCounters() {
                 const tray = (key) => this.trayTabs.find((tab) => tab.key === key);
                 const values = this.shellValues;
@@ -11038,6 +11142,8 @@
             (this.providerKeysOff || []).forEach((off) => off());
             root.document.removeEventListener("keydown", this.onShellKeydown);
             clearInterval(this.shellPollTimer);
+            clearTimeout(this.indicatorTimer);
+            clearTimeout(this.indicatorDebounce);
         }
     });
 

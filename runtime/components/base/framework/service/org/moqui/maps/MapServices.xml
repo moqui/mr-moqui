@@ -262,12 +262,22 @@ along with this software (see the LICENSE.md file). If not, see
                 empty for the initial view</description></parameter>
             <parameter name="recordLayers" type="Boolean" default="true"><description>false: the record layers are listed and
                 no adapter is asked for their features (the local-map dialog, which shows one record)</description></parameter>
+            <parameter name="locationShares" type="Boolean" default="false"><description>true: the configuration carries
+                locationShares (plans/Location-Sharing.md §3.3), the caller's own active shares and those shared with them
+                now, read only through LocationServices find#MyShares, find#SharedWithMe and get#Share, which check the
+                caller against each share's current audience: Maps › Browse's getConfig asks for them (its terminal twin reads
+                the same through MapConfig.js liveShares), a map-view's config-url and the local-map dialog do not; with
+                locationSharesFailed true when one of those reads failed</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="config" type="Map"><description>{profileId, profile: {profileId, profileName, basemaps, basemap,
                 allowedOrigins, notice}, layers, recordLayers, center, zoom, extent, units, points, features, featuresTruncated, record,
                 fallbacks: [{kind, id, reasonCode, message}], layerErrors: [{id, label, reasonCode, message}],
-                externalRequests}</description></parameter>
+                externalRequests, and with locationShares: locationShares [{shareId, role (owner or viewer), label, ownerName
+                (a viewer's), purposeText, fromDate, thruDate (epoch millis), approximate, keepTrail, latest {latitude,
+                longitude, accuracy, heading, speed, observedDate, ageSeconds} or null, trail [[longitude, latitude]] (its
+                latest 500 points, of at most 10 shares, when kept), and an owner's trailKeepDays, trailCount, audience
+                [{audienceSeqId, audienceTypeEnumId, userGroupId, name}] and reportIntervalSeconds}]}</description></parameter>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('effectiveConfig', context))</script></actions>
     </service>

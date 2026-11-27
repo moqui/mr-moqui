@@ -6,5 +6,6 @@
     "props": {
       "source": "terminalMap"
     }
-  }
+  },
+  {"t": "dynamicContainer", "id": "MapsLocationShares", "url": ${JSON.stringify(sri.buildUrl('../LocationSharesTui').getUrlWithParams())}}
 ]
