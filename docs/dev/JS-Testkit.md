@@ -176,6 +176,11 @@ priceMap.price == 16.99
 - `===` and `!==` stay strict JavaScript.
 - A bare value, `!x`, and the sides of `&&` and `||` use Groovy truth: `null`, `false`, zero (a number or a
   decimal), and an empty string, list, map or `Set` are false.
+- `a || b` gives `a` when `a` is true by Groovy truth, else `b`; `a && b` gives `b` when `a` is true, else `a`. The
+  value is the operand's own, as in JavaScript, so `&&` and `||` work inside a condition as values:
+  `Array.from(row.items || [])` is the list or `[]`, and `(row.name || "") == ""` compares the name. Only the operand
+  chosen by Groovy truth differs from JavaScript (`[] || x` is `x`, `0 && x` is `0`). Each side is evaluated once, and
+  the right side only when it is chosen. The condition as a whole is then judged by Groovy truth, as any value is.
 - A condition that is a call and returns `undefined` passes, as a void method call does in Spock. So an action in
   `then` that returns nothing (`capture.clear()`) passes without checking anything, while a call that returns a
   value is checked as any condition is: `map.delete(key)` on a missing key returns false and fails the feature. Do
