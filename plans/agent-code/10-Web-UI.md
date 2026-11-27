@@ -458,17 +458,19 @@ and a comment saying what it does; there is no `default-property` and no `${name
 (`moqui_conf__agent_code__home`, [Run-Deploy](../../docs/Run-Deploy.md#settings-and-the-environment)). T3's
 `T3CODE_*` environment variables become these attributes; none is read from the environment by its own name.
 
+The element comes with P1 (the process host is the first reader); P0 needs none of these. Agent Code has no
+on and off attribute of its own: the one switch is the webroot's `/agentws` endpoint
+([14 §1](14-Security.md#1-permissions-and-groups)).
+
 ```xml
-<agent-code enabled="dev" home="" run-as="" max-sessions="16" session-idle-minutes="30" terminal-shell=""
-        port-discovery="true" browser-sandbox="true" handoff-token-cap="16000" machine-kind="" advertise="auto">
-    <!-- probe-timeout-ms: T3's value, written here when P1 builds the driver -->
-    <codex probe-timeout-ms="..."/>
+<agent-code home="" run-as="" max-sessions="16" session-idle-minutes="30" terminal-shell="" port-discovery="true"
+        browser-sandbox="true" handoff-token-cap="16000" machine-kind="" advertise="auto">
+    <codex probe-timeout-ms="10000"/>
 </agent-code>
 ```
 
 | Selector | Default | What it does |
 |---|---|---|
-| `agent-code@enabled` | `dev` | `true`, `false`, or `dev` (on only on a dev instance): the component's screens, services, REST and MCP tools. The `/agentws` socket also needs its endpoint on ([14 §1](14-Security.md#1-permissions-and-groups), [09 §2.1](09-Wire-API.md#21-route-and-auth)) |
 | `agent-code@home` | empty | The Agent Code home: `runtime/agent-code/` on a server and the app data directory's `agent-code/` on desktop when empty ([02 §2](02-Orchestration.md#2-thread-creation-and-launch)) |
 | `agent-code@run-as` | empty | A separate OS account for harnesses, terminals and scripts, through `moqui-code-runas`, Linux only; empty runs them as the server's user ([14 §5](14-Security.md#5-process-isolation)) |
 | `agent-code@max-sessions` | `16` | Harness processes per cluster member ([03 §4](03-Providers.md#4-the-process-host)) |
@@ -479,7 +481,7 @@ and a comment saying what it does; there is no `default-property` and no `${name
 | `agent-code@handoff-token-cap` | `16000` | The portable handoff's budget, 1,024 to 64,000 ([02 §8.4](02-Orchestration.md#84-portable-handoff)) |
 | `agent-code@machine-kind` | empty | The descriptor's `platform.machine` (server, cloud, desktop, laptop); empty is found from the host ([13 §1](13-Servers-Linking.md#1-environment)) |
 | `agent-code@advertise` | `auto` | The descriptor's advertised endpoints ([13 §1](13-Servers-Linking.md#1-environment)) |
-| `agent-code/codex@probe-timeout-ms` | T3's | How long the Codex driver's probe waits ([03 §5](03-Providers.md#5-per-driver-plan)) |
+| `agent-code/codex@probe-timeout-ms` | `10000` | How long the Codex driver's probe waits ([03 §5](03-Providers.md#5-per-driver-plan)). Ours: T3's value is not in the plan's sources |
 
 A secret is never one of these. A provider's or a code host's credential is a secret source
 ([07 §1.1](07-Secrets-Guest-Voice-Usage.md#11-store), [04 §1](04-Git.md#1-code-hosts)). Settings an admin changes

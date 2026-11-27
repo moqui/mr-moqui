@@ -19,7 +19,7 @@ usage}.md`, `t3:packages/contracts/src/{secretRequest,secretReference,guestShare
 | value | An encrypted field of `AgentSecretSource` (today's field key) | Phase 1 |
 | sealed | `moqui.security.SecretValue` (Sealed-Secrets S1) | When S1 is built; a move job re-encrypts `value` rows |
 | onepassword | 1Password through the `op` CLI on the server host (desktop sign-in, service account, Connect server), as T3 | Phase 1 |
-| vault | A vault lease (Vault-Instances) | When vaults are built; best fit for a run's provider credential and for scheduled tasks |
+| vault | An operational vault item used under a lease ([Vaults](../../docs/security/Vaults.md#leases); leases are built) | When Agent Code binds its credentials to vault items (P8); best fit for a run's provider credential and for scheduled tasks |
 
 - A field that takes a credential (provider env, host account token, webhook secret, device host identity, voice
   cloud key, MCP auth) has a source picker: **Value** or a reference such as `op://vault/item/field`. A check button

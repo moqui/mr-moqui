@@ -22,21 +22,22 @@ the machine. MR Moqui cannot. This file lists every gate.
 - `AgentCodeHost` and `AgentCodeAdmin` are **sealed** permissions: only a holder can grant them
   (`assertSealedPermissionGrant`). `AgentCodeHost` is code execution as the server's OS user, like `TERMINAL_HOST`.
 - Agent Code also needs `AgentUse` (the agent runtime) for the native engine. A user without `AgentUse` can still use
-  outside harnesses (Codex, Claude) when the admin allows it (the `AgentCodePolicy` row `harnessWithoutAgentUse`,
-  default false).
-- The component is off unless the conf turns it on: `agent-code@enabled` (`true`, `false`, or `dev`, the default: on
-  only on a dev instance; [10 §9.5](10-Web-UI.md#95-conf-settings)). On a production instance the admin sets it to
-  `true`. The `/agentws` socket and the descriptor have their own switch as well, the webroot's
-  `endpoint[/agentws]@enabled` (same values, default `dev`), and are open only when both allow them. Both switches
-  follow [Runtime-Config](../Runtime-Config.md#38-services-carried-on-a-listener): the route stays mounted and reads
-  its switch on each request, so turning one off takes effect while the server runs (404, open sockets closed), with
-  no restart ([09 §2.1](09-Wire-API.md#21-route-and-auth)).
+  outside harnesses (Codex, Claude) when the admin allows it (the `AgentCodePolicy` row
+  `access.harnessWithoutAgentUse`, default false; added to the settings schema in P1, with the native engine seam).
+- One switch: the webroot's `<endpoint path="/agentws" enabled="..."/>` (`true`, `false`, or `dev`, the default: on
+  only on a dev instance), as PR #213 builds it. It turns the `/agentws` socket and the descriptor on; on a production
+  instance the admin sets it to `true`. The screens, REST and services need no switch of their own: they are gated by
+  `AgentCodeUse` and the sealed `AgentCodeHost` and `AgentCodeAdmin`. Today the route is mounted only when the switch
+  is on at listen, and `endpoint` is a restart class, so a change waits for a restart; once
+  [Runtime-Config §3.8](../Runtime-Config.md#38-services-carried-on-a-listener) is built the route stays mounted and
+  reads its switch on each request, so it turns off and on while the server runs
+  ([09 §2.1](09-Wire-API.md#21-route-and-auth)).
 
 ## 2. Scopes
 
 Every `/agentws` method, REST route and MCP tool names one scope. A browser session holds every scope its
-permissions allow. A login key holds only the scopes in `UserLoginKey.scope`. A request passes only when both the
-scope and the permission pass.
+permissions allow. A login key holds only the scopes it was granted (stored on master's one-scope-per-key model,
+"Key scopes on master" below). A request passes only when both the scope and the permission pass.
 
 | T3 scope | MR Moqui scope | Needs permission |
 |---|---|---|
@@ -130,8 +131,10 @@ is written, the `code:*` rules above are T3's and not a storage format.
   environment); Agent Code fixes the old adapter in the same phase.
 - Each user's provider home is separate (`<agent-code@home>/homes/<userId>/<instance>/`, mode 0700), so one user's
   Codex or Claude login is not another user's.
-- Work roots are under `<agent-code@home>/worktrees/` or a project root the admin allowed (the `AgentCodePolicy` row
-  `projectRoots`, a list). Opening a project elsewhere needs `AgentCodeHost`.
+- Work roots are under the worktrees directory (the `worktreesDirectory` setting, else `<agent-code@home>/worktrees/`,
+  [02 §9](02-Orchestration.md#9-worktrees)) or a project root the admin allowed (the `AgentCodePolicy` row
+  `access.projectRoots`, a list, added to the settings schema in P2). Opening a project elsewhere needs
+  `AgentCodeHost`.
 - Lower priority: `nice 10`, and on Linux a cgroup per thread (`agent-code.slice/<conversationId>`) with memory and
   CPU limits from settings when systemd is present.
 - The runtime directory (`runtime/conf`, `runtime/db`, keys, `.env`) is not readable from a work root by path rules in

@@ -260,7 +260,7 @@ and gains a link, so one worktree shows in both apps.
 | environment label | the `AgentCodeSetting` row `environment.label` | **New** |
 | environment descriptor (`/.well-known/t3/environment`) | `/.well-known/moqui/agent-code` | route ([09](09-Wire-API.md)) |
 | auth session (cookie, bearer, DPoP; 30 days) | Moqui `HttpSession` for browsers; `UserLoginKey` for devices and links | **Use** |
-| session scopes | `UserLoginKey.scope`: space-separated scope list (§14) | **Ext** (values) |
+| session scopes | `UserLoginKey.scope`: one scope per key, empty for the full account, as master keeps it; a new Agent Code scope in `KEY_SCOPES`, declared by its REST resources, with T3's finer scopes checked inside it ([14 §2](14-Security.md#2-scopes)) | **Ext** (values) |
 | DPoP key binding | new `UserLoginKey.dpopThumbprint` | **Ext** |
 | pairing code (12 chars, 5 min) and pairing link `/pair#token=` | `ClientPairingCode` (package `moqui.security`) | **New** |
 | connect device approval code (K7QM-2XFD) | `ClientPairingCode` kind device-approval | **New** |

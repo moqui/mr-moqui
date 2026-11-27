@@ -36,7 +36,7 @@ Descriptor and well-known routes:
 | T3 | MR Moqui |
 |---|---|
 | `t3` / `t3 start` (open the browser) | `moqui` (existing) prints the URL; `moqui code open` opens `/qapps/code`. |
-| `t3 serve` (headless, print pairing) | `moqui serve` (existing). When Agent Code is on (`agent-code@enabled`, [14 §1](14-Security.md#1-permissions-and-groups)) it prints a pairing QR at start when no user has a device yet and the console is a TTY. |
+| `t3 serve` (headless, print pairing) | `moqui serve` (existing). When Agent Code is on (the `/agentws` endpoint, [14 §1](14-Security.md#1-permissions-and-groups)) it prints a pairing QR at start when no user has a device yet and the console is a TTY. |
 | `--host`, `--port`, `--lan` | Existing listener conf (`webapp` host and port). `--lan` = bind `0.0.0.0` with `webapp-list/webapp[webroot]@private-network-only="true"` (new framework setting, default false, in `MoquiDefaultConf.xml` with its XSD attribute and conf schema entry): close a connection unless both ends are loopback, private, or tailnet addresses. |
 | `--base-dir` (`~/.t3`) | `runtime/` (existing). Agent Code data under `agent-code@home` ([02 §2](02-Orchestration.md#2-thread-creation-and-launch)). |
 | `server-runtime.json` (PID, origin, port) | `runtime/db/server-runtime.json` (new): pid, origin, port, environment id, start time. The SSH launch and the CLI read it. |
@@ -248,7 +248,8 @@ Open decision: a hosted relay (moqui.org) for users with no edge node. Not in th
   streams forward as a channel per stream.
 - A harness process belongs to one node. When that node goes down, its runs are marked `interrupted`; resume needs
   that node back or a move of the work root ([02 §5](02-Orchestration.md#5-interrupt-stop-recovery)).
-- New projects pick the host node by the `AgentCodeSetting` row `hostNodes` (a list) and free disk; the user can choose.
+- New projects pick the host node by the `AgentCodeSetting` row `cluster.hostNodes` (a list, added to the settings schema in P6) and free disk; the
+  user can choose.
 - Effects (`AgentCodeEffect`) are leased per node; harness effects only on the work-root node.
 - Schedulers (automations, PR watch, cleanup) run on one node by the existing ServiceJob lease.
 - **Edge**: a local node behind an edge node is a normal environment at its edge host name. Through an edge node in

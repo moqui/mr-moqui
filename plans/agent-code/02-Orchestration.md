@@ -79,7 +79,7 @@ Internal-only commands, as in T3: `run.output.submit`, `thread.guest-share.open|
 | Agent-created threads (`create_threads`, `t3_thread_launch`) | Same service, `creationSourceEnumId` AgcsMcp, recorded on the parent run. |
 
 The Agent Code home is a new conf setting, `agent-code@home` ([10 §9.5](10-Web-UI.md#95-conf-settings)): empty by
-default, which is `runtime/agent-code/` on a server and the app data directory's `agent-code/` on desktop. It holds `scratch/`, `worktrees/`, `projects/`, `artifacts/`, `browser/`, `voice/` and `logs/`.
+default, which is `runtime/agent-code/` on a server and the app data directory's `agent-code/` on desktop. It holds `scratch/`, `worktrees/` (unless the `worktreesDirectory` setting names another place, §9), `projects/`, `artifacts/`, `browser/`, `voice/` and `logs/`.
 
 ## 3. Settle, snooze, pin, tags, unread
 
@@ -252,7 +252,7 @@ Port of `ContextHandoffService.ts` into `crates/moqui-code/src/handoff.rs`.
 | `defaultThreadEnvMode` (null inherits `t3.json`, then local) | Same resolution: project setting, environment setting, project file, built-in. |
 | `newWorktreesStartFromOrigin` (true) | Same. Fetch before the worktree is made. |
 | `worktreeSubmodules` recursive, top-level, none | Same, on `moqui-git` submodule support (or the `git` CLI when the crate lacks it; see open decision O6 in [16](16-Phases.md)). |
-| `worktreesDirectory` (default `<home>/worktrees`) | `<agent-code@home>/worktrees/<project-slug>/<branch>`. |
+| `worktreesDirectory` (default `<home>/worktrees`) | The `AgentCodeSetting` `worktreesDirectory` decides (a server setting, as T3's); when it is empty, the default, worktrees go in `<agent-code@home>/worktrees/`. Either way a worktree is `<project-slug>/<branch>` under it. |
 | `fastWorktreeCheckout` (APFS clone cache, Git >= 2.42) | Desktop on macOS only. |
 | Sparse checkout from `worktreeSparsePatternsPath` | Same field in the project file. |
 | Branch naming `branchNamingMode` static (prefix `t3`), semantic, custom; `branchNameInstructions`; keep the temporary name when generation fails | Same modes. Static prefix default `moqui`. |
