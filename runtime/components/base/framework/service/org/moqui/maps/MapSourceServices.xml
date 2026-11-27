@@ -649,30 +649,31 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="build" noun="Package" allow-remote="false" transaction="ignore">
-        <description>The MapPackageBuild ServiceJob's run (started when its turn comes by schedule#PackageBuilds, after
-            create#Package, update#Package, a cancel or delete, each build's end and the hourly clean): the user's own package packageId, pending or
-            building, built as a new revision, while the package holds the run's buildKey (a run it no longer holds, one ended
-            as stale and asked for again, writes nothing; its files are named by its key, so two runs never share one).
-            transaction ignore: it holds no transaction while it cuts, each write its own, so its cancel and the sources'
-            revisions are read as committed. Each extract has what is left of maps@package-max-bytes, and the zip past it
-            fails the build. The run signs in as the package's owner (whoever's request, build's end or clean started it) and
-            stays so to its end, its context being the job's own. An owner whose account is closed (disabled for good, or
-            past its terminateDate) or whose password must change, or a run that throws, ends the package failed, so the run
-            never ends in error; an owner locked out for a few minutes after failed sign-ins (login@disable-minutes) puts the
-            build back to wait, and the scheduler passes it by until the lock ends. A call in a web request
-            never changes who is signed in. A source registered again since the
-            build was asked fails it (checked when it starts and again when the cuts end). Each basemap archive the
-            profile offers the user now is cut to the region and zooms (build#PackageExtract), with its style made
-            package-relative, its sprites and the map fonts; then the outline, and as asked the user's places and the
-            overlays they read now that meet the region (a tiled one as its tiles' extract), the postal codes whose point is
-            in it and the active Overture imports' places and addresses in it, each with its licenses; then manifest.json
-            (the package, the frozen effective configuration with every URL package-relative, the sources, each member's
+        <description>The MapPackageBuild ServiceJob's run (started when its turn comes by schedule#PackageBuilds,
+            after create#Package, update#Package, a cancel or delete, each build's end and the hourly clean): the user's
+            own package packageId, pending or building, built as a new revision, while the package holds the run's
+            buildKey (a run it no longer holds, one ended as stale and asked for again, writes nothing; its files are
+            named by its key, so two runs never share one). transaction ignore: it holds no transaction while it cuts,
+            each write its own, so its cancel and the sources' revisions are read as committed. Each extract has what is
+            left of maps@package-max-bytes, and the zip past it fails the build. The run signs in as the package's owner
+            (whoever's request, build's end or clean started it) and stays so to its end, its context being the job's
+            own. An owner whose account is closed (disabled for good, or past its terminateDate) or whose password must
+            change, or a run that throws, ends the package failed, so the run never ends in error; an owner locked out
+            for a few minutes after failed sign-ins (user-facade/login@disable-minutes) puts the build back to wait, and
+            the scheduler passes it by until the lock ends, starting it at its next pass after (within about an hour). A
+            call in a web request never changes who is signed in. A source registered again since the build was asked
+            fails it (checked when it starts and again when the cuts end). Each basemap archive the profile offers the
+            user now is cut to the region and zooms (build#PackageExtract), with its style made package-relative, its
+            sprites and the map fonts; then the outline, and as asked the user's places and the overlays they read now
+            that meet the region (a tiled one as its tiles' extract), the postal codes whose point is in it and the
+            active Overture imports' places and addresses in it, each with its licenses; then manifest.json (the
+            package, the frozen effective configuration with every URL package-relative, the sources, each member's
             path, size and SHA-256, what was left out and what failed) and the zip (ec.resource.writeZip, the archives,
-            sprites and fonts stored as they are) at runtime://tmp/map-packages/{packageId}-{revision}-{buildKey}.zip, its size and
-            SHA-256 recorded. A member that cannot be read is logged and named in the manifest's failures, and the rest
-            goes on. Progress and the cancel are on the row; the outcome is written in a transaction of its own, and a
-            failed or cancelled build leaves no file of its own (an earlier revision stays). Another user's package changes
-            nothing. Out: name, statusId and reason, for the job's notification.</description>
+            sprites and fonts stored as they are) at runtime://tmp/map-packages/{packageId}-{revision}-{buildKey}.zip,
+            its size and SHA-256 recorded. A member that cannot be read is logged and named in the manifest's failures,
+            and the rest goes on. Progress and the cancel are on the row; the outcome is written in a transaction of its
+            own, and a failed or cancelled build leaves no file of its own (an earlier revision stays). Another user's
+            package changes nothing. Out: name, statusId and reason, for the job's notification.</description>
         <in-parameters>
             <parameter name="packageId" required="true"/>
             <parameter name="buildKey" required="true"><description>The build's key, given when it was asked for: a run whose
@@ -689,8 +690,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="schedule" noun="PackageBuilds" allow-remote="false">
         <description>Start the waiting offline map builds the installation has room for (maps@package-concurrent-builds):
             one scheduler at a time (the MapPackageBuild ServiceJob row locked as its mutex), the busy packages read locked,
-            a run that ended without saying so (its ServiceJobRun gone or ended, or no word for an hour) ended failed and its
-            owner told, so a dead run never holds the queue, then the oldest waiting packages handed to the job. Registered
+            a run that ended without saying so (its ServiceJobRun gone or ended, no word for an hour once started, or never
+            started six hours after it was asked for) ended failed and its owner told, so a lost run holds its turn an hour or
+            some hours at most, then the oldest waiting packages handed to the job. Registered
             on commit by create#, update#, cancel# and delete#Package, so their own row writes are committed and their locks
             let go first; a build's end and the hourly clean run it in a transaction of their own. No group's.</description>
         <actions><script>ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('schedulePackageBuilds', context)</script></actions>
