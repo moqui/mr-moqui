@@ -76,6 +76,14 @@ Status values:
 - **confirmed**, **likely**, **not confirmed (second check)**: a second reader's verdict after trying to refute it.
 - **confirmed**, **likely (lead)**: the lead read the lines named in the finding's Re-check.
 - **refuted**: read again and found not to hold; listed at the end.
+- **fixed**, **fixed in part**: changed in code, the entry's **Fix** saying how, with its test; in part, the entry
+  says what is left.
+- **accepted**: read in code and found to hold, but no change is worth making (an Info finding whose risk is
+  understood, or a behaviour kept on purpose); the entry gives the reason.
+- **kept by decision**, **deferred**: the owner's call, recorded in the entry.
+- **moved**: carried to [Remaining-Work](Remaining-Work.md), [Testing-Needed](Testing-Needed.md) or
+  [Future-Plans](Future-Plans.md), which link back to the entry (what needs a device, a toolchain or a design of its
+  own).
 
 Severity: Critical, an unauthenticated caller gets code execution, another user's session, or bulk data. High, an
 anonymous write or read of private data, or a low-privilege user reaching another organization's data or a privileged
