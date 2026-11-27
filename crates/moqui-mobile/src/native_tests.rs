@@ -151,6 +151,15 @@ fn a_package_download_is_tried_again_only_when_it_may_go_on() {
         PACKAGE_RETRY
     );
     assert_eq!(package_outcome(&Status::Queued { revision: 1 }), PACKAGE_RETRY);
+    // the last run gives up a failure to try again, never a pause (WorkManager runs it again) or a run under way
+    assert!(package_gives_up(&failed(true)));
+    assert!(!package_gives_up(&Status::failed(1, "PAUSED", "later", true)));
+    assert!(!package_gives_up(&failed(false)));
+    assert!(!package_gives_up(&Status::Downloading {
+        revision: 1,
+        done: 1,
+        total: 2
+    }));
     for ended in [
         failed(false),
         Status::Installed { revision: 1 },

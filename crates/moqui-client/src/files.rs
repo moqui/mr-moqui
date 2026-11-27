@@ -66,19 +66,25 @@ pub(crate) fn create_private_dir(dir: &Path) -> std::io::Result<()> {
 }
 
 /// A name that stays in its directory as a file name: letters, digits, `.`, `-` and `_`, not empty and not starting
-/// with `.` (so not `..` or a hidden file), and not a name Windows keeps for a device ([`windows_reserved`]). Account
-/// ids and the store's file names are such names.
+/// with `.` (so not `..` or a hidden file). Account ids and the store's file names are such names. A name Windows
+/// keeps for a device is one too, so what an earlier version wrote under it is always found and forgotten; only a new
+/// file is refused such a name, where Windows would take it for the device ([`writable_name`]).
 pub(crate) fn plain_name(name: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('.')
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
-        && !windows_reserved(name)
+}
+
+/// A [`plain_name`] a new file may take on this system: on Windows not a device name ([`windows_reserved`]: an account
+/// of `aux.corp.net` keeps no store there), anywhere else any plain name. Never asked of a forget.
+pub(crate) fn writable_name(name: &str) -> bool {
+    plain_name(name) && !(cfg!(windows) && windows_reserved(name))
 }
 
 /// Whether Windows keeps `name` for a device whatever its extension: CON, PRN, AUX, NUL, COM0 to COM9 and LPT0 to LPT9
-/// before its first `.`, in any case (`nul.txt`, `Com1.tar.gz`). Refused on every system, so a name works on all.
+/// before its first `.`, in any case (`nul.txt`, `Com1.tar.gz`).
 pub(crate) fn windows_reserved(name: &str) -> bool {
     let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
     match stem.as_str() {

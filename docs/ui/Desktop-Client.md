@@ -214,8 +214,9 @@ A map region the user downloads to read with no network (plans/Maps-Offline.md Â
   `GetDiskFreeSpaceExW` on Windows; skipped, logged, where neither answers), and the cap counts what the account's other
   downloads under way still have to fetch. A personal account keeps them across sign-outs; a shared one's go at its
   sign-out or revocation, and removing an account deletes them (`Packages::forget`, with the store), no empty folder
-  named after the server left behind. No file or folder takes a name Windows keeps for a device (CON, NUL, COM1 and
-  the rest, with any extension).
+  named after the server left behind. A package id or member path that Windows keeps for a device (CON, NUL, COM1 and
+  the rest, with any extension) is refused on every system; an account id is refused one only on Windows, and only for
+  a new store or download there, never when its data is forgotten.
 - **The download** is a task of the host (a thread of its own), with the account's key as the outbox's requests: the
   server's `packageList` for the revision's tag and size, the zip by ranges of 4 MiB with `If-Range` the tag into
   `<revision>.zip.part`, resumed from its length by the next try; the whole file's SHA-256 against the tag; each member

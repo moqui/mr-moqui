@@ -66,7 +66,7 @@ JNI_NAMES=(
     org/moqui/mobile/ChatNotifications#forgetAccount org/moqui/mobile/Push#stopFcm
     org/moqui/mobile/PackageDownloadWorker#start org/moqui/mobile/PackageDownloadWorker#cancel
     org/moqui/mobile/PackageDownloadWorker#cancelAccount org/moqui/mobile/Native#packageDownload
-    org/moqui/mobile/Native#packagePause
+    org/moqui/mobile/Native#packagePause org/moqui/mobile/Native#packageGiveUp
     org/moqui/mobile/Ipc#attach org/moqui/mobile/RustWebView#loadUrlMainThread org/moqui/mobile/RustWebView#evalScript
     org/moqui/mobile/WryActivity#getAppClass org/moqui/mobile/WryActivity#getVersion
     org/moqui/mobile/WryActivity#setWebView org/rustls/platformverifier/CertificateVerifier#verifyCertificateChain

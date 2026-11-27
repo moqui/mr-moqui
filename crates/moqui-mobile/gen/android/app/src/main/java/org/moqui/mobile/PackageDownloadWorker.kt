@@ -58,6 +58,13 @@ class PackageDownloadWorker(context: Context, params: WorkerParameters) : Listen
       )
     } catch (err: Throwable) {
       Log.e(TAG, "The offline map $packageId was not downloaded", err)
+      if (PackageDownloadRules.isLast(runAttemptCount)) {
+        try {
+          Native.packageGiveUp(account, packageId)
+        } catch (gone: Throwable) {
+          Log.w(TAG, "The offline map's download was not given up", gone)
+        }
+      }
       PackageDownloadRules.RETRY
     }
     return when (PackageDownloadRules.outcome(ended, runAttemptCount, isStopped)) {
