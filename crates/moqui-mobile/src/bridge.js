@@ -355,8 +355,12 @@
                 return () => { const i = mediaListeners.indexOf(fn); if (i >= 0) mediaListeners.splice(i, 1); };
             }
         });
+        // the media relay (src/media.rs): the URL a media element of this page plays for a stream on one of `hosts`,
+        // so the app asks the host for bounded ranges (full speed) for it
+        const mediaRelay = (url, hosts) => "/__moqui-app/media?url=" + encodeURIComponent(String(url || "")) +
+            "&hosts=" + encodeURIComponent((Array.isArray(hosts) ? hosts : [hosts]).map(String).join(","));
         // pushDelivers: the chat's notifications come by FCM, not from the page's socket (plans/Comms-Messaging.md §7.2 rule 7)
-        window.moquiDesktop = Object.freeze({ socket, outbox, drafts, vault, notify, windowSeen, media, pushDelivers: true, location,
+        window.moquiDesktop = Object.freeze({ socket, outbox, drafts, vault, notify, windowSeen, media, mediaRelay, pushDelivers: true, location,
             storageScope: String(page.storageScope || ""),
             openInShell: (path) => ask("open_in_shell", { path: String(path || "") }),
             openExternal: (url) => invoke("open_external", { url: String(url || "") }),

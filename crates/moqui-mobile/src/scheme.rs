@@ -193,6 +193,13 @@ fn respond(app: &AppHandle, label: &str, request: tauri::http::Request<Vec<u8>>,
             Err(err) => plain(StatusCode::NOT_FOUND, &err),
         };
     }
+    // the media relay (src/media.rs): the main webview's server page only, GET and HEAD
+    if origin == APP_ORIGIN && request.uri().path() == crate::media::RELAY_PATH {
+        if label != crate::host::MAIN || !matches!(*request.method(), tauri::http::Method::GET | tauri::http::Method::HEAD) {
+            return plain(StatusCode::FORBIDDEN, "Not for this page");
+        }
+        return crate::media::relay(&request);
+    }
     // the WebView hands the scheme no body, and no Sec-Fetch-* headers (only User-Agent, Accept, Referer, the client
     // hints, and Origin on a CORS-mode request): a request with a body comes as scheme_fetch, and one that comes here
     // (a form posted by navigation) would reach the server empty, with nothing to tell where it came from

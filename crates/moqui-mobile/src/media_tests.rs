@@ -76,3 +76,30 @@ fn page_actions_are_known_ones_with_json_arguments() {
     assert!(action_script("seekto", Some(f64::INFINITY)).unwrap().contains(r#""position":null"#));
     assert_eq!(action_script("alert(1)", None), None);
 }
+
+#[test]
+fn relay_ranges_are_bounded() {
+    use super::{bounded_range, RELAY_CHUNK};
+    assert_eq!(bounded_range(None), (0, RELAY_CHUNK - 1));
+    assert_eq!(bounded_range(Some("bytes=100-")), (100, 100 + RELAY_CHUNK - 1));
+    assert_eq!(bounded_range(Some("bytes=100-199")), (100, 199));
+    assert_eq!(bounded_range(Some("bytes=0-99999999")), (0, RELAY_CHUNK - 1));
+    assert_eq!(bounded_range(Some("bytes=-500")), (0, RELAY_CHUNK - 1));
+    assert_eq!(bounded_range(Some("bytes=0-1,5-9")), (0, RELAY_CHUNK - 1));
+    assert_eq!(bounded_range(Some("bytes=9-3")), (0, RELAY_CHUNK - 1));
+    assert_eq!(bounded_range(Some("items=1-2")), (0, RELAY_CHUNK - 1));
+}
+
+#[test]
+fn relay_targets_are_on_the_pages_hosts() {
+    use super::relay_target;
+    let url = "https%3A%2F%2Frr1.media.example.com%2Fplay%3Fid%3D1";
+    let (target, hosts) = relay_target(&format!("url={url}&hosts=*.example.com")).unwrap();
+    assert_eq!(target.as_str(), "https://rr1.media.example.com/play?id=1");
+    assert_eq!(hosts, vec!["*.example.com".to_string()]);
+    assert!(relay_target(&format!("url={url}&hosts=other.org")).is_err());
+    assert!(relay_target(&format!("url={url}")).is_err());
+    assert!(relay_target("url=http%3A%2F%2Frr1.example.com%2F&hosts=*.example.com").is_err());
+    assert!(relay_target("url=https%3A%2F%2F10.0.0.1%2F&hosts=*.example.com").is_err());
+    assert!(relay_target("hosts=*.example.com").is_err());
+}
