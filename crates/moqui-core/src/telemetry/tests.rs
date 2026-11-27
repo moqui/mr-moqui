@@ -1630,6 +1630,140 @@ mod configured {
         telemetry.shutdown();
     }
 
+    /// The spans waiting under a root open on its thread are at most tail-trace-spans, the most the export's tail
+    /// buffer keeps of a trace: a long call (an import's hundreds of thousands of entity frames) held a record of every
+    /// one until it ended (plans/Maps.md §6.3). A full tail makes room for a failed span; a kept trace counts the rest
+    /// as dropped.
+    #[test]
+    fn spans_waiting_under_an_open_root_are_bounded() {
+        let (telemetry, memory) = telemetry(r#"<telemetry tail-trace-spans="4"/>"#);
+        let root = telemetry.start_span("long", SpanKind::Server, None);
+        let trace = root.context().unwrap().trace_id.0;
+        for _ in 0..1000 {
+            telemetry
+                .start_span("frame", SpanKind::Internal, root.context())
+                .finish();
+        }
+        assert_eq!(super::sdk::waiting_spans(&trace), 4);
+        let mut failed = telemetry.start_span("failed", SpanKind::Internal, root.context());
+        failed.set_error("failure 9");
+        failed.finish();
+        assert_eq!(super::sdk::waiting_spans(&trace), 4);
+        root.finish();
+        telemetry.flush();
+        let names = span_names(&memory);
+        assert_eq!(names.iter().filter(|name| *name == "frame").count(), 3, "{names:?}");
+        assert!(names.contains(&"failed".to_string()), "{names:?}");
+        assert!(names.contains(&"long".to_string()), "{names:?}");
+        assert_eq!(telemetry.counters().dropped, 997);
+        telemetry.shutdown();
+    }
+
+    /// A slow artifact hit (`moqui.artifact.slow` over a second) is important too: it takes an ordinary span's place.
+    #[test]
+    fn a_slow_hit_takes_a_place_in_a_full_tail() {
+        let (telemetry, memory) = telemetry(r#"<telemetry tail-trace-spans="2"/>"#);
+        let root = telemetry.start_span("long", SpanKind::Server, None);
+        let trace = root.context().unwrap().trace_id.0;
+        for _ in 0..2 {
+            telemetry
+                .start_span("frame", SpanKind::Internal, root.context())
+                .finish();
+        }
+        let mut slow = telemetry.start_span("slow", SpanKind::Internal, root.context());
+        slow.set_attribute("moqui.artifact.slow", Value::Bool(true));
+        std::thread::sleep(std::time::Duration::from_millis(1050));
+        slow.finish();
+        assert_eq!(super::sdk::waiting_spans(&trace), 2);
+        root.finish();
+        telemetry.flush();
+        let names = span_names(&memory);
+        assert!(names.contains(&"slow".to_string()), "{names:?}");
+        assert_eq!(names.iter().filter(|name| *name == "frame").count(), 1, "{names:?}");
+        telemetry.shutdown();
+    }
+
+    /// A tail full of failed spans drops the next one, counted, and the trace is kept with those it holds.
+    #[test]
+    fn a_tail_of_important_spans_drops_the_newcomer() {
+        let (telemetry, memory) = telemetry(r#"<telemetry tail-trace-spans="2"/>"#);
+        let root = telemetry.start_span("failing", SpanKind::Server, None);
+        let trace = root.context().unwrap().trace_id.0;
+        for name in ["first", "second", "third"] {
+            let mut failed = telemetry.start_span(name, SpanKind::Internal, root.context());
+            failed.set_error("failure 3");
+            failed.finish();
+        }
+        assert_eq!(super::sdk::waiting_spans(&trace), 2);
+        root.finish();
+        telemetry.flush();
+        let names = span_names(&memory);
+        assert!(names.contains(&"first".to_string()) && names.contains(&"second".to_string()), "{names:?}");
+        assert!(!names.contains(&"third".to_string()), "{names:?}");
+        assert!(names.contains(&"failing".to_string()), "{names:?}");
+        assert_eq!(telemetry.counters().dropped, 1);
+        telemetry.shutdown();
+    }
+
+    /// Two roots open on one thread each have their own bound.
+    #[test]
+    fn nested_roots_on_a_thread_each_have_their_own_bound() {
+        let (telemetry, _memory) = telemetry(r#"<telemetry tail-trace-spans="3"/>"#);
+        let outer = telemetry.start_span("outer", SpanKind::Server, None);
+        let inner = telemetry.start_span("inner", SpanKind::Server, None);
+        let (outer_trace, inner_trace) = (outer.context().unwrap().trace_id.0, inner.context().unwrap().trace_id.0);
+        assert_ne!(outer_trace, inner_trace);
+        for _ in 0..10 {
+            telemetry
+                .start_span("outer.frame", SpanKind::Internal, outer.context())
+                .finish();
+            telemetry
+                .start_span("inner.frame", SpanKind::Internal, inner.context())
+                .finish();
+        }
+        assert_eq!(super::sdk::waiting_spans(&outer_trace), 3);
+        assert_eq!(super::sdk::waiting_spans(&inner_trace), 3);
+        inner.finish();
+        assert_eq!(super::sdk::waiting_spans(&inner_trace), 0);
+        assert_eq!(super::sdk::waiting_spans(&outer_trace), 3);
+        outer.finish();
+        telemetry.shutdown();
+    }
+
+    /// A kept tail goes out failed spans first: when the export's buffer for the trace has less room than the tail
+    /// holds (spans of the trace from another thread took some), it drops ordinary spans, and the error that keeps the
+    /// trace reaches it.
+    #[test]
+    fn a_kept_tail_goes_out_important_spans_first() {
+        let (telemetry, memory) = telemetry(r#"<telemetry tail-trace-spans="3"/>"#);
+        let root = telemetry.start_span("caught", SpanKind::Server, None);
+        // on another thread, where the root is not open: two of the export's three places for the trace
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for _ in 0..2 {
+                    telemetry
+                        .start_span("queued", SpanKind::Internal, root.context())
+                        .finish();
+                }
+            });
+        });
+        for _ in 0..3 {
+            telemetry
+                .start_span("frame", SpanKind::Internal, root.context())
+                .finish();
+        }
+        let mut failed = telemetry.start_span("failed", SpanKind::Internal, root.context());
+        failed.set_error("failure 5");
+        failed.finish();
+        root.finish();
+        telemetry.flush();
+        let names = span_names(&memory);
+        assert!(names.contains(&"failed".to_string()), "{names:?}");
+        assert!(names.contains(&"caught".to_string()), "{names:?}");
+        assert!(!names.contains(&"frame".to_string()), "{names:?}");
+        telemetry.shutdown();
+    }
+
     #[test]
     fn prometheus_text_has_cumulative_instruments_with_per_instrument_attributes() {
         let (telemetry, _memory) = telemetry(

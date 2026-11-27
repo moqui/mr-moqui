@@ -378,7 +378,9 @@ along with this software (see the LICENSE.md file). If not, see
             unsampled spans wait for the root's tail decision; spans of further traces are dropped. Default 1024.
             </xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="tail-trace-spans" type="xs:positiveInteger"><xs:annotation><xs:documentation>Spans one
-            trace may hold while it waits. Default 512.</xs:documentation></xs:annotation></xs:attribute>
+            trace holds while its root decides, on the thread under an open root and in the export's buffer; past it a
+            span is dropped and counted; on the thread a failed or slow frame takes the place of an ordinary one. Default
+            512.</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="interval-seconds" type="xs:positiveInteger"><xs:annotation><xs:documentation>How often
             metrics are collected. Metric documents are minute documents, which the rollups and dashboards assume, so
             anything but 60 is for tests and is warned about.</xs:documentation></xs:annotation></xs:attribute>
