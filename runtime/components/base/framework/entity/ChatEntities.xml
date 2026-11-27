@@ -437,7 +437,9 @@ along with this software (see the LICENSE.md file). If not, see
             room and message that started a location share (moqui.maps.LocationShare) and its owner, written with the
             message. Ids only, never a position. Read when a member is taken out of the room by another (remove#Member) or
             blocked by the owner (ChatBlocks.js blockUser), whose entry in the room's live shares is then revoked
-            (LocationServices.revoke#ChatAudience); a member who leaves by themselves stays in the share.</description>
+            (ChatLocationServices.revoke#LiveAudience, after the commit); a member who leaves by themselves stays in the
+            share. Kept while the share is on, its message deleted or not (a disappearing message goes long before a share
+            ends); deleted when the hourly clean removes the ended share (LocationShares.js), or when its room is gone.</description>
         <field name="chatRoomId" type="id" is-pk="true"/>
         <field name="eventSeq" type="number-integer" is-pk="true"/>
         <field name="shareId" type="id"/>

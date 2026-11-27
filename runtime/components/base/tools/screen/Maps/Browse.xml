@@ -150,9 +150,9 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <!-- Share my location: create#Share with the audience chosen (audience: a JSON list of {audienceTypeEnumId, userId,
-        userGroupId, jid}), until thruDate (epoch millis), exact or approximate and a trail or not; a guest link's page
-        link (linkUrl: this server's https web root and linkPath, its secret in the fragment; plans/Location-Sharing.md
-        §3.7) is answered this once -->
+        userGroupId, jid}), until thruDate (epoch millis), exact or approximate, a trail or not, and the XMPP app's location
+        for the XMPP contacts or not (takeXmppLocation); a guest link's page link (linkUrl: this server's web root and
+        linkPath, its secret in the fragment; plans/Location-Sharing.md §3.7) is answered this once -->
     <transition name="createShare" method="post">
         <actions><script><![CDATA[
             let audienceList = null
@@ -161,13 +161,18 @@ along with this software (see the LICENSE.md file). If not, see
             const out = !Array.isArray(audienceList) ? null : ec.service.sync().name('org.moqui.maps.LocationServices.create#Share')
                 .requireNewTransaction(true).parameters({audienceList: audienceList.slice(0, 100), thruDate: Number.isFinite(thru) ? new Date(thru) : null,
                     precisionEnumId: String(context.precisionEnumId || 'LspExact'), keepTrail: String(context.keepTrail) === 'true',
+                    takeXmppLocation: String(context.takeXmppLocation) === 'true',
                     label: String(context.label || '').trim() || null}).call()
             if (!out) ec.web.sendJsonResponse({applied: false, reason: ec.l10n.localize('Choose who sees your location')})
             else if (ec.message.hasError()) { const reason = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({applied: false, reasonCode: out.reasonCode, reason}) }
-            else ec.web.sendJsonResponse({applied: true, shareId: out.shareId, thruDate: out.thruDate ? ec.user.timestampMillis(out.thruDate) : null,
+            else {
                 // the full link: this server's https web root and the path, never the page's own origin, which in the apps
-                // is the client's (moqui-app.localhost)
-                linkUrl: out.linkPath ? String(ec.web.getWebappRootUrl('webroot', null, true, true) || '').replace(/\/+$/, '') + out.linkPath : null})
+                // is the client's (moqui-app.localhost); with no web root configured, the path alone and the page says so
+                const root = out.linkPath ? String(ec.web.getWebappRootUrl('webroot', null, true, true) || '').replace(/\/+$/, '') : ''
+                const full = /^https?:\/\//.test(root)
+                ec.web.sendJsonResponse({applied: true, shareId: out.shareId, thruDate: out.thruDate ? ec.user.timestampMillis(out.thruDate) : null,
+                    linkUrl: out.linkPath ? (full ? root : '') + out.linkPath : null, linkPathOnly: !!out.linkPath && !full})
+            }
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -180,6 +185,17 @@ along with this software (see the LICENSE.md file). If not, see
                 .parameters({shareId: String(shareId ?? ''), thruDate: Number.isFinite(thru) ? new Date(thru) : null}).call() || {}
             if (ec.message.hasError()) { const reason = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({applied: false, reasonCode: out.reasonCode, reason}) }
             else ec.web.sendJsonResponse({applied: true, thruDate: out.thruDate ? ec.user.timestampMillis(out.thruDate) : null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- The owner's XMPP app's location for a share's XMPP contacts, on or off (update#Share takeXmppLocation;
+        plans/Location-Sharing.md §3.6) -->
+    <transition name="takeXmppShare" method="post">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.maps.LocationServices.update#Share').requireNewTransaction(true)
+                .parameters({shareId: String(shareId ?? ''), takeXmppLocation: String(context.takeXmppLocation) === 'true' ? 'true' : 'false'}).call()
+            if (ec.message.hasError()) { const reason = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({applied: false, reason}) }
+            else ec.web.sendJsonResponse({applied: true})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>

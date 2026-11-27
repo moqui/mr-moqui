@@ -401,7 +401,12 @@ function expireRoom(p) {
   const limit = Math.max(1, Number(p.limit) || 2000)
   const room = find(ROOM).condition('chatRoomId', chatRoomId).forUpdate(true).one()
   // events of a room that is gone: deleted, with nothing of the room to change
-  if (!room) return { deletedCount: find(EVENT).condition('chatRoomId', chatRoomId).condition('expireDate', 'less-equals', new Date(now)).deleteAll() }
+  if (!room) {
+    const deletedCount = find(EVENT).condition('chatRoomId', chatRoomId).condition('expireDate', 'less-equals', new Date(now)).deleteAll()
+    // a room that is gone takes nobody out of its live locations any more: their links go (plans/Location-Sharing.md §3.5)
+    find('moqui.chat.ChatLiveShare').condition('chatRoomId', chatRoomId).deleteAll()
+    return { deletedCount }
+  }
   const rotationMillis = Math.min(WEEK_MILLIS, (Number(room.messageTimerSeconds) || 0) * 1000 || WEEK_MILLIS)
   pendingSessions(chatRoomId, now)
   let due = Array.from(find(EVENT).condition('chatRoomId', chatRoomId).condition('expireDate', 'less-equals', new Date(now))

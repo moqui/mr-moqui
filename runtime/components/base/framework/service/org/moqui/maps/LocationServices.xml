@@ -26,7 +26,9 @@ along with this software (see the LICENSE.md file). If not, see
     Positions are never logged, audited, cached or put in an error message: the position parameters are plain text read
     by LocationShares.js (so no conversion error repeats a value), report#Position remembers no parameters, and a
     refusal names its reason only. A position is pushed on the topic locationShare:<shareId> to the audience's current
-    users only (directOnly), never saved as a notification or pushed to a phone (persistOnSend false); an approximate
+    users only (directOnly), and to its XMPP contacts' users on locationShareXmpp:<shareId>, which the XMPP server sends
+    as geoloc events (plans/Location-Sharing.md §3.6), never saved as a notification or pushed to a phone
+    (persistOnSend false); an approximate
     share's is its cell of about 1 km on one fixed grid, kept until a fix is well inside another cell, before it is
     stored or sent. Start, extension, stop and an audience added or revoked are in the entity audit log (LocationShare
     thruDate and revokedDate, the audience's fields), never a position. -->
@@ -42,7 +44,8 @@ along with this software (see the LICENSE.md file). If not, see
             LsaUserGroup a group the owner is in now (never ALL_USERS or a group of external users), read by the members
             it has now (a snapshot, less every one the chat directory refuses the owner at this act: its hooks, the
             external-caller rule and blocks) while their membership row stays current, LsaXmpp a contact of the owner's
-            XMPP roster (username@xmpp-server@domain, XmppServices.get#Roster; kept for the XMPP server to deliver),
+            XMPP roster (username@xmpp-server@domain, XmppServices.get#Roster, a user of this server; its positions go to
+            that user's XMPP sessions, and it is told by the LocationSharedXmpp notification),
             LsaLink a guest link (one a share), whose token is returned here once and kept only as its digest. Each
             audience user is told who shares with them and until when (the LocationShared notification). At most
             location@max-active-shares active shares an owner and location@max-audience people (the members its groups
@@ -53,7 +56,8 @@ along with this software (see the LICENSE.md file). If not, see
             SHARE_LOCK_FAILED (the owner's lock row could not be made or locked). The share is sent from the device whose
             key signed this request in (userLoginKeyId, ec.user.loginKeyId: the Android app's), or from no device (a
             browser page, which sends while it is open); a share with a device takes that device's reports only, and one
-            with none takes no device's (plans/Location-Sharing.md §3.4).</description>
+            with none takes no device's (plans/Location-Sharing.md §3.4). takeXmppLocation true lets the owner's XMPP
+            app's location (report#XmppPosition) feed it too, to its XMPP contacts only (§3.6).</description>
         <in-parameters>
             <parameter name="audienceList" type="List" required="true"/>
             <parameter name="thruDate" type="Timestamp" required="true"/>
@@ -62,6 +66,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="trailKeepDays" type="Integer"/>
             <parameter name="label"/>
             <parameter name="purposeText"/>
+            <parameter name="takeXmppLocation" type="Boolean" default="false"><description>Also use the owner's XMPP app's
+                location, sent to the share's XMPP contacts only (plans/Location-Sharing.md §3.6)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="shareId"/>
@@ -87,8 +93,10 @@ along with this software (see the LICENSE.md file). If not, see
             device), or from no device (a browser's Send from here), and the device that sent it is refused as another's
             (409 OTHER_DEVICE), which stops it. The owner's other devices and the audience are told on locationShare:shareId, each user the share
             newly reaches gets the LocationShared notification, and addedUserList (and the owner's push) names them; a
-            link added returns its token once. Refused: SHARE_NOT_FOUND (not the caller's), SHARE_ENDED, and
-            create#Share's reasons.</description>
+            link added returns its token once; an XMPP contact it newly reaches gets LocationSharedXmpp. takeXmppLocation
+            true or false turns the owner's XMPP app's location for it on or off (to its XMPP contacts only); turned on,
+            it raises audienceVersion. Refused: SHARE_NOT_FOUND (not the caller's), SHARE_ENDED, and create#Share's
+            reasons.</description>
         <in-parameters>
             <parameter name="shareId" required="true"/>
             <parameter name="thruDate" type="Timestamp"/>
@@ -96,6 +104,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="label"/>
             <parameter name="purposeText"/>
             <parameter name="sendFromHere" type="Boolean" default="false"/>
+            <parameter name="takeXmppLocation"><description>true or false: the owner's XMPP app's location fed to the share's
+                XMPP contacts or not; empty leaves it as it is</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="thruDate" type="Timestamp"/>
@@ -169,6 +179,37 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="retryAfterSeconds" type="Integer"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('report', context))</script></actions>
+    </service>
+
+    <service verb="report" noun="XmppPosition" no-remember-parameters="true" allow-remote="false">
+        <description>A user location publish (XEP-0080) from the current user's own XMPP client, which the XMPP server
+            (moqui-xmpp session/geoloc.rs) calls with the fields it read and checked (plans/Location-Sharing.md §3.6,
+            LL5): taken by each of the user's active shares whose owner turned on takeXmppLocation (create#Share,
+            update#Share) and that has an XMPP contact in its audience (an LsaXmpp entry not revoked), whatever it is
+            sent from. Such a position goes to the share's XMPP contacts only: kept as its LocationXmppLatest, never as
+            its LocationLatest or trail, never pushed to its users, groups, link or the owner's web. The share's rules
+            hold against that XMPP latest: the rate, the values, staleness, approximate rounding. The first one a share
+            takes tells the owner's XMPP sessions (a headline: whom with, until when). A time more than a minute ahead
+            is taken as now, as a browser page does. No such share: statusCode 403, NO_XMPP_SHARE, so a client's setting
+            never starts a share or feeds one the owner did not choose. Else the best outcome of the shares: 200, else
+            429 (RATE_LIMITED, retryAfterSeconds), else 409 STALE, else the first refusal (400 BAD_POSITION,
+            BAD_ACCURACY, BEFORE_SHARE; 410 SHARE_ENDED or 404 SHARE_NOT_FOUND for a share that ended or went meanwhile).
+            The session answers 200, 429 and STALE as taken (nothing new kept for the last two), 400 bad-request, and
+            NO_XMPP_SHARE, 410 and 404 not-allowed. A refusal names no value, and adds no error.</description>
+        <in-parameters>
+            <!-- plain text, read and checked by LocationShares.js, so that no conversion error repeats a position -->
+            <parameter name="latitude"/>
+            <parameter name="longitude"/>
+            <parameter name="accuracy"/>
+            <parameter name="observedMillis" type="Long"><description>XEP-0080's timestamp, epoch milliseconds; now when
+                not given</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="statusCode" type="Integer"/>
+            <parameter name="reasonCode"/>
+            <parameter name="retryAfterSeconds" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('xmppReport', context))</script></actions>
     </service>
 
     <service verb="get" noun="AppShare">
@@ -269,13 +310,14 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="revoke" noun="ChatAudience" allow-remote="false" transaction="force-new">
         <description>Internal, for Chat's live location (plans/Location-Sharing.md §3.5): userId's own entry (LsaUser) taken
-            out of each active share of shareIdList, as revoke#Audience takes one out (its users and the owner told on
+            out of each active share of shareList [{shareId, ownerUserId}] (the share of that owner only), as revoke#Audience
+            takes one out (its users and the owner told on
             locationShare:shareId), whoever the caller is: Chat calls it when a member is taken out of a room by another
             (remove#Member) or blocked by a share's owner (ChatBlocks.js), for that room's live shares
             (moqui.chat.ChatLiveShare). It only narrows who sees a share, never the owner's own. In a transaction of its own,
             each share in one of its own: one that fails is logged by its id and the rest go on. Out: revokedCount.</description>
         <in-parameters>
-            <parameter name="shareIdList" type="List" required="true"/>
+            <parameter name="shareList" type="List" required="true"/>
             <parameter name="userId" required="true"/>
         </in-parameters>
         <out-parameters><parameter name="revokedCount" type="Integer"/></out-parameters>

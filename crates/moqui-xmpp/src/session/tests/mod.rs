@@ -664,8 +664,9 @@ async fn pep_keeps_omemo_device_lists_in_both_namespaces_and_notifies_who_asked(
     assert!(text_of(&out).contains("precondition-not-met"), "{}", text_of(&out));
 }
 
-/// User location (XEP-0080) is refused until live location sharing maps it (plans/Location-Sharing.md): nothing is
-/// stored or pushed, a location kept earlier is not served, and the other PEP nodes work as before.
+/// User location (XEP-0080) is no PEP node (plans/Location-Sharing.md §3.6): a publish is a location share's report,
+/// refused with no share, nothing is stored or pushed as a PEP item, a location kept earlier is not served, and the
+/// other PEP nodes work as before.
 #[tokio::test]
 async fn pep_refuses_the_user_location_node_and_keeps_the_others() {
     const GEOLOC: &str = "http://jabber.org/protocol/geoloc";
@@ -682,16 +683,17 @@ async fn pep_refuses_the_user_location_node_and_keeps_the_others() {
          <feature var='{GEOLOC}+notify'/><feature var='urn:xmpp:omemo:2:devices+notify'/></query></iq>"
     ))
     .await;
-    let wanted: Vec<String> = server
+    let mut wanted: Vec<String> = server
         .registry
         .sessions_of("U2")
         .iter()
         .flat_map(|entry| moqui_lib::sync::lock(&entry.notify).iter().cloned().collect::<Vec<_>>())
         .collect();
+    wanted.sort();
     assert_eq!(
         wanted,
-        ["urn:xmpp:omemo:2:devices"],
-        "no interest in the location node is kept"
+        [GEOLOC, "urn:xmpp:omemo:2:devices"],
+        "the location interest is kept, for the location shares' notifications alone"
     );
     let calls = fake.state.lock().unwrap().calls.len();
     let out = text_of(
@@ -703,11 +705,16 @@ async fn pep_refuses_the_user_location_node_and_keeps_the_others() {
             ))
             .await,
     );
+    // john has no location share with XMPP contacts: a client's setting alone starts nothing
     assert!(
-        out.contains("type='error'") && out.contains("<forbidden") && out.contains("type='auth'"),
+        out.contains("type='error'") && out.contains("<not-allowed") && out.contains("type='cancel'"),
         "{out}"
     );
-    assert_eq!(fake.state.lock().unwrap().calls.len(), calls, "no service is called");
+    assert_eq!(
+        fake.state.lock().unwrap().calls[calls..],
+        [crate::backend::services::LOCATION_REPORT],
+        "only the location share's report is asked for, no PEP service"
+    );
     assert!(!fake.state.lock().unwrap().pep.keys().any(|(_, node)| node == GEOLOC));
     assert!(!text_of(&jane.pump().await).contains("geoloc"), "nothing is pushed");
     // a location kept before the rule is not served, to its owner or to anyone else
@@ -741,6 +748,7 @@ async fn pep_refuses_the_user_location_node_and_keeps_the_others() {
         assert!(out.contains("<forbidden") && !out.contains("<lat>"), "{node}: {out}");
     }
     assert!(super::pep::refused_node("\tHttp://JABBER.org/protocol/geoloc\n"));
+    assert!(super::pep::geoloc_node(" HTTP://jabber.org/protocol/GEOLOC"));
     assert!(!super::pep::refused_node("http://jabber.org/protocol/geoloc+notify"));
     // ASCII whitespace alone is trimmed, as the services trim it: U+FEFF is part of the name on both sides
     assert!(!super::pep::refused_node("\u{feff}http://jabber.org/protocol/geoloc"));
@@ -778,6 +786,301 @@ async fn pep_refuses_the_user_location_node_and_keeps_the_others() {
     );
     assert!(out.contains("type='result'"), "{out}");
     assert!(text_of(&jane.pump().await).contains("31415"));
+}
+
+/// jane's client asks for user location notifications (XEP-0115, resolved by asking it).
+async fn wants_geoloc(client: &mut Client, ver: &str) {
+    let asked = client
+        .send(&format!(
+            "<presence><c xmlns='http://jabber.org/protocol/caps' hash='sha-1' node='https://dino.im' ver='{ver}'/></presence>"
+        ))
+        .await;
+    let id = find(&asked, "iq", ns::CLIENT).unwrap().attr("id").unwrap().to_string();
+    client
+        .send(&format!(
+            "<iq type='result' id='{id}'><query xmlns='http://jabber.org/protocol/disco#info'>\
+             <feature var='http://jabber.org/protocol/geoloc+notify'/></query></iq>"
+        ))
+        .await;
+}
+
+fn geoloc_publish(id: &str, payload: &str) -> String {
+    format!(
+        "<iq type='set' id='{id}'><pubsub xmlns='http://jabber.org/protocol/pubsub'>\
+         <publish node='http://jabber.org/protocol/geoloc'><item id='current'>{payload}</item></publish></pubsub></iq>"
+    )
+}
+
+/// A user location publish (XEP-0080) is a report of the user's location share with XMPP contacts
+/// (plans/Location-Sharing.md §3.6): refused with no share, taken with one (its fields read and checked, the rest left
+/// out), sent out to that share's contacts' sessions that asked for it, not to the owner's or another session; a stop
+/// is no report; a value out of range, a payload that is not one and a report too soon are refused before or by the
+/// service.
+#[tokio::test]
+async fn user_location_reports_the_share_with_xmpp_contacts_and_reaches_them_alone() {
+    let (server, fake) = server();
+    let (mut john, _) = sign_in(&server, "john.doe", JOHN_PASSWORD, "phone").await;
+    let (mut john_desk, _) = sign_in(&server, "john.doe", JOHN_PASSWORD, "desk").await;
+    let (mut jane, _) = sign_in(&server, "jane", JANE_PASSWORD, "laptop").await;
+    // jane's tablet asked for no location notifications
+    let (mut jane_tablet, _) = sign_in(&server, "jane", JANE_PASSWORD, "tablet").await;
+    wants_geoloc(&mut jane, "loc1=").await;
+    wants_geoloc(&mut john_desk, "loc2=").await;
+    let fix = "<geoloc xmlns='http://jabber.org/protocol/geoloc'><accuracy>12</accuracy><alt>1609</alt>\
+               <lat>48.8584</lat><lon>2.2945</lon><street>Champ de Mars</street>\
+               <timestamp>2026-11-27T10:15:30Z</timestamp></geoloc>";
+
+    // no share: refused, and nothing reaches anyone
+    let out = text_of(&john.send(&geoloc_publish("l1", fix)).await);
+    assert!(out.contains("<not-allowed") && out.contains("type='cancel'"), "{out}");
+    assert!(!text_of(&jane.pump().await).contains("geoloc"));
+
+    // with john's share to jane over XMPP: taken, with lat, lon, accuracy and the time only, and pushed to jane
+    fake.state.lock().unwrap().location_share = Some(fake::LocationShare {
+        audience: vec!["U2".to_string()],
+        approximate: false,
+    });
+    let out = text_of(&john.send(&geoloc_publish("l2", fix)).await);
+    assert!(out.contains("type='result'") && out.contains("id='current'"), "{out}");
+    let report = fake.state.lock().unwrap().location_reports.last().cloned().unwrap();
+    assert_eq!(
+        report,
+        json!({"latitude": "48.8584", "longitude": "2.2945", "accuracy": "12", "observedMillis": 1_795_774_530_000_i64}),
+        "the fields XEP-0080 gives that a share takes, no street or altitude"
+    );
+    let got = jane.pump().await;
+    let event = find(&got, "message", ns::CLIENT).unwrap_or_else(|| panic!("an event: {}", text_of(&got)));
+    assert_eq!(event.attr("from"), Some("john.doe@moqui.local"));
+    assert_eq!(event.attr("type"), Some("headline"));
+    let geoloc = event
+        .get_child("event", ns::PUBSUB_EVENT)
+        .and_then(|event| event.get_child("items", ns::PUBSUB_EVENT))
+        .filter(|items| items.attr("node") == Some(ns::GEOLOC))
+        .and_then(|items| items.get_child("item", ns::PUBSUB_EVENT))
+        .and_then(|item| item.get_child("geoloc", ns::GEOLOC))
+        .unwrap_or_else(|| panic!("a geoloc item: {}", text_of(&got)));
+    let field = |name: &str| geoloc.get_child(name, ns::GEOLOC).map(Element::text);
+    assert_eq!(field("lat").as_deref(), Some("48.8584"));
+    assert_eq!(field("lon").as_deref(), Some("2.2945"));
+    assert_eq!(field("accuracy").as_deref(), Some("12"));
+    assert_eq!(field("timestamp").as_deref(), Some("2026-11-27T10:15:30.000Z"));
+    assert!(field("street").is_none() && field("alt").is_none());
+    // the audience's sessions that asked alone: not jane's tablet, not john's own other session
+    assert!(!text_of(&jane_tablet.pump().await).contains("geoloc"));
+    assert!(!text_of(&john_desk.pump().await).contains("geoloc"));
+    assert!(!text_of(&john.pump().await).contains("pubsub#event"));
+
+    // the XEP's "stopped": answered, no report and nothing ended or pushed
+    let calls = fake.state.lock().unwrap().location_reports.len();
+    let out = text_of(
+        &john
+            .send(&geoloc_publish(
+                "l3",
+                "<geoloc xmlns='http://jabber.org/protocol/geoloc'/>",
+            ))
+            .await,
+    );
+    assert!(out.contains("type='result'"), "{out}");
+    assert_eq!(fake.state.lock().unwrap().location_reports.len(), calls);
+    assert!(!text_of(&jane.pump().await).contains("geoloc"));
+
+    // checked before the service: out of range, no longitude, not a time, not a number, not a geoloc
+    for payload in [
+        "<geoloc xmlns='http://jabber.org/protocol/geoloc'><lat>91</lat><lon>2</lon></geoloc>",
+        "<geoloc xmlns='http://jabber.org/protocol/geoloc'><lat>48</lat></geoloc>",
+        "<geoloc xmlns='http://jabber.org/protocol/geoloc'><lat>48</lat><lon>2</lon><timestamp>soon</timestamp></geoloc>",
+        "<geoloc xmlns='http://jabber.org/protocol/geoloc'><lat>NaN</lat><lon>2</lon></geoloc>",
+        "<geoloc xmlns='http://jabber.org/protocol/geoloc'><lat>48</lat><lon>2</lon><accuracy>-1</accuracy></geoloc>",
+        "<place xmlns='urn:xmpp:test'><lat>48</lat><lon>2</lon></place>",
+    ] {
+        let out = text_of(&john.send(&geoloc_publish("bad", payload)).await);
+        assert!(out.contains("<bad-request") && out.contains("invalid-payload"), "{payload}: {out}");
+    }
+    assert_eq!(
+        fake.state.lock().unwrap().location_reports.len(),
+        calls,
+        "none reached the service"
+    );
+
+    // the service's own answers: too soon (its rate) and older than the last are answered as taken, so a client that
+    // publishes on every move sees no error; a value it refuses is bad-request; a share that ended or went meanwhile,
+    // or one another device sends, not-allowed
+    for (answer, condition) in [
+        (
+            json!({"statusCode": 429, "reasonCode": "RATE_LIMITED", "retryAfterSeconds": 4}),
+            "type='result'",
+        ),
+        (
+            json!({"statusCode": 400, "reasonCode": "BEFORE_SHARE"}),
+            "invalid-payload",
+        ),
+        (json!({"statusCode": 409, "reasonCode": "STALE"}), "type='result'"),
+        (json!({"statusCode": 410, "reasonCode": "SHARE_ENDED"}), "<not-allowed"),
+        (json!({"statusCode": 404, "reasonCode": "SHARE_NOT_FOUND"}), "<not-allowed"),
+        (json!({"statusCode": 409, "reasonCode": "OTHER_DEVICE"}), "<not-allowed"),
+    ] {
+        fake.state.lock().unwrap().location_answer = Some(answer);
+        let out = text_of(&john.send(&geoloc_publish("l4", fix)).await);
+        assert!(out.contains(condition), "{condition}: {out}");
+    }
+    assert!(
+        !text_of(&jane.pump().await).contains("geoloc"),
+        "nothing taken, nothing pushed"
+    );
+}
+
+/// What goes out is what the share's audience may see (plans/Location-Sharing.md §3.6): an approximate share's cell,
+/// never the fix; a share that ends sends an empty item; a contact who blocked the owner gets nothing; and every other
+/// request of the location node, generic PEP, stays refused without a service call.
+#[tokio::test]
+async fn user_location_goes_out_rounded_a_stop_is_an_empty_item_and_generic_pep_is_refused() {
+    let (server, fake) = server();
+    let (mut john, _) = sign_in(&server, "john.doe", JOHN_PASSWORD, "phone").await;
+    let (mut jane, _) = sign_in(&server, "jane", JANE_PASSWORD, "laptop").await;
+    wants_geoloc(&mut jane, "loc1=").await;
+    fake.state.lock().unwrap().location_share = Some(fake::LocationShare {
+        audience: vec!["U2".to_string()],
+        approximate: true,
+    });
+    let out = text_of(
+        &john
+            .send(&geoloc_publish(
+                "l1",
+                "<geoloc xmlns='http://jabber.org/protocol/geoloc'><lat>48.85837</lat><lon>2.29448</lon>\
+                 <accuracy>8</accuracy></geoloc>",
+            ))
+            .await,
+    );
+    assert!(out.contains("type='result'"), "{out}");
+    let got = text_of(&jane.pump().await);
+    assert!(
+        got.contains("<lat>48.86</lat>")
+            && got.contains("<lon>2.29</lon>")
+            && got.contains("<accuracy>1000</accuracy>"),
+        "{got}"
+    );
+    assert!(
+        !got.contains("48.85837") && !got.contains("2.29448") && !got.contains("<accuracy>8<"),
+        "{got}"
+    );
+
+    // the share ended (stopped, revoked or past its end): an empty item to its contacts
+    let ended = |event: &str| {
+        json!({"topic": format!("{}S1", crate::registry::LOCATION_TOPIC), "userIds": ["U2"],
+            "message": {"shareId": "S1", "ownerUserId": "U1", "event": event}})
+    };
+    for event in ["ended", "revoked"] {
+        server.registry.deliver_notice(&ended(event));
+        let got = jane.pump().await;
+        let item = find(&got, "message", ns::CLIENT)
+            .and_then(|message| message.get_child("event", ns::PUBSUB_EVENT))
+            .and_then(|event| event.get_child("items", ns::PUBSUB_EVENT))
+            .and_then(|items| items.get_child("item", ns::PUBSUB_EVENT))
+            .unwrap_or_else(|| panic!("{event}: {}", text_of(&got)));
+        assert_eq!(item.attr("id"), Some("share-S1"));
+        let geoloc = item.get_child("geoloc", ns::GEOLOC).expect("a geoloc");
+        assert!(geoloc.children().next().is_none(), "{event}: an empty geoloc");
+    }
+    // a push of another kind, or with no owner, is not sent
+    server
+        .registry
+        .deliver_notice(&json!({"topic": format!("{}S1", crate::registry::LOCATION_TOPIC),
+        "userIds": ["U2"], "message": {"shareId": "S1", "ownerUserId": "U1", "event": "changed"}}));
+    assert!(!text_of(&jane.pump().await).contains("geoloc"));
+
+    // generic PEP on the location node: an items fetch, a retract, its configuration, a delete and a subscription,
+    // each forbidden, no service called
+    let calls = fake.state.lock().unwrap().calls.len();
+    for request in [
+        "<iq type='get' id='g' to='john.doe@moqui.local'><pubsub xmlns='http://jabber.org/protocol/pubsub'>\
+         <items node='http://jabber.org/protocol/geoloc'/></pubsub></iq>",
+        "<iq type='set' id='r'><pubsub xmlns='http://jabber.org/protocol/pubsub'><retract node='http://jabber.org/protocol/geoloc'>\
+         <item id='current'/></retract></pubsub></iq>",
+        "<iq type='get' id='c'><pubsub xmlns='http://jabber.org/protocol/pubsub#owner'>\
+         <configure node='http://jabber.org/protocol/geoloc'/></pubsub></iq>",
+        "<iq type='set' id='d'><pubsub xmlns='http://jabber.org/protocol/pubsub#owner'>\
+         <delete node='http://jabber.org/protocol/geoloc'/></pubsub></iq>",
+        // (a set to another user's PEP is not served at all)
+        "<iq type='set' id='s'><pubsub xmlns='http://jabber.org/protocol/pubsub'>\
+         <subscribe node='http://jabber.org/protocol/geoloc' jid='john.doe@moqui.local'/></pubsub></iq>",
+    ] {
+        let client = if request.contains("to='john.doe") { &mut jane } else { &mut john };
+        let out = text_of(&client.send(request).await);
+        assert!(out.contains("<forbidden") && out.contains("type='auth'"), "{request}: {out}");
+    }
+    assert_eq!(fake.state.lock().unwrap().calls.len(), calls, "no service is called");
+}
+
+/// A share's end by its time goes out from the session at its tick, not at the services' hourly clean; an extension
+/// moves it; a contact who blocked the owner gets nothing; and the owner's own sessions are told by a headline the first
+/// time their XMPP app's location feeds a share (plans/Location-Sharing.md §3.6).
+#[tokio::test]
+async fn user_location_ends_at_its_time_a_blocked_owner_reaches_nothing_and_the_owner_is_told() {
+    let (server, fake) = server();
+    let (mut john, _) = sign_in(&server, "john.doe", JOHN_PASSWORD, "phone").await;
+    let (mut jane, _) = sign_in(&server, "jane", JANE_PASSWORD, "laptop").await;
+    wants_geoloc(&mut jane, "loc1=").await;
+    let push = |event: &str, thru: i64| {
+        json!({"topic": format!("{}S7", crate::registry::LOCATION_TOPIC), "userIds": ["U2", "U1"],
+            "message": {"shareId": "S7", "ownerUserId": "U1", "event": event, "thruDate": thru, "latitude": 48.85,
+                "longitude": 2.35, "accuracy": 20, "observedDate": 1_800_000_000_000_i64,
+                "text": "Your XMPP app's location is shared with jane@moqui.local until 15:30"}})
+    };
+    let empty_item = |got: &[Element]| {
+        got.last()
+            .filter(|message| message.is("message", ns::CLIENT))
+            .and_then(|message| message.get_child("event", ns::PUBSUB_EVENT))
+            .and_then(|event| event.get_child("items", ns::PUBSUB_EVENT))
+            .and_then(|items| items.get_child("item", ns::PUBSUB_EVENT))
+            .and_then(|item| item.get_child("geoloc", ns::GEOLOC))
+            .is_some_and(|geoloc| geoloc.children().next().is_none())
+    };
+    server.registry.deliver_notice(&push("position", 1_800_000_060_000));
+    assert!(text_of(&jane.pump().await).contains("<lat>48.85</lat>"));
+    // the owner's own session gets no geoloc of their own share
+    assert!(!text_of(&john.pump().await).contains("geoloc"));
+    // before its end nothing; an extension moves the end; at the new end the empty item, once
+    jane.session.geoloc_expire(1_800_000_059_999).await;
+    assert!(jane.out().is_empty());
+    server.registry.deliver_notice(&push("changed", 1_800_000_120_000));
+    assert!(jane.pump().await.is_empty(), "a change sends nothing");
+    jane.session.geoloc_expire(1_800_000_060_000).await;
+    assert!(jane.out().is_empty(), "extended");
+    jane.session.geoloc_expire(1_800_000_120_000).await;
+    let got = jane.out();
+    assert!(empty_item(&got), "{}", text_of(&got));
+    jane.session.geoloc_expire(1_800_000_180_000).await;
+    assert!(jane.out().is_empty(), "sent once");
+    // a share stopped before its end is not ended again at its time
+    server.registry.deliver_notice(&push("position", 1_800_000_240_000));
+    server.registry.deliver_notice(&push("ended", 0));
+    assert!(empty_item(&jane.pump().await));
+    jane.session.geoloc_expire(1_800_000_240_000).await;
+    assert!(jane.out().is_empty());
+
+    // the owner told the first time their XMPP app's location feeds a share; a contact is not
+    server.registry.deliver_notice(&push("feeding", 1_800_000_240_000));
+    let told = john.pump().await;
+    let headline = find(&told, "message", ns::CLIENT).unwrap_or_else(|| panic!("a headline: {}", text_of(&told)));
+    assert_eq!(headline.attr("type"), Some("headline"));
+    assert_eq!(headline.attr("from"), Some("moqui.local"));
+    assert!(headline
+        .get_child("body", ns::CLIENT)
+        .is_some_and(|body| body.text().contains("shared with jane@moqui.local until 15:30")));
+    assert!(jane.pump().await.is_empty());
+
+    // jane blocked john: nothing of his reaches her, not a position, not an end
+    fake.state
+        .lock()
+        .unwrap()
+        .blocks
+        .insert("U2".to_string(), vec!["john.doe@moqui.local".to_string()]);
+    let (mut jane_tablet, _) = sign_in(&server, "jane", JANE_PASSWORD, "tablet").await;
+    wants_geoloc(&mut jane_tablet, "loc2=").await;
+    server.registry.deliver_notice(&push("position", 1_800_000_300_000));
+    assert!(!text_of(&jane_tablet.pump().await).contains("geoloc"));
+    jane_tablet.session.geoloc_expire(1_800_000_300_000).await;
+    assert!(jane_tablet.out().is_empty());
 }
 
 /// SEC-COM-20: a publish, a block or a push registration the services refuse past a cap is `resource-constraint`.

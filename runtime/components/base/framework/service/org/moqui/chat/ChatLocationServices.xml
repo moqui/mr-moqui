@@ -109,6 +109,21 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatLocation.js').execute('liveView', context))</script></actions>
     </service>
 
+    <service verb="revoke" noun="LiveAudience" authenticate="anonymous-all" allow-remote="false" transaction="ignore">
+        <description>Internal (plans/Location-Sharing.md §3.5, the LL4 decisions): userId taken out of the live locations of
+            chatRoomId (a member taken out of the room by another: remove#Member) or of ownerUserId's live locations in
+            every room (the owner blocked them: ChatBlocks.js blockUser), those still on only. Registered to run once the
+            removal or the block has committed, so one rolled back takes nobody out; LocationServices.revoke#ChatAudience
+            takes each share in a transaction of its own. Never fails: a failure is logged. Out: revokedCount.</description>
+        <in-parameters>
+            <parameter name="userId" required="true"/>
+            <parameter name="chatRoomId"/>
+            <parameter name="ownerUserId"/>
+        </in-parameters>
+        <out-parameters><parameter name="revokedCount" type="Integer"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatLocation.js').execute('revokeLive', context))</script></actions>
+    </service>
+
     <service verb="words" noun="Location" allow-remote="false">
         <description>Internal: the words of a place as a location message has them (for an inbound RCS location, Sms.js),
             and the place checked. A place that is not one (coordinates out of range, a label alone) keeps its words with

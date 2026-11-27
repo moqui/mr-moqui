@@ -30,6 +30,19 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
         <error-response url="."/>
     </transition>
+    <!-- the owner's XMPP app's location for the share's XMPP contacts, on or off (update#Share takeXmppLocation;
+        plans/Location-Sharing.md §3.6) -->
+    <transition name="takeXmppShare">
+        <actions><script><![CDATA[
+            const on = String(takeXmppLocation ?? '') === 'true'
+            ec.service.sync().name('org.moqui.maps.LocationServices.update#Share').parameters({shareId: String(shareId ?? ''),
+                takeXmppLocation: on ? 'true' : 'false'}).requireNewTransaction(true).call()
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize(on ? 'Your XMPP app\'s location now goes to your XMPP contacts'
+                : 'Your XMPP app\'s location no longer goes to your XMPP contacts'), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
     <!-- an hour more from the later of now and the share's end, within location@max-share-hours from now -->
     <transition name="extendShare">
         <actions><script><![CDATA[
@@ -74,10 +87,16 @@ along with this software (see the LICENSE.md file). If not, see
         const ageText = (seconds) => seconds == null ? L('No position yet') : seconds < 60 ? L('just now') : seconds < 3600
             ? Math.floor(seconds / 60) + ' ' + L('min ago') : Math.floor(seconds / 3600) + ' ' + L('h ago')
         shareList = shares.filter((share) => share.active).map((share) => ({shareId: share.shareId, label: share.label || '',
+            // the opt-in is offered for a share with an XMPP contact (plans/Location-Sharing.md §3.6)
+            hasXmpp: Array.from(share.audienceList || []).some((row) => !row.revoked && row.audienceTypeEnumId === 'LsaXmpp'),
+            takeXmpp: share.takeXmppLocation === true, takeXmppNext: share.takeXmppLocation === true ? 'false' : 'true',
             whoText: Array.from(share.audienceList || []).filter((row) => !row.revoked)
                 .map((row) => row.hasLink ? L('a guest link') : row.userName || row.groupName || row.jid || '').filter(Boolean).join(', '),
             untilText: share.thruDate ? ec.l10n.format(new Date(Number(share.thruDate)), 'EEE HH:mm') : '',
-            ageText: ageText(share.latest ? share.latest.ageSeconds : null) + (share.approximate ? ' · ' + L('approximate, about 1 km') : '')}))
+            // the newest of the page's or phone's and the XMPP app's, with where it came from (plans/Location-Sharing.md §3.6)
+            ageText: (share.lastSource === 'xmpp' ? ageText(share.xmppAgeSeconds) + ' · ' + L('from your XMPP app')
+                : ageText(share.latest ? share.latest.ageSeconds : null) + (share.lastSource ? ' · ' + L('from this page or phone') : ''))
+                + (share.approximate ? ' · ' + L('approximate, about 1 km') : '')}))
         // Open in Maps: only for a user whose own grants open the Maps app (Maps.xml carries its grant, as LocalMap asks)
         mapsOpen = !!ec.user.userId && !!ec.artifactExecution.isPermittedOwn('component://tools/screen/Maps.xml', 'AT_XML_SCREEN', 'view')
     ]]></script></actions>
@@ -95,6 +114,10 @@ along with this software (see the LICENSE.md file). If not, see
             <field name="ageText"><default-field title="Last position"><display/></default-field></field>
             <field name="actions"><default-field title="">
                 <link url="extendShare" text="An hour more" icon="sym_o_more_time"><parameter name="shareId"/></link>
+                <link url="takeXmppShare" condition="hasXmpp &amp;&amp; !takeXmpp" text="Also use my XMPP app's location (sent to my XMPP contacts only)"
+                        icon="sym_o_forum"><parameter name="shareId"/><parameter name="takeXmppLocation" from="takeXmppNext"/></link>
+                <link url="takeXmppShare" condition="hasXmpp &amp;&amp; takeXmpp" text="Stop using my XMPP app's location"
+                        icon="sym_o_forum"><parameter name="shareId"/><parameter name="takeXmppLocation" from="takeXmppNext"/></link>
                 <link url="stopShare" text="Stop" icon="sym_o_location_off" btn-type="danger" confirmation="Stop sharing your location now?">
                     <parameter name="shareId"/></link>
             </default-field></field>

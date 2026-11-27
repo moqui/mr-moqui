@@ -612,8 +612,8 @@ test("in the Android app the location chip says sending from this phone while th
         await vm.loadShellIndicators();
         await settle();
         assert.equal(indicators.list()[0].text, "Sharing location");
-        // a note of a page's own (Browse's "sending here") is left as it is
-        indicators.note("locationSharing", "sending here");
+        // a page's own words (Browse's "sending here", noteFrom by source) are left as they are
+        indicators.noteFrom("locationSharing", "maps", "sending here");
         await vm.loadShellIndicators();
         await settle();
         assert.equal(indicators.list()[0].text, "Sharing location · sending here");

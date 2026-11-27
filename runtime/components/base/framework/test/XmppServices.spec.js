@@ -252,7 +252,7 @@ feature("PEP items are read by their node's access model; a whitelist node is it
     }
 })
 
-feature("user location (XEP-0080) is refused at the services too, in any spelling, and a row kept earlier is not served", {
+feature("user location (XEP-0080) is refused at the services too, in any spelling, and a row kept earlier is not served, retracted, configured or deleted", {
     when() {
         const GEOLOC = "http://jabber.org/protocol/geoloc"
         const location = (node) => ({node, itemId: "current", payloadXml: "<geoloc xmlns='" + GEOLOC + "'><lat>48.85</lat></geoloc>",
@@ -273,6 +273,12 @@ feature("user location (XEP-0080) is refused at the services too, in any spellin
         })
         const own = as(A, "get#PepItems", {ownerUserId: A, node: GEOLOC})
         const coMember = as(B, "get#PepItems", {ownerUserId: A, node: " Http://jabber.org/protocol/geoloc"})
+        // the generic PEP services take no part of it: its one way in is LocationServices.report#XmppPosition
+        // (plans/Location-Sharing.md §3.6)
+        const retracted = as(A, "retract#PepItem", {node: GEOLOC, itemId: "old"})
+        const configured = as(A, "configure#PepNode", {node: GEOLOC, options: {access_model: "whitelist"}})
+        const deleted = as(A, "delete#PepNode", {node: " " + GEOLOC})
+        const untouched = sys(() => ec.entity.find("moqui.xmpp.XmppPepItem").condition("userId", A).condition("node", GEOLOC).count())
         const ordinary = as(A, "publish#PepItem", {node: "urn:xmpp:avatar:metadata", itemId: "a1",
             payloadXml: "<metadata xmlns='urn:xmpp:avatar:metadata'/>"})
         sys(() => {
@@ -282,9 +288,9 @@ feature("user location (XEP-0080) is refused at the services too, in any spellin
         // ASCII whitespace alone is trimmed, as the XMPP session trims it (Rust's trim keeps U+FEFF, JavaScript's strips it)
         const check = (name) => as(null, "get#PepNodeRefused", {node: name}).refused
         const spaced = check("\t" + GEOLOC + "\r\n"), marked = check("\uFEFF" + GEOLOC)
-        return {published, variant, kept, own, coMember, ordinary, spaced, marked}
+        return {published, variant, kept, own, coMember, retracted, configured, deleted, untouched, ordinary, spaced, marked}
     },
-    then({published, variant, kept, own, coMember, ordinary, spaced, marked}) {
+    then({published, variant, kept, own, coMember, retracted, configured, deleted, untouched, ordinary, spaced, marked}) {
         // refused (the session answers forbidden), not an error (which it would answer internal-server-error)
         published.errors == ""
         published.refused == true
@@ -295,6 +301,10 @@ feature("user location (XEP-0080) is refused at the services too, in any spellin
         own.itemList.length == 0
         coMember.denied == true
         coMember.itemList.length == 0
+        retracted.errors.includes("not kept")
+        configured.errors.includes("not kept")
+        deleted.errors.includes("not kept")
+        untouched == 1
         ordinary.errors == ""
         ordinary.refused == false
         spaced == true
