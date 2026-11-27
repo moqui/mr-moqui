@@ -67,6 +67,27 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   shown. The terminal's room has Info for each message, as text. When the last owner leaves, the
   longest-standing moderator (else member) becomes an owner: Leave names them, and the room says they became an owner
   when the owner left.
+- <a id="chat-bubbles"></a>**Bubbles.** On a phone, in a narrow room and in the single-room mode a room is laid out as
+  a phone's messages app: your messages on the right in the accent, the others' on the left in grey, with round corners
+  that are tight where two of one sender's messages meet. A line of the day and its time ("Today • 8:43 PM") starts each
+  day, and a line of the time alone marks a pause of an hour or more. The composer is a round field with a round Send.
+  The note of what reads the messages (not end-to-end encrypted, for example) is a quiet, centred line under the header.
+  The colors are tokens of `WebrootVue.qvt.css` that a color scheme may set: `--m-chat-mine-bg` and `--m-chat-mine-fg`
+  (the accent, `--q-primary`, which `THEME_PRIMARY_COLOR` sets), `--m-chat-theirs-bg` and `--m-chat-theirs-fg`,
+  `--m-chat-field-bg`, and `--m-chat-send-bg` and `--m-chat-send-fg`. A direct room's header shows the other person's
+  avatar.
+- <a id="single-room"></a>**Single-room mode.** `single=true` on Chat's URL (for example
+  `/qapps/BasicComms/Chat?single=true`) shows one room full screen: `chatRoomId`, else the first of the user's rooms. It
+  has no rail of rooms and no page chrome (the header, drawer and footer of the web page or the client's shell). The
+  room's header is its avatar, name, status line and menu. The menu has Sign out and not Pin, Archive or Leave. The
+  composer has Attach, Emoji and Send. A mobile build of one chat sets it as its start screen
+  (`<client-conf start-path="/apps/BasicComms/Chat?single=true"/>`, [Desktop-Client](../ui/Desktop-Client.md)); its
+  shell then keeps the mode on every Chat link, a notification's room among them.
+
+  ![The single-room mode on a phone, dark: the room, someone typing, and the room's menu with Sign out](../images/chat-single-room.png)
+- <a id="chat-typing"></a>**Typing.** A member's typing shows for 6 seconds unless it is sent again
+  (`signal#Typing`). A member that waits on one long call (an agent that types as another member) passes `forSeconds`
+  (up to 180), and sends `typing` false when done. Their message also ends it.
 - <a id="room-details"></a>**A room's details.** The room's header (Media, files and links; on a phone its menu, or the
   members' faces) opens its details: full screen on a phone, the right pane on a desktop, with tabs. **People** (the
   members, Add people, Verify in an encrypted room), **Media** (the pictures and videos as a grid; a tap opens the

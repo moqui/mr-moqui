@@ -304,7 +304,9 @@
                 const roomId = message.chatRoomId || topic.slice("chatRoom:".length);
                 if (message.kind === "typing") {
                     const typing = state.typing[roomId] = Object.assign({}, state.typing[roomId]);
-                    if (message.typing) typing[message.userId] = now + TYPING_FOR;
+                    // a few seconds unless sent again, or the sender's forSeconds (up to 180) when it waits on one long call
+                    const forMs = message.forSeconds > 0 ? Math.min(Number(message.forSeconds), 180) * 1000 : TYPING_FOR;
+                    if (message.typing) typing[message.userId] = now + forMs;
                     else delete typing[message.userId];
                     // what an agent member says it does ("Looking up open orders…")
                     const texts = state.typingText = state.typingText || {};

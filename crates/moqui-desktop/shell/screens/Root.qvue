@@ -418,6 +418,12 @@ module.exports = {
         // the comms app's path under basePath (BasicComms, or an app's own Comms)
         // the build's start screen (<client-conf start-path>): the home in place of the chat panel and the apps
         startPath() { return String((this.state && this.state.startPath) || ''); },
+        // a start screen that is Chat in its single-room mode (start-path="/apps/<comms>/Chat?single=true"): every Chat link
+        // (a notification's room, a room link) keeps that mode, so the app never shows the rooms' rail or the shell's chrome
+        singleChat() {
+            const start = this.startPath ? this.route(this.startPath) : null;
+            return !!(start && start.view === 'chat' && ['true', 'Y', '1'].includes(String(start.parameters.single || '')));
+        },
         // the start screen is shown here (a bundled one, its query too) with nothing before it: Back leaves the app. What a
         // replaceUrl put in its place (a dm link's room) is the start too, so Back there does not open the link again.
         atStart() {
@@ -579,6 +585,7 @@ module.exports = {
             if (!url) return;
             const target = this.route(url);
             if (!target) { host().openRemote(this.getLinkPath(String(url))).catch((err) => this.failed(err)); return; }
+            if (target.view === 'chat' && this.singleChat && !target.parameters.single) target.parameters = Object.assign({}, target.parameters, { single: 'true' });
             const before = this.view ? this.currentLinkUrl : null;
             // another screen: its containers register again (the same screen keeps them, a compose dock stays)
             if (target.view !== this.view) this.activeContainers = {};
