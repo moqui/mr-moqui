@@ -1766,7 +1766,7 @@ fn an_embedding_call_for_an_external_or_over_quota_user_is_refused() {
         crate::usage::record_call(&bed.facade, &llm.conf().content_log, &target.model.prices, &spent).unwrap();
     }
     let texts = vec!["a page's sentence".to_string()];
-    let embed = || llm.embed_batches(&bed.facade, &target, &texts, Duration::from_secs(2));
+    let embed = || llm.embed_batches(&bed.facade, &target, &texts, Duration::from_secs(2), None);
     login("emout");
     let refused = embed().unwrap_err();
     assert!(refused.to_string().contains("not available to this user"), "{refused}");

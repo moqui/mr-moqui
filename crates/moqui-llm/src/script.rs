@@ -75,19 +75,21 @@ fn entity() -> Result<moqui_core::entity::EntityFacade, HostError> {
 }
 
 /// `ec.llm.embed(texts, {feature|model, allowInTransaction})`. One vector per text, from the model's `/v1/embeddings`
-/// ([`crate::embed`]). An open transaction is refused unless `allowInTransaction` is set, and then it is suspended for
-/// the call. An empty list returns no vectors and does not call the model.
+/// ([`crate::embed`]); `texts` may be one string. A blank text is refused, naming its index, so the vectors stay one
+/// per text in the caller's order. An open transaction is refused unless `allowInTransaction` is set, and then it is
+/// suspended for the call, which is cut to the time it has left ([`crate::provider::outside_transaction`]). An empty
+/// list returns no vectors and does not call the model.
 fn embed(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let texts: Vec<String> = match call.value_or_null(0) {
-        Value::List(items) => items
-            .iter()
-            .map(moqui_lib::object::to_plain_string)
-            .map(|text| text.trim().to_string())
-            .filter(|text| !text.is_empty())
-            .collect(),
-        Value::String(text) if !text.trim().is_empty() => vec![text.trim().to_string()],
+        Value::List(items) => items.iter().map(moqui_lib::object::to_plain_string).collect(),
+        Value::String(text) => vec![text.to_string()],
         _ => return Err(HostError::message("ec.llm.embed takes a list of texts")),
     };
+    if let Some(index) = texts.iter().position(|text| text.trim().is_empty()) {
+        return Err(HostError::message(format!(
+            "ec.llm.embed text {index} is blank; every text gets a vector in its place, so pass none blank"
+        )));
+    }
     let options = call.value(1);
     let (model, feature, allow) = match options {
         Some(Value::Map(map)) => (
@@ -112,24 +114,14 @@ fn embed(call: &mut Call<'_>) -> Result<Ret, HostError> {
             },
         )
         .map_err(HostError::Lib)?;
-    let in_transaction = moqui_core::transaction::thread_in_transaction();
-    if in_transaction && !allow {
+    if !allow && moqui_core::transaction::thread_in_transaction() {
         return Err(HostError::message(crate::provider::IN_TRANSACTION));
     }
-    let parked = if in_transaction {
-        let transactions = facade
-            .transactions_for(crate::usage::LLM_CALL)
-            .map_err(HostError::Lib)?;
-        transactions.suspend().map_err(HostError::Lib)?;
-        Some(transactions)
-    } else {
-        None
-    };
-    let embedded = llm.embed(&facade, &target, &texts);
-    if let Some(transactions) = &parked {
-        transactions.resume().map_err(HostError::Lib)?;
-    }
-    let vectors = embedded.map_err(HostError::Lib)?;
+    let vectors = crate::provider::outside_transaction(Some(&facade), &target.model.id, |ends| {
+        llm.embed(&facade, &target, &texts, ends)
+    })
+    .and_then(|embedded| embedded)
+    .map_err(HostError::Lib)?;
     let dimension = vectors.first().map_or(0, Vec::len);
     let mut rows = Vec::with_capacity(vectors.len());
     for vector in vectors {
@@ -406,6 +398,20 @@ mod tests {
         let _entered = context.enter();
         let missing = run_script(r#"ec.llm.embed(["hello"])"#).unwrap_err().to_string();
         assert!(missing.contains("feature or a model"), "{missing}");
+        // a blank text is refused by its index rather than dropped, which would shift the vectors after it
+        let blank = run_script(r#"ec.llm.embed(["hello", "  ", "world"], {feature: "classify"})"#)
+            .unwrap_err()
+            .to_string();
+        assert!(blank.contains("text 1 is blank"), "{blank}");
+        let blank = run_script(r#"ec.llm.embed("", {feature: "classify"})"#)
+            .unwrap_err()
+            .to_string();
+        assert!(blank.contains("text 0 is blank"), "{blank}");
+        assert!(eval_condition(r#"ec.llm.embed([], {feature: "classify"}).vectors.length === 0"#).unwrap());
+        let one = run_script(r#"ec.llm.embed("hello", {feature: "classify"})"#)
+            .unwrap_err()
+            .to_string();
+        assert!(one.contains("no embeddings API"), "{one}");
         let transactions = facade.transactions_for("moqui.basic.Enumeration").unwrap();
         let in_transaction = |expression: &str| {
             transactions.run(moqui_core::transaction::TransactionAttribute::UseOrBegin, None, || {
@@ -416,10 +422,17 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(refused.contains(crate::provider::IN_TRANSACTION), "{refused}");
-        let no_api =
-            in_transaction(r#"ec.llm.embed(["hi"], {feature: "classify", allowInTransaction: true}) !== null"#)
-                .unwrap_err()
-                .to_string();
+        // allowed, the call is made with the transaction suspended, and the transaction is back in place after it
+        let (no_api, resumed) = transactions
+            .run(moqui_core::transaction::TransactionAttribute::UseOrBegin, None, || {
+                let failed =
+                    eval_condition(r#"ec.llm.embed(["hi"], {feature: "classify", allowInTransaction: true}) !== null"#)
+                        .unwrap_err()
+                        .to_string();
+                Ok((failed, transactions.in_transaction()))
+            })
+            .unwrap();
         assert!(no_api.contains("no embeddings API"), "{no_api}");
+        assert!(resumed);
     }
 }

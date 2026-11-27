@@ -204,21 +204,29 @@ pub struct Batches {
 
 impl LlmFacade {
     /// Embed `texts` with the model of `target`, [`BATCH`] at a time, each request logged as an `LlmCall` of source
-    /// `embed` for the current user. Out: one vector per text, in order.
+    /// `embed` for the current user, each request ending by `deadline` when there is one. Out: one vector per text, in
+    /// order.
     ///
     /// # Errors
     ///
     /// Returns an error when the facade is off, the endpoint has no embeddings API, or a request fails or answers
     /// something that is not one vector per text.
-    pub fn embed(&self, facade: &EntityFacade, target: &Target, texts: &[String]) -> Result<Vec<Vec<f32>>, Error> {
-        let batches = self.embed_batches(facade, target, texts, REQUEST_TIMEOUT)?;
+    pub fn embed(
+        &self,
+        facade: &EntityFacade,
+        target: &Target,
+        texts: &[String],
+        deadline: Option<Instant>,
+    ) -> Result<Vec<Vec<f32>>, Error> {
+        let batches = self.embed_batches(facade, target, texts, REQUEST_TIMEOUT, deadline)?;
         match batches.error {
             None => Ok(batches.vectors),
             Some(error) => Err(embed_error(target, &error)),
         }
     }
 
-    /// [`Self::embed`] that keeps what the batches before a failed one made, each request with `timeout`.
+    /// [`Self::embed`] that keeps what the batches before a failed one made, each request with `timeout` and ending by
+    /// `deadline` when there is one.
     ///
     /// # Errors
     ///
@@ -229,6 +237,7 @@ impl LlmFacade {
         target: &Target,
         texts: &[String],
         timeout: Duration,
+        deadline: Option<Instant>,
     ) -> Result<Batches, Error> {
         if !self.enabled() {
             return Err(Error::new("the llm-facade is disabled"));
@@ -277,7 +286,8 @@ impl LlmFacade {
         let mut out = Batches::default();
         for batch in texts.chunks(BATCH) {
             let body = request_body(target, json!(batch));
-            let limits = pump::Limits::new(timeout, Some(Instant::now() + timeout));
+            let ends = Instant::now() + timeout;
+            let limits = pump::Limits::new(timeout, Some(deadline.map_or(ends, |deadline| deadline.min(ends))));
             let mut record = CallRecord::new(CallSource::Embed, target);
             record.user_id.clone_from(&user_id);
             if self.conf().content_log.enabled {
@@ -507,7 +517,7 @@ impl LlmEmbedder {
             missing.dedup();
             missing
         };
-        let batches = self.llm.embed_batches(&self.facade, &target, &missing, timeout)?;
+        let batches = self.llm.embed_batches(&self.facade, &target, &missing, timeout, None)?;
         {
             let mut kept = lock(&self.kept);
             if kept.len() + batches.vectors.len() > KEPT {

@@ -996,45 +996,63 @@ fn call_with_transaction(target: &Target, request: &ModelRequest, options: &mut 
         ));
         return reply;
     }
-    let in_place = options
-        .recorder
-        .as_ref()
-        .and_then(|recorder| recorder.facade.transactions_for(usage::LLM_CALL).ok())
+    let facade = options.recorder.as_ref().map(|recorder| recorder.facade);
+    let suspended = outside_transaction(facade, &target.model.id, |ends| {
+        // an opted-in call ends when the transaction it suspends would: past that the caller's work rolls back anyway
+        if let Some(cut) = ends {
+            options.deadline = Some(options.deadline.map_or(cut, |deadline| deadline.min(cut)));
+        }
+        call_unsuspended(target, request, options)
+    });
+    suspended.unwrap_or_else(|error| {
+        let mut reply = Reply::empty();
+        reply.finish = Finish::Error(ProviderError::new(ErrorClass::BadRequest, error.to_string()));
+        reply
+    })
+}
+
+/// Run `work`, a call to model `model_id` the caller opted to make with a transaction open, with the transaction in
+/// place on the call log's group of `facade` suspended, and resume that transaction after it. `work` is given when
+/// the transaction would end, to cut the call to; with no transaction in place it runs as is and is given `None`. A
+/// transaction that does not resume is logged. [`call`] and `ec.llm.embed` share it.
+///
+/// # Errors
+///
+/// Returns why the transaction in place could not be suspended; `work` did not run.
+pub(crate) fn outside_transaction<T>(
+    facade: Option<&EntityFacade>,
+    model_id: &str,
+    work: impl FnOnce(Option<Instant>) -> T,
+) -> Result<T, Error> {
+    let in_place = facade
+        .and_then(|facade| facade.transactions_for(usage::LLM_CALL).ok())
         .filter(moqui_core::transaction::TransactionManager::in_transaction);
     let Some(transactions) = in_place else {
-        return call_unsuspended(target, request, options);
+        return Ok(work(None));
     };
-    // an opted-in call ends when the transaction it suspends would: past that the caller's work rolls back anyway
-    if let Some(remaining) = transactions.time_remaining() {
-        let cut = Instant::now() + remaining;
-        options.deadline = Some(options.deadline.map_or(cut, |deadline| deadline.min(cut)));
-    }
-    let mut reply = None;
+    let ends = transactions
+        .time_remaining()
+        .map(|remaining| Instant::now() + remaining);
+    let mut out = None;
     let suspended = transactions.run(
         moqui_core::transaction::TransactionAttribute::IgnoreSuspend,
         None,
         || {
-            reply = Some(call_unsuspended(target, request, options));
+            out = Some(work(ends));
             Ok(())
         },
     );
-    match (reply, suspended) {
-        (Some(reply), Ok(())) => reply,
-        (Some(reply), Err(error)) => {
-            tracing::error!(
-                "the transaction suspended for the call to model {} did not resume: {error}",
-                target.model.id
-            );
-            reply
+    match (out, suspended) {
+        (Some(out), Ok(())) => Ok(out),
+        (Some(out), Err(error)) => {
+            tracing::error!("the transaction suspended for the call to model {model_id} did not resume: {error}");
+            Ok(out)
         }
         (None, result) => {
             let message = result.err().map_or_else(String::new, |error| error.to_string());
-            let mut reply = Reply::empty();
-            reply.finish = Finish::Error(ProviderError::new(
-                ErrorClass::BadRequest,
-                format!("the transaction in place could not be suspended for the model call: {message}"),
-            ));
-            reply
+            Err(Error::new(format!(
+                "the transaction in place could not be suspended for the model call: {message}"
+            )))
         }
     }
 }
