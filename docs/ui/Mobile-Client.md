@@ -112,7 +112,8 @@ own `/qapps`), never both:
 
 The phone keeps downloaded map regions as the desktop does ([Desktop-Client](Desktop-Client.md#offline-map-packages):
 the store under `client/data/`, `packages-max-mb`, the checks, the shell's `/__moqui-app/maps/` path and the
-commands); what differs is who runs the download (plans/Maps-Offline.md §2.4).
+commands, and the bundled offline Maps screen: [Maps, In the apps](../tools/Maps.md#in-the-apps)); what differs is who
+runs the download (plans/Maps-Offline.md §2.4) and the screen's "Download only on Wi-Fi" choice, the phone's alone.
 
 - **`PackageDownloadWorker`** (WorkManager, `PackageDownloadWorker.kt`, a `ListenableWorker` on a thread of its own, so
   one map download runs at a time and WorkManager's threads stay for `FlushWorker` and `RegisterWorker`; a second
@@ -129,7 +130,10 @@ commands); what differs is who runs the download (plans/Maps-Offline.md §2.4).
   show a download nothing will run again; the part is kept for the next download asked. A cancel, a delete, and an
   account's data deleted cancel its works (`cancelUniqueWork`, `cancelAllWorkByTag`).
 - **The bridge:** `moquiDesktop.packages` on the shell's page only (`list`, `download(packageId, revision, wifiOnly)`,
-  `cancel`, `remove`, `status`), with the load's nonce.
+  `cancel`, `remove`, `status`, `addresses`), with the load's nonce.
+- **The offline screen** in the one webview: the drawer's Maps opens Maps' Browse (the server's page, in the webview)
+  when the server answers and the shell's offline Maps screen when it does not; a place saved there waits in the
+  outbox, and `FlushWorker` sends it when the network is back.
 - **Android's WebView and ranges:** the patched `RustWebViewClient.kt` hands a 206 body on as it starts at its range,
   and reads an intercepted body's length as an Int32, so no member past 2 GiB less a byte is unpacked (on every device,
   so a package is the same everywhere); the server's `maps@package-max-bytes` (2 GiB) keeps packages under it.

@@ -37,6 +37,7 @@
     "allow-packages-cancel",
     "allow-packages-delete",
     "allow-packages-status",
+    "allow-packages-addresses",
     "allow-scheme-fetch",
     "allow-client-show-shell",
     "allow-open-in-shell",

@@ -854,7 +854,7 @@ pub(crate) fn package_download(
     };
     if !network_ready() {
         return if last {
-            core.packages().tried_by(account, package_id, revision, runner);
+            // only the work the host enqueued for the job ends it (expect_runner): a replaced one is refused
             package_give_up(&core, account, package_id, revision, runner, "there was no network")
         } else {
             PACKAGE_RETRY

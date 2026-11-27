@@ -29,7 +29,9 @@ along with this software (see the LICENSE.md file). If not, see
         uploadStatus, then upload by uploadId; plans/Mobile-Desktop.md MD5)). server.features says what a client may use
         beside it: nativePush {providers: ['fcm', 'unifiedpush'], fcmConfigured, registered, encrypted (registerClientPush
         takes the app's push keys and pushes to it are encrypted to them), ack (ackClientPush)}, and what each
-        inbox-source provider's operation features answers, merged in: internalSendRef, mailChangesUncovered. A
+        inbox-source provider's operation features answers, merged in: internalSendRef, mailChangesUncovered; and placeRef
+        (Maps' savePlace keeps a place once by its clientRef, so the apps may queue one saved offline: plans/Maps-Offline.md
+        §2.5). A
         transition runs none of the pre-actions below. 401 without a user. -->
     <transition name="clientConfig" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[
@@ -44,7 +46,7 @@ along with this software (see the LICENSE.md file). If not, see
                 config.server = { name: config.shell.title || ec.web.getHostName(false), moquiVersion: ec.factory.moquiVersion, clientApi: 4 }
                 const push = ec.service.sync().name('org.moqui.ui.NotificationServices.get#PushDeviceStatus').disableAuthz().call() || {}
                 config.server.features = { nativePush: { providers: ['fcm', 'unifiedpush'], fcmConfigured: push.fcmConfigured === true,
-                    registered: push.registered === true, encrypted: true, ack: true } }
+                    registered: push.registered === true, encrypted: true, ack: true }, placeRef: true }
                 // what an app's inbox source supports beyond the framework's (its operation features), for a client that works
                 // offline: internalSendRef (an internal send is made once by its clientRef, so it may be queued) and
                 // mailChangesUncovered (the stores the mail change cursor does not cover). Read-only and the user's own, so with

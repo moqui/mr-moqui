@@ -22,7 +22,7 @@
 //! - [`wkb`]: the points and polygons of the `geometry` column.
 //! - [`overture`]: the schema 2.x columns of each theme and a region read from one file.
 //! - [`address`]: O2's address matching: a text read into its parts, the keys points and texts are compared by, and the
-//!   ranking of the points found (plans/archive/Maps-Overture.md §O2).
+//!   ranking of the points found (plans/archive/Maps-Overture.md §O2); `moqui_lib::geo::address`, re-exported.
 //! - [`address_service`]: the address index (`OvertureAddress` rows), a refresh's changes, and `search#OvertureAddresses`,
 //!   the local geocoder's search.
 //! - [`service`]: `org.moqui.maps.OvertureServices`' Rust services; the rest of the import (preflight, validation,
@@ -31,7 +31,8 @@
 //! This crate is on moqui-core, which reaches it through the [`moqui_core::extension`] entry below. moqui-host links it
 //! under its `overture` feature; a build without it reports that `overture` is not built in.
 
-pub mod address;
+// the address matching is moqui-lib's (the apps' offline search uses it too: plans/Maps-Offline.md §2.5)
+pub use moqui_lib::geo::address;
 pub mod address_service;
 pub mod http;
 pub mod overture;

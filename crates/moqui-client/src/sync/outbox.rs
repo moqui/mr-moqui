@@ -40,6 +40,10 @@
 //!   by its `clientRef` (`features.internalSendRef`); a `mail-send` of one becomes it. No files.
 //! - `mail-send` carries `baseStamp` (the server's draft the user edited) and `saveRef` (the save's own reference), so
 //!   a draft changed on the server meanwhile is a conflict, not overwritten.
+//! - `map-place`: a place saved on the offline Maps screen (plans/Maps-Offline.md §2.5), `{clientRef, label,
+//!   longitude, latitude}`, where the server says Maps' `savePlace` (`store#Place`) takes it once by its `clientRef`
+//!   (`features.placeRef`). A place is only ever added there, never changed, so it meets no server change to conflict
+//!   with; all of them in one order. A refusal keeps no ref on the server, so a retry may be saved.
 //!
 //! A conflict (`conflict` state) keeps the server's state in `current`; a retry of it sends the user's anyway (no
 //! `seen` or `baseStamp`, new references), a discard drops it.
@@ -128,6 +132,11 @@ pub(crate) const CHAT_REDACT: &str = "chat-redact";
 pub(crate) const CHAT_REACT: &str = "chat-react";
 pub(crate) const POLL_VOTE: &str = "poll-vote";
 pub(crate) const INTERNAL_SEND: &str = "internal-send";
+pub(crate) const MAP_PLACE: &str = "map-place";
+/// The target all saved places share, so they reach the server in the order they were made.
+pub(crate) const MAP_PLACE_TARGET: &str = "map-place";
+/// The longest name of a saved place (`store#Place` keeps 200 characters).
+const PLACE_LABEL_BYTES: usize = 800;
 
 /// The kinds a server below `clientApi` 4 is sent (MD4).
 const MD4_KINDS: [&str; 4] = [CHAT_SEND, CHAT_READ, MAIL_SEND, MAIL_STATE];
@@ -244,6 +253,9 @@ pub fn kinds_json(server: &ServerSync) -> Value {
     let mut kinds: Vec<&str> = MD4_KINDS.to_vec();
     if server.syncs() {
         kinds.extend(MESSAGE_KINDS);
+    }
+    if server.place_queue() {
+        kinds.push(MAP_PLACE);
     }
     if server.internal_send() {
         kinds.push(INTERNAL_SEND);
@@ -445,6 +457,20 @@ pub fn check_with(
                 now_ms,
             )
         }
+        MAP_PLACE => {
+            if !server.place_queue() {
+                return Err("A place saved offline needs a connection to this server".to_string());
+            }
+            if !files.is_empty() {
+                return Err("A saved place sends no files".to_string());
+            }
+            (
+                plain_ref(&given.get("clientRef").cloned().unwrap_or(Value::Null))?,
+                MAP_PLACE_TARGET.to_string(),
+                map_place(given)?,
+                now_ms,
+            )
+        }
         MAIL_STATE => {
             let action = given.get("action").and_then(Value::as_str).unwrap_or("");
             if !MAIL_ACTIONS.contains(&action) {
@@ -479,6 +505,33 @@ pub fn check_with(
     op.next_ms = now_ms;
     op.files = files.to_vec();
     Ok(op)
+}
+
+/// A place saved offline (`map-place`): its `clientRef`, its name (text) and its point (WGS84 degrees), as kept.
+fn map_place(given: &Map<String, Value>) -> Result<Value, String> {
+    let id = plain_ref(&given.get("clientRef").cloned().unwrap_or(Value::Null))?;
+    let label = match given.get("label") {
+        Some(Value::String(text)) if !text.trim().is_empty() && text.len() <= PLACE_LABEL_BYTES => {
+            text.trim().to_string()
+        }
+        _ => return Err("A place needs its name".to_string()),
+    };
+    let degrees = |name: &str, limit: f64| -> Result<f64, String> {
+        let value = match given.get(name) {
+            Some(Value::Number(n)) => n.as_f64(),
+            Some(Value::String(text)) => text.trim().parse::<f64>().ok(),
+            _ => None,
+        };
+        value
+            .filter(|value| value.is_finite() && value.abs() <= limit)
+            .ok_or_else(|| format!("A place's {name} is a number from -{limit} to {limit}"))
+    };
+    Ok(json!({
+        "clientRef": id,
+        "label": label,
+        "longitude": degrees("longitude", 180.0)?,
+        "latitude": degrees("latitude", 90.0)?,
+    }))
 }
 
 /// A message's change (edit, redaction, reaction, poll vote): its `clientRef`, its target (the message) and the

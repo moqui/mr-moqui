@@ -58,6 +58,7 @@ const COMMANDS: &[&str] = &[
     "packages_cancel",
     "packages_delete",
     "packages_status",
+    "packages_addresses",
     "scheme_fetch",
     "client_show_shell",
     "open_in_shell",

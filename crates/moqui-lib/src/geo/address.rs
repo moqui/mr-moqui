@@ -15,9 +15,11 @@
 //! Address matching of O2 (plans/archive/Maps-Overture.md §O2, plans/archive/Maps.md §6.1): the parts of an address a person typed
 //! ([`parse`]), the keys an address point and a query are compared by ([`street_key`], [`number_key`], [`unit_key`],
 //! [`postcode_key`], [`fold`]) and the ranking of the points found into candidates ([`rank`]). No database and no
-//! context: the service reads the rows (`address_service::search_overture_addresses`) and hands them here.
+//! context: the server's service reads the rows (`moqui-maps` `address_service::search_overture_addresses`) and hands
+//! them here, and so does the apps' search of an offline map package's addresses (`moqui-client` `packages::addresses`,
+//! plans/Maps-Offline.md §2.5), which is why it is here, in moqui-lib, with no Parquet reader or codec beside it.
 //!
-//! **Normalization.** Case and the diacritics of Latin letters are folded (`moqui_lib::geo::admin1::fold_name`), dots
+//! **Normalization.** Case and the diacritics of Latin letters are folded (`crate::geo::admin1::fold_name`), dots
 //! inside a word dropped (`St.`, `p.za`), other punctuation made a space, and each word of a street mapped to one
 //! spelling by the tables of its country's languages ([`STREET_WORDS`]): English (with the directionals), Italian,
 //! French, German, Spanish, Portuguese and Dutch; a German or Dutch street's `-straße`, `-strasse`, `-straat` or `-platz`
@@ -31,8 +33,8 @@
 //! street's estimate with its points' extent. Overture's schema 2.0 does not say what an address point stands for, so a
 //! candidate says its position kind is not stated.
 
-use moqui_lib::geo::admin1::fold_name;
-use moqui_lib::geo::postal::lookup_code;
+use crate::geo::admin1::fold_name;
+use crate::geo::postal::lookup_code;
 
 /// Points of one address closer than this are one candidate: its units and entrances (the evaluation's same-address
 /// spread: Boston's 99th percentile 30 m, Amsterdam's 28 m).
@@ -383,7 +385,7 @@ pub fn unit_key(unit: &str) -> String {
         .concat()
 }
 
-/// A postal code's key for `country`: its country's rules (`moqui_lib::geo::postal`: a ZIP+4 read as its ZIP code, a
+/// A postal code's key for `country`: its country's rules (`crate::geo::postal`: a ZIP+4 read as its ZIP code, a
 /// British, Canadian or Dutch code without its space), else upper case letters and digits.
 #[must_use]
 pub fn postcode_key(postcode: &str, country: &str) -> String {
@@ -1012,6 +1014,100 @@ pub fn label(point: &Point, tier: Tier) -> String {
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// The most street keys tried for one country's reading of a text.
+pub const MAX_STREETS: usize = 8;
+
+/// The order of the tiers, the best first.
+#[must_use]
+pub fn tier_order(tier: Tier) -> u8 {
+    match tier {
+        Tier::Address => 0,
+        Tier::NumberBase => 1,
+        Tier::Street => 2,
+    }
+}
+
+/// Whether one country's best (`tier`, `ranked`) is better than the best so far: a better tier, or the same tier with a
+/// higher score.
+#[must_use]
+pub fn better(tier: Tier, ranked: &Ranked, best: Option<(Tier, &Ranked)>) -> bool {
+    match best {
+        None => true,
+        Some((best_tier, best_ranked)) => {
+            tier_order(tier) < tier_order(best_tier)
+                || tier == best_tier
+                    && ranked.candidates.first().map_or(i32::MIN, |c| c.score)
+                        > best_ranked.candidates.first().map_or(i32::MIN, |c| c.score)
+        }
+    }
+}
+
+/// What [`search_tiers`] reads points with: `(street key, number key)` to the points of the street (of the number).
+pub type RowsOf<'a, E> = dyn FnMut(&str, Option<&str>) -> Result<Vec<Point>, E> + 'a;
+
+/// The best tier found for one country's reading of a text: for each street key of the query (at most
+/// [`MAX_STREETS`]), the number on it, then the number without its suffix (a suffix the source keeps as the unit, Italy's
+/// `12/A`, is the address), then the street alone. `rows(street, number)` gives the points of a street key of `country`,
+/// those of one number key when given: the server's index (`moqui-maps` `address_service`) and an offline package's
+/// rows (`moqui-client` `packages::addresses`, plans/Maps-Offline.md §2.5) are both searched by this one walk.
+///
+/// # Errors
+///
+/// What `rows` answers.
+pub fn search_tiers<E>(
+    query: &Query,
+    country: &str,
+    near: Option<(f64, f64)>,
+    rows: &mut RowsOf<'_, E>,
+) -> Result<Option<(Tier, Ranked)>, E> {
+    let number = query.number.as_deref().map(number_key).filter(|key| !key.is_empty());
+    for (street, locality) in query.streets(country).into_iter().take(MAX_STREETS) {
+        let locality = locality.as_deref().map(fold);
+        if let Some(number) = number.as_deref() {
+            let found = rows(&street, Some(number))?;
+            if !found.is_empty() {
+                return Ok(Some((
+                    Tier::Address,
+                    rank(query, locality.as_deref(), Tier::Address, found, near),
+                )));
+            }
+            if let Some(base) = number_base(number) {
+                let found = rows(&street, Some(&base))?;
+                let suffix = number
+                    .get(base.len()..)
+                    .unwrap_or_default()
+                    .trim_matches(['/', '-'])
+                    .to_string();
+                if query.unit.is_none() && !suffix.is_empty() && found.iter().any(|point| point.unit_key == suffix) {
+                    let as_unit = Query {
+                        unit: Some(suffix.clone()),
+                        ..query.clone()
+                    };
+                    let units: Vec<Point> = found.into_iter().filter(|point| point.unit_key == suffix).collect();
+                    return Ok(Some((
+                        Tier::Address,
+                        rank(&as_unit, locality.as_deref(), Tier::Address, units, near),
+                    )));
+                }
+                if !found.is_empty() {
+                    return Ok(Some((
+                        Tier::NumberBase,
+                        rank(query, locality.as_deref(), Tier::NumberBase, found, near),
+                    )));
+                }
+            }
+        }
+        let found = rows(&street, None)?;
+        if !found.is_empty() {
+            return Ok(Some((
+                Tier::Street,
+                rank(query, locality.as_deref(), Tier::Street, found, near),
+            )));
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(test)]

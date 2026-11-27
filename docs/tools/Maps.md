@@ -815,7 +815,7 @@ Stage O2 ([Maps-Overture §8](../../plans/archive/Maps-Overture.md#8-o2-regional
 region, imported as Places are (Configuration › Overture: the theme `ADDRESSES`, a run pinned to a release, read by range,
 staged, checked, activated, rolled back, removed), and searched by a geocoder of this server, **Overture addresses (local)**
 (`MPK_GEOCODER_OVERTURE`, seeded disabled as `OVERTURE_ADDRESSES`). The dataset alone is not a geocoder: the parsing,
-normalization, ranking and ambiguity are ours (`moqui-maps` `address.rs`).
+normalization, ranking and ambiguity are ours (`moqui-lib` `geo/address.rs`, which `moqui-maps` uses).
 
 **Limits, from the evaluation of release 2026-11-18.0.** The theme is alpha with partial coverage, the US included (downtown
 Austin has a tenth of Boston's density); a source may give no postal code (none of Italy's do); the schema does not say what a
@@ -872,8 +872,8 @@ fallback), and a refresh is compared by address, not by ID.
 
 A user downloads a region of their map to the Android app or the desktop client and browses it with no network
 ([plans/Maps-Offline.md](../../plans/Maps-Offline.md)). The server part is built (the package, its build and its
-download), and so is the apps' store of packages with their download and serving (OF2, [below](#on-the-device)); the
-offline Maps screen in the apps that reads them (OF3) is coming.
+download), and so are the apps' store of packages with their download and serving ([below](#on-the-device)) and the
+offline Maps screen that reads them ([In the apps](#in-the-apps)).
 
 **A package** (`moqui.maps.MapPackage`) is one region (west, south, east, north; a west east of its east crosses the
 antimeridian) at a zoom range (0 to 16), built on the server from what its owner may see when it is built. It is its
@@ -983,8 +983,59 @@ The Android app and the desktop client keep downloaded packages beside each acco
   not list is 404. The package's own `manifest.json` is served too. Android's WebView reads an intercepted body's length
   as a 32-bit number, hence the 2 GiB member bound, within the server's `maps@package-max-bytes` of 2 GiB.
 - **The shell's commands**: `packages_list` (the server's list and the device's), `packages_download` (a revision;
-  `wifiOnly` on the phone), `packages_cancel`, `packages_delete` and `packages_status`; ids, names, revisions, sizes
-  and states, never a path on the device.
+  `wifiOnly` on the phone), `packages_cancel`, `packages_delete`, `packages_status` and `packages_addresses` (below);
+  ids, names, revisions, sizes and states, never a path on the device.
+
+### In the apps
+
+The apps' shell bundles an offline Maps screen (`Shell/MapsOffline`, `crates/moqui-desktop/shell/screens/MapsOffline.qvue`,
+precompiled with the other bundled screens) and OpenLayers' main part (plans/Maps-Offline.md §2.5):
+
+- **The library.** `shell/libs.txt` names `openlayers main`: the main entry of the OpenLayers build with ol-mapbox-style,
+  ol-pmtiles and pmtiles, the chunks it imports, `ol.css` and `ol-map.json`, as the build's `openlayers/parts.json`
+  lists them (about 0.7 MB of the build's 1.2 MB). The raster part and its decoders (COG layers, registered projections)
+  are not bundled: a package holds no COG layer. A development run serves only those files too; a bundle holds only
+  them (and no `parts.json`) and serves what it holds.
+- **The Maps entry.** For an account with the Maps app (its `shellData` apps, which the store keeps for offline use),
+  the shell's drawer has Maps, which opens Maps' Browse (the server's page, in an app window; on the phone in the
+  webview) when the server answers and the offline screen when it does not, as the shell's offline chip says
+  (`moqui.connection`: the host's own unreachable answer, `X-Moqui-Offline: unreachable`, or none); and Offline maps,
+  the offline screen at any time. The Maps app of the drawer's Applications opens the offline screen too while
+  offline.
+- **The offline screen** lists the account's packages as the server lists them (`packageList`) and as the device holds
+  them, one row each, with Download, Update (a newer revision on the server), Cancel, Delete and, on the phone, "Download
+  only on Wi-Fi"; offline it lists the device's and says so. Open draws a package's map and says when it is offline and
+  when the package was built; its sources (each archive's attribution and notice, the postal and Overture licenses) and
+  the package's notice are shown as text, never as markup.
+- **The map** is `m-map` in package mode ([Qvt-Client](../ui/Qvt-Client.md)): its configuration the manifest's, every
+  URL resolved under the package's path on the shell's origin and nothing else asked (not the shell's own `/libs`,
+  never another host), the label fonts and sprites the package's, each archive read by range (pmtiles' `FetchSource`
+  takes the host's 206 slices, one per tile or directory, well under the 16 MiB a slice), the outline its
+  `outline.json`, the attribution the manifest's with the archive's own notice as plain text. A layer's style is the
+  package's too, and a GeoJSON member past 16 MiB is read by range. Locate me, the places and the overlays work as on
+  the web. **Attribution as text:** an archive's attribution (its metadata, often HTML) is never markup. It goes to
+  OpenLayers' attribution control, which sets what it is given as HTML, only as escaped text (`map.attributionHtml`,
+  links only to http addresses), and the offline screen shows it as text.
+- **Search** is in the page over the package's JSON, within its region: its places (`places.geojson`), postal codes
+  (`postal.json`, by code or place name) and Overture places (`overture-places.json`, by name, brand, category or
+  locality), at most ten results of each source; its Overture addresses through the host (`packages_addresses`,
+  `moqui_client::packages::Packages::search_addresses`), which matches them with the server's own address matching
+  (`moqui-lib` `geo/address.rs`, which builds with no Parquet reader or codec; its tier walk, `search_tiers`, is the
+  server's search's too) over the keys the server wrote into each row. The host reads the member once into typed rows
+  and keeps their index for one package revision (a switch, a delete or a new revision drops it). A member past 16 MiB
+  is read by range and joined, and a new revision installed while a package is open opens it again.
+- **A place saved** there (the place found or chosen, else the map's center, and a name; for an account with the Maps
+  app) is an outbox item, `map-place` ([Desktop-Client](../ui/Desktop-Client.md#the-outbox-and-drafts)), queued where
+  the server's client config says `features.placeRef`, and sent by the host when the server answers to Browse's
+  `savePlace` with its `clientRef`, which keeps a saved place once by it (`ClientSyncServices` claim#ClientRequest and
+  store#ClientRequest in one transaction: sent again it answers the first save, `duplicate`). A place is only ever
+  added, so no change on the server meets it. One refused (1000 places, an unreadable places file) keeps no ref on the
+  server and shows why, with Retry, which may then save it, and Discard; a user Maps refuses (a 403 with the server's
+  reason) fails so, holding up no later place, and one waiting for a sign-in may be discarded. A server without
+  `placeRef` takes no queued place: it is saved at once online and needs a connection offline.
+- **No cache across accounts.** A package's URL carries no account, and package ids are the server's, so two accounts
+  may have the same URL with other files: the host answers them `no-store`, and the screen keeps what it read of a
+  package in memory for its account and revision only (an account switch loads the shell again).
 
 ## Live location
 

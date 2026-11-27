@@ -96,6 +96,18 @@
  * editing. It emits edit-change ({count, dirty, selected: {id, label, description} or null, sketch, drawType}). The map drawn
  * again (another configuration) keeps the editing, its changes and all.
  *
+ * Package mode (plans/Maps-Offline.md §2.5): an offline map package on the device, which the desktop and mobile apps serve
+ * to their shell at /__moqui-app/maps/<packageId>/<path> (moqui_client::packages::serve). The configuration is then
+ *   {packageBase: "/__moqui-app/maps/<packageId>/", manifest: (the package's manifest.json), and the view or places of the
+ *    page's own, which win}
+ * and map.fromManifest makes it of the manifest's frozen configuration: each URL in it package-relative, resolved against
+ * packageBase (one that is absolute, rooted or leaves the package is dropped, and its layer fails by name); the allowed
+ * origin is the package path alone (urlAllowed takes packageBase: the page's own origin outside it is refused too); the
+ * label fonts (ol:webfonts) and a style's sprite are the package's (packageFonts, packageStyle); a PMTiles archive is read
+ * by range from the package; the outline is its outline.json; and a basemap's attribution is the manifest's, with the
+ * source's own notice (an archive's metadata, often HTML) as plain text, never markup. No outside request is ever made.
+ * Everything else (Locate me, places, overlays, selection) is as above; showPlace(place) marks a place a page found.
+ *
  * Events: pick ({lon, lat}, also the DOM event m-map-pick with that detail, which bubbles), select (a place or a feature:
  * {id, lon, lat, label}, with layerId for a record layer's feature; an overlay layer's feature is kind "overlay" with its
  * layerId, layerLabel and description, label and description plain text (map.plainText), shown as text, never as markup)
@@ -439,6 +451,111 @@
     // of the page) for a provider whose test saw CORS, and none for one that did not, whose images then load as plain images
     map.ogcCrossOrigin = (url, ogc, pageOrigin) => (map.sameOrigin(url, pageOrigin) || !ogc || ogc.cors === false ? undefined : "anonymous");
 
+    // ---- offline packages (plans/Maps-Offline.md §2.5) ----
+
+    // The path a package's files are read at on the shell's origin, and its check: one package id, a plain name
+    const PACKAGE_BASE = /^\/__moqui-app\/maps\/[A-Za-z0-9_.:-]{1,64}\/$/;
+    map.isPackageBase = (base) => PACKAGE_BASE.test(text(base)) && !/\/\.+\/$/.test(text(base));
+    map.packageBase = (packageId) => {
+        const base = "/__moqui-app/maps/" + text(packageId) + "/";
+        return map.isPackageBase(base) ? base : "";
+    };
+    // A package-relative path made the URL of its file (base + path), or "" for one that is not a plain path inside the
+    // package: absolute, rooted, with a scheme, a query, a backslash, a percent sign, or a "." or ".." segment
+    map.packageUrl = (path, base) => {
+        const value = text(path);
+        if (!value || !map.isPackageBase(base) || /^[a-z][a-z0-9+.-]*:/i.test(value) || /[\\?#%\u0000-\u001f]/.test(value) ||
+            value.split("/").some((part) => !part || part === "." || part === "..")) return "";
+        return base + value;
+    };
+    // The label fonts of a package (its fonts/ member, as OF1's MapPackages.js writes the style's ol:webfonts)
+    const PACKAGE_FONTS = "fonts/{font-family}/{fontweight}{-fontstyle}.css";
+    map.packageFonts = (pageOrigin, base) => pageOrigin + base + PACKAGE_FONTS;
+    // A package's style with its sprite made the package's own absolute URL (the manifest writes it package-relative,
+    // which a library would resolve against the style's folder): one that is not a plain package path is dropped
+    map.packageStyle = (style, pageOrigin, base) => {
+        if (!style || typeof style !== "object") return style;
+        const out = Object.assign({}, style);
+        const of = (url) => { const made = map.packageUrl(url, base); return made ? pageOrigin + made : ""; };
+        if (typeof out.sprite === "string") {
+            const sprite = of(out.sprite);
+            if (sprite) out.sprite = sprite;
+            else delete out.sprite;
+        } else if (Array.isArray(out.sprite)) {
+            out.sprite = out.sprite.map((entry) => Object.assign({}, entry, { url: of(entry && entry.url) })).filter((entry) => entry.url);
+        }
+        return out;
+    };
+    // The configuration a map draws of a package's manifest (its configuration, frozen when it was built): every URL the
+    // package's, no allowed origin, no link of the notice, the view its region, and each basemap's attribution with the
+    // notice of the data it was cut from (the manifest's sources: an archive's metadata, often HTML) read as plain text
+    map.fromManifest = (manifest, base) => {
+        const given = manifest && typeof manifest === "object" && manifest.configuration && typeof manifest.configuration === "object" ?
+            JSON.parse(JSON.stringify(manifest.configuration)) : {};
+        const sources = Array.isArray(manifest && manifest.sources) ? manifest.sources : [];
+        const profile = given.profile && typeof given.profile === "object" ? given.profile : {};
+        const notice = (member) => {
+            const source = sources.find((one) => one && text(one.member) === member);
+            return source ? map.attributionText(map.plainText(source.sourceAttribution, 300)) : "";
+        };
+        profile.basemaps = (Array.isArray(profile.basemaps) ? profile.basemaps : []).filter((basemap) => basemap && typeof basemap === "object").map((basemap) => {
+            const own = notice(text(basemap.url));
+            const lines = text(basemap.attribution).split("\n").map((line) => line.trim()).filter((line) => line);
+            return Object.assign({}, basemap, { url: map.packageUrl(basemap.url, base), styleUrl: basemap.styleUrl ? map.packageUrl(basemap.styleUrl, base) : "",
+                attribution: lines.concat(own && !lines.includes(own) ? [own] : []).join("\n") });
+        });
+        profile.allowedOrigins = [];
+        if (profile.notice && typeof profile.notice === "object") profile.notice = { text: text(profile.notice.text) };
+        given.profile = profile;
+        given.layers = (Array.isArray(given.layers) ? given.layers : []).filter((layer) => layer && typeof layer === "object")
+            .map((layer) => Object.assign({}, layer, { url: map.packageUrl(layer.url, base), styleUrl: layer.styleUrl ? map.packageUrl(layer.styleUrl, base) : "" }));
+        // what a page of the server's would ask again or send: nothing of it offline
+        ["recordLayers", "features", "points", "record", "adapter", "recordKey", "layerErrors", "projections"].forEach((key) => { delete given[key]; });
+        given.projection = "EPSG:3857";
+        given.packageBase = map.isPackageBase(base) ? base : "";
+        return given;
+    };
+    // A package's file read whole: the apps' scheme answers a file past 16 MiB only by range (moqui_client::packages::serve),
+    // so it is asked in slices of that, each with no HTTP cache (a package's URL carries no account), and joined
+    const PACKAGE_SLICE = 16 * 1024 * 1024;
+    map.readPackageFile = (url) => {
+        const parts = [];
+        const next = (at) => root.fetch(url, { cache: "no-store", credentials: "same-origin", headers: { Range: "bytes=" + at + "-" + (at + PACKAGE_SLICE - 1) } })
+            .then((response) => {
+                if (response.status === 200) return response.text().then((whole) => ({ whole }));
+                if (response.status !== 206) throw new Error("HTTP " + response.status);
+                // a slice that does not say the whole file's length cannot be joined: an error, never a file cut short
+                const range = /^bytes \d+-\d+\/(\d+)$/.exec(String(response.headers.get("Content-Range") || "").trim());
+                if (!range) throw new Error("A slice of " + url + " without its Content-Range");
+                const total = Number(range[1]);
+                return response.arrayBuffer().then((buffer) => {
+                    const bytes = new Uint8Array(buffer);
+                    parts.push(bytes);
+                    return bytes.length && at + bytes.length < total ? next(at + bytes.length) : {};
+                });
+            });
+        return next(0).then((done) => {
+            if (done && done.whole !== undefined) return done.whole;
+            const joined = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+            let offset = 0;
+            parts.forEach((part) => { joined.set(part, offset); offset += part.length; });
+            return new root.TextDecoder().decode(joined);
+        });
+    };
+    // What a package was built from, for the offline screen: each source's attribution and licenses as plain text (an
+    // archive's own notice is often HTML, never shown as markup)
+    map.packageSources = (manifest) => (Array.isArray(manifest && manifest.sources) ? manifest.sources : []).filter((source) => source && typeof source === "object").map((source) => {
+        const plain = (value) => (value && typeof value === "object" ? "" : map.attributionText(map.plainText(value, 300)));
+        const named = (license) => (license && typeof license === "object" ? license.name || license.license || license.licenseName || license.text || license.attribution : license);
+        const licenses = []
+            .concat(source.license ? [source.license] : [])
+            .concat((Array.isArray(source.licenses) ? source.licenses : []).map(named))
+            .concat((Array.isArray(source.imports) ? source.imports : []).flatMap((one) => (Array.isArray(one && one.licenses) ? one.licenses : []).map(named)))
+            .map(plain).filter((line, index, all) => line && all.indexOf(line) === index);
+        return { kind: text(source.kind), member: text(source.member), attribution: plain(source.attribution),
+            sourceAttribution: plain(source.sourceAttribution), licenses };
+    }).filter((source) => source.kind);
+
     // The configuration as m-map-view draws it (the shape at the top of this file), from a server's answer, a map-view's
     // attributes bound in a static template (texts) or a JSON text: numbers parsed, a point, center or extent that is not WGS84
     // degrees left out, layers as objects, and the outline profile when no basemap is given (outline true then).
@@ -448,15 +565,24 @@
             try { given = JSON.parse(given); } catch (err) { given = {}; }
         }
         if (!given || typeof given !== "object") given = {};
+        // a package's manifest (package mode): its configuration, the page's own view and places winning
+        if (given.manifest && typeof given.manifest === "object") {
+            const own = {};
+            ["center", "zoom", "extent", "points", "pick", "pickForm", "units"].forEach((key) => { if (!blank(given[key])) own[key] = given[key]; });
+            given = Object.assign(map.fromManifest(given.manifest, text(given.packageBase)), own);
+        }
+        const packageBase = map.isPackageBase(given.packageBase) ? text(given.packageBase) : "";
         const profileIn = given.profile && typeof given.profile === "object" ? given.profile : {};
         const basemaps = (Array.isArray(profileIn.basemaps) ? profileIn.basemaps : []).map(normalizeBasemap).filter((basemap) => basemap);
         const outline = !basemaps.length;
+        // a package draws its own outline when it has no basemap
+        const outlines = packageBase ? OUTLINE.basemaps.map((basemap) => Object.assign({}, basemap, { url: packageBase + "outline.json" })) : OUTLINE.basemaps;
         const profile = {
             profileId: text(profileIn.profileId) || (outline ? OUTLINE.profileId : text(given.profileId)),
             profileName: text(profileIn.profileName) || (outline ? OUTLINE.profileName : ""),
-            basemaps: outline ? OUTLINE.basemaps.map(normalizeBasemap) : basemaps,
+            basemaps: outline ? outlines.map(normalizeBasemap) : basemaps,
             basemap: text(profileIn.basemap),
-            allowedOrigins: (Array.isArray(profileIn.allowedOrigins) ? profileIn.allowedOrigins : []).map(text).filter((origin) => origin),
+            allowedOrigins: packageBase ? [] : (Array.isArray(profileIn.allowedOrigins) ? profileIn.allowedOrigins : []).map(text).filter((origin) => origin),
             notice: profileIn.notice && typeof profileIn.notice === "object" && text(profileIn.notice.text) ?
                 { text: text(profileIn.notice.text), href: map.safeHref(profileIn.notice.href), linkText: text(profileIn.notice.linkText) } : null
         };
@@ -467,7 +593,7 @@
         const projections = map.normalizeProjections(given.projections);
         return {
             profileId: text(given.profileId) || text(profileIn.profileId),
-            profile, outline,
+            profile, outline, packageBase,
             layers: idList(given.layers).map(normalizeLayer).filter((layer) => layer),
             center: center && lonOk(center[0]) && latOk(center[1]) ? center : null,
             zoom: zoom !== null && zoom >= 0 && zoom <= 22 ? zoom : null,
@@ -534,6 +660,8 @@
     // The origins a map may ask: the page's, those of the URLs its profile and layers name, and the profile's allowedOrigins.
     map.allowedOrigins = (config, pageOrigin) => {
         const origins = new Set([pageOrigin]);
+        // a package's map asks its package's path of the page's origin, nothing else (urlAllowed with its base)
+        if (config.packageBase) return origins;
         const add = (url) => {
             if (!url || !/^https?:\/\//i.test(url)) return;
             const origin = originOf(url.replace(/\{[^}]*\}/g, "0"));
@@ -545,13 +673,15 @@
         return origins;
     };
     // Whether a URL may be asked: http or https (a relative URL is the page's), of an allowed origin. A mapbox:// URL, or a
-    // data:, blob:, file: or javascript: one, is refused, and so is a host the profile does not name.
-    map.urlAllowed = (url, origins, pageOrigin) => {
+    // data:, blob:, file: or javascript: one, is refused, and so is a host the profile does not name. With a package's
+    // base (package mode), only a URL of the page's origin under that path, with no query.
+    map.urlAllowed = (url, origins, pageOrigin, packageBase) => {
         const value = text(url);
         if (!value || /^mapbox:/i.test(value)) return false;
         let parsed;
         try { parsed = new URL(value.replace(/\{[^}]*\}/g, "0"), pageOrigin + "/"); } catch (err) { return false; }
         if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
+        if (packageBase) return parsed.origin === pageOrigin && parsed.pathname.startsWith(packageBase) && !parsed.search;
         return origins.has(parsed.origin);
     };
     // A PMTiles source of this server's archive at url (pmtiles' FetchSource, the session's cookies), whose 409 calls
@@ -572,15 +702,17 @@
     // The URLs a style document names that may not be asked (its sources' url, tiles and GeoJSON data, and its sprite), each
     // resolved against the style's own URL. ol-mapbox-style does not read glyphs (it uses web fonts), so they are not asked.
     // bound: the IDs of sources m-map binds itself (a PMTiles archive's, whose url is pmtiles://), not asked by the library.
-    map.refusedStyleUrls = (style, styleUrl, origins, pageOrigin, bound) => {
+    // packageBase: a package's style, whose relative URLs are the package's (resolved against its root), each under it.
+    map.refusedStyleUrls = (style, styleUrl, origins, pageOrigin, bound, packageBase) => {
         const refused = [];
         const check = (url) => {
             if (typeof url !== "string" || !url) return;
             let resolved = url;
             if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) {
-                try { resolved = new URL(url.replace(/\{[^}]*\}/g, (m) => "__" + m.slice(1, -1) + "__"), new URL(styleUrl, pageOrigin + "/")).href; } catch (err) { resolved = url; }
+                const against = packageBase ? pageOrigin + packageBase : new URL(styleUrl, pageOrigin + "/");
+                try { resolved = new URL(url.replace(/\{[^}]*\}/g, (m) => "__" + m.slice(1, -1) + "__"), against).href; } catch (err) { resolved = url; }
             }
-            if (!map.urlAllowed(resolved, origins, pageOrigin)) refused.push(url);
+            if (!map.urlAllowed(resolved, origins, pageOrigin, packageBase)) refused.push(url);
         };
         const sources = style && style.sources && typeof style.sources === "object" ? style.sources : {};
         Object.keys(sources).forEach((id) => {
@@ -609,7 +741,9 @@
         Object.assign({}, source, { attribution: map.escapeHtml(map.attributionText(source.attribution)) }) : source);
 
     // The attribution control's HTML for a text of lines and their links (attributionUrls, in order): each line escaped, a
-    // link only for an http(s) URL, opening in a new tab.
+    // link only for an http(s) URL, opening in a new tab. OpenLayers' attribution control sets what it is given as HTML, so
+    // everything handed to it is made escaped text here, a package's own source notice too (plans/Maps-Offline.md §2.5:
+    // an archive's attribution, often HTML, is shown as text, never as markup).
     map.attributionHtml = (attribution, urls) => text(attribution).split("\n").map((line) => line.trim()).filter((line) => line).map((line, index) => {
         const url = (urls || [])[index];
         return url && /^https?:\/\//i.test(url) ? '<a href="' + map.escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + map.escapeHtml(line) + "</a>" :
@@ -904,7 +1038,9 @@
         },
         methods: {
             pageOrigin() { return root.location.origin; },
-            webfonts() { return map.webfonts(this.pageOrigin()); },
+            // a package's path in package mode (plans/Maps-Offline.md §2.5), else ""
+            packageBase() { return this.shown.packageBase || ""; },
+            webfonts() { return this.packageBase() ? map.packageFonts(this.pageOrigin(), this.packageBase()) : map.webfonts(this.pageOrigin()); },
             load() {
                 const local = this.local;
                 // an answer for an earlier configuration, come after a later one, is not drawn
@@ -1075,6 +1211,8 @@
                 } catch (err) { fail(err); }
             },
             checkUrl(url, what) {
+                if (this.packageBase() && !map.urlAllowed(url, this.origins, this.pageOrigin(), this.packageBase()))
+                    throw new Error(what + " " + (url || "(none)") + " " + L("is not a file of this offline map"));
                 if (!map.urlAllowed(url, this.origins, this.pageOrigin())) throw new Error(what + " " + (url || "(none)") + " " + L("is not a host of the map's profile"));
             },
             watchSource(source, entry, kind) {
@@ -1093,11 +1231,14 @@
                 const dark = root.document && root.document.body && root.document.body.classList.contains("body--dark");
                 // read here, not by url: each ring is made continuous across the antimeridian before it is projected
                 const url = new URL(basemap.url, this.pageOrigin() + "/").href;
-                const source = new O.VectorSource({ attributions, overlaps: false, loader: (extent, resolution, projection, success, failure) => {
+                // a package's by range, past 16 MiB as the app's scheme answers it
+                const read = () => (this.packageBase() ? map.readPackageFile(url).then((body) => JSON.parse(body)) :
                     root.fetch(url, { credentials: "same-origin" }).then((response) => {
                         if (!response.ok) throw new Error("HTTP " + response.status);
                         return response.json();
-                    }).then((topology) => {
+                    }));
+                const source = new O.VectorSource({ attributions, overlaps: false, loader: (extent, resolution, projection, success, failure) => {
+                    read().then((topology) => {
                         const features = new O.TopoJSON({ layers: ["countries"] }).readFeatures(topology);
                         features.forEach((feature) => {
                             const geometry = feature.getGeometry();
@@ -1239,9 +1380,9 @@
             // A TileJSON ("Source") is fetched here and answered with its attribution escaped, since the attribution control sets it
             // as HTML before m-map can replace it.
             transformRequest() {
-                const origins = this.origins, page = this.pageOrigin();
+                const origins = this.origins, page = this.pageOrigin(), base = this.packageBase();
                 return (url, resourceType) => {
-                    if (!map.urlAllowed(url, origins, page)) return refusal(url);
+                    if (!map.urlAllowed(url, origins, page, base)) return refusal(url);
                     if (resourceType !== "Source") return undefined;
                     return root.fetch(url, { credentials: map.sameOrigin(url, page) ? "same-origin" : "omit", headers: { Accept: "application/json" } })
                         .then((response) => (!response.ok ? response : response.json().then((tileJson) =>
@@ -1257,10 +1398,13 @@
                     .then((response) => {
                         if (!response.ok) throw new Error(L("The style did not load") + ": HTTP " + response.status);
                         return response.json();
-                    }).then((style) => {
+                    }).then((given) => {
+                        // a package's style: its sprite the package's own (its fonts are, through webfonts)
+                        const base = this.packageBase();
+                        const style = base ? map.packageStyle(given, this.pageOrigin(), base) : given;
                         const sources = style && style.sources && typeof style.sources === "object" ? style.sources : {};
                         const sourceId = bindVector ? Object.keys(sources).find((id) => (sources[id] || {}).type === "vector") : null;
-                        const refused = map.refusedStyleUrls(style, url, this.origins, this.pageOrigin(), sourceId ? [sourceId] : null);
+                        const refused = map.refusedStyleUrls(style, url, this.origins, this.pageOrigin(), sourceId ? [sourceId] : null, base);
                         if (refused.length) throw new Error(L("The style names a host outside the map's profile") + ": " + refused[0]);
                         return { style: map.localStyle(style, this.webfonts()), sourceId };
                     });
@@ -1276,6 +1420,9 @@
             },
             pmtilesLayer(O, group, entry, attributions) {
                 if (!map.sameOrigin(entry.url, this.pageOrigin())) return Promise.reject(new Error(L("A PMTiles archive must be of this server") + ": " + entry.url));
+                // a package's archive, read by range from the package (206 slices of the file; a package's file never
+                // changes, so no 409)
+                try { if (this.packageBase()) this.checkUrl(entry.url, L("The archive")); } catch (err) { return Promise.reject(err); }
                 const url = new URL(entry.url, this.pageOrigin() + "/").href;
                 // the archive's header first: one that cannot be read by range fails here, by name, not tile by tile in silence.
                 // Its URL names a registered revision (the map-source transition): a 409 says the archive has another now,
@@ -1364,7 +1511,15 @@
                         this.checkUrl(layer.url, L("The layer"));
                         const format = layer.kind === "gpx" ? new O.GPX() : layer.kind === "kml" ? new O.KML(map.kmlOptions()) :
                             layer.kind === "topojson" ? new O.TopoJSON() : new O.GeoJSON();
-                        const source = new O.VectorSource({ url: layer.url, format, attributions });
+                        // a package's file read here, by range past 16 MiB as the app's scheme answers it; else by url
+                        const url = new URL(layer.url, this.pageOrigin() + "/").href;
+                        const source = this.packageBase() ? new O.VectorSource({ format, attributions, loader: (extent, resolution, projection, success, failure) => {
+                            map.readPackageFile(url).then((body) => {
+                                const features = format.readFeatures(body, { featureProjection: projection });
+                                source.addFeatures(features);
+                                success(features);
+                            }).catch((err) => { console.warn("m-map: the layer " + layer.id + " did not load", err); failure(); });
+                        } }) : new O.VectorSource({ url: layer.url, format, attributions });
                         this.watchSource(source, layer, "vector");
                         // its features are selected (a click, or Enter at the center): the layer says whose they are
                         const vector = new O.VectorLayer({ source, style: (feature) => this.featureStyle(O, feature) });
@@ -1413,8 +1568,9 @@
             },
             markerStyle(O, feature) {
                 const kind = feature.get("kind");
-                const color = kind === "picked" ? "#c62828" : kind === "located" ? "#2e7d32" : feature.get("place") && feature.get("place").id === this.selectedId ? "#ef6c00" : "#1976d2";
-                const label = kind === "place" ? text(feature.get("place").label) : "";
+                const color = kind === "picked" ? "#c62828" : kind === "located" ? "#2e7d32" : kind === "found" ? "#6a1b9a" :
+                    feature.get("place") && feature.get("place").id === this.selectedId ? "#ef6c00" : "#1976d2";
+                const label = kind === "place" ? text(feature.get("place").label) : kind === "found" ? text(feature.get("label")) : "";
                 return new O.Style({
                     image: new O.CircleStyle({ radius: kind === "place" ? 7 : 6, fill: new O.Fill({ color }), stroke: new O.Stroke({ color: "#fff", width: 2 }) }),
                     text: label ? this.labelText(O, label) : undefined
@@ -1533,11 +1689,22 @@
                 this.choose(point);
                 if (this.olMap) this.olMap.getView().animate({ center: this.toMap(point.lon, point.lat), duration: 250 });
             },
-            mark(kind, point) {
+            mark(kind, point, label) {
                 const O = root.MoquiOl;
                 if (!O || !this.markerSource) return;
                 this.markerSource.getFeatures().filter((feature) => feature.get("kind") === kind).forEach((feature) => this.markerSource.removeFeature(feature));
-                this.markerSource.addFeature(new O.Feature({ geometry: new O.Point(this.toMap(point.lon, point.lat)), kind }));
+                this.markerSource.addFeature(new O.Feature({ geometry: new O.Point(this.toMap(point.lon, point.lat)), kind, label: label || "" }));
+            },
+            // A place found by a page's own search (the offline screen's, plans/Maps-Offline.md §2.5): marked and shown,
+            // its label drawn on the canvas as text; nothing is kept or sent
+            showPlace(place) {
+                const lon = num(place && place.lon), lat = num(place && place.lat);
+                if (!lonOk(lon) || !latOk(lat)) return;
+                const label = map.plainText(place.label, 200);
+                this.mark("found", { lon, lat }, label);
+                this.announced = (label || L("Place")) + ": " + map.formatCoordinates(lon, lat);
+                const view = this.olMap && this.olMap.getView();
+                if (view) view.animate({ center: this.toMap(lon, lat), zoom: Math.max(view.getZoom() || 0, num(place.zoom) || 15), duration: 250 });
             },
             // Locate me: the browser's position once, when asked; shown, never kept or sent
             locate() {

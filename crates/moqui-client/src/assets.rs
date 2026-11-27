@@ -97,6 +97,42 @@ pub struct Assets {
     shell: PathBuf,
     webroot: PathBuf,
     libs: Vec<String>,
+    /// The files of a library staged by one part only (a line `<lib> <part>` of `libs.txt`, the part's files as the
+    /// library's `parts.json` lists them: OpenLayers' main part, plans/Maps-Offline.md §2.5), so a development run
+    /// serves what a bundle has. None for a host whose staged files are the bundle's ([`Self::embedded`]).
+    parts: Vec<(String, Vec<String>)>,
+}
+
+/// The libraries of the text of `shell/libs.txt`: each line's first word (a library), with the part named after it.
+fn lib_lines(text: &str) -> Vec<(String, Option<String>)> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| {
+            let mut words = line.split_whitespace();
+            let lib = words.next().unwrap_or("").to_string();
+            (lib, words.next().map(str::to_string))
+        })
+        .collect()
+}
+
+/// The files of `part` as the library's `parts.json` in `dir` lists them (`{"<part>": ["path", ...]}`); an empty list
+/// when it cannot be read, so none of the library is served and the failure shows in development first.
+fn part_files(dir: &Path, lib: &str, part: &str) -> Vec<String> {
+    let read = std::fs::read(dir.join(lib).join("parts.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+    let files: Vec<String> = read
+        .as_ref()
+        .and_then(|parts| parts[part].as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|name| name.as_str().map(str::to_string))
+        .collect();
+    if files.is_empty() {
+        tracing::error!("The shell's library {lib} has no part {part} in its parts.json");
+    }
+    files
 }
 
 /// A file of the shell, as the scheme answers it.
@@ -111,40 +147,52 @@ pub struct Asset {
 
 impl Assets {
     /// The bundle's files, staged in `shell-assets/` of its resources.
+    /// A library staged by its part holds that part's files only (`./moq desktop build` copies them, not the library's
+    /// `parts.json`), so nothing more is filtered here.
     pub fn staged(resources: &Path) -> Self {
         let staged = resources.join("shell-assets");
-        Self::new(staged.join("shell"), staged.join("webroot"))
+        Self::load(staged.join("shell"), staged.join("webroot"), false)
     }
 
-    /// The shell's files in `shell` (with its `libs.txt`) and the webroot's in `webroot`.
+    /// The shell's files in `shell` (with its `libs.txt`) and the webroot's in `webroot`: a development run's, the
+    /// repository's, where a library staged by its part is served by its `parts.json`, as a bundle has it.
     pub fn new(shell: PathBuf, webroot: PathBuf) -> Self {
-        let libs = std::fs::read_to_string(shell.join("libs.txt"))
-            .unwrap_or_else(|err| {
-                tracing::error!("The shell's libs.txt was not read: {err}");
-                String::new()
+        Self::load(shell, webroot, true)
+    }
+
+    fn load(shell: PathBuf, webroot: PathBuf, by_parts: bool) -> Self {
+        let lines = lib_lines(&std::fs::read_to_string(shell.join("libs.txt")).unwrap_or_else(|err| {
+            tracing::error!("The shell's libs.txt was not read: {err}");
+            String::new()
+        }));
+        let libs_dir = webroot.join("libs");
+        let parts = lines
+            .iter()
+            .filter(|_| by_parts)
+            .filter_map(|(lib, part)| {
+                part.as_ref()
+                    .map(|part| (lib.clone(), part_files(&libs_dir, lib, part)))
             })
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .map(str::to_string)
             .collect();
-        Self { shell, webroot, libs }
+        let libs = lines.into_iter().map(|(lib, _)| lib).collect();
+        Self {
+            shell,
+            webroot,
+            libs,
+            parts,
+        }
     }
 
     /// The shell's files as a host keeps them itself in the staged layout (the mobile app's, embedded in the app), with
     /// the libraries of `libs_txt` (the text of `shell/libs.txt`): [`Self::staged_path`] says where a path's file is,
     /// and the host reads it and makes its answer with [`asset`].
     pub fn embedded(libs_txt: &str) -> Self {
-        let libs = libs_txt
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .map(str::to_string)
-            .collect();
+        let libs = lib_lines(libs_txt).into_iter().map(|(lib, _)| lib).collect();
         Self {
             shell: PathBuf::from("shell"),
             webroot: PathBuf::from("webroot"),
             libs,
+            parts: Vec::new(),
         }
     }
 
@@ -176,8 +224,17 @@ impl Assets {
                 let (first, rest) = path.strip_prefix('/')?.split_once('/')?;
                 match first {
                     "shell" => (&self.shell, rest),
-                    // a library of libs.txt only, as a bundle has
+                    // a library of libs.txt only, as a bundle has, and of a library staged by a part its files only
                     "libs" if !self.libs.iter().any(|lib| rest.split('/').next() == Some(lib.as_str())) => return None,
+                    "libs"
+                        if self.parts.iter().any(|(lib, files)| {
+                            rest.strip_prefix(lib.as_str())
+                                .and_then(|file| file.strip_prefix('/'))
+                                .is_some_and(|file| !files.iter().any(|listed| listed == file))
+                        }) =>
+                    {
+                        return None
+                    }
                     "js" | "libs" | "css" => (&self.webroot, path.strip_prefix('/')?),
                     _ => return None,
                 }
