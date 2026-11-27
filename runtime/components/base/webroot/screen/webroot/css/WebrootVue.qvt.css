@@ -1044,6 +1044,15 @@ pre.m-md-mermaid-drawn:hover .m-md-mermaid-zoom, .m-md-mermaid-zoom:focus-visibl
 .m-map-place-label { font-weight:500; }
 .m-map-place-coordinates { font-family:var(--m-font-mono); font-size:calc(12px * var(--m-fs-small-scale)); }
 .m-map-place-details { display:block; color:rgba(127,127,127,0.95); font-size:calc(12px * var(--m-fs-small-scale)); }
+/* the live layer's shares (plans/Location-Sharing.md §3.3), listed as the places are; a stale one muted */
+.m-map-live { list-style:none; margin:0; padding:0; }
+.m-map-live-share { padding:2px 0; }
+.m-map-live-button { display:inline; text-align:left; font:inherit; padding:2px 4px; margin:0 -4px; border:0; border-radius:4px; background:transparent; color:inherit; cursor:pointer; }
+.m-map-live-button:hover, .m-map-live-button:focus-visible { background:rgba(127,127,127,0.12); }
+.m-map-live-label { font-weight:500; }
+.m-map-live-age, .m-map-live-details { color:rgba(127,127,127,0.95); font-size:calc(12px * var(--m-fs-small-scale)); }
+.m-map-live-coordinates { font-family:var(--m-font-mono); font-size:calc(12px * var(--m-fs-small-scale)); }
+.m-map-live-stale .m-map-live-label { opacity:0.7; }
 
 /* m-code: source code in a table of lines, the numbers drawn from data-line (so a copy takes the code only); the token colors of
    highlight.js's GitHub themes, light and dark */

@@ -10,7 +10,9 @@
 // jitter at a line, its accuracy 1000 m or the device's rounded up, its time to the minute) made before it is stored or
 // sent, an ADMIN reads nothing of another's, the audit rows hold no position, and a link's token is returned once with
 // only its digest kept; the owner's lock row is made on first use, and a group of more than four times the audience cap
-// is refused before its snapshot is written (the LL1 review). It ends its memberships and stops its shares in cleanup, so it runs again on --db existing.
+// is refused before its snapshot is written (the LL1 review); and the effective configuration's locationShares (LL2, Maps
+// › Browse) hold the owner's own share and the audience's, nobody else's. It ends its memberships and stops its shares in
+// cleanup, so it runs again on --db existing.
 // Run: ./moq test framework --spec LocationShares
 const S = "org.moqui.maps.LocationServices."
 const A = "LOC_SHARE_A"
@@ -798,6 +800,76 @@ feature(
             refused.shareId == null
             allowed.errors == ""
             snapshot.join() == B
+        }
+    }
+)
+
+feature(
+    "the effective configuration's locationShares: the owner's own with its audience, the audience's with the latest and the trail, nobody else's",
+    {
+        when() {
+            later(6000)
+            const shareId = as(A, "create#Share", {
+                audienceList: [toUser(B)],
+                thruDate: new Date(shared.now + HOUR),
+                label: "Alex live",
+                keepTrail: true
+            }).shareId
+            report(shareId, "47.6", "-122.3", {accuracy: "9"})
+            later(6000)
+            report(shareId, "47.61", "-122.31", {accuracy: "7"})
+            // MapConfig.js liveShares as each user, with authorization on (Browse's getConfig and locationShares)
+            const live = userId => {
+                ec.user.internalLoginUser(username(userId))
+                ec.artifactExecution.enableAuthz()
+                try {
+                    const all = Array.from(
+                        ec.resource.script("component://framework/service/org/moqui/maps/MapConfig.js").execute("liveShares", {})
+                            .locationShares || []
+                    )
+                    return all.find(row => row.shareId === shareId) || null
+                } finally {
+                    ec.message.clearErrors()
+                }
+            }
+            const config = asked =>
+                sys(() => {
+                    ec.user.internalLoginUser(username(B))
+                    return ec.service
+                        .sync()
+                        .name("org.moqui.maps.MapServices.get#EffectiveConfig")
+                        .parameters({locationShares: asked})
+                        .call().config
+                })
+            const out = {owner: live(A), viewer: live(B), other: live(C), admin: live("EX_JOHN_DOE")}
+            out.carried = (config(true).locationShares || []).some(row => row.shareId === shareId)
+            out.notAsked = config(false).locationShares === undefined
+            as(A, "stop#Share", {shareId})
+            out.afterStop = live(B)
+            return out
+        },
+        then({owner, viewer, other, admin, carried, notAsked, afterStop}) {
+            owner.role == "owner"
+            owner.label == "Alex live"
+            owner.audience.map(entry => entry.name).join() == "Loc B"
+            owner.reportIntervalSeconds == 5
+            owner.trailCount == 2
+            owner.latest.latitude == 47.61
+            viewer.role == "viewer"
+            viewer.ownerName == "Loc A"
+            viewer.latest.latitude == 47.61
+            viewer.latest.accuracy == 7
+            viewer.audience == null
+            JSON.stringify(viewer.trail) ==
+                JSON.stringify([
+                    [-122.3, 47.6],
+                    [-122.31, 47.61]
+                ])
+            other == null
+            admin == null
+            carried == true
+            notAsked == true
+            afterStop == null
         }
     }
 )
