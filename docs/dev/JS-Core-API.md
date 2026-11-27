@@ -344,7 +344,7 @@ Change sets, version notes and change logs are described in
 | `hmac(key, message, encoding)` | HMAC-SHA256 of the message with a secret key (both as UTF-8), lower-case hex, or unpadded URL-safe base64 with `base64url`: the same for the same key and message (a keyed derivation; `makeGrant` for a token that expires); refused without a key |
 | `gunzip(source, target, maxBytes)` | Unpacks a gzip file to a location, refusing output over `maxBytes` (4 GB) |
 | `extractArchive(source, target, limits)` | Unpacks an archive under a location, within the limits |
-| `writeZip(target, entries)` | A zip of the files at the entries' locations (`[{path, location}]`): `{count, size, failures: [{path, error}]}` |
+| `writeZip(target, entries)` | A zip of the files at the entries' locations (`[{path, location, stored}]`), each deflated, or with `stored` true as it is (a file already compressed, such as a map archive): `{count, size, failures: [{path, error}]}` |
 | `writeTarGz(target, entries)` | A `.tar.gz` of entries |
 | `extractText(location, cacheKey, maxChars, cacheOnly)` | The text of a PDF, spreadsheet or text file (100000 characters), kept under `runtime://tmp/file-text` by the key; `""` when it has none; null with `cacheOnly` when not extracted yet |
 | `readSheetPreview(location, sheetName, maxRows, maxCols)` | The first rows of a sheet (100 by 26): `{sheetNames, sheetName, rows, truncated}`; null when it is not a spreadsheet |

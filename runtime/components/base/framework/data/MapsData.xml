@@ -128,4 +128,17 @@ along with this software (see the LICENSE.md file). If not, see
             errorTitleTemplate="Map overlay not simplified: see Maps › Layers" linkTemplate="/qapps/maps/Browse"/>
     <moqui.service.job.ServiceJob jobName="MapOverlayTiles" description="Simplify a map overlay into vector tiles"
             serviceName="org.moqui.maps.MapSourceServices.build#OverlayTiles" topic="MapOverlayTiles" transactionTimeout="3600"/>
+    <!-- an offline map package built from what its owner may see (MapPackages.js buildPackage, plans/Maps-Offline.md §2.2):
+        started by whichever request or build's end found the installation room for it, so the run signs in as the
+        package's owner, and the owner alone is told when it ends (the build sends the topic's notification itself, directly
+        to them: the job has no topic, which would tell the user who started it). A regional cut may take long, so its
+        transaction timeout is a day. The hourly clean removes the files of deleted packages and those not downloaded for
+        maps@package-keep-days, and starts a waiting build whose turn was missed. -->
+    <moqui.security.user.NotificationTopic topic="MapPackageBuild" inboxEnumId="NinUpdates" description="Offline map built"
+            typeString="success" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="Offline map ${name || ''}: ${outcome || ''}" linkTemplate="/qapps/maps/Offline"/>
+    <moqui.service.job.ServiceJob jobName="MapPackageBuild" description="Build an offline map package"
+            serviceName="org.moqui.maps.MapSourceServices.build#Package" transactionTimeout="86400" noTimeLimit="Y"/>
+    <moqui.service.job.ServiceJob jobName="clean_MapPackages_hourly" description="Remove the files of deleted and expired offline map packages"
+            serviceName="org.moqui.maps.MapSourceServices.clean#MapPackages" cronExpression="0 23 * * * ?" paused="N" errorHistoryOnly="Y"/>
 </entity-facade-xml>

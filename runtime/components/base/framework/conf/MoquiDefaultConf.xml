@@ -158,9 +158,15 @@
         well past every registered source, GeoNames' allCountries at 19 MB zipped, and under the 2 GiB upload).
         max-features is the most features one overlay or one viewport query of a layer adapter returns; 0 turns record
         layers off. overture-catalog is the STAC root Overture releases are found in and overture-max-area the largest
-        Overture region in km² (plans/archive/Maps-Overture.md). -->
+        Overture region in km² (plans/archive/Maps-Overture.md). package-max-bytes is the largest offline map package a
+        user may build (2 GiB; refused at its estimate), package-user-max-bytes the most a user's packages may hold in all
+        (8 GiB), package-concurrent-builds how many packages the installation builds at once (the others wait, pending),
+        and package-keep-days how long a package's file is kept with no download before the hourly clean removes it
+        (plans/Maps-Offline.md). -->
     <maps external-requests="true" import-max-bytes="536870912" max-features="5000" overlay-max-bytes="10485760"
-            overture-catalog="https://stac.overturemaps.org/catalog.json" overture-max-area="2500"/>
+            overture-catalog="https://stac.overturemaps.org/catalog.json" overture-max-area="2500"
+            package-max-bytes="2147483648" package-user-max-bytes="8589934592" package-concurrent-builds="1"
+            package-keep-days="30"/>
 
     <!-- Shared live location (plans/Location-Sharing.md §3.1; org.moqui.maps.LocationServices). max-share-hours is the
         longest a share runs from its start or its owner's last extension (24); trail-max-days the longest a trail its owner
