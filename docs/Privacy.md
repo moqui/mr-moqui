@@ -23,8 +23,9 @@ their own.
   only its latest position, read by no one once the share ends and deleted then (when you stop it) or up to an hour
   later (when its time runs out), and a trail only when you choose one for that share, for at most 30 days after it ends
   (`location@trail-max-days`) or until you delete it. The server's operator is not kept out: an administrator who signs
-  in as you, the database's own tools and its backups can see what the server holds, and its audit history keeps who you
-  shared with and until when, never where you were.
+  in as you, a holder of the Tools SQL runner, any server script that turns on the `NotificationCapture` tool (which sees
+  the live positions as they are sent), the database's own tools and its backups can see what the server holds, and its
+  audit history keeps who you shared with and until when, never where you were.
 - **Photos and videos.** Only those you take or pick to send, sent to your server; a photo or video taken in the app
   is kept in the app's cache, not in your gallery, and cleared at its next start.
 - **Logs.** The apps log what they do on this device (the phone's system log, the desktop's log files); a failed

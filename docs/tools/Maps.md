@@ -891,7 +891,11 @@ and read through the services only.
   only: a user whose entry is not revoked, or a member of a group whose entry is not revoked who was a member when the
   owner added the group and still is, checked again at every read. A person taken out of a group sees nothing of it from
   then on, and one put into it later (by an administrator, an app or a household organizer) sees nothing and gets no push
-  until the owner adds the group again, which lets in and tells its new members. No grant of these services reads
+  until the owner adds the group again, which lets in and tells its new members and names them to the owner. A
+  membership counts only when it began by the time the owner added the group and its row was last written before then
+  (`lastUpdatedStamp`), so an add with a backdated start and an ended membership reopened count for nothing; a member
+  whose membership row was edited after the share for any other reason drops out too, until the owner adds the group
+  again. No grant of these services reads
   another person's shares, and the generic entity tools, entity REST, entity-auto services and the agents' `data` tool
   refuse these four entities, an administrator's included (`moqui-entity` `sensitive.rs`).
 - **What the server's operator can still reach.** These services keep a share from other users, not from whoever runs
@@ -905,9 +909,13 @@ and read through the services only.
   `location@min-interval-seconds`, or `location@approximate-interval-seconds` for an approximate share (a sooner one is
   dropped with 429), 410 for a share that has ended or was stopped, which stops a device, and 409 `CLOCK_AHEAD` for a time
   more than a minute ahead of the server's clock. An approximate share's position is made here, before it is stored or
-  sent: the centre of a cell of about 1 km on a grid offset by a secret random amount for that share (never answered),
-  the last cell kept until a fix is more than a quarter of a cell inside another one (so jitter at a line, or crossing
-  it, gives no exact position away), the time rounded down to the minute, no heading or speed. Each report replaces the
+  sent: the centre of a cell of about 1 km on one fixed grid that every share uses (so two shares of one person at one
+  place show the same cell, and comparing them narrows nothing), the last cell kept until a fix is more than a quarter
+  of a cell inside another one, an accuracy of 1000 m (a device's coarser one rounded up to the next 1000), no heading
+  or speed. Keeping the cell stops jitter at a line flipping it, but a change of cell still shows that the person
+  crossed a line 0.75 cell from the old centre, to within what they move in one `location@approximate-interval-seconds`
+  (not to within the cell). The stored and answered `observedDate` is rounded down to the minute; the push itself goes
+  out when the report comes, so its arrival tells the time. Each report replaces the
   share's latest position, adds a trail point when the share keeps a trail, and goes out on the topic
   `locationShare:<shareId>` to the audience's current users only, never saved as a notification or pushed to a phone.
   On the same topic the owner's other devices are told when a share starts, and the owner and the audience when it
@@ -1012,11 +1020,13 @@ the real release for central Florence and part of Boston's Back Bay with sample 
 `OvertureAddressLookup`.
 
 Live location: `framework/test/LocationShares.spec.js` (by the real grants, with authorization on: a share read and pushed to
-its audience alone, another user and an administrator refused; a blocked user, an audience past `max-audience` and a
-share past `max-active-shares` refused; a group member taken out losing it at the next read and the pushes, and one put
-in later getting nothing until the owner adds the group again; the rate and its 429, a clock ahead and a time before the
-share; an approximate share's cell made before it is stored or sent, kept through jitter at a cell line, its offset in
-no answer and its time to the minute; an ended share hidden, 410 to
+its audience alone, another user and an administrator refused; a blocked user, an audience past `max-audience` (on
+create, on update and on a group added again) and a share past `max-active-shares` refused; a group member taken out
+losing it at the next read and the pushes, and a backdated add, an ended membership reopened and an ended one with a new
+row getting nothing until the owner adds the group again, which names and tells only those it lets in and is audited;
+the rate and its 429, a clock ahead and a time before the share; an approximate share's cell made before it is stored or
+sent, the same for two shares at one place, kept through jitter at a cell line, its accuracy 1000 m or the device's
+rounded up and its time to the minute; an ended share hidden, 410 to
 a report and its latest position cleaned; a trail kept only when chosen, deleted by its owner and purged past its days;
 the audit rows with no position; a link's token answered once and only its digest kept), with the generic tools' refusal
 of the four entities in Rust (`moqui-entity` `sensitive.rs`) and the agents' `data` tool's (`moqui-llm` `core_tests.rs`).
