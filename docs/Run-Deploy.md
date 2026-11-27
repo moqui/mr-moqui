@@ -219,7 +219,9 @@ what is not built ([Edge-Node2 §3](../plans/Edge-Node2.md#3-topologies)).
   build of Maximal, carry the dev tools (the file watcher, Dev AIDE): they open only on a dev instance, and the server
   warns at start when it finds them on a production one. A production image leaves them out: `./moq build --enterprise`,
   or Maximal without them (`cargo build --profile release --no-default-features -F maximal -p moqui`)
-  ([Packaging](Build-Test.md#packages), SEC-OUT-14).
+  ([Packaging](Build-Test.md#packages), SEC-OUT-14). `podman/build.sh` builds the default `--release`, with the dev
+  tools: for a production image build Maximal without them first, as above, and then run `podman/build.sh --nobuild`,
+  which packs `target/release/moqui` as it is (SEC-OUT-90).
 - **Purpose**: `instance@purpose` is `production` everywhere except in the dev conf. An archive's `MoquiConf.xml` is
   the production conf.
 - **Seal**: the server starts sealed and opens its listeners only once unsealed: `moqui operator init` with `tpm` (or
@@ -310,7 +312,11 @@ time it is needed, and runs as its own process; unlike the runtime files they ar
 this is packaging and delivery only. `moqui embedded unpack [postgres|opensearch|chromium|all]` unpacks them ahead of
 the first start (a container image). OpenSearch starts when the search backend is `opensearch`, the cluster is local
 and not running, and `runtime/opensearch` has no install of its own; its config (seeded from the install on the first
-start), data and logs stay in `runtime/opensearch`. Chromium is used for PDF and the browser tests after
+start), data and logs stay in `runtime/opensearch`. That OpenSearch is the `opensearch-min` distribution, without the
+security plugin: it listens on loopback with no sign-in, so any local user or process of the host reads, rewrites and
+deletes every search index on port 9200, past the server's own authorization. On a host shared with other users keep
+the default Postgres search backend, or run an OpenSearch with the security plugin of your own and give the server its
+credentials (`search-facade/cluster@user` and `@password`, from `.env`). Chromium is used for PDF and the browser tests after
 `screen-facade/pdf@chromium-path` and `runtime/chromium`, before an installed one.
 
 **Checksums.** `moqui embedded checksum` prints the SHA-256 of each part built in, in `sha256sum` format: `runtime`

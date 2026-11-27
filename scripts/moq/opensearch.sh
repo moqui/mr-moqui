@@ -179,14 +179,15 @@ task_opensearch_download() {
 }
 
 # Check the file $1 against the SHA-512 published at the url $2 (a sha512sum line), which OpenSearch publishes beside
-# each tarball; the file is removed and the task stops when it differs. When none can be read, warn and go on.
+# each tarball; the file is removed and the task stops when it differs, or when no sum can be read: an archive that is
+# run is never used unchecked (plans/Security-Review-Low.md SEC-OUT-91).
 verify_published_sha512() {
     local file=$1 url=$2 expected actual
     dry_run && return 0
     expected=$(curl -fsSL --max-time 60 "$url" 2>/dev/null | awk '{print tolower($1); exit}')
     if [ -z "$expected" ]; then
-        warn "could not read $url; the archive is not checked"
-        return 0
+        rm -f "$file"
+        die "could not read $url, so the archive cannot be checked; it was removed (try again)"
     fi
     if command -v sha512sum >/dev/null 2>&1; then
         actual=$(sha512sum "$file" | awk '{print $1}')
