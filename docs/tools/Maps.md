@@ -990,257 +990,296 @@ answers.
 
 ## Live location
 
-A person shares where they are, until a time they choose, with people they choose; nothing else starts a share
-([plans/Location-Sharing.md](../../plans/Location-Sharing.md)). The server side is built: the services
-`org.moqui.maps.LocationServices` (`framework/service/org/moqui/maps/LocationServices.xml`, `LocationShares.js`), the
-entities `LocationShare`, `LocationShareAudience`, `LocationShareAudienceMember`, `LocationShareOwner` (the lock of an
-owner's share count), `LocationLatest`, `LocationTrailPoint` and `LocationXmppLatest` (the owner's XMPP app's latest,
-for its XMPP contacts only) (`moqui.maps`,
-`framework/entity/MapLocationEntities.xml`) and the hourly clean, Maps shows them (below, "In Maps"), and the Android
-app sends a share from the phone, also in the background (below, "From the Android app"), a chat room's members get
-one from Chat's Share live location (below, "In chat"), a share's XMPP contacts follow it in their XMPP apps (below,
-"Over XMPP"), and a guest link opens its public page (below, "Guest links").
+A person shares where they are, until a time they choose, with people they choose, and nothing else starts a share: not
+an administrator, a household's organizer, a manager, a record or a schedule
+([plans/Location-Sharing.md](../../plans/Location-Sharing.md) §1). Every share has an end, at most `location@max-share-hours` (24) from its start or its last extension; the server
+keeps its latest position only, and a trail only when its owner keeps one for that share; and no grant reads another
+person's shares. This section is the guide to all of it; the parts that are another guide's are there: Chat's Share
+live location in [Comms, Live location](Comms.md#live-location), the XMPP mapping in
+[XMPP, User location](../interfaces/XMPP.md#user-location), the Android app's sending in
+[Mobile-Client, Live location](../ui/Mobile-Client.md#live-location), and what the apps say of it to their users in
+[Privacy](../Privacy.md).
 
-**In Maps** (Browse; LL2):
+The services are `org.moqui.maps.LocationServices` (`framework/service/org/moqui/maps/LocationServices.xml`, the logic
+in `LocationShares.js`), every signed-in user's for their own shares (`LocationShareServices`, framework
+`data/MapsLocationData.xml`). The entities (`moqui.maps`, `framework/entity/MapLocationEntities.xml`) are
+`LocationShare`, `LocationShareAudience`, `LocationShareAudienceMember` (a group entry's snapshot),
+`LocationShareOwner` (the lock row of an owner's share count), `LocationLatest`, `LocationTrailPoint` and
+`LocationXmppLatest` (the owner's XMPP app's latest, for the share's XMPP contacts only). The hourly job
+`clean_LocationShares_hourly` ends and removes them ([Retention and trails](#retention-and-trails)).
+
+### Who sees what
+
+- **The owner** sees every active share of their own, its audience and its end, wherever they are: the app bar's
+  chip on every screen ([below](#the-app-bars-chip)), Browse's banner and its Who sees my location, My location shares,
+  a chat room's card of their own, and the Android notification while the phone sends one. Any of them stops it at
+  once.
+- **Who a share is for.** A user the owner may message (the chat directory's rule, `ChatServices.get#RefusedUsers`: a
+  user it refuses, or one who blocked the owner, answers as one that does not exist, and so does an account that cannot
+  sign in); a group the owner is in now (never `ALL_USERS` or a group of external users); a contact of the owner's XMPP
+  roster (`username@xmpp-server@domain`, a person of one of the owner's direct rooms, a user of this server, since XMPP
+  has no federation); or one guest link a share, whose token is answered once by the call that makes it and kept only
+  as its digest (as `ResourceShare`'s link). Each person added is told who shares with them and until when (the
+  `LocationShared` notification, in their own time zone; `LocationSharedXmpp` for an XMPP contact). A person has at
+  most `location@max-active-shares` shares on at once, and a share at most `location@max-audience` people (the members
+  its groups reach, counted each), contacts and links; a group with more than four times that many current members is
+  refused before its members are written down. A share whose owner's lock row cannot be made or locked is refused
+  (`SHARE_LOCK_FAILED`) rather than counted without it.
+- **The reach rule.** `find#MyShares` (the owner's shares with their audiences), `find#SharedWithMe` and `get#Share`
+  (the latest position, and a kept trail in pages of up to 1000 points) answer the owner and the share's current
+  audience only: a user whose entry is not revoked, or a member of a group whose entry is not revoked who is in the
+  entry's snapshot and whose membership row of the snapshot is still current, checked again at every read and every
+  push. A viewer sees the latest position and a kept trail the server received from when the audience first reached
+  them only (by the server's receive time, `receivedDate`, never the device's; from their entry's `fromDate`, or their
+  group snapshot's `reachedDate`, kept when the group is added again only for the same membership row), so no position
+  reported before a person was added, or while they were out of the group, reaches them; the owner sees everything.
+- **A group's snapshot** (`LocationShareAudienceMember`) is the group's members when the owner adds the group, each with
+  the membership row that makes them one, less every one the chat directory refuses the owner at that act (its hooks,
+  the external-caller rule, the people who blocked the owner; a block made later applies at the next re-add, as for a
+  direct user). Only `create#Share`, and `update#Share` when the owner adds the group again, write it. A person taken
+  out of the group sees nothing of the share from then on and gets no more of its pushes. One put into it later, by
+  anyone and with whatever dates (an administrator, an app or a household organizer; a backdated, reopened or new
+  membership, a member removed and given a new row), sees nothing until the owner adds the group again (Add the group
+  again in Who sees my location), which lets in and tells its new members, names them to the owner, and tells anyone
+  it leaves out. The one way back without the owner, which plans/Location-Sharing.md §3.1 accepts: a snapshot member's
+  own row, ended and reopened, or deleted and made again with the same `fromDate` (an administrator can do either in
+  System › Access), lets that same person back, keeping their first reach, so they see what was received while out.
+- **What nobody else sees.** No grant of these services reads another person's shares: another person's share answers
+  `SHARE_NOT_FOUND` to every call, an administrator's included, and a household's organizer, a group's owner or a
+  manager has no reader of them either. The generic entity tools, entity REST, entity-auto services and the agents'
+  `data` tool refuse the seven entities, an administrator's included (`moqui-entity` `sensitive.rs`). Positions never
+  go to a log, a telemetry attribute, an error message, a notification row or a cache.
+- **What the server's operator can still reach.** These services keep a share from other users, not from whoever runs
+  the server: an administrator who signs in as the person (`ADMIN_LOGIN_AS`) sees what that person sees; a holder of
+  the Tools SQL runner reads the tables; any server script can turn on the `NotificationCapture` tool (meant for specs,
+  not gated) and see pushes in transit; and the database, its backups and its own logs hold what the tables hold. Who
+  shared with whom and until when (never a position) stays in the entity audit log and in the `LocationShared`
+  notification rows of the people told, under their own retention.
+
+### The owner's acts
+
+`create#Share` (the audience, the end, exact or approximate, a trail or not, a label the audience sees, the owner's
+name by default, and a purpose text), `update#Share` (extend or shorten, within `location@max-share-hours` from now;
+add to the audience; change the label or purpose; Send from here; the XMPP opt-in), `stop#Share`, `revoke#Audience`
+(one person, group, XMPP contact or the link), `report#Position` and `delete#Trail` are the owner's alone. A client
+sends a share's audience to `update#Share` only for an explicit Add the group again: any `update#Share` naming a group
+the share has takes a new snapshot of it. Start, extension, stop and an audience added or revoked are in the entity
+audit log (who, when, the audience), never a position. On the share's topic `locationShare:<shareId>` the owner's other
+devices are told when a share starts, the owner and the audience when it changes or ends, and a revoked entry's people
+(and the owner) that it was revoked; the audience learns of a start by the `LocationShared` notification. A stop, or
+the end by time, stops the feed at once, and a device still sending the share is answered 410 and stops.
+
+### In Maps
 
 - **The live layer.** Browse's configuration carries `locationShares` (`get#EffectiveConfig` with `locationShares`
-  true, which only Browse's `getConfig` asks for; the terminal twin reads the same through `MapConfig.js` `liveShares`):
-  the user's own active shares and those shared with them, read
-  through `find#MyShares`, `find#SharedWithMe` and `get#Share` (a kept trail, its latest 500 points, of at most 10
-  shares), so each is checked against the share's current audience. `m-map` draws each share with a position as a
-  marker labelled with its label and the position's age, its accuracy as a ring and a kept trail as a line, the user's
-  own in green and the others' in teal, grey and dashed once no report has come for five minutes (the page that sent it
-  closed, or the device lost its fix); the same shares are listed under the map as text. It follows each share on its
-  topic `locationShare:<shareId>` of the page's notification socket while it shows it: a position moves the marker, a
-  new end is taken, and `ended` (or `revoked`, to a viewer) takes the share off and lets go of its topic. A position's
-  age is kept from when it was first read or pushed (Browse stamps each read once), so a configuration drawn again never
-  makes an old position fresh.
-- **The Live location panel.** *Shared with me*: each person's label, the age of the position, the end, Show on map, and
-  Directions (in the Android app a `geo:` link its `openExternal` hands to the phone's maps app; elsewhere Open in
-  OpenStreetMap, the place at openstreetmap.org in a new window, offered only while `maps@external-requests` is on, which
-  is the only way a position leaves the server from here, by the user's act). *Who
-  sees my location*: each share of the user's own with its audience and end, Stop, Extend (a new end, the audience never
-  sent again), Delete trail, a person or group taken out, and for a group Add the group again, the one act that sends a
-  group to `update#Share` (a new snapshot: who joined since is let in and told, who left or blocked the owner is left
-  out).
-- **Share my location** (the panel's button): people the user may message (as Chat finds them), groups the user is in,
-  XMPP contacts when the server has XMPP, a guest link (its page's link shown once, in the dialog: below, "Guest links"), until (15 minutes to `location@max-share-hours`), exact or approximate, and a trail or not. Each
-  person is told by the `LocationShared` notification.
-- **Sending from a browser.** A share started on Browse is sent from that page while it is open: the browser's
+  true, which only Browse's `getConfig` asks for; the terminal twin reads the same through `MapConfig.js`
+  `liveShares`): the user's own active shares and those shared with them, read through `find#MyShares`,
+  `find#SharedWithMe` and `get#Share` (a kept trail, its latest 500 points, of at most 10 shares), so each is checked
+  against the share's current audience. `m-map` draws each share with a position as a marker labelled with its label
+  and the position's age, its accuracy as a ring and a kept trail as a line, the user's own in green and the others' in
+  teal, grey and dashed once no report has come for five minutes (the page that sent it closed, or the device lost its
+  fix); the same shares are listed under the map as text. It follows each share on its topic of the page's
+  notification socket while it shows it: a position moves the marker, a new end is taken, and `ended` (or `revoked`, to
+  a viewer) takes the share off and lets go of its topic. A position's age is kept from when it was first read or
+  pushed (Browse stamps each read once), so a configuration drawn again never makes an old position fresh.
+- **The Live location panel.** *Shared with me*: each person's label, the age of the position, the end, Show on map,
+  and Directions (in the Android app a `geo:` link its `openExternal` hands to the phone's maps app; elsewhere Open in
+  OpenStreetMap, the place at openstreetmap.org in a new window, offered only while `maps@external-requests` is on,
+  which is the only way a position leaves the server from here, by the user's act). *Who sees my location*: each share
+  of the user's own with its audience and end, where its last position came from, Stop, Extend (a new end, the
+  audience never sent again), Delete trail, a person or group taken out, and for a group Add the group again.
+- **Share my location** (the panel's button): people the user may message (as Chat finds them), groups the user is
+  in, XMPP contacts when the server has XMPP (with "Also use my XMPP app's location": [Over XMPP](#over-xmpp)), a guest
+  link (its page's link shown once, in the dialog: [Guest links](#guest-links)), until (15 minutes to
+  `location@max-share-hours`), exact or approximate, a trail or not, and the name they see.
+- **The terminal.** Browse's twin lists, under its map, the user's own shares (with whom, until, the last position's
+  age and coordinates, Stop) and those shared with them (`Maps/LocationSharesTui.xml`).
+- **My location shares** (`Maps/MyShares.xml`), where the chip goes, which every signed-in user may open, Maps user or
+  not (`MAPS_SHARES`, as `MAPS_DIALOG` opens LocalMap): the user's own active shares with who sees each, its end and
+  its last position's age, Stop, An hour more (the end alone, within `location@max-share-hours`), the XMPP opt-in and,
+  for a user who may open the Maps app, Open in Maps (Who sees my location).
+
+### Sending a share
+
+- **From a browser page.** A share started on Browse is sent from that page while it is open: the browser's
   `watchPosition`, at most one report a share's interval (`location@min-interval-seconds`, or
   `location@approximate-interval-seconds` for an approximate share) through the `reportPosition` transition, which
   answers `report#Position`'s outcome as its JSON's `statusCode`: 429 is sent again after `retryAfterSeconds`, 410 and
   404 stop the page sending it, 409 `STALE` and another 400 pass that fix over, and 409 `CLOCK_AHEAD` or 400
-  `BEFORE_SHARE` send from then on without the device's time (the server's); a lost sign-in (401, 403, an answer that is
-  not the transition's JSON) stops sending. The watch asks for high accuracy while an exact share is sent (started again
-  when that changes); a new share waits for a fix taken after it began (one is asked for at once), and with no fix for
-  three intervals (a still device) one is asked for again. The shares a tab sends are kept in its session storage under
-  the account (`moqui.scopedKey`) with the session it was kept in, so a reload goes on sending them and a sign-in anew does not, pruned to the user's active shares and forgotten at
-  a sign-out (`moqui.beforeLogoutHooks`); Send from here takes over one started elsewhere. When the page closes the
-  share stays active and goes stale; its audience sees the age. A banner above the map names every active share of the
-  user's own and every share the page sends (with whom, until when, whether this page sends it, or the device that does)
-  with Stop. Send from here posts the `sendFromHere` transition first (`update#Share` with `sendFromHere`), so a share
-  another device sent is sent from this page from then on, and that device is refused (409 `OTHER_DEVICE`) and stops; a
-  page that gets `OTHER_DEVICE` stops sending too and offers Send from here again.
+  `BEFORE_SHARE` send from then on without the device's time (the server's); a lost sign-in (401, 403, an answer that
+  is not the transition's JSON) stops sending. The watch asks for high accuracy while an exact share is sent (started
+  again when that changes); a new share waits for a fix taken after it began (one is asked for at once), and with no
+  fix for three intervals (a still device) one is asked for again. The shares a tab sends are kept in its session
+  storage under the account (`moqui.scopedKey`) with the session it was kept in, so a reload goes on sending them and a
+  sign-in anew does not, pruned to the user's active shares and forgotten at a sign-out (`moqui.beforeLogoutHooks`).
+  When the page closes the share stays active and goes stale; its audience sees the age. A banner above the map names
+  every active share of the user's own and every share the page sends (with whom, until when, whether this page sends
+  it, or the device that does) with Stop. A chat room's page sends a share started there the same way
+  ([In chat](#in-chat)), and so does a component's page for a record's share, such as BOSS's work order.
 - **The device it is sent from.** A share records the device whose request started it (`LocationShare.userLoginKeyId`:
   the request's device key, `ec.user.loginKeyId`, the key's stored hash as the device list names a device, never the
   key), or none for a browser page; `report#Position` takes that device's reports only, and for a share with none no
   device's, so the owner on another device or page gets 409 `OTHER_DEVICE` ("Another device sends this share's
-  location") until they take it over (Send from here, Send from this device: `sendFromHere`). The renewal of the
-  device's key moves its shares to the new key (`renew_device_key`), keeping the replaced key as `renewedFromKeyId`,
-  whose reports are taken while it still signs in (its few minutes' grace; cleared by a takeover). Revoking a device
-  key (its sign-out, the device list, an administrator ending it) stops every active share it sends
-  (`stop#DeviceShares`, in a transaction of its own, each share in its own, its errors logged and cleared so the revoke
-  always goes through), also when the device could not tell the server. A share has an audience version
-  (`audienceVersion`) that every change of its audience that can reach someone new raises (an entry added, a group
-  added again); a share sent from a device takes reports of that version only (`report#Position`'s `audienceVersion`,
-  409 `AUDIENCE_CHANGED` before anything is written or pushed, also for none), so the Android app sends the version
-  its person confirmed and pauses on a change, and Browse sends the one it read and reads again on a change; a
-  browser's share (no device) sends none and is not checked. The owner's reads say where each share is sent from (`sentFromDevice`, the device's
-  `deviceName`, `fromThisDevice`), never the key's id.
-- **From the Android app** (LL3; [Mobile-Client, Live location](../ui/Mobile-Client.md#live-location)). Browse in the app
-  has `moquiDesktop.location`: Share asks for the phone's location permission first (approximate alone for an
-  approximate share), after the app's dialog that says why, and the app asks "Send your location from this phone to
-  ... until ...?" in its own dialog, with the server's words (`get#AppShare`, `/qapps/clientLocationShare`), which is
-  what lets it send in the background (a page cannot start it alone); once the share is made the app's foreground service of type `location` (`LocationShareService.kt`) sends it
-  from the phone, also with the app in the background, under its notification ("Sharing your location with Sam until
-  15:30", with Stop) for as long as it does; a share the service could not start (notifications off, the app not in
-  front) is sent by the page while it is open, as a browser does. The service reads Android's `LocationManager` (the
-  platform's fused provider, else GPS or the network's; no Google Play services) every 5 seconds while the phone moves,
-  every 30 while it is still, and at the share's own interval for an approximate one, and hands each fix to the host's
-  `report_location` (`moqui_client::location::Reporter`), which keeps only the newest point not yet sent and posts it to
-  `/qapps/reportClientLocation` with the account's device key: a transition of the webroot's `qapps` that every
-  signed-in user reaches (Browse's own are `MAPS_APP`'s, while every signed-in user may own a share), POST only, which
-  calls `report#Position` and answers its outcome as `statusCode`, as `reportPosition` does. It handles the answers as
-  the page does (429 waits `retryAfterSeconds`, `STALE` and another 400 are passed over, `CLOCK_AHEAD` and
-  `BEFORE_SHARE` send with the server's time), each post within 15 seconds, and stops a share at its end, on a 410 or
-  404, on `OTHER_DEVICE` (tried again once across a renewal of the device key), at the account's sign-out or removal
-  (stopped on the server first, while the key is held), on the notification's Stop or with notifications turned off
-  (both stop the share on the server too, `/qapps/stopClientLocation`, kept and tried until the server confirms) or the
-  page's Stop, and when the location permission is taken away (Android ends the process: the share goes stale until
-  its end or a Stop). The notification check lists the location permission and the shares the phone sends.
-- **The desktop app** shares as a browser does: Browse sends while its window is open (`watchPosition`). A server's page
-  in a client window gets `Permissions-Policy: geolocation=(self)` (`moqui_client_tauri::scheme::PAGE_PERMISSIONS_POLICY`),
-  which lets Browse, the window's own page, ask and keeps a frame of another origin from it; the permission itself is
-  left to CEF (`bridge::on_permission` answers only the camera, the microphone and screen capture), and whether a
-  position comes is the platform's (see [Desktop-Client](../ui/Desktop-Client.md)).
-- **The app bar's chip.** While the user has any active share of their own, the shell shows "Sharing location" (with the
-  count when there are more than one) in the app bar on every screen, a shell indicator ([Qvt-Client, Shell
-  indicators](../ui/Qvt-Client.md)) that the framework's `shell-indicator` provider answers for every signed-in user,
-  whatever apps they may open (`LocationServices.get#ShellIndicator`, a count of the user's own shares, no audience or
-  position read; registered in `MoquiDefaultConf.xml`'s `screen-facade` `shell-providers`, since sharing is for every
-  user, not only Maps users). The shell reads it once with its shell data, when its notification socket opens again,
-  and on the user's own pushes of a share's start, change or end (which every device of the owner gets, so a share
-  started on another device shows too) and at the soonest end. It opens My location shares (`Maps/MyShares.xml`), which
-  every signed-in user may open, Maps user or not (`MAPS_SHARES`, as `MAPS_DIALOG` opens LocalMap): the user's own
-  active shares with who sees each, its end and its last position's age, Stop, An hour more (the end alone, within
-  `location@max-share-hours`) and, for a user who may open the Maps app, Open in Maps (Who sees my location). A Browse page that
-  sends a share adds "· sending here" to the chip. With Browse's banner, and the Android notification (LL3), it is how
-  the owner sees every active share wherever they are.
-- **The terminal.** Browse's twin lists, under its map, the user's own shares (with whom, until, the last position's age
-  and coordinates, Stop) and those shared with them (`Maps/LocationSharesTui.xml`).
-- **Over XMPP** (LL5; [XMPP, User location](../interfaces/XMPP.md#user-location)). A share with XMPP contacts in its
-  audience sends each position it takes, from any device or page, to those contacts' XMPP apps as user location
-  (XEP-0080): a `geoloc` event from the owner's JID to each of their sessions that asked for it, with the values the
-  audience sees (an approximate share's cell), and an empty `geoloc` item when it ends (at its time too, sent by the
-  XMPP session), is stopped or revokes them. A contact is told (`LocationSharedXmpp`), reads nothing of it on the web
-  (`find#SharedWithMe`, `get#Share` read people and groups), gets only positions received after they were added, and
-  adding one raises the audience version. The owner's own XMPP app's location feeds a share only when the owner turns
-  on "Also use my XMPP app's location (sent to my XMPP contacts only)" in Share my location (`takeXmppLocation`, on
-  `create#Share` and `update#Share`, audited; turning it on raises the audience version): its location publish is
-  `report#XmppPosition`, taken by each such share with its rules, kept apart (`LocationXmppLatest`) and sent to the
-  share's XMPP contacts only, never its latest position, trail, people, groups or link. The first one tells the owner's
-  XMPP app by a headline, and Who sees my location and My location shares say where the last position came from
-  ("from your XMPP app" or "from this page or phone") and the XMPP app's last position's age. With no such share a
-  publish is refused, so a client's setting never starts or feeds a share, and its "stopped" (an empty item) ends
-  none: the share is the owner's to stop here. A share the phone sends takes it too once opted in; the phone's dialog
-  and notification then name its audience with "(your XMPP app's location also goes to your XMPP contacts)", and the
-  raised version pauses the phone until its person confirms. Turning it on needs an XMPP contact in the share (else it
-  is refused, `XMPP_NO_CONTACT`); turning it off leaves the version; a revoke that takes out the last XMPP contact turns
-  it off (its audit row says so), while taking out a person, group or link leaves it. While the phone or page and the
-  XMPP app are on different devices, the XMPP contacts may see the marker alternate between the two. The toggle is in
-  Share my location, Who sees my location and My location shares; turning it off deletes the XMPP app's last position.
-  XMPP contacts are users of this server only: there is no federation.
-- **In chat** (LL4; [Comms, Live location](Comms.md#live-location)). Chat's Share a location has Share live location:
-  `ChatLocationServices.send#LiveLocation` makes an ordinary share through `create#Share` (no trail, purpose "In chat:
-  the room's name") whose audience is the room's members of that moment as `LsaUser` entries, after the same directory
-  and block rules, and posts a message carrying only the share's id (`content.location.liveShareId`). Its card reads the
-  share through `get#Share` (`get#LiveLocation`, which first reads the message through `get#Timeline`, so only a reader
-  of the room asks) and follows its topic; `get#ShareStatus` (internal) tells a reader of the room whom the share does
-  not reach whether it has ended, and nothing else. Who joins the room later is not added, who leaves by themselves
-  stays in until the owner takes them out here, and who is taken out of the room by another, or blocked by the owner, is
-  taken out of the room's live shares (`revoke#ChatAudience`, internal, the `revoke#Audience` path whoever the caller,
-  over the room's `moqui.chat.ChatLiveShare` rows); the share is in Shared with me, Who sees my location and the app
-  bar's chip like any other. The
-  Android app's dialog and service, and a browser's sending while its page is open (`moqui.chat.live.sender`, Chat's
-  `reportLiveLocation`), are as for a share started in Maps. Not in an encrypted room, where the server would see each
-  position (the decision and its later step are in Comms).
-- **Guest links** (LL6; plans/Location-Sharing.md §3.7). A link's token is a selector and a secret; its page is
-  `/location/<selector>#<secret>` (`Maps/SharedLocation.xml`, the token route `location` of tools' `MoquiConf.xml`, in the
-  public shell, no sign-in). The secret is the URL's fragment, which a browser sends to no server: the public shell
-  (`WebrootPublic.qvt.js`) takes it as it loads, before the page does, sets the address bar to the URL without it (kept
-  for the tab, so a reload still reads it), and the page posts it in the body of its read (`get#LinkShare`), so no
-  request line, server log or `Referer` holds it. Two places can still hold the whole link: the browser's history and its
-  sync keep the URL first opened, fragment and all, and a mail or chat service's link scanner may rewrite or fetch the
-  whole URL; and the mail that carries it holds it until its share ends (below). The page shows the share's label, its
-  purpose text (an ETA its owner wrote) and its latest position with its age, on the country outline or the one basemap
-  an administrator marks public, and as text where no map draws; it reads again every 20 seconds and answers nothing
-  else: no position received before the link was added, an approximate share's cell, at most
-  `location@link-max-views-per-minute` reads a minute for the link. A wrong secret is counted on the link and against the
-  client, and the link is refused from `location@link-max-failed-tries` (10) of them, and once its share ends. The page is
-  sent with `Referrer-Policy: strict-origin` (a tile host that needs a Referer gets this site's origin, never the path
-  with its selector), `Cache-Control: no-store`, and a `Content-Security-Policy` that lets it reach this server, the
-  public basemap's origins and the theme's own outside files only.
+  location") until they take it over: Send from here (Send from this device in the app) posts `update#Share` with
+  `sendFromHere`, the share is sent from there from then on, and the device that sent it is refused and stops. The
+  renewal of the device's key moves its shares to the new key (`renew_device_key`), keeping the replaced key as
+  `renewedFromKeyId`, whose reports are taken while it still signs in (its few minutes' grace; cleared by a takeover).
+  Revoking a device key (its sign-out, the device list, an administrator ending it) stops every active share it sends
+  (`stop#DeviceShares`, in a transaction of its own, each share in its own, its errors logged and cleared so the
+  revoke always goes through), also when the device could not tell the server. The owner's reads say where each share
+  is sent from (`sentFromDevice`, the device's `deviceName`, `fromThisDevice`), never the key's id.
+- **The audience version.** A share has an `audienceVersion` that every change of its audience that can reach someone
+  new raises (an entry added, a group added again, the XMPP opt-in turned on; a revoke does not); a share sent from a
+  device takes reports of that version only (`report#Position`'s `audienceVersion`, 409 `AUDIENCE_CHANGED` before
+  anything is written or pushed, also for none), so the Android app sends the version its person confirmed and pauses
+  on a change, and Browse sends the one it read and reads again on a change; a browser's share (no device) sends none
+  and is not checked.
+- **Reports.** From the owner only, for an active share: the values checked (latitude and longitude in range,
+  accuracy, heading and speed, a time not before the share began and later than the latest), at most one a share's
+  interval (a sooner one is dropped with 429), 410 for a share that has ended or was stopped, which stops a device, 409
+  `CLOCK_AHEAD` for a time more than a minute ahead of the server's clock, and 409 `OTHER_DEVICE` for a request not
+  from the device the share is sent from. Each report replaces the share's latest position, adds a trail point when
+  the share keeps a trail, and goes out on the share's topic to the audience's current users only (and to its XMPP
+  contacts, [Over XMPP](#over-xmpp)), never saved as a notification or pushed to a phone. The stored and answered
+  `observedDate` of an approximate share is rounded down to the minute; the push itself goes out when the report comes,
+  so its arrival tells the time.
+
+### Precision
+
+A share is exact or approximate. An approximate share's position is made in `report#Position`, before it is stored or
+sent anywhere (the latest row, a trail, a push, XMPP, a guest link): the centre of a cell of about 1 km on one fixed
+grid that every share uses (so two shares of one person at one place show the same cell), the last cell kept until a
+fix is more than a quarter of a cell inside another one, for the person rather than the share (a new share starts from
+the cell the person's other approximate shares hold, so they show one cell; once none is active the next starts
+afresh), an accuracy of 1000 m (a device's coarser one rounded up to the next 1000), no heading or speed, and its time
+to the minute. Keeping the cell stops jitter at a line flipping it, but a change of cell still shows that the person
+crossed a line 0.75 cell from the old centre, to within what they move in one `location@approximate-interval-seconds`
+(not to within the cell). The Android app asks only for approximate location for an approximate share, so where
+precise was never given the phone's own fixes are coarse before the server rounds them.
+
+### Retention and trails
+
+A share ends at its end or when stopped: reads stop then, and its latest position (and the XMPP app's) is deleted at
+once by a stop, and up to an hour after an end by time (the hourly job). A trail is kept only when the owner chose it
+for that share, for its days after the share ends (at most `location@trail-max-days`), and the owner deletes it at any
+time (`delete#Trail`, Delete trail). The hourly job (`clean#LocationShares`) ends the shares past their end, deletes the
+trails whose purge date has come (`trailPurgeDate`, set when the share ends) and removes the shares ended more than
+`location@trail-max-days` ago, with their audience, their snapshot and their chat links (`ChatLiveShare`, which stay
+until then so that a block or a removal from a room still reaches a share sent there). Each part goes on when one share
+fails, which is logged by its id.
+
+### Devices
+
+- **The Android app** sends a share from the phone, also with the app in the background, after the person's Send in
+  the app's own dialog, under its foreground notification ("Sharing your location with Sam and 2 others until 15:30",
+  with Stop) for as long as it does ([Mobile-Client, Live location](../ui/Mobile-Client.md#live-location)). Browse,
+  Chat and BOSS's work order call it through `moquiDesktop.location` (`allow`, `start`, `stop`, `status`): `allow` asks
+  for the location permission (approximate alone for an approximate share) after the app's dialog that says why, and
+  `start` asks "Send your location from this phone to ... until ...?" in the app's own dialog with the server's words
+  (`get#AppShare`, `/qapps/clientLocationShare`); that dialog, not the page, is what lets the phone send in the
+  background. Its service (`LocationShareService.kt`, of type `location`) posts each fix through the host's
+  `report_location` to `/qapps/reportClientLocation` with the account's device key, a transition of the webroot's
+  `qapps` that every signed-in user reaches (Browse's own are `MAPS_APP`'s, while every signed-in user may own a share),
+  which calls `report#Position` and answers its outcome as `statusCode`, as `reportPosition` does; its Stop, and
+  notifications turned off, stop the share on the server too (`/qapps/stopClientLocation`). A share the service could
+  not start (notifications off, the app not in front) is sent by the page while it is open, as a browser does. The
+  app's notification check lists the location permission and the shares the phone sends.
+- **The desktop app** shares as a browser does: the page sends while its window is open (`watchPosition`). A server's
+  page in a client window gets `Permissions-Policy: geolocation=(self)`
+  (`moqui_client_tauri::scheme::PAGE_PERMISSIONS_POLICY`), which lets the window's own page ask and keeps a frame of
+  another origin from it; the permission itself is left to CEF (`bridge::on_permission` answers only the camera, the
+  microphone and screen capture), and whether a position comes is the platform's (see
+  [Desktop-Client](../ui/Desktop-Client.md)).
+
+### The app bar's chip
+
+While the user has any active share of their own, the shell shows "Sharing location" (with the count when there are
+more than one) in the app bar on every screen, a shell indicator ([Qvt-Client, Shell indicators](../ui/Qvt-Client.md))
+that the framework's `shell-indicator` provider answers for every signed-in user, whatever apps they may open
+(`LocationServices.get#ShellIndicator`, a count of the user's own shares, no audience or position read; registered in
+`MoquiDefaultConf.xml`'s `screen-facade` `shell-providers`, since sharing is for every user, not only Maps users). The
+shell reads it once with its shell data, when its notification socket opens again, on the user's own pushes of a
+share's start, change or end (which every device of the owner gets, so a share started on another device shows too)
+and at the soonest end. It opens My location shares. A page that sends a share adds "· sending here" to it (a chat
+room's page the same), and the Android app "sending from this phone" while its service sends.
+
+### In chat
+
+Chat's Share a location has Share live location ([Comms, Live location](Comms.md#live-location)):
+`ChatLocationServices.send#LiveLocation` makes an ordinary share through `create#Share` (no trail, purpose "In chat:
+the room's name") whose audience is the room's members of that moment as `LsaUser` entries, after the same directory
+and block rules, and posts a message carrying only the share's id (`content.location.liveShareId`), so no message,
+feed, bridge or push text holds a position. Its card reads the share through `get#Share` (`get#LiveLocation`, which
+first reads the message through `get#Timeline`, so only a reader of the room asks) and follows its topic;
+`get#ShareStatus` (internal) tells a reader of the room whom the share does not reach whether it has ended, and nothing
+else. Who joins the room later is not added, who leaves by themselves stays in until the owner takes them out, who is
+taken out of the room by another is taken out of the room's live shares, and who the owner blocks out of every live
+share the owner sent to a room (`revoke#ChatAudience`, internal, over the `moqui.chat.ChatLiveShare` rows, a gone
+room's included). The share is in Shared with me, Who sees my location and the chip like any other. Not in an
+encrypted room, where the server would see each position (the decision and its later step are in Comms).
+
+### Over XMPP
+
+A share with XMPP contacts in its audience sends each position it takes, from any device or page, to those contacts'
+XMPP apps as user location (XEP-0080; [XMPP, User location](../interfaces/XMPP.md#user-location)): a `geoloc` event
+from the owner's JID to each of their sessions that asked for it, with the values the audience sees (an approximate
+share's cell), and an empty `geoloc` item when it ends (at its time too, sent by the XMPP session), is stopped or
+revokes them. A contact is told (`LocationSharedXmpp`), reads nothing of it on the web (`find#SharedWithMe` and
+`get#Share` read people and groups), and gets only positions received after they were added. The owner's own XMPP
+app's location feeds a share only when the owner turns on "Also use my XMPP app's location (sent to my XMPP contacts
+only)" for it (`takeXmppLocation`, on `create#Share` and `update#Share`, audited, raising the audience version, needing
+an XMPP contact in the share, else `XMPP_NO_CONTACT`; offered in Share my location, Who sees my location and My
+location shares): its publish is `report#XmppPosition`, taken by each such share with its rules, kept apart
+(`LocationXmppLatest`) and sent to the share's XMPP contacts only, never the share's latest position, trail, people,
+groups or link. Turning it off deletes the XMPP app's last position and leaves the version; a revoke that takes out the
+last XMPP contact turns it off. With no such share a publish is refused, so a client's setting never starts or feeds a
+share, and its "stopped" (an empty item) ends none. Who sees my location and My location shares say where the last
+position came from ("from your XMPP app" or "from this page or phone"); while the phone or page and the XMPP app are on
+different devices, the XMPP contacts may see the marker alternate between the two. XMPP contacts are users of this
+server only: there is no federation.
+
+### Guest links
+
+- **The link.** A link's token is a selector and a secret; its page is `/location/<selector>#<secret>`
+  (`Maps/SharedLocation.xml`, the token route `location` of tools' `MoquiConf.xml`, in the public shell, no sign-in).
+  The secret is the URL's fragment, which a browser sends to no server: the public shell (`WebrootPublic.qvt.js`) takes
+  it as it loads, before the page does, sets the address bar to the URL without it (kept for the tab, so a reload still
+  reads it), and the page posts it in the body of its read (`get#LinkShare`), so no request line, server log or
+  `Referer` holds it. Two places can still hold the whole link: the browser's history and its sync keep the URL first
+  opened, fragment and all, and a mail or chat service's link scanner may rewrite or fetch the whole URL; and the mail
+  that carries it holds it until its share ends (below). The page shows the share's label, its purpose text (an ETA its
+  owner wrote) and its latest position with its age, on the country outline or the one basemap an administrator marks
+  public, and as text where no map draws; it reads again every 20 seconds and answers nothing else: no position
+  received before the link was added, an approximate share's cell, at most `location@link-max-views-per-minute` reads a
+  minute for the link. A wrong secret is counted on the link and against the client, and the link is refused from
+  `location@link-max-failed-tries` (10) of them, and once its share ends or the link is revoked. The page is sent with
+  `Referrer-Policy: strict-origin` (a tile host that needs a Referer gets this site's origin, never the path with its
+  selector), `Cache-Control: no-store`, and a `Content-Security-Policy` that lets it reach this server, the public
+  basemap's origins and the theme's own outside files only.
 - **A public basemap.** A `MapLayer` with `isPublic` Y and `isBasemap` Y, enabled, with no `viewPermission`, no
   registered resource (`resourceLocation`), and no provider that is proxied (`proxyRequests` Y) or on a private network
   (`allowPrivateNetwork` Y); the first by `layerId` is drawn, else the country outline. Configuration does not set
   `isPublic`: an administrator sets it on the layer by a data load (`<moqui.maps.MapLayer layerId="..." isPublic="Y"/>`)
   or with the entity tools. Outside requests and the provider's test hold as for any map.
 - **A share for a record.** A component's service that has checked the caller may act on a record (Mantle's
-  `create#RecordGuestShare`, a technician's visit) names the record on the share with its end (`store#ShareRecord`,
-  `recordThruDate`); the share's end is no later, also when `update#Share` extends it (`AFTER_RECORD_END`), and the
-  record's end stops it (`stop#RecordShares`). Mantle mails the link only once the technician's app has confirmed the
-  share (or, in a browser, at the press), and keeps the mail's `EmailMessage` row for the mail queue with the link's
-  secret blanked from its body when the share ends or is stopped (mr-mantle `LocationShareServices.xml`). The send runs
-  under the share's lock, in a transaction of 60 seconds, while an SMTP session may take up to 120: a send that stalls
-  between the two can answer that the link could not be mailed for a mail that went out or is queued, so the page's
-  "could not be mailed" means the technician should check with the customer, not send again.
-- **The owner's acts.** `create#Share` (the audience, the end, exact or approximate, a trail or not), `update#Share`
-  (extend or shorten, add to the audience, change the label or purpose), `stop#Share`, `revoke#Audience` (one person,
-  group, XMPP contact or the link), `report#Position` and `delete#Trail` are the owner's alone; another person's share,
-  an administrator's request included, answers `SHARE_NOT_FOUND`. Every signed-in user may call them for their own
-  shares (`LocationShareServices`, framework `data/MapsLocationData.xml`).
-- **Who a share is for.** A user the owner may message (the chat directory's rule, `ChatServices.get#RefusedUsers`: a
-  user it refuses, or one who blocked the owner, answers as one that does not exist), a group the owner is in now (never
-  `ALL_USERS` or a group of external users), a contact of the owner's XMPP roster (`username@xmpp-server@domain`, a
-  person of one of the owner's direct rooms, a user of this server since XMPP has no federation; the entry keeps the
-  contact's user, whose XMPP sessions get the share's positions, "Over XMPP" above), or one guest link a share, whose
-  token is answered once by the call that makes it and kept only as its digest (as `ResourceShare`'s link). Each person
-  added is told who shares with them and until when (the `LocationShared` notification, in their own time zone). A
-  person has at most `location@max-active-shares` shares on at once, and a share at most `location@max-audience` people
-  (the members its groups reach, counted each), contacts and links; a group with more than four times that many current
-  members is refused before its members are written down. A share whose owner's lock row cannot be made or locked is
-  refused (`SHARE_LOCK_FAILED`) rather than counted without it.
-- **Who reads it.** `find#MyShares` (the owner's shares with their audiences), `find#SharedWithMe` and `get#Share` (the
-  latest position, and a kept trail in pages of up to 1000 points) answer the owner and the share's current audience
-  only: a user whose entry is not revoked, or a member of a group whose entry is not revoked who is in the entry's
-  snapshot and whose membership row of the snapshot is still current, checked again at every read and every push. A
-  viewer sees the latest position and a kept trail the server received from when the audience first reached them only
-  (by the server's receive time, `receivedDate`, never the device's; from their entry's `fromDate`, or their group
-  snapshot's `reachedDate`, kept when the group is added again only for the same membership row), so no position
-  reported before a person was added, or while they were out of the group, reaches them (but for the snapshot member
-  whose own row is ended and reopened, or made again with the same `fromDate`, who keeps their first reach and sees
-  what was received while out, which plans/Location-Sharing.md §3.1 accepts); the owner sees everything. The
-  snapshot (`LocationShareAudienceMember`) is the group's members when the owner adds the group, each with the
-  membership row that makes them one, less every one the chat directory refuses the owner at that act (its hooks, the
-  external-caller rule, the people who blocked the owner; a block made later applies at the next re-add, as for a direct
-  user), written only by `create#Share` and by `update#Share` when the owner adds the group again. A person taken out of
-  a group sees nothing of it from then on, and one put into it later, by anyone and with whatever dates (an
-  administrator, an app or a household organizer; a backdated, reopened or new membership, a member removed and given a
-  new row) sees nothing and gets no push until the owner adds the group again, which lets in and tells its new members,
-  names them to the owner, and tells anyone it leaves out. The one way back without the owner: a snapshot member's own
-  row, ended and reopened, or deleted and made again with the same `fromDate` (an administrator can do either in System
-  › Access), lets that same person back. No grant of these services reads another person's shares, and the generic
-  entity tools, entity REST, entity-auto services and the agents' `data` tool refuse these seven entities, an
-  administrator's included (`moqui-entity` `sensitive.rs`).
-- **What the server's operator can still reach.** These services keep a share from other users, not from whoever runs
-  the server: an administrator who signs in as the person (`ADMIN_LOGIN_AS`) sees what that person sees; a holder of the
-  Tools SQL runner reads the tables; any server script can turn on the `NotificationCapture` tool (meant for specs, not
-  gated) and see pushes in transit; and the database, its backups and its own logs hold what the tables hold. Who shared
-  with whom and until when (never a position) stays in the entity audit log and in the `LocationShared` notification
-  rows of the people told, under their own retention.
-- **Reports.** From the owner only, for an active share: the values checked (latitude and longitude in range, accuracy,
-  heading and speed, a time not before the share began and later than the latest), at most one a
-  `location@min-interval-seconds`, or `location@approximate-interval-seconds` for an approximate share (a sooner one is
-  dropped with 429), 410 for a share that has ended or was stopped, which stops a device, 409 `CLOCK_AHEAD` for a
-  time more than a minute ahead of the server's clock, and 409 `OTHER_DEVICE` for a request not from the device the
-  share is sent from (above). An approximate share's position is made here, before it is stored
-  or sent: the centre of a cell of about 1 km on one fixed grid that every share uses (so two shares of one person at
-  one place show the same cell), the last cell kept until a fix is more than a quarter of a cell inside another one, for
-  the person rather than the share (a new share starts from the cell the person's other approximate shares hold, so they
-  show one cell; once none is active the next starts afresh), an accuracy of 1000 m (a device's coarser one rounded up
-  to the next 1000), no heading or speed. Keeping the cell stops jitter at a line flipping it, but a change of cell
-  still shows that the person crossed a line 0.75 cell from the old centre, to within what they move in one
-  `location@approximate-interval-seconds` (not to within the cell). The stored and answered `observedDate` is rounded
-  down to the minute; the push itself goes out when the report comes, so its arrival tells the time. Each report
-  replaces the share's latest position, adds a trail point when the share keeps a trail, and goes out on the topic
-  `locationShare:<shareId>` to the audience's current users only, never saved as a notification or pushed to a phone. On
-  the same topic the owner's other devices are told when a share starts, and the owner and the audience when it changes
-  or ends; a revoked entry's people (and the owner) are told it was revoked. The audience learns of a start by the
-  `LocationShared` notification.
-- **Retention.** A share ends at its end (at most `location@max-share-hours` from its start or last extension) or when
-  stopped: reads stop then, and its latest position is deleted at once by a stop, and up to an hour after an end by time
-  (the hourly job). A trail is kept only when the owner chose it for that share, for its days after the share ends (at
-  most `location@trail-max-days`), and the owner deletes it at any time. The hourly job `clean_LocationShares_hourly`
-  (`clean#LocationShares`) ends the shares past their end, deletes the trails whose purge date has come
-  (`trailPurgeDate`, set when the share ends) and removes the shares ended more than `location@trail-max-days` ago.
-  Start, extension, stop and an audience added or revoked are in the entity audit log (who, when, the audience), never a
-  position. Positions never go to a log, a telemetry attribute, an error message or a cache.
-- **Settings**, on the conf's `location` element (`moqui_conf__location__max_share_hours` and the rest):
-  `location@max-share-hours` (24), `location@trail-max-days` (30), `location@min-interval-seconds` (5),
-  `location@approximate-interval-seconds` (60), `location@max-active-shares` (20), `location@max-audience` (50) and
-  `location@link-max-views-per-minute` (30, the reads a minute of a guest link's page) and
-  `location@link-max-failed-tries` (10, the wrong secrets after which a guest link is refused).
+  `create#RecordGuestShare`, a technician's visit, which BOSS's work order offers as Share my location with the
+  customer) names the record on the share with its end (`store#ShareRecord`, `recordThruDate`); the share's end is no
+  later, also when `update#Share` extends it (`AFTER_RECORD_END`), and the record's end stops it
+  (`stop#RecordShares`, by Mantle's EECA when the work order completes or is cancelled). Mantle mails the link only once
+  the technician's app has confirmed the share (or, in a browser, with the first position the server takes from the
+  page), and keeps the mail's `EmailMessage` row for the mail queue with the link's secret blanked from its body when
+  the share ends or the link is revoked (mr-mantle `LocationShareServices.xml`). The send runs under the share's lock,
+  in a transaction of 60 seconds, while an SMTP session may take up to 120: a send that stalls between the two can
+  answer that the link could not be mailed for a mail that went out or is queued, so the page's "could not be mailed"
+  means the technician should check with the customer, not send again.
+
+### Settings
+
+On the conf's `location` element (`moqui_conf__location__max_share_hours` and the rest):
+`location@max-share-hours` (24), `location@trail-max-days` (30), `location@min-interval-seconds` (5),
+`location@approximate-interval-seconds` (60), `location@max-active-shares` (20), `location@max-audience` (50),
+`location@link-max-views-per-minute` (30, the reads a minute of a guest link's page) and
+`location@link-max-failed-tries` (10, the wrong secrets after which a guest link is refused).
 
 ## Tests
 
@@ -1363,3 +1402,9 @@ device's rounded up and its time to the minute; an ended share hidden, 410 to a 
 a trail kept only when chosen, deleted by its owner and purged past its days; the audit rows with no position; a link's
 token answered once and only its digest kept), with the generic tools' refusal of the seven entities in Rust
 (`moqui-entity` `sensitive.rs`) and the agents' `data` tool's (`moqui-llm` `core_tests.rs`).
+The acceptance walk `LocationShareWalk` (`./moq accept tools --spec LocationShareWalk`, its fixture
+`LocationShareWalkFixtures`) is the whole of it in three browsers: a share started from Browse's Share my location
+with a group and the chip saying so, seen in Shared with me with its marker moved by push, extended, a member taken out
+of the group by an administrator getting no more, and stopped, seen to end; its phone half,
+`scripts/android-location-share.sh` on the emulator, is the app's confirmation dialog, its notification and the
+notification's Stop ([Mobile-Client, Tests](../ui/Mobile-Client.md#tests)).

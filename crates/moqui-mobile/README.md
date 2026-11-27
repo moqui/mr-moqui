@@ -74,6 +74,8 @@ scripts/android-smoke.sh      # on the emulator, when asked: the shell's ready l
                               # (MOQUI_MOBILE_APK=<a release APK>: what R8 kept for JNI instead of the frame check)
 scripts/android-maps-offline.sh   # acceptance MapsOfflinePackage, when asked: a map package downloaded, browsed
                                   # and searched offline, a place saved offline and sent when the network is back
+scripts/android-location-share.sh # acceptance LocationShareWalk's phone half, when asked: a live location share
+                                  # confirmed in the app's dialog, sent in the background, stopped by its notification
 ```
 
 The Kotlin has JVM tests (`./gradlew :app:testUniversalDebugUnitTest` in `gen/android`) and, on the emulator when

@@ -1291,11 +1291,16 @@ fn lower_case_headers(headers: &Value) -> Value {
     let mut out = serde_json::Map::new();
     for (name, value) in map {
         let text = value.as_str().map_or_else(|| value.to_string(), str::to_string);
-        let joined = match out.get(&name.to_ascii_lowercase()).and_then(Value::as_str) {
-            Some(before) => format!("{before}\n{text}"),
-            None => text,
-        };
-        out.insert(name.to_ascii_lowercase(), Value::String(joined));
+        let lower = name.to_ascii_lowercase();
+        match out.get_mut(&lower) {
+            Some(Value::String(before)) => {
+                before.push('\n');
+                before.push_str(&text);
+            }
+            _ => {
+                out.insert(lower, Value::String(text));
+            }
+        }
     }
     Value::Object(out)
 }

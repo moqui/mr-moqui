@@ -280,7 +280,8 @@ function revokeLive(p) {
     if (!blank(p.ownerUserId)) rows = rows.condition('ownerUserId', p.ownerUserId)
     const linked = Array.from(rows.selectField('shareId,ownerUserId').list()).filter((row) => row.shareId && row.ownerUserId)
     if (!linked.length) return { revokedCount: 0 }
-    // only the shares still on (an ended one's row is deleted with it; one past its end waits for the hourly clean)
+    // only the shares still on: an ended share's links are kept until the hourly clean removes the share, and one past
+    // its end that the clean has not ended yet is skipped as well
     const now = ec.user.nowTimestamp
     const active = new Set(Array.from(ec.entity.find('moqui.maps.LocationShare').condition('shareId', 'in', linked.map((row) => row.shareId))
       .condition('endedDate', null).condition('revokedDate', null).condition('thruDate', 'greater', now).selectField('shareId').disableAuthz().list())

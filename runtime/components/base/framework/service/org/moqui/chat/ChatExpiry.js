@@ -403,8 +403,8 @@ function expireRoom(p) {
   // events of a room that is gone: deleted, with nothing of the room to change
   if (!room) {
     const deletedCount = find(EVENT).condition('chatRoomId', chatRoomId).condition('expireDate', 'less-equals', new Date(now)).deleteAll()
-    // a room that is gone takes nobody out of its live locations any more: their links go (plans/Location-Sharing.md §3.5)
-    find('moqui.chat.ChatLiveShare').condition('chatRoomId', chatRoomId).deleteAll()
+    // its live location links (ChatLiveShare) stay for the hourly clean of the shares, so an owner's later block still
+    // reaches a share sent to this room (plans/Location-Sharing.md §3.5)
     return { deletedCount }
   }
   const rotationMillis = Math.min(WEEK_MILLIS, (Number(room.messageTimerSeconds) || 0) * 1000 || WEEK_MILLIS)

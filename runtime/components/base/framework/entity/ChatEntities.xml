@@ -439,7 +439,8 @@ along with this software (see the LICENSE.md file). If not, see
             blocked by the owner (ChatBlocks.js blockUser), whose entry in the room's live shares is then revoked
             (ChatLocationServices.revoke#LiveAudience, after the commit); a member who leaves by themselves stays in the
             share. Kept while the share is on, its message deleted or not (a disappearing message goes long before a share
-            ends); deleted when the hourly clean removes the ended share (LocationShares.js), or when its room is gone.</description>
+            ends), and its room gone or not (an owner's later block still reaches the share); deleted when the hourly clean
+            removes the ended share (LocationShares.js).</description>
         <field name="chatRoomId" type="id" is-pk="true"/>
         <field name="eventSeq" type="number-integer" is-pk="true"/>
         <field name="shareId" type="id"/>

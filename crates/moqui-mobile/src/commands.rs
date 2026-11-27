@@ -877,17 +877,27 @@ fn page_account(app: &AppHandle, webview: &tauri::Webview) -> Result<String, Str
 /// not given yet (`LocationShare.allow`: fine and coarse for an exact share, which the person may answer with either,
 /// coarse alone for an approximate one). Whether the app may read the location now; false when the person chose Not
 /// now. A page of the current account's only. Android's own question is the person's act here; what starts sending is
-/// `location_share_start`'s native confirmation.
-#[tauri::command(async)]
-pub(crate) fn location_allow(app: AppHandle, webview: tauri::Webview, exact: Option<bool>) -> Result<bool, String> {
+/// `location_share_start`'s native confirmation. The person's answer is waited for on Tauri's blocking pool, never a
+/// runtime worker.
+#[tauri::command]
+pub(crate) async fn location_allow(
+    app: AppHandle,
+    webview: tauri::Webview,
+    exact: Option<bool>,
+) -> Result<bool, String> {
     page_account(&app, &webview)?;
-    #[cfg(target_os = "android")]
-    return crate::android::location_allow(exact != Some(false));
-    #[cfg(not(target_os = "android"))]
-    {
-        log::info!("No phone location here to allow (exact: {exact:?})");
-        Ok(false)
-    }
+    let work = move || {
+        #[cfg(target_os = "android")]
+        return crate::android::location_allow(exact != Some(false));
+        #[cfg(not(target_os = "android"))]
+        {
+            log::info!("No phone location here to allow (exact: {exact:?})");
+            Ok(false)
+        }
+    };
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|err| format!("The location permission's question did not finish: {err}"))?
 }
 
 /// The page's Share (a share it just started, or its Send from this device): the share is sent from this phone by its
@@ -900,15 +910,30 @@ pub(crate) fn location_allow(app: AppHandle, webview: tauri::Webview, exact: Opt
 /// [`crate::location::read_share`]), never the page's; the page names only the share. `started`; `declined` when the
 /// person said Not now (the page sends nothing either); `unavailable` when the service could not start (the page sends
 /// while it is open, as a browser does). A page of the current account's only, for that account, for a share this
-/// device sends (Send from this device first).
-#[tauri::command(async)]
-pub(crate) fn location_share_start(
+/// device sends (Send from this device first). Run on Tauri's blocking pool: its read of the share is reqwest's
+/// blocking client, which panics on a runtime worker (and the page's promise was then never answered), and the app's
+/// dialog is waited for there too.
+#[tauri::command]
+pub(crate) async fn location_share_start(
     app: AppHandle,
     webview: tauri::Webview,
     share: crate::location::ShareAsk,
 ) -> Result<String, String> {
     let account = page_account(&app, &webview)?;
-    let state = moqui_client_tauri::state(&app)?;
+    let work = move || {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| start_share(&app, &account, &share)))
+            .unwrap_or_else(|_| Err("The share could not be started here".to_string()))
+    };
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|err| format!("The share's start did not finish: {err}"))?
+}
+
+/// [`location_share_start`]'s work, off the async runtime: the share read with the account's device key, then the
+/// app's confirmation and its service.
+fn start_share(app: &AppHandle, account: &str, share: &crate::location::ShareAsk) -> Result<String, String> {
+    let account = account.to_string();
+    let state = moqui_client_tauri::state(app)?;
     let signed_in = crate::native::asked(&state.core)
         .into_iter()
         .find(|asked| asked.account.id == account)

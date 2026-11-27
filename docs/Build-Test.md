@@ -612,6 +612,7 @@ sdkmanager 'platform-tools' 'emulator' 'platforms;android-37.0' 'build-tools;36.
 scripts/check-android.sh                     # clippy for both Android targets: moqui-client, moqui-client-tauri, the app
 scripts/android-smoke.sh                     # when asked, not in test-all: ready line, frame check, relaunch
 scripts/android-maps-offline.sh              # acceptance MapsOfflinePackage, when asked: offline map packages
+scripts/android-location-share.sh           # acceptance LocationShareWalk's phone half, when asked: live location
 # For debug sign-in, start this server in a separate terminal.
 moqui_conf__webapp_list__webapp__WEBROOT__http_bind=127.0.0.1 \
 moqui_conf__webapp_list__webapp__WEBROOT__https_enabled=false ./moq run --http-port 8080
