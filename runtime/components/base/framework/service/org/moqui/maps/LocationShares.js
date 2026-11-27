@@ -34,8 +34,6 @@ const millis = value => (blank(value) ? null : ec.user.timestampMillis(value))
 const nowMillis = () => millis(ec.user.nowTimestamp)
 const yes = value => value === true || value === "Y" || value === "true"
 const round6 = value => Math.round(value * 1e6) / 1e6
-// a fraction in [0, 1) from the server's random source (ec.user.randomCode), not Math.random
-const randomFraction = () => Number(ec.user.randomCode(9)) / 1e9
 
 /** A whole-number setting of the location conf element; the fallback when it is not set or not a whole number. */
 function setting(name, fallback) {
@@ -75,12 +73,12 @@ function ownShare(shareId, forUpdate) {
     return share && share.ownerUserId === me ? share : null
 }
 
-/** The current group memberships of a user (userGroupId, fromDate): those in effect now. */
+/** The current group memberships of a user (userGroupId, fromDate, lastUpdatedStamp): those in effect now. */
 function currentMemberships(userId, groupIds) {
     if (!userId || (groupIds && !groupIds.length)) return []
     let members = find(GROUP_MEMBER).condition("userId", userId).conditionDate("fromDate", "thruDate", null)
     if (groupIds) members = members.condition("userGroupId", "in", groupIds)
-    return Array.from(members.selectField("userGroupId,fromDate").list())
+    return Array.from(members.selectField("userGroupId,fromDate,lastUpdatedStamp").list())
 }
 const currentGroupIds = (userId, groupIds) =>
     Array.from(new Set(currentMemberships(userId, groupIds).map(row => row.userGroupId)))
@@ -88,14 +86,18 @@ const currentGroupIds = (userId, groupIds) =>
 const activeAudience = shareId => Array.from(find(AUDIENCE).condition("shareId", shareId).condition("revokedDate", null).list())
 
 /**
- * The users a group entry reaches: the group's members who were members when the entry was added (its fromDate) and
- * still are, so whoever adds people to a group (an administrator, an organizer) gives them nothing of a share until its
- * owner adds the group again. With userId, that user only.
+ * The users a group entry reaches: the group's members who were members when the owner added the group and still are,
+ * so whoever runs a group's membership (an administrator, an app or household organizer) gives nobody a share until its
+ * owner adds the group again. A membership counts only when it began by the entry's fromDate and its row was last
+ * written before the entry's (both lastUpdatedStamp, the time the writing transaction began): an add with a backdated
+ * fromDate and an ended row reopened are written after the entry, so both fail closed, as does a row edited after it
+ * for any other reason. With userId, that user only.
  */
 function groupEntryUserIds(row, userId) {
     let members = find(GROUP_MEMBER)
         .condition("userGroupId", row.userGroupId)
         .condition("fromDate", "less-equals", row.fromDate)
+        .condition("lastUpdatedStamp", "less", row.lastUpdatedStamp)
         .conditionDate("fromDate", "thruDate", null)
         .selectField("userId")
     if (userId) members = members.condition("userId", userId)
@@ -103,9 +105,14 @@ function groupEntryUserIds(row, userId) {
         .map(member => member.userId)
         .filter(id => id)
 }
-/** Whether one of the user's current memberships of the entry's group began by the time the entry was added. */
+/** Whether one of the user's current memberships of the entry's group counts for it, as groupEntryUserIds has it. */
 const memberSince = (memberships, row) =>
-    memberships.some(member => member.userGroupId === row.userGroupId && millis(member.fromDate) <= millis(row.fromDate))
+    memberships.some(
+        member =>
+            member.userGroupId === row.userGroupId &&
+            millis(member.fromDate) <= millis(row.fromDate) &&
+            millis(member.lastUpdatedStamp) < millis(row.lastUpdatedStamp)
+    )
 
 /** The users a share reaches now: its users whose entries are not revoked and its groups' members as above, but its owner. */
 function currentUserIds(share) {
@@ -356,6 +363,8 @@ function create(p) {
     const size = checkAudienceSize(null, audience.entries)
     if (size.reasonCode) return size
     const maxShares = setting("max-active-shares", 20)
+    // counted under a lock of the owner's account row, so two creates at once cannot both pass the cap
+    find(ACCOUNT).condition("userId", me).forUpdate(true).one()
     const active = find(SHARE)
         .condition("ownerUserId", me)
         .condition("revokedDate", null)
@@ -375,10 +384,7 @@ function create(p) {
             thruDate: new Date(until.until),
             precisionEnumId,
             keepTrail: trail.keepTrail,
-            trailKeepDays: trail.trailKeepDays,
-            // the secret offset of an approximate share's grid, never answered (approximate below)
-            gridLatOffset: precisionEnumId === "LspApproximate" ? randomFraction() : null,
-            gridLonOffset: precisionEnumId === "LspApproximate" ? randomFraction() : null
+            trailKeepDays: trail.trailKeepDays
         })
         .setSequencedIdPrimary()
         .create()
@@ -433,13 +439,16 @@ function update(p) {
         added = addAudience(share, fresh, now)
     }
     share.update()
-    notifyShared(
-        share,
-        currentUserIds(share).filter(id => !before.includes(id)),
-        now
-    )
-    push(share, currentUserIds(share).concat([share.ownerUserId]), {event: "changed", thruDate: millis(share.thruDate)})
-    return {thruDate: millis(share.thruDate), linkToken: added.linkToken}
+    const reached = currentUserIds(share)
+    const fresh = reached.filter(id => !before.includes(id))
+    notifyShared(share, fresh, now)
+    const people = namesOf(fresh)
+    const addedUserList = fresh.map(userId => ({userId, userName: (people[userId] || {}).name || userId}))
+    const thruDate = millis(share.thruDate)
+    push(share, reached, {event: "changed", thruDate})
+    // the owner's devices are told whom the change lets in
+    push(share, [share.ownerUserId], {event: "changed", thruDate, addedUserList})
+    return {thruDate, linkToken: added.linkToken, addedUserList}
 }
 
 /** A share's end acted on: its latest position deleted, the audience and the owner told. */
@@ -513,25 +522,28 @@ function longitudeStep(latitude) {
     return cos > APPROXIMATE_DEGREES ? APPROXIMATE_DEGREES / cos : 360
 }
 
-/** The centre of the cell of a share's grid (its secret offsets, in cells) that holds the point. */
-function cellOf(share, latitude, longitude) {
-    const latOffset = Number(share.gridLatOffset) || 0
-    const lonOffset = Number(share.gridLonOffset) || 0
-    const row = Math.floor(latitude / APPROXIMATE_DEGREES - latOffset)
-    const centreLatitude = Math.max(-90, Math.min(90, (row + latOffset + 0.5) * APPROXIMATE_DEGREES))
+/**
+ * The centre of the cell that holds the point on the one fixed grid every share uses: so every share of a person snaps
+ * one place to the same cell, and comparing shares narrows nothing.
+ */
+function cellOf(latitude, longitude) {
+    const row = Math.floor(latitude / APPROXIMATE_DEGREES)
+    const centreLatitude = Math.max(-90, Math.min(90, (row + 0.5) * APPROXIMATE_DEGREES))
     const step = longitudeStep(centreLatitude)
-    const centreLongitude = step >= 360 ? 0 : wrapLongitude((Math.floor(longitude / step - lonOffset) + lonOffset + 0.5) * step)
+    const centreLongitude = step >= 360 ? 0 : wrapLongitude((Math.floor(longitude / step) + 0.5) * step)
     return {latitude: centreLatitude, longitude: centreLongitude}
 }
 
 /**
  * An approximate share's position (plans/Location-Sharing.md §1, "Approximate when chosen"): the centre of a cell of
- * about 1 km on a grid offset by a secret random amount for the share, so a cell line says nothing of where the person
- * is; the last cell reported is kept until a fix is more than a quarter of a cell inside another one, so jitter at a line
- * or a crossing gives no exact position away; the time to the minute; no heading or speed; an accuracy of at least 1 km.
+ * about 1 km on the fixed grid; the last cell reported is kept until a fix is more than a quarter of a cell inside
+ * another one, so jitter at a line does not flip cells (a change of cell still shows that the person crossed a line
+ * 0.75 cell from the old centre, within what they move in one approximate-interval-seconds); the stored and answered
+ * time to the minute (the push itself goes out when the report comes); no heading or speed; an accuracy of 1000 m, or
+ * the device's rounded up to the next 1000.
  */
-function approximate(share, position, latest) {
-    let cell = cellOf(share, position.latitude, position.longitude)
+function approximate(position, latest) {
+    let cell = cellOf(position.latitude, position.longitude)
     if (latest && latest.latitude != null && latest.longitude != null) {
         const lastLatitude = Number(latest.latitude)
         const lastLongitude = Number(latest.longitude)
@@ -544,7 +556,10 @@ function approximate(share, position, latest) {
     return {
         latitude: round6(cell.latitude),
         longitude: round6(cell.longitude),
-        accuracy: Math.max(position.accuracy ?? 0, APPROXIMATE_ACCURACY),
+        accuracy: Math.max(
+            Math.ceil((position.accuracy ?? 0) / APPROXIMATE_ACCURACY) * APPROXIMATE_ACCURACY,
+            APPROXIMATE_ACCURACY
+        ),
         heading: null,
         speed: null,
         observed: Math.floor(position.observed / MINUTE) * MINUTE
@@ -578,7 +593,7 @@ function report(p) {
         (approximated ? checked.position.observed < latestObserved : checked.position.observed <= latestObserved)
     )
         return {statusCode: 409, reasonCode: "STALE"}
-    const position = approximated ? approximate(share, checked.position, latest) : checked.position
+    const position = approximated ? approximate(checked.position, latest) : checked.position
     const values = {
         latitude: position.latitude,
         longitude: position.longitude,
@@ -722,7 +737,7 @@ function findShared() {
             .condition("audienceTypeEnumId", "LsaUserGroup")
             .condition("userGroupId", "in", groups)
             .condition("revokedDate", null)
-            .selectField("shareId,userGroupId,fromDate")
+            .selectField("shareId,userGroupId,fromDate,lastUpdatedStamp")
         for (const row of rows.list()) if (memberSince(memberships, row)) ids.add(row.shareId)
     }
     if (!ids.size) return {shareList: []}
@@ -794,36 +809,53 @@ function deleteTrail(p) {
 }
 
 /**
- * The rows of a stage of the clean, in batches by orderField from the oldest, each share in its own transaction: a
- * failure is logged by the share's id and the clean goes on. A stage ends at a short batch, when a batch holds no share
- * it has not seen (one that failed stays), or after CLEAN_STAGE_MILLIS of the clock.
+ * The rows of a stage of the clean, in batches by (orderField, shareId) from the oldest, each share in its own
+ * transaction: a failure is logged by the share's id, the clean goes on, and the shares that failed are tried once more
+ * after the rest. A stage ends at a short batch, or after CLEAN_STAGE_MILLIS of the clock.
  */
 function eachShare(makeFind, orderField, counts, work) {
     const started = Date.now()
-    const seen = new Set()
-    let from = null
+    const failed = []
+    const run = (shareId, last) => {
+        try {
+            ec.transaction.runRequireNew(60, "Could not clean a location share", () => work(shareId))
+            return true
+        } catch (err) {
+            if (last) {
+                counts.failedCount++
+                ec.logger.error(`Could not clean location share ${shareId}: ${err && err.message ? err.message : err}`)
+            }
+            return false
+        }
+    }
+    const conditions = ec.entity.conditionFactory
+    let after = null
     while (Date.now() - started < CLEAN_STAGE_MILLIS) {
         let batch = makeFind().selectField("shareId," + orderField)
-        if (from != null) batch = batch.condition(orderField, "greater-equals", from)
+        if (after != null)
+            batch = batch.condition(
+                conditions.makeCondition(
+                    conditions.makeCondition(orderField, "greater", after.value),
+                    "or",
+                    conditions.makeCondition(
+                        conditions.makeCondition(orderField, "equals", after.value),
+                        "and",
+                        conditions.makeCondition("shareId", "greater", after.shareId)
+                    )
+                )
+            )
         const rows = Array.from(
             batch
                 .orderBy(orderField + ",shareId")
                 .limit(CLEAN_BATCH)
                 .list()
         )
-        const fresh = rows.filter(row => !seen.has(row.shareId))
-        for (const row of fresh) {
-            seen.add(row.shareId)
-            try {
-                ec.transaction.runRequireNew(60, "Could not clean a location share", () => work(row.shareId))
-            } catch (err) {
-                counts.failedCount++
-                ec.logger.error(`Could not clean location share ${row.shareId}: ${err && err.message ? err.message : err}`)
-            }
-        }
-        if (rows.length < CLEAN_BATCH || !fresh.length) break
-        from = rows[rows.length - 1][orderField]
+        for (const row of rows) if (!run(row.shareId, false)) failed.push(row.shareId)
+        if (rows.length < CLEAN_BATCH) break
+        const last = rows[rows.length - 1]
+        after = {value: last[orderField], shareId: last.shareId}
     }
+    for (const shareId of failed) run(shareId, true)
 }
 
 /** clean#LocationShares, hourly: the shares past their end ended, the trails past their days deleted, old shares removed. */

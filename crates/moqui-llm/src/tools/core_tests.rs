@@ -187,6 +187,7 @@ fn bed_with_cap(name: &str, cap: usize) -> Bed {
                 <data-entity package="moqui.basic"/>
                 <data-entity package="moqui.test" entity="TestEntity"/>
                 <data-entity package="moqui.maps" entity="LocationLatest"/>
+                <data-entity package="moqui.security" entity="UserGroupMemberUser"/>
             </llm-facade></moqui-conf>"#,
         root = dir.join("Root.xml").display()
     );
@@ -501,6 +502,8 @@ fn data_reads_basic_entities_directly_and_refuses_the_rest() {
                 // a restricted entity (shared live locations) is refused though a pattern names it
                 tool("e5", "data", json!({"entity": "moqui.maps.LocationLatest"})),
                 tool("e6", "data", json!({"entity": "LocationLatest"})),
+                // and a view over one (UserGroupMember, group membership)
+                tool("e7", "data", json!({"entity": "moqui.security.UserGroupMemberUser"})),
             ]),
             fake::Reply::text("Done."),
         ],
@@ -531,6 +534,11 @@ fn data_reads_basic_entities_directly_and_refuses_the_rest() {
         results[5].starts_with("{\"error\":\"entity_not_readable\""),
         "{}",
         results[5]
+    );
+    assert!(
+        results[6].starts_with("{\"error\":\"entity_not_readable\""),
+        "{}",
+        results[6]
     );
     assert!(
         results[3].contains("\"did_you_mean\":[\"enumTypeId\""),

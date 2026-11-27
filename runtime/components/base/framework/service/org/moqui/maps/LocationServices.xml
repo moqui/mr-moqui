@@ -15,8 +15,8 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Shared live location (plans/Location-Sharing.md §1, §3.2): a person shares where they are, until a time they choose,
     with people they choose. Only the owner starts, changes, stops and reports a share; only the owner and the share's
     current audience read it (a user whose entry is not revoked; a group's members who were members when the owner added
-    the group and still are, so that whoever runs a group's membership gives nobody a share), and every read checks that
-    again; another person's share, an ADMIN's request included, answers as not found. The model is
+    the group and still are, a membership row written after the entry not counting, so that whoever runs a group's
+    membership gives nobody a share), and every read checks that again; another person's share, an ADMIN's request included, answers as not found. The model is
     entity/MapLocationEntities.xml, the logic LocationShares.js beside this file, the settings the conf's location element,
     the grants data/MapsLocationData.xml (LocationShareServices, every signed-in user).
 
@@ -24,8 +24,7 @@ along with this software (see the LICENSE.md file). If not, see
     by LocationShares.js (so no conversion error repeats a value), report#Position remembers no parameters, and a refusal
     names its reason only. A position is pushed on the topic locationShare:<shareId> to the audience's current users only
     (directOnly), never saved as a notification or pushed to a phone (persistOnSend false); an approximate share's is
-    its cell of about 1 km on a grid with a secret offset, kept until a fix is well inside another cell, its time to the
-    minute, before it is stored or sent. Start, extension, stop and an audience added or revoked are in the
+    its cell of about 1 km on one fixed grid, kept until a fix is well inside another cell, before it is stored or sent. Start, extension, stop and an audience added or revoked are in the
     entity audit log (LocationShare thruDate and revokedDate, the audience's fields), never a position. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
@@ -66,10 +65,10 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="update" noun="Share">
         <description>Change an active share of the current user's own: extend or shorten it (thruDate, after now and at most
             location@max-share-hours from now: extending is the owner's act again), add to its audience (addAudienceList,
-            entries as create#Share's; one already there is passed over, but a group already there is stamped again, which
-            lets in its members who joined since), and change its label or purpose. The owner's other devices and the
-            audience are told on locationShare:shareId, and each user the share newly reaches gets the LocationShared
-            notification; a link added returns its token once. Refused: SHARE_NOT_FOUND (not the caller's), SHARE_ENDED,
+            entries as create#Share's; one already there is passed over, but a group already there is stamped again, in the
+            audit log, which lets in its members who joined since), and change its label or purpose. The owner's other
+            devices and the audience are told on locationShare:shareId, each user the share newly reaches gets the
+            LocationShared notification, and addedUserList (and the owner's push) names them; a link added returns its token once. Refused: SHARE_NOT_FOUND (not the caller's), SHARE_ENDED,
             and create#Share's reasons.</description>
         <in-parameters>
             <parameter name="shareId" required="true"/>
@@ -81,6 +80,8 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="thruDate" type="Timestamp"/>
             <parameter name="linkToken"/>
+            <parameter name="addedUserList" type="List"><description>The users the change lets in, each {userId,
+                userName}</description></parameter>
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('update', context))</script></actions>
@@ -114,9 +115,11 @@ along with this software (see the LICENSE.md file). If not, see
             device took it: not before the share began, later than the latest one; now when not given). At most one a
             location@min-interval-seconds a share (location@approximate-interval-seconds for an approximate one): a sooner
             one is dropped with statusCode 429 (RATE_LIMITED, retryAfterSeconds). An approximate share's position is the
-            centre of its cell of about 1 km on the share's grid, offset by a secret random amount never answered, the last
-            cell kept until a fix is more than a quarter of a cell inside another, its time rounded down to the minute, its
-            accuracy at least 1000 and no heading or speed, made here before it is stored or sent. It replaces the share's LocationLatest, adds a trail point when
+            centre of its cell of about 1 km on one fixed grid, the last cell kept until a fix is more than a quarter of a
+            cell inside another (which stops jitter flipping cells; a change of cell still shows a line crossed 0.75 cell
+            from the old centre, within what the person moves in an interval), an accuracy of 1000 or the device's rounded
+            up to the next 1000, no heading or speed, made here before it is stored or sent; its stored and answered
+            observedDate is rounded down to the minute, though the push goes out when the report comes. It replaces the share's LocationLatest, adds a trail point when
             the share keeps a trail, and is sent on locationShare:shareId to the audience's current users. statusCode 200;
             410 (SHARE_ENDED) for a share ended or stopped, which stops the device; 404 (SHARE_NOT_FOUND) for one that is
             not the caller's; 400 for a value out of range (BAD_POSITION, BAD_ACCURACY, BAD_HEADING, BAD_SPEED) or a time
