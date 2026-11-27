@@ -203,7 +203,13 @@ Enable the profile and make it the default on the same page. To replace an archi
 location and register it again: a map drawing the old revision is refused it (409) and loads its configuration again,
 so no map mixes the two. The readiness provider `maps.archives` says when a newer revision is stored but not registered
 (`NEWER_REVISION`), and when the registered one is gone, or a file on disk has changed in place (a change of its size or
-modification time, which also makes the map-source transition answer 409 until it is registered again).
+modification time, which also makes the map-source transition answer 409 until it is registered again). Its
+`maps.archive.space` check warns (`ARCHIVE_SPACE_LOW`) when the filesystem an archive is on has less free room than the
+largest archive on it once more (the old revision is kept while maps move): the runtime's for one on disk, the database's
+for one in a drive or git when its content database is the embedded one. While the scheduled backup runs, the filesystem
+its directory is on (a watched one: the database's, the runtime's, ...) needs the database's archives once more for the
+next local backup. It reads the status map's filesystems; an external database's room is not measured, nor a backup
+directory outside the runtime, and off Unix nothing is (`ARCHIVE_SPACE_EXTERNAL_DB`, `ARCHIVE_SPACE_UNREAD`).
 
 **Reading.** A map reads an archive at `/apps/maps/LocalMap/source?layerId=...&revision=...` (the effective configuration
 hands that URL to a user it lets read the archive, and to no other). Every request, each range included, checks the
@@ -260,6 +266,9 @@ tiles in view (plans/Maps.md §4.1). It is either:
   is allowed the private network), which must answer 206 (`NO_RANGES`) and allow other origins by CORS (`NO_CORS`: the
   browser reads it directly, with no credentials of the page); it is drawn only while its provider is enabled and tested
   and outside requests are on, as any provider layer, never through this server's proxy, and nothing of it is pinned.
+  Its provider is a raster-tiles provider: for a host that serves only COGs (a bucket), give it the URL of one of them
+  (a `.tif` or `.tiff` path with no tile placeholder), and its test reads that COG as registering one does (the range,
+  CORS and the header; a failure names its reason, `NO_RANGES`, `NO_CORS`, `COG_INVALID` and so on).
 
 **The header** is read in Rust (`MapSourceServices.read#CogHeader`, `moqui-lib` `geo/tiff.rs`), never a tile: the TIFF or
 BigTIFF header, in either byte order, and its image directories, at most 64 of them (one seen twice is a loop, refused), at
@@ -862,7 +871,7 @@ rules); the configuration services' rules are `framework/test/MapsConfig.spec.js
 app's route, else one of no app, and left out for a non-holder, and a profile's view projection: a registered one handed
 to the map with its definition, refused for a vector-style basemap and for an unknown code), and the archives'
 (registering, the map-source transition's access, ranges, revocation and stale revisions, and the tile transition's tile,
-304, 204, non-holder and stale revision) `framework/test/MapsSource.spec.js`, with the header's, the tile IDs', the
+304, 204, non-holder and stale revision, and readiness's room to replace an archive) `framework/test/MapsSource.spec.js`, with the header's, the tile IDs', the
 directories' and the archive writer's in Rust (`moqui-lib` `pmtiles_tests.rs`) and the tile reader's (`moqui-tools`
 `maps_tiles_tests.rs`: gzip or plain by the client, a missing tile, `If-None-Match`, a changed archive, the cache's
 bound). Overlays and places: `framework/test/MapsOverlays.spec.js`
@@ -884,7 +893,9 @@ found by authority, name or parameters); a COG's header (`geo/tiff_tests.rs`: cl
 what a map cannot draw, and hostile files: a loop, a directory past the end, a count that overflows, too many directories
 or entries); `MapsSource` registers a COG of a drive, refuses one in strips and reads its ranges for a holder of its share
 and not another user, with its projection in the holder's configuration and the holder's own band settings kept (a band
-it lacks refused); `MapsOverlays` converts a UTM and a British
+it lacks refused), and a real public Sentinel-2 COG (the bucket OpenLayers' COG example reads) registered from its
+provider's URL (the provider tested by a range of that COG), its header recorded and its full image's first tile read by
+range is the acceptance test `MapsCogPublic`; `MapsOverlays` converts a UTM and a British
 National Grid overlay and the tiler's (`geo/tiles_tests.rs`:
 the budgets against a pathological file, a stop within a zoom, points, the poles and the antimeridian;
 `geo/simplify_tests.rs`, `geo/mvt_tests.rs`); the geocoder: `framework/test/MapsGeocoder.spec.js`
