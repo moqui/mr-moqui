@@ -8224,7 +8224,7 @@
         }
     });
 
-    // m-map (plans/Maps.md §3.2), the map-view element: js/WebrootMap.js, the vendored OpenLayers bundle (an ES module with
+    // m-map (plans/archive/Maps.md §3.2), the map-view element: js/WebrootMap.js, the vendored OpenLayers bundle (an ES module with
     // shared chunks, imported and set as the global MoquiOl; its raster and projection part is imported by m-map-view only
     // for a map that needs it) and its style sheet, loaded once when the first map mounts, then m-map-view of that file drawn
     // by its definition (as m-diagram-zoom draws m-pan-zoom). The bundle failing is passed on as library-error, so m-map-view lists the places in its place; until the file

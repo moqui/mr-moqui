@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Map archives (plans/Maps.md §4.1, §5; docs/tools/Maps.md "Archives"): a PMTiles archive registered as a layer's revision,
+<!-- Map archives (plans/archive/Maps.md §4.1, §5; docs/tools/Maps.md "Archives"): a PMTiles archive registered as a layer's revision,
     the access check of the map-source transition (tools screen/Maps/LocalMap.xml source), the archives Configuration lists
     and their readiness; a user's geographic file read as an overlay (convert#Overlay, P3); and a proxied map provider's
     assets for the LocalMap providerProxy transition (get#ProviderAsset, MapProviders.js); one Z/X/Y tile of an archive for the LocalMap
@@ -92,7 +92,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="convert" noun="Overlay" type="rust" location="moqui_tools::maps_overlay::convert_overlay_service" allow-remote="false">
-        <description>A geographic file read as a map overlay (plans/Maps.md §4.1, §8; moqui-lib geo/overlay.rs and its
+        <description>A geographic file read as a map overlay (plans/archive/Maps.md §4.1, §8; moqui-lib geo/overlay.rs and its
             readers): GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML, WKT, WKB, delimited text with a WKT, WKB or latitude and
             longitude column, or a zipped shapefile, at a resource location (read as the framework) or given as text or
             bytes, at most maxBytes, at most maxFeatures features, WGS84 or a declared EPSG:3857 (a GeoJSON or TopoJSON crs,
@@ -135,7 +135,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="generalize" noun="Overlay" type="rust" location="moqui_tools::maps_simplify::generalize_overlay" allow-remote="false">
-        <description>An overlay file (any format convert#Overlay reads) too large to draw whole cut into vector tiles (plans/Maps.md §7; moqui-lib
+        <description>An overlay file (any format convert#Overlay reads) too large to draw whole cut into vector tiles (plans/archive/Maps.md §7; moqui-lib
             geo/tiles.rs over geo/simplify.rs and geo/mvt.rs, moqui-tools maps_simplify.rs): read and sanitized as
             convert#Overlay reads it but with up to maxFeatures (250,000) features, projected to Web Mercator, and for each
             zoom from 0 simplified (Douglas–Peucker to half a pixel), clipped to each tile with a small buffer, points thinned
@@ -275,7 +275,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="get" noun="ProviderAsset">
-        <description>One asset of a proxied map provider (proxyRequests Y; plans/Maps.md §4.2) for the LocalMap
+        <description>One asset of a proxied map provider (proxyRequests Y; plans/archive/Maps.md §4.2) for the LocalMap
             providerProxy transition: its style, a TileJSON, a tile or a sprite at a path a rule its last passing test recorded
             matches (proxyPaths: an exact document path, a sprite with its suffixes, a tile template), asked of the
             provider's origin with that rule's query (never the browser's, but for an OGC rule, wms, wmts or wfs, the
@@ -338,7 +338,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="get" noun="ArchiveTile">
-        <description>One Z/X/Y tile of a registered PMTiles archive (plans/Maps.md §5: a client with no PMTiles reader) for the
+        <description>One Z/X/Y tile of a registered PMTiles archive (plans/archive/Maps.md §5: a client with no PMTiles reader) for the
             LocalMap tile transition, on every request, writing nothing: layerId a registered layer, checked as
             get#SourceAccess checks it (SOURCE_MISSING, SOURCE_NOT_REGISTERED, PROVIDER_DISABLED 404; SOURCE_NOT_PERMITTED
             403; REVISION_CHANGED, SOURCE_CHANGED 409), or overlay:ID, a user's overlay generalized on the server

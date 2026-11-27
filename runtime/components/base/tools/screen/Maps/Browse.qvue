@@ -11,7 +11,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Maps › Browse (Browse.xml; plans/Maps.md §3.1): m-map filling the space below the shell's header, over the effective
+<!-- Maps › Browse (Browse.xml; plans/archive/Maps.md §3.1): m-map filling the space below the shell's header, over the effective
     configuration this component asks getConfig for and hands to m-map as an object (so a layer shown or hidden, a basemap
     chosen, a saved view or a result gone to draws again where the map was). Beside it, one panel at a time: Search (saved
     views and places, permitted records and postal codes, a postal area shown by its broad extent, and the configured

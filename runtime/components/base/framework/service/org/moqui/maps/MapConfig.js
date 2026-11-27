@@ -1,4 +1,4 @@
-// The map configuration of org.moqui.maps.MapServices (plans/Maps.md §3.2, §4.2): the effective configuration m-map draws
+// The map configuration of org.moqui.maps.MapServices (plans/archive/Maps.md §3.2, §4.2): the effective configuration m-map draws
 // (webroot/screen/webroot/js/WebrootMap.js documents its shape), personal preferences and saved views.
 //
 // Precedence (§4.2): the installation's policy (maps@external-requests) constrains every choice; the consumer's profile

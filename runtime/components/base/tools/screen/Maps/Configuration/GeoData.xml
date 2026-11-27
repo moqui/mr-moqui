@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Geo data (plans/Maps.md §6.4; docs/tools/Maps.md "Geo data"): the registered Geo data sets (moqui.maps.GeoDataSet: US
+<!-- Geo data (plans/archive/Maps.md §6.4; docs/tools/Maps.md "Geo data"): the registered Geo data sets (moqui.maps.GeoDataSet: US
     Census, GeoNames, an operator's file) with their licenses, attribution and coverage, and Acknowledge license (who and
     when, in the audit log); the countries imported, each with its edition, rows in use and last run, with Refresh, Cancel and
     Remove; Import (a run of the GeoDataImport ServiceJob, never in the request: a country for a set read a country at a time,

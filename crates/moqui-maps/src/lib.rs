@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Optional Overture data for Maps (plans/Maps-Overture.md, stages O1 and O2 of plans/Maps.md §4.3): a region's Places,
+//! Optional Overture data for Maps (plans/archive/Maps-Overture.md, stages O1 and O2 of plans/archive/Maps.md §4.3): a region's Places,
 //! Buildings and Addresses from a pinned Overture release, and the local address matching over its Addresses.
 //!
 //! - [`parquet`]: our own reader of the GeoParquet subset Overture writes, a part of a file at a time, with ZSTD on
@@ -22,7 +22,7 @@
 //! - [`wkb`]: the points and polygons of the `geometry` column.
 //! - [`overture`]: the schema 2.x columns of each theme and a region read from one file.
 //! - [`address`]: O2's address matching: a text read into its parts, the keys points and texts are compared by, and the
-//!   ranking of the points found (plans/Maps-Overture.md §O2).
+//!   ranking of the points found (plans/archive/Maps-Overture.md §O2).
 //! - [`address_service`]: the address index (`OvertureAddress` rows), a refresh's changes, and `search#OvertureAddresses`,
 //!   the local geocoder's search.
 //! - [`service`]: `org.moqui.maps.OvertureServices`' Rust services; the rest of the import (preflight, validation,

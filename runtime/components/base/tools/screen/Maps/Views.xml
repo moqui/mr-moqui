@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Saved views (plans/Maps.md §3.1): the user's own saved map views and, beside them, those others shared, over
+<!-- Saved views (plans/archive/Maps.md §3.1): the user's own saved map views and, beside them, those others shared, over
     org.moqui.maps.MapServices find#SavedViews, store#SavedView and delete#SavedView, which act on the signed-in user's own
     views only (another's is read, never changed). Each shows its place, its owner and whether all its layers are still
     available (a layer that is not is left out of what is drawn, and said here); its name opens it in Browse, and View map

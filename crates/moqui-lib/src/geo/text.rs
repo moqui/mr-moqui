@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The delimited-text reader of the Geo data parsers (plans/Maps.md §6.4): a bare file, or one member of a zip read as
+//! The delimited-text reader of the Geo data parsers (plans/archive/Maps.md §6.4): a bare file, or one member of a zip read as
 //! it inflates, within [`Limits`] (the bytes it may give, the ratio of inflated to compressed bytes, and the entries
 //! a zip may have), so a zip bomb or a runaway line ends the read; and its [`Lines`], with a leading UTF-8 byte order
 //! mark taken off, each line bounded and checked as UTF-8 on its own.

@@ -1,4 +1,4 @@
-// Map archives of org.moqui.maps.MapSourceServices (plans/Maps.md §4.1, §5; docs/tools/Maps.md "Archives"): registering a
+// Map archives of org.moqui.maps.MapSourceServices (plans/archive/Maps.md §4.1, §5; docs/tools/Maps.md "Archives"): registering a
 // PMTiles archive as a layer's revision, the access check of the map-source transition (LocalMap.xml source), the
 // same-origin URL the effective configuration hands a map (MapConfig.js), the archives Configuration lists and their
 // readiness.
@@ -49,7 +49,7 @@ const COG_HEAD = 65536
 const COG_URL_PATTERN = /^https:\/\/[^\/?#@\s]+\//i
 // the band settings a COG layer starts with when nobody chose any, from its header (P4c; MapConfig.js reads them)
 const COLORMAPS = ["grey", "viridis", "terrain", "magma"]
-// storage that reads a range of a file without reading the rest (plans/Maps.md §5, the backend table)
+// storage that reads a range of a file without reading the rest (plans/archive/Maps.md §5, the backend table)
 const RANGED_SCHEMES = ["file", "runtime", "component", "dbresource", "git"]
 const MAX_ARCHIVES = 200
 // An archive on the server's disk is registered only under the runtime's maps directory (runtime://maps/..., or a file: path
@@ -253,7 +253,7 @@ function sourceAccess(p) {
         : {ok: false, status: out.status, reasonCode: out.reasonCode, reason: out.reason}
 }
 
-// ===== get#ArchiveTile: the tile transition, every request (plans/Maps.md §5, a Z/X/Y endpoint) =====
+// ===== get#ArchiveTile: the tile transition, every request (plans/archive/Maps.md §5, a Z/X/Y endpoint) =====
 // One tile of a registered archive, or of a user's overlay generalized into one on the server (overlay:ID, MapOverlays.js
 // buildTiles), for a client with no PMTiles reader. The same check as the map-source transition, on every request: a layer
 // by check() above; an overlay by its file's own access, the reader's in its drive at its path now (a revoked share or a

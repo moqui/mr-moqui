@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The map widget (plans/Maps.md §3.2), on the vendored OpenLayers bundle (libs/openlayers, an ES module build whose files
+ * The map widget (plans/archive/Maps.md §3.2), on the vendored OpenLayers bundle (libs/openlayers, an ES module build whose files
  * are named by their hash: map.loadOpenLayers reads ol-map.json for its entries, imports the main one and sets it as the
  * global MoquiOl, with ol-mapbox-style and the PMTiles sources). m-map of WebrootVue.qvt.js loads this
  * file, the bundle and ol.css when the first map mounts and draws m-map-view by its definition; the map-view XML element
@@ -65,7 +65,7 @@
  *     featuresTruncated: true when a record layer had more features than were sent, units: "metric" | "imperial" (the
  *                  scale line's)
  *   }
- * The network contracts of the bundle (build/libs/refresh.mjs, OPENLAYERS_HOSTS; plans/Maps.md §3.2): a mapbox:// URL is
+ * The network contracts of the bundle (build/libs/refresh.mjs, OPENLAYERS_HOSTS; plans/archive/Maps.md §3.2): a mapbox:// URL is
  * refused before it reaches the library; a style is loaded here, checked, its sources' attributions escaped, and its
  * metadata['ol:webfonts'] replaced with the local fonts' absolute template (map.webfonts), which is also the webfonts option;
  * a TileJSON is fetched here and handed on with its attribution escaped; KML is read with an iconUrlFunction answering a blank
@@ -75,7 +75,7 @@
  * not is asked as a plain image, which a fetched WFS cannot be). Locate me asks the browser for the position only when
  * pressed, and the position is neither kept nor sent.
  *
- * Editing (plans/Maps.md §4.1, P4b; Browse's own overlays): editCommand(name, value) of the component (m-map passes it on)
+ * Editing (plans/archive/Maps.md §4.1, P4b; Browse's own overlays): editCommand(name, value) of the component (m-map passes it on)
  * edits a FeatureCollection in a layer of its own over the map while the overlay it came from is hidden: start {layerId,
  * collection (GeoJSON, WGS84), pointsOnly}, draw ("Point", "LineString", "Polygon" or "" for none: OpenLayers' Draw), with
  * the selected feature's vertices moved by Modify and snapped to the others' (Snap); from the keyboard Enter adds a vertex at

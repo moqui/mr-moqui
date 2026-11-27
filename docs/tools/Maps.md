@@ -2,7 +2,7 @@
 
 Maps is the framework's map app, beside Dashboards, System and Tools (`runtime/components/base/tools`, mounted as
 `/apps/maps` and `/qapps/maps`). It needs no BOSS, HOME, PASS or Mantle: those components add record adapters and
-mount its dialog under their own routes. The design is [plans/Maps.md](../../plans/Maps.md); the map widget
+mount its dialog under their own routes. The design is [plans/archive/Maps.md](../../plans/archive/Maps.md); the map widget
 (`map-view`, `m-map`) is in [Qvt-Client](../ui/Qvt-Client.md) and the terminal's `map` component in
 [TUI](../ui/TUI.md#components).
 
@@ -106,7 +106,7 @@ but it still sees every area viewed (as this server's requests), and this server
 ## OGC services
 
 A WMS, WMTS or WFS service is a map provider of the kind `MPK_WMS` (WMS 1.3.0), `MPK_WMTS` (WMTS 1.0.0) or `MPK_WFS`
-(WFS 2.0.0, read as GeoJSON) (`MapOgc.js`, plans/Maps.md §4.1). Its URL is the service's (`https://host/geoserver/ows`,
+(WFS 2.0.0, read as GeoJSON) (`MapOgc.js`, plans/archive/Maps.md §4.1). Its URL is the service's (`https://host/geoserver/ows`,
 a MapServer URL with its own `map=` query, or a WMTS service's `WMTSCapabilities.xml`); an https URL, as every provider's.
 The seed has the USGS National Map's topographic WMTS (provider `USGS_NATIONAL_MAP`, layer and profile `USGS_TOPO`; public
 domain, the United States only), disabled until its provider passes a test and the profile is enabled.
@@ -167,7 +167,7 @@ answer is passed on as it came, at most 4 MiB, refused when it carries the key. 
 
 ## Archives
 
-A PMTiles archive on this server draws a map with no outside request (plans/Maps.md §4.1, §5). The seed has the local
+A PMTiles archive on this server draws a map with no outside request (plans/archive/Maps.md §4.1, §5). The seed has the local
 Protomaps profile, `LOCAL_PROTOMAPS`, with its layers `LOCAL_PROTOMAPS_LIGHT` and `LOCAL_PROTOMAPS_DARK` (format
 `MLF_PMTILES_VECTOR`), all disabled: they draw a regional [Protomaps extract](https://docs.protomaps.com/basemaps/downloads)
 with the styles, sprites and fonts packaged under `/libs` (`protomaps/light.json`, `dark.json`, `protomaps/sprites/v4/`,
@@ -256,7 +256,7 @@ range the browser has read is not asked again while it keeps it.
 
 A raster of measurements or imagery (an elevation model, a satellite scene, a scanned map) is a layer of the format
 `MLF_COG` (P4c), drawn by the browser itself with geotiff.js and OpenLayers' WebGL tiles, reading only the ranges of the
-tiles in view (plans/Maps.md §4.1). It is either:
+tiles in view (plans/archive/Maps.md §4.1). It is either:
 
 - **a registered resource**, registered as a PMTiles archive is (Configuration › Archives, `register#ArchiveLayer`: a drive,
   a Git LFS object or `runtime://maps/`), its revision pinned and read through the map-source transition with the same
@@ -461,7 +461,7 @@ a declared CRS or anything the map does not keep) stays as it is, and the edit i
 file there is replaced), which the overlay draws from then on, its row keeping the original as `sourcePath` with what
 reading the original found (its CRS and notes). A reader of the original through a share of that file alone does not
 read the edited copy; a share of the folder reaches both. An overlay with no feature left is refused (remove it
-instead); places may all be removed. A WFS layer is not edited (WFS-T, plans/Maps.md §4.1).
+instead); places may all be removed. A WFS layer is not edited (WFS-T, plans/archive/Maps.md §4.1).
 
 **Saved places** are named points in one GeoJSON file, `Maps/places.geojson` of the personal drive: Save place on the
 selected place or search result (`store#Place`, written through `FileServices.save#Text`, so the drive keeps each change
@@ -657,7 +657,7 @@ file (5), then Census (10), then GeoNames (20).
   confirmation with an estimate (`everyCountryEstimate`), a queue of runs, one pending run a country with a country Geo
   sharing a `queueId`, run one after another (each run starts the next when it ends, whatever its end), each its own run
   and edition; a run holds one country's records while it loads, so the queue's peak memory is that of its largest
-  country (plans/Maps.md §6.3). A refusal every run would meet (the set disabled, its license, outside requests off) cancels
+  country (plans/archive/Maps.md §6.3). A refusal every run would meet (the set disabled, its license, outside requests off) cancels
   the waiting runs with its reason. **Imported** shows the queue's progress with **Cancel the rest** (`cancel#GeoDataImport`
   with the `queueId`: the countries waiting are cancelled, the one running stops at its next step; a run with no word for
   an hour is taken as abandoned and ended at once). An operator's file is uploaded (at most `maps@import-max-bytes`, refused before it is
@@ -722,8 +722,8 @@ was cancelled after them) and a Remove clear it. Every signed-in user may call i
 
 ## Overture places and buildings
 
-Optional regional data from an [Overture Maps](https://overturemaps.org/) release (plans/Maps-Overture.md, stage O1 of
-plans/Maps.md §4.3): **Places**, named destinations with their categories, for Browse's search, and **Buildings**, footprints
+Optional regional data from an [Overture Maps](https://overturemaps.org/) release (plans/archive/Maps-Overture.md, stage O1 of
+plans/archive/Maps.md §4.3): **Places**, named destinations with their categories, for Browse's search, and **Buildings**, footprints
 drawn as a map layer. Nothing of it ships and nothing is read until an administrator imports a region; maps, archives and
 postal lookup need none of it. It is the `moqui-maps` crate, which the host links under its `overture` feature (Maximal and
 Enterprise, not Lite); a server without it keeps what was imported usable and says it cannot import.
@@ -806,7 +806,7 @@ import of a region theme failed, and when regions are set up on a server built w
 
 ## Overture addresses
 
-Stage O2 ([Maps-Overture §8](../../plans/Maps-Overture.md#8-o2-regional-addresses)): Overture's **Addresses** theme for a
+Stage O2 ([Maps-Overture §8](../../plans/archive/Maps-Overture.md#8-o2-regional-addresses)): Overture's **Addresses** theme for a
 region, imported as Places are (Configuration › Overture: the theme `ADDRESSES`, a run pinned to a release, read by range,
 staged, checked, activated, rolled back, removed), and searched by a geocoder of this server, **Overture addresses (local)**
 (`MPK_GEOCODER_OVERTURE`, seeded disabled as `OVERTURE_ADDRESSES`). The dataset alone is not a geocoder: the parsing,

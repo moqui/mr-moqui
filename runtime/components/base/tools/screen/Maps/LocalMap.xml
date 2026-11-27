@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The local-map dialog (plans/Maps.md §3.2; docs/tools/Maps.md "The local-map dialog"), opened beside an address or a
+<!-- The local-map dialog (plans/archive/Maps.md §3.2; docs/tools/Maps.md "The local-map dialog"), opened beside an address or a
     coordinate field of any app with View map: a dynamic-dialog whose id is LocalMapDialog, loading this screen with
     adapterKey and recordKey (its key fields as JSON) and an optional addressPurpose, or a plain longitude, latitude and
     label, or a plain postalCode and countryGeoId (an address with no point: its local postal-area position from
@@ -64,7 +64,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- A registered map archive (a PMTiles layer's, plans/Maps.md §5), read by range by every map, the Browse page's and any
+    <!-- A registered map archive (a PMTiles layer's, plans/archive/Maps.md §5), read by range by every map, the Browse page's and any
         app's dialog alike: the effective configuration hands a map this path with the layer's ID and its registered revision
         (MapSources.js). Each request (GET, HEAD, every range) checks the caller again and writes nothing
         (MapSourceServices.get#SourceAccess: the layer, its viewPermission and its drive's access, so a revoked share is
@@ -88,7 +88,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- One Z/X/Y tile of a registered map archive (plans/Maps.md §5: a client with no PMTiles reader, such as OpenLayers'
+    <!-- One Z/X/Y tile of a registered map archive (plans/archive/Maps.md §5: a client with no PMTiles reader, such as OpenLayers'
         XYZ vector tile source or a terminal), at tile/{layerId}/{revision}/{z}/{x}/{y} (y may end in .mvt, .pbf or .png):
         layerId a registered PMTiles layer, or overlay:ID, a user's overlay generalized on the server. Each request checks the
         caller again, as source does, and writes nothing (MapSourceServices.get#ArchiveTile: the layer, its viewPermission
@@ -134,7 +134,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- A proxied map provider's style, TileJSON, tiles and sprites (proxyRequests Y; plans/Maps.md §4.2): the effective
+    <!-- A proxied map provider's style, TileJSON, tiles and sprites (proxyRequests Y; plans/archive/Maps.md §4.2): the effective
         configuration hands a map providerProxy/{providerId}/{the provider's own path} in place of the provider's URLs, and a
         rewritten style or TileJSON names only such paths. Each GET checks the caller and the path again
         (MapSourceServices.get#ProviderAsset: one of the provider's layers offered to them, outside requests on, a path its

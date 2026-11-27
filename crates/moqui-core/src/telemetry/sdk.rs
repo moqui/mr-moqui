@@ -748,7 +748,7 @@ impl DoneSpan {
 
 /// The spans waiting under a root open on this thread, by trace, at most `limit` of them: the export's tail buffer
 /// keeps no more of a trace (telemetry tail-trace-spans), and a long root holding every span under it held a record of
-/// each of its frames for its whole life, about 2 KB a row of a Geo data import (plans/Maps.md §6.3).
+/// each of its frames for its whole life, about 2 KB a row of a Geo data import (plans/archive/Maps.md §6.3).
 #[derive(Default)]
 struct Tail {
     trace: [u8; 16],

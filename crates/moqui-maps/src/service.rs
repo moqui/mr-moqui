@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.maps.OvertureServices`' Rust services (plans/Maps-Overture.md §3): `read#OvertureReleases` lists the
+//! `org.moqui.maps.OvertureServices`' Rust services (plans/archive/Maps-Overture.md §3): `read#OvertureReleases` lists the
 //! catalog's releases, and `read#OvertureTheme` reads one run's theme for its region: the release's catalog (its schema
 //! version checked), the items whose extent meets the region, and each file by range ([`crate::overture`]); Places and
 //! Addresses are written as the run's `OverturePlace` and `OvertureAddress` rows in batches, each in a transaction of

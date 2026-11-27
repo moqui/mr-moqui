@@ -632,7 +632,7 @@
             .sort((a, b) => b.value - a.value);
         return { mode: "countries", countries, listed, unmatched: unmatched.slice(0, 20), max, field: value && value.field };
     };
-    // A geomap's drill-down into Maps (plans/Maps.md §2, the Dashboard geomap row): Browse centered on a country's largest
+    // A geomap's drill-down into Maps (plans/archive/Maps.md §2, the Dashboard geomap row): Browse centered on a country's largest
     // land area (its extent, so an overseas territory does not widen it) or on a point, a plain extent or point and nothing
     // else of the panel's rows. Offered only where the dashboard's screen names the maps link (appLinks.maps: a viewer whose
     // own grants open the Maps app); "" otherwise. Each outer ring across the antimeridian (Russia, Fiji) is unwrapped

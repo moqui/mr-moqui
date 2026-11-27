@@ -1,10 +1,10 @@
-// GeoDataEveryCountry (plans/Maps.md §6.3 "Every country", §6.4): an import of every country of a set read a country at a
+// GeoDataEveryCountry (plans/archive/Maps.md §6.3 "Every country", §6.4): an import of every country of a set read a country at a
 // time, as Geo data's Import starts one (start#GeoDataImport with everyCountry), with outside requests (opened to
 // download.geonames.org alone): a set as an administrator adds one for a mirror, sharing GeoNames postal's source key, whose
 // countryCodes are two small countries and the largest GeoNames country file between them (Brazil, Portugal's 206,942
 // rows, Canada's first parts). The queue runs the three one after another, each its own run and edition of the
 // GeoDataImport ServiceJob, the one after Portugal showing the queue goes on past a large country. It records each run's
-// wall time and counts and the rows in use after it, logged as GeoDataEveryCountry lines for plans/Maps.md §6.3 (the
+// wall time and counts and the rows in use after it, logged as GeoDataEveryCountry lines for plans/archive/Maps.md §6.3 (the
 // server's memory is sampled beside the run). The wait looks at the runs every half second, pausing with sleep between
 // looks (ec.factory.waitWorkerPoolEmpty waits for the service worker pool only, not a job's run). Cleanup cancels what is
 // still running and removes what it loaded: the set shares GeoNames postal's source key, so that is the GEONAMES_POSTAL

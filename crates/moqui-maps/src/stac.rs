@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Overture's STAC catalog (plans/Maps-Overture.md §3.1), read with no network of its own: the root's releases
+//! Overture's STAC catalog (plans/archive/Maps-Overture.md §3.1), read with no network of its own: the root's releases
 //! ([`releases`]), a release's schema version and themes ([`release`]), a theme's collection of a type ([`theme`]),
 //! its items and the extent of each ([`collection`]), and an item's GeoParquet asset ([`item`]). Links are resolved
 //! against the document they are in; the caller fetches each document and keeps every one on the catalog's origin.

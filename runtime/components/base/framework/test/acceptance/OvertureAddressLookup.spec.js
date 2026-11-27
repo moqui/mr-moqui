@@ -1,4 +1,4 @@
-// OvertureAddressLookup (plans/Maps-Overture.md §8): the latest real Overture release's Addresses for two small boxes,
+// OvertureAddressLookup (plans/archive/Maps-Overture.md §8): the latest real Overture release's Addresses for two small boxes,
 // central Florence (1.6 by 1.7 km, the Italian countrywide source, CC BY 4.0, no postal codes) and part of Boston's Back
 // Bay (1.2 by 1.1 km, Massachusetts' statewide points, a point per unit, which Overture marks LicenseRef-Proprietary),
 // through org.moqui.maps.OvertureServices with the catalog and the files opened to their hosts alone

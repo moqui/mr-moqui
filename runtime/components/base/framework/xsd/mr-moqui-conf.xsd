@@ -2380,7 +2380,7 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:complexType>
     </xs:element>
     <xs:element name="maps">
-        <xs:annotation><xs:documentation>Maps (plans/Maps.md §4.2): the switch for the server's outside map requests and
+        <xs:annotation><xs:documentation>Maps (plans/archive/Maps.md §4.2): the switch for the server's outside map requests and
             the hard limits of Geo data imports and feature queries. Providers, layers and profiles are entity rows
             (moqui.maps), not settings.</xs:documentation></xs:annotation>
         <xs:complexType>
@@ -2398,7 +2398,7 @@ along with this software (see the LICENSE.md file). If not, see
                 within import-max-bytes: an overlay is drawn whole in the browser. Its GeoJSON is served up to 4 MiB of
                 characters.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="overture-catalog" type="xs:string" default="https://stac.overturemaps.org/catalog.json"><xs:annotation><xs:documentation>
-                The root of the STAC catalog Overture releases are found in (plans/Maps-Overture.md): its releases are
+                The root of the STAC catalog Overture releases are found in (plans/archive/Maps-Overture.md): its releases are
                 offered under Maps › Configuration › Overture, and an import reads only documents on its host and the
                 https files its items name. A mirror of the catalog, or a spec's fixtures.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="overture-max-area" type="xs:string" default="2500"><xs:annotation><xs:documentation>

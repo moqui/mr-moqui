@@ -1,5 +1,5 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
-// MapsLocalOnly (plans/Maps.md §5, §9 acceptance), on a server with maps@external-requests false (client/suite.js): a user
+// MapsLocalOnly (plans/archive/Maps.md §5, §9 acceptance), on a server with maps@external-requests false (client/suite.js): a user
 // whose profile is the local Protomaps profile (MapsLocalFixtures: a registered archive) browses Maps › Browse, which draws
 // the archive with the packaged style, sprite and fonts, every request to this server (the browser's own resource list);
 // a pan and a zoom ask a measured number of archive ranges, logged against the per-client all rate limit (50 a second,

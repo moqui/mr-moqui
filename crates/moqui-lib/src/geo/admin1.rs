@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! GeoNames first-level codes to ISO 3166-2 (plans/Maps.md §6.3): GeoNames' admin1 codes are FIPS 10-4 (or its own
+//! GeoNames first-level codes to ISO 3166-2 (plans/archive/Maps.md §6.3): GeoNames' admin1 codes are FIPS 10-4 (or its own
 //! where FIPS has none) for every country but the US, Switzerland, Belgium and Montenegro, so a second-level division or
 //! a city, which names its first-level division by that code, finds the division Mantle's install data already has
 //! (`CAN_AB`, `JPN_01`, `IND_AN`) through the crosswalk in `admin1_iso.tsv` (GeoNames CC BY 4.0 joined with Wikidata's

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A TopoJSON file as an overlay (plans/Maps.md §4.1; the TopoJSON 1.0 specification): its objects' geometries, each a
+//! A TopoJSON file as an overlay (plans/archive/Maps.md §4.1; the TopoJSON 1.0 specification): its objects' geometries, each a
 //! feature (a GeometryCollection's members each one), their lines and rings stitched from the shared arcs, quantized
 //! positions read through the topology's transform. Features may share an arc any number of times, so the positions the
 //! stitching makes are bounded in all ([`super::OverlayLimits::max_bytes`] / 4), and a file that would make more is

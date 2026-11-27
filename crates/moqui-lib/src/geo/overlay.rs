@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A user's geographic file as a map overlay (plans/Maps.md §4.1, §8): a GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML,
+//! A user's geographic file as a map overlay (plans/archive/Maps.md §4.1, §8): a GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML,
 //! WKT, WKB, delimited text (a WKT, WKB or latitude and longitude column) or zipped shapefile read, checked and made a
 //! sanitized GeoJSON FeatureCollection in WGS84 for the browser, which draws only that. The readers of the formats added
 //! after GeoJSON, GPX and KML are the submodules ([`topojson`], [`esrijson`], [`wkt`] with the delimited text, [`wkb`],

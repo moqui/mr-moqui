@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.maps.MapSourceServices.read#ArchiveTile` (plans/Maps.md §5, "a later Rust endpoint returning individual
+//! `org.moqui.maps.MapSourceServices.read#ArchiveTile` (plans/archive/Maps.md §5, "a later Rust endpoint returning individual
 //! Z/X/Y tiles"): one tile of a registered PMTiles archive, for the LocalMap `tile` transition, which serves clients
 //! with no PMTiles reader (an OpenLayers XYZ vector tile source, a terminal, another program) through the same resource
 //! facade and the same per-request access check as the map-source transition: MapSources.js checks the caller and

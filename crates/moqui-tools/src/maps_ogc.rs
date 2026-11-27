@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.maps.MapServices.read#OgcCapabilities` (plans/Maps.md §4.1, P4a): an OGC service's GetCapabilities text,
+//! `org.moqui.maps.MapServices.read#OgcCapabilities` (plans/archive/Maps.md §4.1, P4a): an OGC service's GetCapabilities text,
 //! which the provider's test fetched (`MapOgc.js`), read by [`moqui_lib::geo::ogc`] (no DTD, no entity declaration) into
 //! the JSON the provider records. In Rust because a large service's document (a few MB, thousands of layers) is more
 //! than a script's memory holds as a tree. It sends and writes nothing, so no group is granted it: the test calls it.

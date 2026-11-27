@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Preferences (plans/Maps.md §3.1, §4.2): the user's own map defaults, over org.moqui.maps.MapServices get#Preferences and
+<!-- Preferences (plans/archive/Maps.md §3.1, §4.2): the user's own map defaults, over org.moqui.maps.MapServices get#Preferences and
     store#Preferences: their map profile (else the installation's), basemap, initial extent, display units, whether the last
     view is restored, and which layers are shown. Only what an administrator enabled is offered, and the profile's allowed
     overrides decide what a preference changes (get#EffectiveConfig). Maps asks for no location unless Locate me is

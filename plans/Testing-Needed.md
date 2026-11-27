@@ -78,6 +78,15 @@ runs under 15 s with the add-ons since 2026-11-26.
 | Terminal | The browser terminal's keys and paste in Chrome, Firefox and Safari; the mouse (clicks, the wheel and drag to copy in kitty and GNOME Terminal over SSH, in local mode, and OSC 52 in the browser terminal in Chrome and Firefox); F-keys, Alt and paste in xterm, kitty, GNOME Terminal, tmux and the Linux console | [Screen-TUI-Impl](archive/Screen-TUI-Impl.md) §5 Phase 4 findings, §7 |
 | Wasm host | The WebSocket check is `cargo test -p moqui-host --test it -- wasm_browser`, against that test's `/notws` mock, not moqui-host. A live-host mode needs the package served from moqui-host's origin, a signed-in session, and checks of what the real `/notws` does (the mock's `echo:`, `drop` and `Ack` replies are its own) | [Wasm, Status](archive/Wasm.md) |
 
+### Maps
+
+Plan [Maps](archive/Maps.md) (archived 2026-11-26); guide [Maps](../docs/tools/Maps.md).
+
+| Area | Item | Source |
+|---|---|---|
+| Geo data | The full Canadian, Dutch and British GeoNames sets (`CA_full`, `NL_full`, `GB_full`, the last about 1.8 million rows) have never been imported or measured | [§6.3](archive/Maps.md#63-extend-the-basic-geo-model), "Every country" |
+| Overture | The memory of `OvertureRegionImport` and `OvertureAddressLookup`, run only on macOS where the status map reports none: run them on Linux | [Maps-Overture §6](archive/Maps-Overture.md#6-tests), [§8.3](archive/Maps-Overture.md#83-tests) |
+
 ### Apps
 
 | Area | Item | Source |

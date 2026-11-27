@@ -1,4 +1,4 @@
-// The Geo data importer (plans/Maps.md §6.4): org.moqui.maps.GeoDataServices import#GeoData, cancel#GeoDataImport and
+// The Geo data importer (plans/archive/Maps.md §6.4): org.moqui.maps.GeoDataServices import#GeoData, cancel#GeoDataImport and
 // remove#GeoData, with HttpFixtures answering for the Census ZCTA zip and the GeoNames US zip (built here with
 // writeZip). A load writes the four rows a code with its leading zeros kept (the ZCTA's land area on its point), a bad row goes to the error file while the
 // rest load; a re-import changes nothing and sends the edition's validators, a 304 ends the run as current; retiring

@@ -1,4 +1,4 @@
-// Map archives (plans/Maps.md §5; org.moqui.maps.MapSourceServices, MapSources.js, tools screen/Maps/LocalMap.xml source):
+// Map archives (plans/archive/Maps.md §5; org.moqui.maps.MapSourceServices, MapSources.js, tools screen/Maps/LocalMap.xml source):
 // registering a PMTiles archive records its revision (a DbResource archive in a drive, by its content blob; a file on disk,
 // by its SHA-256 and time), and refuses an archive a map cannot draw, a raster layer over vector tiles, a git archive that
 // is not a Git LFS object (NOT_LFS) and a caller who may not change Configuration, and registers several layers of one

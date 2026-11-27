@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Browse (plans/Maps.md §3.1; docs/tools/Maps.md): the full-screen map. Browse.qvue draws m-map over the effective
+<!-- Browse (plans/archive/Maps.md §3.1; docs/tools/Maps.md): the full-screen map. Browse.qvue draws m-map over the effective
     configuration (getConfig: org.moqui.maps.MapServices.get#EffectiveConfig, with a record's adapterKey and recordKey when
     LocalMap's Open in Maps sent them, and the user's own and shared overlays: MapOverlays.js), with the search and results,
     layers (record layers and overlays among them, a layer that is not shown named with Retry, Add overlay), saved views and
@@ -319,7 +319,7 @@ along with this software (see the LICENSE.md file). If not, see
                         .execute('searchPlaces', {q: String(q || ''), limit: 20})
                     sources.push('places')
                     results.unshift(...Array.from(places.results || []))
-                    // then the imported Overture places (plans/Maps-Overture.md), local rows with their sources and licenses
+                    // then the imported Overture places (plans/archive/Maps-Overture.md), local rows with their sources and licenses
                     const overtureFound = ec.resource.script('component://framework/service/org/moqui/maps/OvertureData.js')
                         .execute('searchPlaces', {q: String(q || ''), extent: extent || null, limit: 20})
                     if (overtureFound.results && overtureFound.results.length) {

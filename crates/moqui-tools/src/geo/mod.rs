@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The Geo data importer (plans/Maps.md §6.4): `org.moqui.maps.GeoDataServices` ([`service`]) brings a registered data
+//! The Geo data importer (plans/archive/Maps.md §6.4): `org.moqui.maps.GeoDataServices` ([`service`]) brings a registered data
 //! set (`moqui.maps.GeoDataSet`) in when an administrator asks: preflight, a capped and conditional download to a file
 //! under `runtime/tmp`, or an operator's file ([`fetch`]); the whole file read and checked writing nothing, then loaded
 //! in batches of a few thousand codes to a transaction, and retired only after a whole load ([`load`]). Each run is a

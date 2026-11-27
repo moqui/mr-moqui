@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- A map provider's page (plans/Maps.md §4.2): one connection of the mapProvider kind, read from
+<!-- A map provider's page (plans/archive/Maps.md §4.2): one connection of the mapProvider kind, read from
     org.moqui.admin.ConfigurationServices.get#Connection and changed through store#Connection and test#Connection, through
     the shared parts of template/ConnectionParts.xml (README, "Mounting the administration screens"): its settings and its
     key (write-only: a provider with a key is offered to a browser only through this server, Through this server, whose

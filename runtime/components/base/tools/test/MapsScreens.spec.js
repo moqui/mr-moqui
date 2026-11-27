@@ -1,4 +1,4 @@
-// The Maps app's screens (plans/Maps.md §3.1, §3.2; docs/tools/Maps.md): Browse's terminal template (Browse.tui.json over
+// The Maps app's screens (plans/archive/Maps.md §3.1, §3.2; docs/tools/Maps.md): Browse's terminal template (Browse.tui.json over
 // terminalMap; Browse.qvue's one render is in a browser, test/client/MapsBrowseExtent) for a Maps user, and the app
 // refused to a user with ALL_USERS alone; the local-map dialog,
 // a plain XML screen rendered once in qvt and once in html: for a Maps user the adapter lets write, the record's place,

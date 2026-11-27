@@ -1,5 +1,5 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
-//! `map`: the terminal form of the `map-view` element (plans/Maps.md §3.2): an overview of the places as braille points
+//! `map`: the terminal form of the `map-view` element (plans/archive/Maps.md §3.2): an overview of the places as braille points
 //! over the land mask, then the places as a list, each its label, latitude and longitude, precision and source, and the
 //! map data's attribution. With `pick` a point is chosen by typing its latitude and longitude (or Enter on a place);
 //! the choice is shown, marked on the overview and copied, and saves nothing by itself.

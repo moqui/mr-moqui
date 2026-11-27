@@ -1,4 +1,4 @@
-// MapsCogPublic (plans/Maps.md §4.1, P4c): a real public Cloud Optimized GeoTIFF at a provider's URL, nothing proxied and no
+// MapsCogPublic (plans/archive/Maps.md §4.1, P4c): a real public Cloud Optimized GeoTIFF at a provider's URL, nothing proxied and no
 // key: the true-colour image (TCI.tif, about 224 MiB, 10980 pixels square, three bands of 8 bits) of a Sentinel-2 L2A scene
 // in the Sentinel-2 COGs bucket on AWS Open Data, the one OpenLayers' own COG example draws (examples/cog.js), which answers
 // ranges and CORS for any origin. A raster-tiles provider whose URL is that COG is tested (one range of its header, as a COG
