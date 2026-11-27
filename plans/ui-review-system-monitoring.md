@@ -350,14 +350,14 @@ execution records it; “exercised” never implies that all modes and recovery 
 | MON-02 — Follow a log to its trace and surrounding context | exercised — partial | Logs invalid-query recovery → real local log/context → trace selection/raw span → filtered logs, then invalid-duration/recovery in Traces. Trace/range retained. MON-B02 confirmed histogram total, partial-interval notice, zero-match and recovery. Split, controlled multi-service fixture, retention/missing-span/refusal/fetch-failure and alternate modes pending. | MON-B01/B02; MON-UI-001; evidence 02–08 |
 | MON-03 — Explain an error group and its affected work | exercised — partial | MON-B02 opened a deliberately unnamed Overview group by its generated label and verified its full fingerprint, range and occurrences on ErrorDetail. Dedicated Errors, controlled repeated/unrelated errors, stack/release handoffs and recovery/mode branches pending. | MON-B01/B02; MON-UI-002; 01-overview |
 | MON-04 — Compare a metric over meaningful ranges | exercised — partial | Charted a populated metric grouped by an attribute through the picker. Comparison of the same known series across windows and exported values remains open. | MON-B03; core-checks.txt |
-| MON-05 — Move from service pressure to a specific operation | inspected — partial | Observed the populated Services and Instances aggregates in Material and opened Services in the live TUI. Remaining steps and recovery branches are open. | MON-B03 |
-| MON-06 — Replay a captured browser failure safely | inspected — partial | Opened /qapps/system/Monitor/Replays as John Doe. Visible controls included Find, Collapse Replays. | MON-B03; entry-MON-06.json |
+| MON-05 — Move from service pressure to a specific operation | exercised — partial | Earlier walk. Observed the populated Services and Instances aggregates in Material and opened Services in the live TUI. Remaining steps and recovery branches are open. | MON-B05 (current). MON-B03 |
+| MON-06 — Replay a captured browser failure safely | exercised — partial | Earlier walk. Opened /qapps/system/Monitor/Replays as John Doe. Visible controls included Find, Collapse Replays. | MON-B05 (current). MON-B03; entry-MON-06.json |
 | MON-07 — Admit a telemetry source and revoke its key | exercised — partial | The browser created an ingest key and saw its single-display message. The fixture posted all three OTLP signals. Ingestion after revocation remains open. | MON-B03; core-checks.txt |
 | MON-08 — Run a synthetic check and follow its result | exercised — partial | Created a Standard synthetic check and ran it from Material. Followed the passing result to a 3 ms trace and its 2.97 ms HTTP GET. Failed and recovered runs remain open. | MON-B03 |
 | MON-09 — Review a release regression and open an evidence-based incident | inspected — partial | Opened /qapps/system/Monitor/Incidents as John Doe. Visible controls included Find, Collapse Matching incidents. | MON-B03; entry-MON-09.json |
 | MON-10 — Apply an expiring diagnostic setting and restore the baseline | exercised — partial | MonitorSettings exercised a change and revert by the holder and a refusal by the reader. Expiry and consumer readback remain open. | MON-B03 |
 | MON-11 — Approve and verify a bounded recovery | inspected — partial | Opened /qapps/system/Monitor/Recovery as John Doe. Visible controls included Collapse Adapters, Collapse Newest actions. | MON-B03; entry-MON-11.json |
-| MON-12 — Reconcile alternate mounts and restricted diagnostics | inspected — partial | Opened /qapps/system/Monitor/AgentTraces as John Doe. Visible controls included Through, Search. | MON-B03; entry-MON-12.json |
+| MON-12 — Reconcile alternate mounts and restricted diagnostics | exercised — partial | Earlier walk. Opened /qapps/system/Monitor/AgentTraces as John Doe. Visible controls included Through, Search. | MON-B05 (current). MON-B03; entry-MON-12.json |
 
 ### Findings register
 
@@ -491,3 +491,13 @@ MON-02 and MON-09 were selected for Log Context and Releases. Both screens showe
   are not inherited. Preserve routes, stored preferences and public contracts in any later refinement.
 - Finish a review with explicit branch outcomes and a candid unresolved ledger; missing prerequisites do not become
   passes. Building absent features is outside this review.
+
+### MON-B05 · November 26 inspection follow-up
+
+Build `fa75eceb6`. These entries update the activity ledger above. The earlier batches retain the original observations. Local receipts are under `plans/ui-refinement-evidence/inspection-fa75/`.
+
+| Activity | Current evidence | Remaining observation | Receipt |
+|---|---|---|---|
+| MON-05 | Six OTLP submissions were accepted. The Services selector narrowed the dashboard to the fixture service. Traces filtered to that service and a 3,500 ms minimum showed its 4,000 ms request. Opening the result showed the same trace ID and 4,000 ms span in Detail. | The operator carried the service name into Traces manually. Check a second instance and a different time window for isolation. | `monitor.txt`, `otlp-drill.json` |
+| MON-06 | The native RUM fixture posted authenticated, synthetic masked replay chunks, enforced the byte cap and checked replay access under different grants. The Monitor browser walk opened Browser and Replays. | Capture an actual masked input through the replay recorder and play that same recording in the granted browser. | `hosts.txt`, `monitor.txt` |
+| MON-12 | John Doe opened both Llm/Traces and Monitor/AgentTraces. sec.none.only received the AgentAdmin permission message on the first and 403 on the second. | Populate a gen_ai span visible to the specialist and compare its ID, filters and return path across both mounts. | `controls.json`, `followup.json` |
