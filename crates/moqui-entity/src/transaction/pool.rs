@@ -14,9 +14,10 @@
 
 //! One pool. Another database is another instance.
 //!
-//! Ordinary checkout never takes a reserve connection. It waits only when a checked-out ordinary
-//! connection might be returned. If the only idle connections are reserve and no ordinary
-//! connection can be opened or returned, it fails without using [`PoolConfig::acquire_timeout`].
+//! Ordinary checkout never takes a reserve connection. It waits only when an ordinary connection
+//! might be returned: one checked out, or one another checkout is opening or testing. If the only
+//! idle connections are reserve and no ordinary connection can be opened or returned, it fails
+//! without using [`PoolConfig::acquire_timeout`].
 //! A parked client counts against `max`.
 
 use std::sync::{Arc, Condvar, Mutex};
@@ -552,7 +553,7 @@ impl Pool {
         let started = Instant::now();
         let mut waited = false;
         let result = loop {
-            let (step, expired) = {
+            let (step, expired, notified) = {
                 let mut state = lock(&self.inner.state);
                 let mut expired = self.take_expired(&mut state);
                 if budget.is_none() {
@@ -561,34 +562,42 @@ impl Pool {
                 let allowed = budget.unwrap_or(0);
                 let skip_idle = allowed > 0 && failures >= allowed;
                 let step = decide(&mut state, class, &self.inner.config, skip_idle, &mut expired);
-                (step, expired)
+                (step, expired, state.counters.notifies)
             };
             drop(expired);
             match step {
                 Step::Ready(tracked) => break Ok(self.wrap(tracked, class)),
-                Step::Test(tracked) => match test_connection(tracked, self.inner.config.test_sql()) {
-                    Ok(tracked) => {
-                        self.finish_test(class, true);
-                        break Ok(self.wrap(tracked, class));
+                Step::Test(tracked) => {
+                    let in_flight = InFlight::new(&self.inner, class, true);
+                    let tested = test_connection(tracked, self.inner.config.test_sql());
+                    in_flight.disarm();
+                    match tested {
+                        Ok(tracked) => {
+                            self.finish_test(class, true);
+                            break Ok(self.wrap(tracked, class));
+                        }
+                        Err((tracked, err)) => {
+                            self.finish_test(class, false);
+                            drop(tracked);
+                            failures += 1;
+                            failed_test = Some(err);
+                        }
                     }
-                    Err((tracked, err)) => {
-                        self.finish_test(class, false);
-                        drop(tracked);
-                        failures += 1;
-                        failed_test = Some(err);
-                    }
-                },
+                }
                 Step::Connect => {
+                    let in_flight = InFlight::new(&self.inner, class, false);
                     let name_generation = application_name_generation();
                     let connected = self.inner.driver.connect();
                     let tracked = match connected {
                         Ok(conn) => Tracked::new(conn, name_generation),
                         Err(err) => {
+                            in_flight.disarm();
                             self.mark_creating(class, false);
                             self.inner.available.notify_all();
                             break Err(unavailable(err));
                         }
                     };
+                    in_flight.disarm();
                     // A successful connect already established a live session. Let the caller's
                     // metadata query or application work be its first SQL, as on Java startup.
                     self.finish_create(class);
@@ -596,7 +605,11 @@ impl Pool {
                 }
                 Step::Wait => {
                     waited = true;
-                    if !self.wait_for_return(started)? {
+                    #[cfg(test)]
+                    if let Some(hook) = BEFORE_WAIT.with(std::cell::Cell::take) {
+                        hook();
+                    }
+                    if !self.wait_for_return(started, notified)? {
                         break Err(unavailable(Error::new("timed out waiting for a connection")));
                     }
                 }
@@ -618,7 +631,12 @@ impl Pool {
     /// to open a connection rather than an idle one, so it must pass the head ticket the right to connect, or that
     /// waiter sleeps to its deadline. A waiter that times out takes its ticket out, and if it was handed something as
     /// it timed out, passes that on to the next ticket.
-    fn wait_for_return(&self, started: Instant) -> Result<bool, Error> {
+    ///
+    /// `notified` is the pool's wakeup count when the checkout decided to wait, read under that lock hold: a wakeup
+    /// sent since (a return, or the failed connect of the only connection being opened, between that lock hold and
+    /// this one) reached no waiter, so the checkout looks again at once instead of sleeping to its deadline. Every
+    /// `notify_all` follows a [`State::note_wake`] under the lock.
+    fn wait_for_return(&self, started: Instant, notified: u64) -> Result<bool, Error> {
         let timeout = self.inner.config.acquire_timeout;
         if timeout.is_zero() {
             return Ok(false);
@@ -636,6 +654,9 @@ impl Pool {
         let wait_started = Instant::now();
         {
             let mut state = lock(&self.inner.state);
+            if state.counters.notifies != notified {
+                return Ok(true);
+            }
             state.waiting += 1;
             state.counters.waits += 1;
             publish(&state, Duration::ZERO);
@@ -960,13 +981,66 @@ fn can_create(state: &State, class: Class, config: &PoolConfig) -> bool {
     }
 }
 
-/// A checked-out client of this class can come back to the idle list. A parked client does not:
-/// the thread that parked it cannot return it while blocked in checkout.
+/// A client of this class can come back to the idle list: one checked out, or one another checkout is opening or
+/// testing (it is handed out and returned, or its failure wakes the waiters). A parked client does not: the thread
+/// that parked it cannot return it while blocked in checkout.
 fn might_return(state: &State, class: Class) -> bool {
     match class {
-        Class::Ordinary => state.ordinary_out > 0,
-        Class::Reserve => state.reserve_out > 0,
+        Class::Ordinary => state.ordinary_out + state.creating_ordinary + state.testing_ordinary > 0,
+        Class::Reserve => state.reserve_out + state.creating_reserve + state.testing_reserve > 0,
     }
+}
+
+/// A checkout's connect or test in flight, counted in `creating_*` or `testing_*`: if it unwinds (a driver that
+/// panics) before it is disarmed, the count is lowered and the waiters woken, or the pool would count for good a
+/// connection that never comes back, and wait for it.
+struct InFlight<'a> {
+    inner: &'a Inner,
+    class: Class,
+    testing: bool,
+    armed: bool,
+}
+
+impl<'a> InFlight<'a> {
+    fn new(inner: &'a Inner, class: Class, testing: bool) -> Self {
+        Self {
+            inner,
+            class,
+            testing,
+            armed: true,
+        }
+    }
+
+    /// The connect or test ended without a panic; its own path lowers the count.
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        {
+            let mut state = lock(&self.inner.state);
+            if self.testing {
+                adjust_testing(&mut state, self.class, false);
+            } else {
+                adjust_creating(&mut state, self.class, false);
+            }
+            state.note_wake();
+            publish(&state, Duration::ZERO);
+        }
+        self.inner.available.notify_all();
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A test's hook run on this thread when a checkout has decided to wait and let the pool's lock go, before it
+    /// waits: the gap a wakeup can fall into.
+    pub(super) static BEFORE_WAIT: std::cell::Cell<Option<Box<dyn FnOnce()>>> = const { std::cell::Cell::new(None) };
 }
 
 fn test_connection(mut tracked: Tracked, sql: &str) -> Result<Tracked, (Tracked, Error)> {

@@ -30,7 +30,7 @@ import javax.crypto.spec.GCMParameterSpec
  * phone is unlocked, from Android 9 (`setUnlockedDeviceRequired`; plans/Security-Review.md SEC-CLI-113): its methods
  * are the `...Unlocked` ones, and before Android 9 `readyUnlocked` refuses, so Rust seals those by the first key.
  *
- * A third key, the vault's device memory key (`...Auth`, plans/Vault-Instances.md V5), is used only after the user confirms
+ * A third key, the vault's device memory key (`...Auth`, plans/archive/Vault-Instances.md V5), is used only after the user confirms
  * with the lock screen or a strong biometric, each time.
  */
 object KeyVault {
@@ -92,7 +92,7 @@ object KeyVault {
     fun openUnlocked(sealed: ByteArray): ByteArray = openBy(UNLOCKED_ALIAS, sealed)
 
     /**
-     * The vault's device memory key (plans/Vault-Instances.md §3.5, V5): authentication for each use (no time window), by
+     * The vault's device memory key (plans/archive/Vault-Instances.md §3.5, V5): authentication for each use (no time window), by
      * a strong biometric or the lock screen through BiometricPrompt with the cipher as its CryptoObject, only while the
      * phone is unlocked; a new biometric enrolled invalidates it. Android 11 and later, which takes the lock screen for
      * such a key; a phone with no secure lock screen cannot make it, and the app then offers no device memory.

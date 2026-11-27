@@ -1696,12 +1696,24 @@ fn store_tool_exposure(parameters: &Parameters, facade: &EntityFacade) -> Out {
     } else {
         row.create(facade)?;
     }
+    // a service that needs no authentication is not authorized for the user (`catalog::user_permitted`): every user of
+    // an agent that has the tool may run it, which the editor is told (SEC-AI-13)
+    let every_user = !service.needs_authz() && service.entity_noun().is_none();
+    if every_user {
+        let text = format!(
+            "{} needs no authentication, so every user of an agent with the tool {tool_name} may run it; limit the \
+             agent's users, or expose a service that needs authentication",
+            service.name()
+        );
+        ExecutionContext::with_current(|ctx| ctx.message().add_message(text));
+    }
     Ok(out([
         ("lockVersion", Value::I64(version)),
         (
             "serviceClassification",
             Value::string(catalog::service_classification(&service).enum_id()),
         ),
+        ("everyAgentUser", Value::Bool(every_user)),
     ]))
 }
 

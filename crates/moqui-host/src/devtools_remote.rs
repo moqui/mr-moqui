@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `moqui check`, `moqui refs` and `moqui lsp` with `--server URL` (plans/design-dev-aide.md 13.6, F13): the checks and
+//! `moqui check`, `moqui refs` and `moqui lsp` with `--server URL` (plans/archive/design-dev-aide.md 13.6, F13): the checks and
 //! the artifact index of a running dev instance, over its MCP tools `check` and `artifact` (`POST /mcp`, `tools/call`),
 //! as the user of the login key `moqui tui --server` keeps for that server (or `MOQUI_LOGIN_KEY`). A local file is the
 //! `component://` location of the nearest directory above it with a `component.xml`, and a location the file of the
@@ -394,7 +394,11 @@ fn loopback(url: &str) -> bool {
         .strip_prefix('[')
         .and_then(|rest| rest.split_once(']').map(|(host, _)| host))
         .unwrap_or_else(|| authority.split(':').next().unwrap_or(authority));
-    host == "localhost" || host == "::1" || host.starts_with("127.")
+    // an IP literal that is loopback, never a name that only starts with 127. (127.example.net) (SEC-DEV-86)
+    host == "localhost"
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
 }
 
 #[cfg(test)]
@@ -431,6 +435,9 @@ mod tests {
         assert!(super::loopback("http://127.0.0.1:8080/x"));
         assert!(super::loopback("http://[::1]:8080"));
         assert!(!super::loopback("http://dev.example.com"));
+        // SEC-DEV-86: a name that only starts with 127. is not this machine
+        assert!(!super::loopback("http://127.example.net/x"));
+        assert!(super::loopback("http://127.0.0.2:8080"));
         assert!(super::Remote::connect("http://dev.example.com").is_err());
     }
 }

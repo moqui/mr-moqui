@@ -9,7 +9,8 @@ the row. **Tests to write** are missing automated tests that an open item names.
 Testing that another open plan already lists as needed stays in that plan: the deployed edge node checks
 ([Edge-Node2 §2.1](Edge-Node2.md#21-checks-on-a-deployed-edge-node)), the Dogfood pipeline and deploy runs on a
 second machine ([Dogfood](Dogfood.md)), the live Qwen 3.8 and 8B evaluation runs and the Constitution's published
-anchors ([LLM-A2A-Assist](LLM-A2A-Assist.md)), relevance and cover density on a real corpus
+anchors ([LLM-A2A-Assist](LLM-A2A-Assist.md)), the sealed start's TPM reboot `SealedStart` and the other unbuilt
+phases' checks ([Sealed-Secrets](Sealed-Secrets.md)), relevance and cover density on a real corpus
 ([Performance](Performance.md)), the screen walks of the `ui-review-*` plans, the browser terminal hand checks
 ([Mobile-Desktop-Exit-Checks](Mobile-Desktop-Exit-Checks.md)), and the Comms live checks that
 [Comms-Messaging](Comms-Messaging.md) lists. Open work that is not testing is in [Remaining-Work](Remaining-Work.md)
@@ -53,6 +54,22 @@ Guide [Monitoring](../docs/tools/Monitoring.md).
 | Shop payments | Before production, an Authorize.Net sandbox check of the stored-credential indicators and renewals (F106, F115) | mr-pass `plan/impl-shop.md` |
 | Mantle | Not called by `moqui test mr-mantle` because they need a network: the three Google services (`GooglePartyServices`) and `create#ContactRequestReCaptcha` | [ConvertProcess](archive/ConvertProcess.md), [MantleFlowTests](archive/MantleFlowTests.md) |
 
+### Dev AIDE
+
+Plan [design-dev-aide](archive/design-dev-aide.md) (archived 2026-11-26); guide [Dev-AIDE](../docs/tools/Dev-AIDE.md). Every dev-aide spec
+runs under 15 s with the add-ons since 2026-11-26.
+
+| Area | Item | Source |
+|---|---|---|
+| Dev agent | The live-model run of the dev agent's evaluation tasks, `moqui test dev-aide --agents --llm-profile <profile>`: it costs API spend, so it runs only with the user's OK (the replays pass) | [§19](archive/design-dev-aide.md#19-tests), P4 |
+| Windows | The first result of the dev-aide's `confine::`, `vcs::` and `git::` tests in `.github/workflows/windows.yml`, at the next push | [§19](archive/design-dev-aide.md#19-tests), P1a |
+| CI | A job's log and failed tests in the Workspace against a real CI run | [§21.5](archive/design-dev-aide.md#215-checks), P12 |
+| Terminal twins | The terminal twins walked by hand | [ui-review-dev-aide-authoring](ui-review-dev-aide-authoring.md) |
+| Desktop shell | The desktop shell's library list with Yjs before Tiptap (`libs.txt`), by `./moq test-clients desktop` | [§18](archive/design-dev-aide.md#18-phases), "Keymaps, legacy modes, co-editing" |
+| MySQL | `EntityFacade::create_values`' multi-row inserts against a live MySQL server | moqui-entity `entity/value/create_values.rs` |
+| Co-editing | One file co-edited in two browsers on one shared dev server: carets, a revoked writer, a room seeded again (the page test runs two tabs on a fake room) | `DevAideCoedit.page.js`, [§18](archive/design-dev-aide.md#18-phases) |
+| Smithy | Smithy's side of P11, checked by its REST contract only | mr-mantle `test/smithy/SmithyDevAide.spec.js` |
+
 ### Browsers, terminals and screens
 
 | Area | Item | Source |
@@ -60,6 +77,17 @@ Guide [Monitoring](../docs/tools/Monitoring.md).
 | Zoom | Real 200% browser zoom of the framework apps, left pending by the UI review | [UI-Refinement, Coverage ledger](archive/UI-Refinement.md#coverage-ledger) |
 | Terminal | The browser terminal's keys and paste in Chrome, Firefox and Safari; the mouse (clicks, the wheel and drag to copy in kitty and GNOME Terminal over SSH, in local mode, and OSC 52 in the browser terminal in Chrome and Firefox); F-keys, Alt and paste in xterm, kitty, GNOME Terminal, tmux and the Linux console | [Screen-TUI-Impl](archive/Screen-TUI-Impl.md) §5 Phase 4 findings, §7 |
 | Wasm host | The WebSocket check is `cargo test -p moqui-host --test it -- wasm_browser`, against that test's `/notws` mock, not moqui-host. A live-host mode needs the package served from moqui-host's origin, a signed-in session, and checks of what the real `/notws` does (the mock's `echo:`, `drop` and `Ack` replies are its own) | [Wasm, Status](archive/Wasm.md) |
+
+### Maps
+
+Plan [Maps](archive/Maps.md) (archived 2026-11-26); guide [Maps](../docs/tools/Maps.md).
+
+| Area | Item | Source |
+|---|---|---|
+| Geo data | The full Canadian, Dutch and British GeoNames sets (`CA_full`, `NL_full`, `GB_full`, the last about 1.8 million rows) have never been imported or measured | [§6.3](archive/Maps.md#63-extend-the-basic-geo-model), "Every country" |
+| Offline maps | On a real Android phone with a real network loss (Wi-Fi or cellular dropping, not `adb reverse`): a download with only-on-Wi-Fi, a resume after a cut mid-download, `PackageDownloadWorker` in the background and after the app is killed, `FlushWorker` sending a place saved offline with the app in the background; shared-device mode wiping packages at sign-out | [Maps-Offline](archive/Maps-Offline.md), `scripts/android-maps-offline.sh` (the emulator walk) |
+| Offline maps | A large package of a real region (hundreds of MB, near the 2 GiB member bound) from a real Protomaps extract and real Overture imports: build and download time, storage, range reads while browsing, address search over a large `overture-addresses.json` on a phone; the desktop client's flow by hand on Linux, Windows and macOS | [Maps-Offline](archive/Maps-Offline.md) |
+| Overture | The memory of `OvertureRegionImport` and `OvertureAddressLookup`, run only on macOS where the status map reports none: run them on Linux | [Maps-Overture §6](archive/Maps-Overture.md#6-tests), [§8.3](archive/Maps-Overture.md#83-tests) |
 
 ### Apps
 
@@ -75,6 +103,7 @@ Guide [Build-Test, Offline source release](../docs/Build-Test.md#offline-source-
 
 | Item | Source |
 |---|---|
+| `./moq trust-dev-cert --system --untrust` on Debian or Ubuntu now runs `update-ca-certificates --fresh`, so the removed root's `/etc/ssl/certs` links go too (they stayed dangling in the 2026-11-25 run). Checked only by a moq test with a stubbed store: run it on a real one and see that no `mr-moqui` link is left | [Install-DevCA, Linux verification](archive/Install-DevCA.md#linux-verification) |
 | The release pipeline's `offline-source` job (`ci.xml`) needs its `linux-offline` pool: a runner with rootless Podman or Docker and the `localhost/moqui-build` image built with Chromium. The same check ran by hand on 2026-11-24 (`scripts/test-source-archive.sh`, Linux x86-64): the offline build and the Rust and moq tests passed, and the specs but for the Assist canvas frame in Chromium 156 ([Remaining-Work](Remaining-Work.md#tests)), so what is left is provisioning the pool and one tagged run | [JS-Build, Linux checks](archive/JS-Build.md#linux-checks); [Build-Test, Offline source release](../docs/Build-Test.md#offline-source-release) |
 
 ### Load and failure
@@ -82,6 +111,25 @@ Guide [Build-Test, Offline source release](../docs/Build-Test.md#offline-source-
 | Item | Source |
 |---|---|
 | The opt-in acceptance scenarios the high-level review proposed and nobody wrote: sustained load; prolonged delivery failures; one of two members killed mid-job, timing how long until the job runs elsewhere; TURN and SIP connection floods; downloads, requests and agents saturating together; endpoint slots on two nodes; transitions calling AI tasks under load; a purge of millions of `ServiceJobRun` rows; 25 messages of 20 MiB through mail sync | [High-Level-Review, Verification follow-ups](archive/High-Level-Review.md#verification-follow-ups) |
+
+### Vaults and managed instances
+
+Plan [Vault-Instances](archive/Vault-Instances.md) (archived 2026-11-25); guides [Vaults](../docs/security/Vaults.md),
+[Run-Deploy, Managed instances](../docs/Run-Deploy.md#managed-instances). Run here on 2026-11-25 (Ubuntu 26.04,
+rootless Podman 5.7, Docker 29.7): the real-engine tests on both engines, `ManagedSealedStart`, `InstanceDeploy` against
+a `./moq run` manager, the Android checks with the emulator smoke, and the desktop's lock watchers compiled for Linux
+and Windows.
+
+| Area | Item | Source |
+|---|---|---|
+| Sealed start | `SealedStart` (a TPM2 host and a reboot): on a spare machine or a VM with a TPM (swtpm under QEMU), MR Moqui installed under `systemd/moqui.service` and sealed with `--method tpm`. The user `moqui` runs as needs `systemd-creds` to reach the TPM: libtss2's libraries (`systemd-analyze has-tpm2` lists them; libtss2-rc was missing here) and `/dev/tpmrm0`, the tss group's | `test/acceptance/client/SealedStart.spec.js`, [Sealed-Secrets](Sealed-Secrets.md) S3 |
+| Desktop, Windows | The vault locks on the session's lock (Win+L) and on sleep in the installed app: compiled for x86_64-pc-windows-msvc with cargo-xwin, never run | `moqui-desktop` `src/client/screen_lock.rs`; [Mobile-Desktop-Exit-Checks, V5](Mobile-Desktop-Exit-Checks.md#v5-the-vault-in-the-apps) |
+| Desktop, Linux | The vault locks on the screen lock and on suspend in the installed app, under GNOME and KDE, Wayland and X11 (logind's `Lock`, `LockedHint` and `PrepareForSleep`, the screen saver's `ActiveChanged`): its unit test ran, and logind's `auto` session resolved here, but no lock was watched live | same |
+| Android | The vault on a real phone: device memory in the Keystore behind the fingerprint or the lock screen. Built and smoke-tested on the emulator only (no screen lock there, so device memory was refused, as it should be) | [Mobile-Desktop-Exit-Checks, V5](Mobile-Desktop-Exit-Checks.md#v5-the-vault-in-the-apps) |
+| A manager behind a firewall | A managed instance's link to a manager reached through the manager's edge node, by a passthrough host name, on deployed nodes; covered by a unit test of the passthrough here | `edge_link/down.rs`, [Run-Deploy, The manager link](../docs/Run-Deploy.md#the-manager-link) |
+| Hosts | Managed instances on a second machine's Docker or Podman over HTTPS with a client key, and over SSH; here only this machine's sockets were used | [Run-Deploy, Managed instances](../docs/Run-Deploy.md#managed-instances) |
+| Ubuntu 26.04 hosts | Rootless Podman cannot stop a network's pasta process (its AppArmor profile for pasta refuses Podman's signal), so every container removal there answers 500; the driver takes a removal as done when the container is gone, but the pasta processes may stay. Check that a profile allowing `signal (receive) peer=podman` ends them, and file it upstream | [Build-Test](../docs/Build-Test.md) |
+- Live location on a real Android phone: the confirmation, Not now, the notification's Stop, a removed location permission, sign-out while sharing, Android 14's dismissed notification, and the XMPP opt-in with a real XMPP client (the emulator walk covers the start, the notification and Stop only).
 
 ## Tests to write
 

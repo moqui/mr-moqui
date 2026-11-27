@@ -35,6 +35,8 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Customer Data Entry" enumId="DST_CUSTOMER_ENTRY" enumTypeId="DataSourceType"/>
             <moqui.basic.Enumeration description="Internal Data Entry (employees, etc)" enumId="DST_INTERNAL_ENTRY" enumTypeId="DataSourceType"/>
             <moqui.basic.Enumeration description="Mailing List Sign-up" enumId="DST_MAILING_SIGNUP" enumTypeId="DataSourceType"/>
+            <!-- a Geo data set of the Maps importer (moqui.maps.GeoDataSet dataSourceId) -->
+            <moqui.basic.Enumeration description="Geographic Data Set" enumId="DST_GEO_DATA_SET" enumTypeId="DataSourceType"/>
         </seed-data>
     </entity>
 
@@ -275,8 +277,117 @@ along with this software (see the LICENSE.md file). If not, see
             <key-map field-name="elevationUomId"/></relationship>
         <seed-data>
             <moqui.basic.EnumerationType description="Geo Point Type" enumTypeId="GeoPointType"/>
+            <moqui.basic.Enumeration description="Reference point of a Geo (from a Geo data set)" enumId="GPT_GEO_REFERENCE" enumTypeId="GeoPointType" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="A record's own location (an address, facility or asset)" enumId="GPT_RECORD_LOCATION" enumTypeId="GeoPointType" sequenceNum="2"/>
         </seed-data>
         <master><detail relationship="type"/><detail relationship="dataSource"/><detail relationship="elevationUom"/></master>
+    </entity>
+
+    <!-- Geo IDs of imported Geo data (plans/archive/Maps.md §6.3).
+        - Computed, with no lookup, from the country and the source's code, so a re-import is a create-or-update of the
+          same rows:
+          - a postal code: {country}_Z_{code}, the code normalized (upper case, spaces and hyphens taken out, leading zeros
+            kept): USA_Z_02134, CAN_Z_K1A0B1; a prefix or outward code (a partial-code country): {country}_ZP_{code}, CAN_ZP_K1A;
+          - a US county: USA_C_{FIPS state and county}, USA_C_25025; a US city or place: USA_P_{FIPS state and place},
+            USA_P_2507000; a GeoNames city: {country}_G_{geonameid};
+          - a point: the Geo's ID, _ and its source's sourceKey (GeoDataSet, at most 12 characters, shared by a mirror and a
+            later year of the same source): USA_Z_02134_CENSUS_ZCTA; a place name's own point (GeoPostalCodePlace) adds _ and
+            its sequenceNum. An ID longer than 40 characters is not made: the importer sends its row to the error file.
+        - Found by lookup, never computed: a first- or second-level division (a state, a province, a county outside the US).
+          Mantle's install data has them in more than one form (USA_CA, VNM_VN-SG, KOR_KR-11, and ITA_AG a province, which
+          is second level), and GeoNames' first-level codes are FIPS for most countries. The importer looks among the
+          country's GAT_REGIONS children for the source's code in geoCodeAlpha2 or geoCodeNumeric (a GeoNames code through
+          a crosswalk to ISO 3166-2 where the country's are FIPS), and only when nothing matches makes
+          {country}_A1_{source code} or {country}_A2_{admin1}_{admin2}. -->
+    <entity entity-name="GeoPostalCode" package="moqui.basic" use="configuration" cache="never">
+        <description>The postal-code companion of a Geo of type GEOT_POSTAL_CODE (plans/archive/Maps.md §6.3), found by country and
+            normalized code: the code is never squeezed into the Geo's alpha-2 or alpha-3 fields nor identified by its number
+            alone. displayCode keeps the source's spelling (spaces where they mean something, leading zeros). A prefix code
+            (granularity GPG_PREFIX) is a declared lower precision, never the result of cutting another country's codes.
+            Its place names are GeoPostalCodePlace rows. Not cached: the postal lookup keeps its own cache, which an import
+            clears.</description>
+        <field name="geoId" type="id" is-pk="true"/>
+        <field name="countryGeoId" type="id"/>
+        <field name="normalizedCode" type="text-short"/>
+        <field name="displayCode" type="text-short"/>
+        <field name="granularityEnumId" type="id"/>
+        <field name="sourceKey" type="id"><description>The source (GeoDataSet sourceKey) that made the row and owns it;
+            empty for one made by hand, which no import changes</description></field>
+        <field name="thruDate" type="date-time"><description>Set when the edition in use no longer has the code; a Geo
+            another record refers to is end-dated, never deleted</description></field>
+        <relationship type="one" related="moqui.basic.Geo" short-alias="geo"/>
+        <relationship type="one" title="Country" related="moqui.basic.Geo" short-alias="country">
+            <key-map field-name="countryGeoId" related="geoId"/></relationship>
+        <relationship type="one-nofk" title="PostalCodeGranularity" related="moqui.basic.Enumeration" short-alias="granularity">
+            <key-map field-name="granularityEnumId"/></relationship>
+        <relationship type="many" related="moqui.basic.GeoPostalCodePlace" short-alias="places">
+            <key-map field-name="geoId"/></relationship>
+        <index name="GEO_POSTAL_CODE_LOOKUP" unique="true"><index-field name="countryGeoId"/><index-field name="normalizedCode"/>
+            <index-field name="granularityEnumId"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Postal Code Granularity" enumTypeId="PostalCodeGranularity"/>
+            <moqui.basic.Enumeration description="Full code" enumId="GPG_FULL" enumTypeId="PostalCodeGranularity" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Prefix or outward code" enumId="GPG_PREFIX" enumTypeId="PostalCodeGranularity" sequenceNum="2"/>
+        </seed-data>
+    </entity>
+    <entity entity-name="GeoPostalCodePlace" package="moqui.basic" use="configuration" cache="never">
+        <description>A place name of a postal code, from one source (plans/archive/Maps.md §6.3). A source with one row a code and place
+            (GeoNames postal) gives a code several names, each a row here, in the order of the file; none is chosen over the
+            others as the code's name. The code's one representative point from that source (GeoPointAssoc, role
+            GPR_REPRESENTATIVE) is the point of its row with the highest accuracy (GeoNames: 6, then 4, then 1; empty lowest),
+            the first in the file among equals; a row with a point of its own keeps it here (geoPointId), for a search by
+            place. Keyed by code, source and name, so a re-import writes the same rows; a name the new edition no longer has
+            is end-dated.</description>
+        <field name="geoId" type="id" is-pk="true"/>
+        <field name="sourceKey" type="id" is-pk="true"/>
+        <field name="placeName" type="text-medium" is-pk="true"/>
+        <field name="sequenceNum" type="number-integer"><description>Its order among the code's rows in the file, from 1</description></field>
+        <field name="adminName1" type="text-medium"/>
+        <field name="adminName2" type="text-medium"/>
+        <field name="accuracy" type="number-integer"><description>The source's accuracy value of the row's point</description></field>
+        <field name="geoPointId" type="id"/>
+        <field name="thruDate" type="date-time"/>
+        <relationship type="one" related="moqui.basic.GeoPostalCode" short-alias="postalCode"/>
+        <relationship type="one" related="moqui.basic.GeoPoint" short-alias="point"/>
+    </entity>
+    <entity entity-name="GeoPointAssoc" package="moqui.basic" use="configuration" cache="never">
+        <description>A point of a Geo (plans/archive/Maps.md §6.3): its role, its precision, the data set and edition that last wrote it,
+            and its priority among the Geo's points from other sources. The active representative point is the in-date row of
+            role GPR_REPRESENTATIVE with the lowest priority; candidates of unrelated sources are never averaged. Keyed by Geo
+            and point, both computed IDs, so a re-import writes the same row. A Census point keeps its ZCTA basis (its data
+            set), not a claim of a precise postal boundary. Not cached, as GeoPostalCode.</description>
+        <field name="geoId" type="id" is-pk="true"/>
+        <field name="geoPointId" type="id" is-pk="true"/>
+        <field name="pointRoleEnumId" type="id"/>
+        <field name="precisionEnumId" type="id"/>
+        <field name="dataSetId" type="id"/>
+        <field name="edition" type="text-short"/>
+        <field name="priority" type="number-integer"/>
+        <field name="landArea" type="number-integer"><description>The land area of the Geo's area in square meters, where
+            the point's source has it (a Census ZCTA's ALAND): the postal lookup sizes its extent from it</description></field>
+        <field name="fromDate" type="date-time"/>
+        <field name="thruDate" type="date-time"/>
+        <relationship type="one" related="moqui.basic.Geo" short-alias="geo"/>
+        <relationship type="one" related="moqui.basic.GeoPoint" short-alias="point"/>
+        <relationship type="one-nofk" title="GeoPointRole" related="moqui.basic.Enumeration" short-alias="role">
+            <key-map field-name="pointRoleEnumId"/></relationship>
+        <relationship type="one-nofk" title="GeoPointPrecision" related="moqui.basic.Enumeration" short-alias="precision">
+            <key-map field-name="precisionEnumId"/></relationship>
+        <relationship type="one-nofk" related="moqui.maps.GeoDataSet" short-alias="dataSet"/>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Geo Point Role" enumTypeId="GeoPointRole"/>
+            <moqui.basic.Enumeration description="Representative point" enumId="GPR_REPRESENTATIVE" enumTypeId="GeoPointRole" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Centroid" enumId="GPR_CENTROID" enumTypeId="GeoPointRole" sequenceNum="2"/>
+
+            <!-- How exact a location is (§6.1), used here and by Mantle's record-location provenance: a postal-area point is
+                shown as Approximate location — postal area, never as a confirmed or address-level position -->
+            <moqui.basic.EnumerationType description="Geo Point Precision" enumTypeId="GeoPointPrecision"/>
+            <moqui.basic.Enumeration description="User-confirmed point" enumId="GPP_USER_CONFIRMED" enumTypeId="GeoPointPrecision" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Address match" enumId="GPP_ADDRESS_MATCH" enumTypeId="GeoPointPrecision" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Street-range interpolation" enumId="GPP_STREET_RANGE" enumTypeId="GeoPointPrecision" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Postal-area representative point" enumId="GPP_POSTAL_AREA" enumTypeId="GeoPointPrecision" sequenceNum="4"/>
+            <moqui.basic.Enumeration description="Place estimate" enumId="GPP_PLACE_ESTIMATE" enumTypeId="GeoPointPrecision" sequenceNum="5"/>
+        </seed-data>
     </entity>
 
     <!-- ========== Localized ========== -->

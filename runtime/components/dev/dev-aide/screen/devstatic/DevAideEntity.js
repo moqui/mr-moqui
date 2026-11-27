@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The entity view of the Dev AIDE (plans/design-dev-aide.md 8): m-dev-entity-view, a visual view of an entity file's
+ * The entity view of the Dev AIDE (plans/archive/design-dev-aide.md 8): m-dev-entity-view, a visual view of an entity file's
  * tab. One entity at a time, as the server merged it (get#EntityView): its header with the origin (the defining
  * component, each component whose extend-entity adds to it), the fields, the relationships, the incoming ones, the
  * indexes, the EECA rules, the table against the fields and the first rows; for a view entity its members, aliases,
@@ -210,6 +210,18 @@
     ops.setRecordValue = (row, name, value) => (value === "" || value == null)
         ? (row.values[name] === undefined ? [] : [{ op: "remove-attribute", at: row.path, name }])
         : [{ op: "set-attribute", at: row.path, name, value: String(value) }];
+    // The entity's own records in the seed file, as a table; with none, an empty table of its fields, so Add row makes the
+    // first (plans/ui-review-dev-aide-authoring.md DEVA-UI-001). Records of other entities in the file are not shown.
+    ops.entityRecordTables = (outline, entity) => {
+        if (!entity) return [];
+        const names = [entity.fullEntityName, entity.entityName, entity.shortAlias].filter(Boolean);
+        // the entity's fields are columns whatever the records set, so a new empty row has its cells; lastUpdatedStamp is
+        // the framework's to set
+        const fields = (entity.fields || []).map((field) => field.name).filter((name) => name !== "lastUpdatedStamp");
+        const own = ops.recordTables(outline).filter((table) => names.indexOf(table.entity) >= 0)
+            .map((table) => Object.assign(table, { columns: table.columns.concat(fields.filter((name) => table.columns.indexOf(name) < 0)) }));
+        return own.length ? own : [{ entity: entity.fullEntityName, columns: fields, rows: [] }];
+    };
     ops.addRecord = (outline, table, values) => {
         const rows = table.rows;
         const xml = ops.xml(table.entity, table.columns.map((name) => [name, values ? values[name] : ""]));
@@ -329,11 +341,11 @@
         props: { ctx: { type: Object, required: true }, tab: { type: Object, required: true }, outline: Object },
         data() {
             return {
-                entityName: "", view: null, loading: false, error: "", target: null, seed: null, section: "fields",
+                entityName: "", view: null, loading: false, error: "", target: null, seed: null, seedError: "", section: "fields",
                 adding: null, relAdding: null, indexAdding: null, memberAdding: null, aliasAdding: null, uses: null,
                 membersAs: "diagram", memberSizes: {},
                 ddl: null, showOnForm: null, entityOptions: [], filterFields: "", seedPending: false, schema: null, viewSql: "",
-                dataCheck: null, exporting: null
+                dataCheck: null, loadPlan: null, exporting: null
             };
         },
         computed: {
@@ -387,7 +399,8 @@
                 if (!table.missingColumns.length && !table.extraColumns.length) return moqui.l10n.localize("The table matches the fields.");
                 return "";
             },
-            seedTables() { return this.isData ? ops.recordTables(this.outline) : (this.seed && this.seed.outline ? ops.recordTables(this.seed.outline) : []); },
+            seedTables() { return this.isData ? ops.recordTables(this.outline) : (this.seed && this.seed.outline ? ops.entityRecordTables(this.seed.outline, this.entity) : []); },
+            seedRecordCount() { return this.seedTables.reduce((count, table) => count + table.rows.length, 0); },
             full() { return this.ctx.tier === "full"; },
             // the attributes the schema gives the element edits go to (entity, view-entity or extend-entity), but its name
             elementAttributes() {
@@ -405,7 +418,13 @@
             dataEditUrl() { return this.entity ? "/qapps/tools/Data/Grid?entityName=" + encodeURIComponent(this.entity.fullEntityName) : ""; }
         },
         watch: {
-            outline() { if (!this.entityName && !this.isData) this.pickEntity(); }
+            outline() { if (!this.entityName && !this.isData) this.pickEntity(); },
+            // the seed file is read when its tab is chosen, not only on an edit, so the tab never opens empty (DEVA-UI-001)
+            section(value) {
+                if (value !== "seed" || this.seed) return;
+                this.seedError = "";
+                this.seedBuffer().catch((error) => { this.seedError = pure.errorText(error); });
+            }
         },
         mounted() {
             this.pickEntity();
@@ -654,10 +673,36 @@
                     this.dataCheck = { messages: answer.messages || [], differences: answer.differences || [], fields: answer.fieldsChecked };
                 }, (error) => { this.dataCheck = null; this.ctx.fail(error); });
             },
+            // Load the changed records (12), three ways: the plan first (base, file and database per record), then the
+            // load with a choice for each conflict (Keep database by default) and each removal (kept unless chosen)
             loadChanged() {
-                this.ctx.post("loadChanged", { rootId: this.ctx.rootId, path: this.tab.path }).then((answer) => {
-                    this.ctx.note(answer.changed ? "Loaded " + answer.records + " records of the " + answer.changed + " changed since the last commit" : "No record changed since the last commit");
-                }, (error) => this.ctx.fail(error));
+                this.loadPlan = { running: true };
+                this.ctx.post("planDataLoad", { rootId: this.ctx.rootId, path: this.tab.path }).then((answer) => {
+                    const choices = {};
+                    // a conflict starts at Keep database; a removal or a record not compared has no choice until one is made, and
+                    // the baseline holds over it (offered again by the next load)
+                    for (const record of answer.records || []) choices[record.key] = record.action === "conflict" ? "database" : null;
+                    this.loadPlan = { counts: answer.counts || {}, records: answer.records || [], skipped: answer.skipped || [], truncated: !!answer.truncated,
+                        baseFrom: answer.baseFrom, baseHash: answer.baseHash, fileHash: answer.fileHash, note: answer.note || "", choices, loading: false };
+                }, (error) => { this.loadPlan = null; this.ctx.fail(error); });
+            },
+            planRecords(action) { return ((this.loadPlan && this.loadPlan.records) || []).filter((record) => record.action === action); },
+            planPk(record) { return Object.keys(record.pk || {}).map((name) => name + "=" + record.pk[name]).join(", "); },
+            runLoad() {
+                const plan = this.loadPlan;
+                plan.loading = true;
+                const chosen = {};
+                for (const key of Object.keys(plan.choices)) if (plan.choices[key]) chosen[key] = plan.choices[key];
+                this.ctx.post("loadChanged", { rootId: this.ctx.rootId, path: this.tab.path, choices: JSON.stringify(chosen),
+                    baseHash: plan.baseHash, fileHash: plan.fileHash }).then((answer) => {
+                    this.loadPlan = null;
+                    const parts = [answer.written + " written"];
+                    if (answer.deleted) parts.push(answer.deleted + " deleted");
+                    if (answer.kept) parts.push(answer.kept + " kept as the database has them");
+                    if (answer.applied) parts.push(answer.applied + " already loaded");
+                    this.ctx.note("Loaded the changed records: " + parts.join(", ") + (answer.baselineNote ? "; " + answer.baselineNote : ""),
+                        answer.baselineMoved === false ? "warning" : "positive");
+                }, (error) => { plan.loading = false; this.ctx.fail(error); });
             },
             startExport() { this.exporting = { entity: "", filter: "" }; },
             exportRecords() {
@@ -732,6 +777,54 @@
         </tr></tbody></table></div>
     </div>
     <div v-if="!seedTables.length" class="m-muted">{{ t('No records yet.') }}</div>
+    <div v-if="loadPlan" class="q-mt-md" id="DevLoadPlan">
+      <div class="row items-center"><span class="text-subtitle2">Load the changed records</span>
+        <q-spinner v-if="loadPlan.running" size="14px" class="q-ml-sm"></q-spinner><q-space></q-space>
+        <q-btn dense flat round size="sm" icon="close" aria-label="Close the plan" @click="loadPlan = null"></q-btn></div>
+      <template v-if="!loadPlan.running">
+        <div class="text-caption m-muted">Compared with {{loadPlan.baseFrom === 'baseline' ? 'the text the last load of this file loaded' : loadPlan.baseFrom === 'commit' ? 'the last commit' : 'nothing (no load and no history yet)'}} and the database.</div>
+        <div class="row q-gutter-xs q-my-xs" id="DevLoadPlanCounts">
+          <q-chip dense square>{{loadPlan.counts.write || 0}} to write</q-chip>
+          <q-chip dense square :color="loadPlan.counts.conflict ? 'orange-3' : undefined">{{loadPlan.counts.conflict || 0}} in conflict</q-chip>
+          <q-chip dense square>{{loadPlan.counts.remove || 0}} removed from the file</q-chip>
+          <q-chip dense square>{{loadPlan.counts.applied || 0}} already loaded</q-chip>
+          <q-chip dense square>{{loadPlan.counts.unchanged || 0}} unchanged</q-chip>
+          <q-chip v-if="loadPlan.counts.skip" dense square>{{loadPlan.counts.skip}} passed over</q-chip>
+          <q-chip v-if="loadPlan.counts.differs" dense square>{{loadPlan.counts.differs}} not compared</q-chip>
+        </div>
+        <div v-for="record in planRecords('conflict')" :key="record.key" class="q-mb-sm m-dev-load-conflict">
+          <div class="row items-center no-wrap"><span class="text-weight-medium">{{record.entity}}</span><span class="q-ml-sm text-caption">{{planPk(record)}}</span>
+            <span class="q-ml-sm text-caption m-muted">{{record.change === 'removed' ? 'removed from the file, changed in the database' : record.change === 'added' ? 'added to the file, the database has it otherwise' : 'changed in the file and in the database'}}</span></div>
+          <table v-if="record.fields.length" class="m-dev-grid"><thead><tr><th>Field</th><th>Last loaded</th><th>File</th><th>Database</th></tr></thead>
+            <tbody><tr v-for="field in record.fields" :key="field.name"><td>{{field.name}}</td><td>{{field.base == null ? '—' : field.base}}</td>
+              <td>{{field.file == null ? '—' : field.file}}</td><td>{{field.db == null ? '—' : field.db}}</td></tr></tbody></table>
+          <q-btn-toggle v-model="loadPlan.choices[record.key]" dense no-caps unelevated size="sm" toggle-color="primary" class="q-mt-xs"
+              :options="[{ label: 'Keep database', value: 'database' }, { label: record.change === 'removed' ? 'Take file (delete)' : 'Take file', value: 'file' }]"></q-btn-toggle>
+        </div>
+        <div v-for="record in planRecords('remove')" :key="record.key" class="row items-center no-wrap q-mb-xs">
+          <span class="text-weight-medium">{{record.entity}}</span><span class="q-ml-sm text-caption">{{planPk(record)}}</span>
+          <span class="q-ml-sm text-caption m-muted">removed from the file</span><q-space></q-space>
+          <q-btn-toggle v-model="loadPlan.choices[record.key]" dense no-caps unelevated size="sm" toggle-color="primary"
+              :options="[{ label: 'Keep', value: 'database' }, { label: 'Delete', value: 'file' }]"></q-btn-toggle>
+        </div>
+        <div v-for="record in planRecords('differs')" :key="record.key" class="row items-center no-wrap q-mb-xs">
+          <span class="text-weight-medium">{{record.entity}}</span><span class="q-ml-sm text-caption">{{planPk(record)}}</span>
+          <span class="q-ml-sm text-caption m-muted">{{record.change}} in the file; not compared with the database for you</span><q-space></q-space>
+          <q-btn-toggle v-model="loadPlan.choices[record.key]" dense no-caps unelevated size="sm" toggle-color="primary"
+              :options="[{ label: 'Keep database', value: 'database' }, { label: record.change === 'removed' ? 'Delete' : 'Take file', value: 'file' }]"></q-btn-toggle>
+        </div>
+        <q-expansion-item v-if="planRecords('write').length" dense dense-toggle header-class="text-caption q-px-none" :label="planRecords('write').length + ' to write'">
+          <div v-for="record in planRecords('write')" :key="record.key" class="text-caption">{{record.entity}} {{planPk(record)}}<span class="m-muted">{{record.fields.length ? ': ' + record.fields.map((field) => field.name).join(', ') : ''}}</span></div>
+        </q-expansion-item>
+        <div v-if="loadPlan.truncated" class="text-caption m-muted">The first 500 records are listed.</div>
+        <div v-if="loadPlan.note" class="text-caption m-muted" id="DevLoadPlanNote">{{loadPlan.note}}</div>
+        <div v-for="(why, i) in loadPlan.skipped" :key="'s' + i" class="text-caption text-warning">Passed over: {{why}}</div>
+        <div class="row q-mt-sm"><q-space></q-space>
+          <q-btn unelevated no-caps color="primary" :loading="loadPlan.loading" id="DevLoadPlanRun"
+              :disable="!ctx.canWrite || !((loadPlan.counts.write || 0) + (loadPlan.counts.conflict || 0) + (loadPlan.counts.remove || 0) + (loadPlan.counts.differs || 0))"
+              label="Load" @click="runLoad"></q-btn></div>
+      </template>
+    </div>
     <div v-if="dataCheck" class="q-mt-md" id="DevDataCheck">
       <div class="text-subtitle2">Against the database <q-spinner v-if="dataCheck.running" size="14px"></q-spinner></div>
       <template v-if="!dataCheck.running">
@@ -934,8 +1027,12 @@
         <div class="m-dev-grid-wrap" v-if="(view.data.rows || []).length"><table class="m-dev-grid"><thead><tr><th v-for="name in Object.keys(view.data.rows[0])" :key="name">{{name}}</th></tr></thead>
           <tbody><tr v-for="(row, i) in view.data.rows" :key="i"><td v-for="name in Object.keys(view.data.rows[0])" :key="name" class="ellipsis" style="max-width: 14rem">{{row[name]}}</td></tr></tbody></table></div>
       </div>
-      <div v-if="section === 'seed' && seed" id="DevEntitySeed">
+      <div v-if="section === 'seed'" id="DevEntitySeed">
+        <div v-if="seedError" class="text-negative">{{seedError}}</div>
+        <div v-else-if="!seed" class="m-muted"><q-spinner size="14px" class="q-mr-xs"></q-spinner>{{ t('Reading the seed data file') }}</div>
+        <template v-else>
         <div class="text-caption m-muted q-mb-xs">{{seed.path}}{{seed.missing ? ' (made on Save)' : ''}}: loaded after Save.</div>
+        <div v-if="!seedRecordCount" class="m-muted q-mb-sm">{{ t('This file has no records of the entity yet: Add row starts one, and Save writes it.') }}</div>
         <div v-for="table in seedTables" :key="table.entity" class="q-mb-md">
           <div class="row items-center no-wrap"><span class="text-weight-medium">{{table.entity}}</span><q-space></q-space>
             <q-btn dense flat no-caps size="sm" icon="add" label="Add row" @click="addRecord(seed, table)"></q-btn></div>
@@ -944,6 +1041,7 @@
               <td v-for="column in table.columns" :key="column"><input class="m-dev-cell" :value="row.values[column] || ''" @change="setRecord(seed, row, column, $event.target.value)"></td>
               <td><q-btn dense flat round size="xs" icon="delete" aria-label="Remove row" @click="removeRecord(seed, row)"><q-tooltip>Remove row</q-tooltip></q-btn></td></tr></tbody></table></div>
         </div>
+        </template>
       </div>
     </template>
   </template>

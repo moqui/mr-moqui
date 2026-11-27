@@ -34,6 +34,7 @@
             :edit-url="canEdit ? url('calcEdit') : ''" :content-url="url('calcContent')" :state-url="url('calcState')" :revert-url="canEdit ? url('calcRevert') : ''"
             @gone="reopen" @changed="changed" @selection="selected = $event"></component>
     <div v-else-if="busy" class="text-body2 q-pa-md" :class="mutedClass">Opening…</div>
+    <div v-else-if="unavailable" class="text-body2 q-pa-md text-warning m-calc-unavailable">{{unavailable}}</div>
     <div v-else-if="loaded && !accessOptions.length" class="text-body2 q-pa-md" :class="mutedClass">CalcGrid is not set up for you: no access profile is granted to a group of yours.</div>
     <div v-else-if="loaded" class="text-body2 q-pa-md" :class="mutedClass">
         {{documents.length ? 'Choose a document.' : 'No document is shared with you yet.'}}<span v-if="access.canAuthor"> New starts one over your data.</span></div>
@@ -87,7 +88,7 @@ module.exports = {
             loaded: false, busy: false, calcSheet: null,
             access: { tools: false, profiles: [], canAuthor: false, canShare: false, fixedProfile: null, userId: '' },
             // the access a call is made under: a profile's id, or '' for the Tools app's own
-            profileId: '', documents: [], documentId: null, room: null, opened: null, selected: null,
+            profileId: '', documents: [], documentId: null, room: null, opened: null, selected: null, unavailable: '',
             newOpen: false, newEntity: null, newTitle: '', entityOptions: [],
             saveOpen: false, saveTitle: '', saveGroup: null, shareGroups: [],
             panelOpen: false, dashboardOptions: [], panel: { dashboardId: null, range: '', title: '', visualization: 'table' }
@@ -128,7 +129,7 @@ module.exports = {
             return this.call('calcOpen', params, 'POST').then((out) => {
                 this.busy = false;
                 if (!out || !out.roomId) return null;
-                this.room = out;
+                this.room = out; this.unavailable = '';
                 this.opened = out.definitionId ? { definitionId: out.definitionId } : params;
                 this.documentId = out.definitionId || null;
                 return out;
@@ -140,7 +141,17 @@ module.exports = {
             if (room) moqui.request(this.url('calcClose'), { method: 'POST', params: { roomId: room.roomId } }).catch(() => { /* dropped when idle */ });
         },
         openDocument(definitionId) { if (!definitionId) return; this.closeRoom(); this.openWith({ definitionId }); },
-        reopen() { if (this.opened) this.openWith(this.opened); },
+        // the server no longer has the room: it is opened again, and when that is refused (the document deleted, or no
+        // longer shared with the viewer) its cells are no longer shown, nor edited (DASH-UI-008)
+        reopen() {
+            if (!this.opened) return;
+            this.openWith(this.opened).then((out) => {
+                if (out) return;
+                this.room = null; this.opened = null; this.documentId = null;
+                this.unavailable = 'This document is no longer available to you: it was deleted, or it is no longer shared with you.';
+                this.loadDocuments();
+            });
+        },
         // an edit's answer: the room's new state, taken into the same object so the sheet keeps its place
         changed(state) { if (this.room) Object.assign(this.room, state); },
         // another profile reads other rows: the open document is read again under it, and the choice is kept as the

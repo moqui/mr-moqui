@@ -12,11 +12,11 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The entity modeler (plans/design-dev-aide.md 8): the entities as the server merged them, with each field's origin
+<!-- The entity modeler (plans/archive/design-dev-aide.md 8): the entities as the server merged them, with each field's origin
     and where an edit goes (the site's extend-entity for an upstream entity, D17), the table against the fields, the
     changes the table check never makes (the full tier, typed confirm, audited) and the load of a modeler's seed data. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
-    <service verb="list" noun="Entities" type="rust" location="dev_aide::entities::list_entities" allow-remote="false" read-only="true">
+    <service verb="list" noun="Entities" authz-action="view" type="rust" location="dev_aide::entities::list_entities" allow-remote="false" read-only="true">
         <description>The entities and view entities of the artifact index by name, with their component, file and how many site extensions each has.</description>
         <in-parameters>
             <parameter name="filter"/>
@@ -71,7 +71,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="file"/>
         </out-parameters>
     </service>
-    <service verb="check" noun="DataFile" type="rust" location="dev_aide::entities::check_data_file" allow-remote="false" read-only="true">
+    <service verb="check" noun="DataFile" authz-action="view" type="rust" location="dev_aide::entities::check_data_file" allow-remote="false" read-only="true">
         <description>A data file's records (the buffer's text, or the file) against the database: each record not found and each field that differs.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
@@ -84,7 +84,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="fieldsChecked" type="Long"/>
         </out-parameters>
     </service>
-    <service verb="export" noun="Records" type="rust" location="dev_aide::entities::export_records" allow-remote="false" read-only="true">
+    <service verb="export" noun="Records" authz-action="view" type="rust" location="dev_aide::entities::export_records" allow-remote="false" read-only="true">
         <description>An entity's records as the elements of a data file, at most a thousand; filter narrows by field values.</description>
         <in-parameters>
             <parameter name="entityName" required="true"/>
@@ -95,18 +95,67 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="count" type="Long"/>
         </out-parameters>
     </service>
-    <service verb="load" noun="ChangedRecords" type="rust" location="dev_aide::entities::load_changed_records" allow-remote="false">
-        <description>Of a data file the user may write, only the records added or changed since its last commit, loaded; audited.</description>
+    <service verb="plan" noun="DataLoad" authz-action="view" type="rust" location="dev_aide::data_load::plan_data_load" allow-remote="false" read-only="true">
+        <description>What Load the changed records would do with a data file (the buffer's text, or the file): each record
+            by entity and primary key compared in the base (the text the last load of the file loaded, else the last
+            commit's), the file and the database (plans/archive/design-dev-aide.md 12). Unchanged in the file: no write; changed
+            or added with the database still the base's (or without the row): write; the database already the file's:
+            applied; the database changed too: a conflict; removed from the file: a removal to choose, or a conflict when
+            the database changed it. The counts, and each record but the unchanged with the fields that differ. A password
+            or encrypted field is neither compared nor answered, and a record of an entity whose records export#Records
+            refuses the caller is never compared with the database: it only differs from its base (Take file writes it).
+            Writes nothing.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
             <parameter name="path" required="true"/>
+            <parameter name="text" allow-html="any"><description>The buffer; the file when empty</description></parameter>
         </in-parameters>
         <out-parameters>
-            <parameter name="changed" type="Integer"/>
-            <parameter name="records" type="Long"/>
+            <parameter name="baseFrom"><description>baseline, commit or none</description></parameter>
+            <parameter name="baseHash"/>
+            <parameter name="fileHash"/>
+            <parameter name="counts" type="Map"><description>unchanged, write, applied, conflict, remove, gone, skip, differs</description></parameter>
+            <parameter name="records" type="List"><description>Maps: key, entity, pk, change (added, changed, removed),
+                action (write, applied, conflict, remove, skip, differs), fields (name, base, file, db); at most 500</description></parameter>
+            <parameter name="truncated" type="Boolean"/>
+            <parameter name="skipped" type="List"><description>The elements that did not read, with why (the file's,
+                and the last load's text's)</description></parameter>
+            <parameter name="note"><description>That a change only to a password or encrypted field is not picked up,
+                and a written record writes the file's values of them too</description></parameter>
         </out-parameters>
     </service>
-    <service verb="list" noun="DataFiles" type="rust" location="dev_aide::entities::list_data_files" allow-remote="false" read-only="true">
+    <service verb="load" noun="ChangedRecords" type="rust" location="dev_aide::data_load::load_changed_records" allow-remote="false">
+        <description>Of a data file the user may write, as saved, the plan of plan#DataLoad carried out in one
+            transaction: the writes through the entity-auto store (store#[entity], with its status checks) in the file's
+            order, each conflict and differing record as choices settles it (file: Take file, which deletes a removed
+            record; database: Keep database), each removal chosen (file) deleted, the last first. A conflict the choices
+            do not name refuses the load, as do baseHash and fileHash (required, checked in the transaction) when they are
+            not the plan's. Once it committed the text is the file's baseline for the next load, unless an element or a
+            record of it (or of the last load's text) was passed over, or a removal or a differing record had no choice:
+            those are offered again. A retry finds what was written already applied. The entity-auto store runs the
+            SECA rules of store#[entity], which Load this file does not. Audited.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="choices" type="Object"><description>A map, or its JSON text, of a record's key to file or database</description></parameter>
+            <parameter name="baseHash" required="true"/>
+            <parameter name="fileHash" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="written" type="Long"/>
+            <parameter name="deleted" type="Long"/>
+            <parameter name="kept" type="Long"/>
+            <parameter name="applied" type="Long"/>
+            <parameter name="unchanged" type="Long"/>
+            <parameter name="conflicts" type="Long"/>
+            <parameter name="records" type="Long"><description>Written and deleted</description></parameter>
+            <parameter name="baselineMoved" type="Boolean"/>
+            <parameter name="baselineNote"><description>Why the baseline did not move</description></parameter>
+            <parameter name="skipped" type="List"/>
+            <parameter name="location"/>
+        </out-parameters>
+    </service>
+    <service verb="list" noun="DataFiles" authz-action="view" type="rust" location="dev_aide::entities::list_data_files" allow-remote="false" read-only="true">
         <description>The data files of the loaded components by component and type, each with its Workspace link.</description>
         <in-parameters>
             <parameter name="filter"/>

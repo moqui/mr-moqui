@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Per-user runtime installation (plans/Install-DevCA.md). Stage the complete selected input
+//! Per-user runtime installation (plans/archive/Install-DevCA.md). Stage the complete selected input
 //! before reporting conflicts, then publish individual files by rename in the destination filesystem.
 //! A manifest of the installed definition files (`.install-manifest`) lets the next install remove the ones its
 //! source no longer has, and `.install-version` records the binary an `--installed` run is checked against.

@@ -78,3 +78,28 @@ test("a snippet inserted before, after or last inside, at the element's indent",
     assert.equal(pure.vueElements(inside.text).find((element) => element.start === inside.select).name, "q-chip");
     assert.equal(pure.vueEdit(BOARD, elements, 1, "inside", snippet), null);
 });
+
+test("a .qvue tab is Design, Text .qvue and Text .xml, its sibling XML a companion buffer of the tab", () => {
+    const views = pure.viewsFor(moqui.devAide.viewSpecs, "screen/A/Board.qvue", null);
+    assert.deepEqual(views.map((view) => view.label), ["Text .qvue", "Design", "Text .xml"]);
+    assert.equal(pure.qvueXmlPath("screen/A/Board.qvue"), "screen/A/Board.xml");
+    // an XML screen's tab keeps plain Text
+    assert.equal(pure.viewsFor(moqui.devAide.viewSpecs, "screen/A/Board.xml", "screen")[0].label, "Text");
+});
+
+test("Design renders both buffers' unsaved text, and a saved or missing one from disk", () => {
+    const tab = { path: "screen/A/Board.qvue", text: "<template><b></b></template>", saved: "<template></template>" };
+    const xml = { rootId: "r", path: "screen/A/Board.xml", text: "<screen><actions></actions></screen>", saved: "<screen></screen>" };
+    assert.deepEqual(pure.canvasFiles("r", tab, xml).map((file) => file.path), ["screen/A/Board.qvue", "screen/A/Board.xml"]);
+    assert.deepEqual(pure.canvasFiles("r", tab, Object.assign({}, xml, { saved: xml.text })).map((file) => file.path), ["screen/A/Board.qvue"]);
+    assert.deepEqual(pure.canvasFiles("r", Object.assign({}, tab, { saved: tab.text }), xml).map((file) => file.path), ["screen/A/Board.xml"]);
+    assert.equal(pure.canvasFiles("r", tab, Object.assign({}, xml, { missing: true })).length, 1);
+    // the view posts them to put#CanvasBuffer
+    const render = moqui.qvt.components["m-dev-qvue-view"].methods.render;
+    let posted;
+    const vm = { view: { urlPath: "/qapps/board" }, tab, xml, mode: "design", version: 0, bufferId: "b", frameSrc: "", $refs: {},
+        ctx: { rootId: "r", post: (name, params) => { posted = { name, files: JSON.parse(params.files) }; return { then: () => {} }; } } };
+    render.call(vm);
+    assert.equal(posted.name, "canvasBuffer");
+    assert.deepEqual(posted.files.map((file) => file.text), [tab.text, xml.text]);
+});

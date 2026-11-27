@@ -751,6 +751,24 @@ fn the_code_view_is_bound_over_the_scope_in_a_static_template() {
     assert!(!html.contains("{{x}}"), "{html}");
 }
 
+/// A map-view of a server-static screen is bound over the scope: its configuration an object of the attributes (texts
+/// expanded, points and record-key expressions of the screen's data), which m-map checks in the browser; the transition is
+/// its path, the condition a v-if; no place is in the template.
+#[test]
+fn the_map_view_is_bound_over_the_scope_in_a_static_template() {
+    let (html, _) = static_fixture("mapview");
+    for expected in [
+        r#"<m-map id="Offices" :config="{'profileId':'OUTLINE','zoom':'3','points':[].concat(((places)||[])),'pick':true}" class="q-mt-sm"></m-map>"#,
+        r#"'points':[{'lon':'-0.1278','lat':ec.resource.expandNoL10n('${lat}',{'lat':()=&gt;(lat)}),'label':'London &amp; Co','precision':'GPP_USER_CONFIRMED','source':'Entered'}]"#,
+        r#"config-url="/mapConfig" height="240px"></m-map>"#,
+        r#"<template v-if="(false)"><m-map"#,
+        r#"'adapter':'party','recordKey':({partyId: 'P1'})}"#,
+    ] {
+        assert!(html.contains(expected), "{expected} in {html}");
+    }
+    assert!(!html.contains("Chicago"), "{html}");
+}
+
 /// A split of a server-static screen is the same m-container-split, its panes the side and main slots, the selection read from
 /// the URL in the browser: nothing in it is request data. A wizard or stack panel reads its steps from the menu data.
 #[test]

@@ -192,25 +192,13 @@ fn email_eca_runs_its_action_and_sends_the_screen_mail() {
     assert!(sent[0].body_text.contains("Subject: Noticed"), "{}", sent[0].body_text);
 }
 
-/// `emailNotifications` Y: the notification goes out by email with the `NotificationEmail.xml` body in html
-/// and text, and the saved `EmailMessage` id is stored on the recipient's `NotificationMessageUser` row.
-#[test]
-fn email_notification_sends_the_screen_body_and_stores_the_email_message_id() {
-    let _lock = moqui_core::user::session::cookie_property_lock();
-    let ctx = ExecutionContextFactory::test_context_in(
-        "",
-        moqui_core::service::ServicePools::idle(),
-        moqui_core::context::framework_dir(),
-    );
-    let facade = moqui_core::testing::open();
-    ctx.factory().set_entity(facade.clone());
-    let _entered = ctx.enter();
-    moqui_core::service::load_definitions().unwrap();
-    let _authz = ctx.disable_authz();
+/// The SMTP server `NOTE_SMTP` (returned, to change), the template `NOTE_MAIL` with the `NotificationEmail.xml` body,
+/// and a new topic that emails it and saves each `EmailMessage` (its name returned).
+fn mail_topic(facade: &EntityFacade) -> (EntityValue, String) {
     let mut server = facade.make_value("moqui.basic.email.EmailServer").unwrap();
     server.set("emailServerId", Value::string("NOTE_SMTP"));
     server.set("smtpHost", Value::string("smtp.example.com"));
-    server.create(&facade).unwrap();
+    server.create(facade).unwrap();
     let mut template = facade.make_value("moqui.basic.email.EmailTemplate").unwrap();
     for (field, value) in [
         ("emailTemplateId", "NOTE_MAIL"),
@@ -225,10 +213,10 @@ fn email_notification_sends_the_screen_body_and_stores_the_email_message_id() {
     ] {
         template.set(field, Value::string(value));
     }
-    template.create(&facade).unwrap();
+    template.create(facade).unwrap();
     let topic = unique("MailOut");
     topic_row(
-        &facade,
+        facade,
         &topic,
         &[
             ("description", "Mail Out"),
@@ -237,6 +225,88 @@ fn email_notification_sends_the_screen_body_and_stores_the_email_message_id() {
             ("emailMessageSave", "Y"),
         ],
     );
+    (server, topic)
+}
+
+/// COM-UI-032: a notification sent inside a transaction has its rows in it and is emailed at its commit, its
+/// `EmailMessage` id then stored on the recipient's row; a rollback takes the rows away and sends no email.
+#[test]
+fn a_notification_email_waits_for_the_senders_commit() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = open(ServicePools::idle());
+    let _entered = ctx.enter();
+    moqui_core::service::load_definitions().unwrap();
+    let _authz = ctx.disable_authz();
+    let (_, topic) = mail_topic(&facade);
+    let user = unique("carol");
+    account(&facade, &user, "carol@example.com");
+    let sink = crate::SinkGuard::install();
+    let tx = facade.default_transactions().unwrap();
+    let send = |title: &str| {
+        let mut note = NotificationMessage::new();
+        note.topic(&topic)
+            .user_id(&user)
+            .title(title)
+            .persist(true)
+            .send()
+            .unwrap();
+        assert!(
+            note.email_message_id_by_user_id().is_empty(),
+            "no email before the commit"
+        );
+        note.notification_message_id().unwrap().to_string()
+    };
+    let user_row = |id: &str| {
+        facade
+            .find(MESSAGE_USER)
+            .unwrap()
+            .eq("notificationMessageId", Value::string(id))
+            .eq("userId", Value::string(&user))
+            .one()
+            .unwrap()
+    };
+
+    let mut dropped = String::new();
+    let rolled = tx.run(moqui_core::transaction::TransactionAttribute::UseOrBegin, None, || {
+        dropped = send("Rolled back");
+        assert!(sink.sent().is_empty(), "no email before the commit");
+        Err::<(), _>(moqui_lib::error::Error::new("roll back the notice"))
+    });
+    assert!(rolled.is_err());
+    assert!(sink.sent().is_empty(), "no email for a rollback");
+    assert!(user_row(&dropped).is_none(), "no row for a rollback");
+
+    let mut kept = String::new();
+    tx.run(moqui_core::transaction::TransactionAttribute::UseOrBegin, None, || {
+        kept = send("Committed");
+        assert!(sink.sent().is_empty(), "no email before the commit");
+        let row = user_row(&kept).expect("the row is in the transaction");
+        assert!(text(&row, "emailMessageId").is_empty(), "no email id before the commit");
+        Ok::<(), moqui_lib::error::Error>(())
+    })
+    .unwrap();
+    let sent = sink.sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].subject, "Committed");
+    assert_eq!(sent[0].to, ["carol@example.com"]);
+    let row = user_row(&kept).expect("NotificationMessageUser");
+    assert!(
+        !text(&row, "emailMessageId").is_empty(),
+        "the email id is stored after the commit"
+    );
+    assert!(row.get("sentDate").is_some_and(|value| !value.is_null()));
+}
+
+/// `emailNotifications` Y: the notification goes out by email with the `NotificationEmail.xml` body in html
+/// and text, and the saved `EmailMessage` id is stored on the recipient's `NotificationMessageUser` row.
+#[test]
+fn email_notification_sends_the_screen_body_and_stores_the_email_message_id() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = open(ServicePools::idle());
+    let _entered = ctx.enter();
+    moqui_core::service::load_definitions().unwrap();
+    let _authz = ctx.disable_authz();
+    let (mut server, topic) = mail_topic(&facade);
     let user = unique("bob");
     account(&facade, &user, "bob@example.com");
     let title = unique("Disk full");

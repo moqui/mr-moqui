@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A credential's source (plans/Vault-Instances.md §4.7, step 1 and the check of step 3): where a rotation sets a new
+//! A credential's source (plans/archive/Vault-Instances.md §4.7, step 1 and the check of step 3): where a rotation sets a new
 //! value, and signs in with it to check it.
 //!
 //! - **A database user's password** on its database dependency, set by the leased admin login: on a database instance

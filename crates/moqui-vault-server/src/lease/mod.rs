@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Leases (plans/Vault-Instances.md §3.7): operational items used on the server for one operation.
+//! Leases (plans/archive/Vault-Instances.md §3.7): operational items used on the server for one operation.
 //!
 //! 1. An operation asks ([`LeaseRegistry::ask`]): the server makes an ephemeral X25519 key pair, keeps its private half
 //!    in this cluster member's memory only, and signs the lease with its lease key ([`key`]): the lease id, the vault
@@ -48,6 +48,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
+use moqui_core::context::framework_thread;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::entity::{EntityFacade, EntityValue};
 use moqui_core::transaction::TransactionAttribute;
@@ -713,7 +714,7 @@ impl LeaseRegistry {
         Ok(answer)
     }
 
-    /// Stages a rotation's new value of the item bound to `binding` (plans/Vault-Instances.md §4.7): the item's body,
+    /// Stages a rotation's new value of the item bound to `binding` (plans/archive/Vault-Instances.md §4.7): the item's body,
     /// opened under the lease, with `fields[field_name]` set to `value` and the rest as it was (its other fields, notes,
     /// tags and URIs), deposited as a pending revision ([`crate::deposit::stage_revision`]). The body goes to no caller.
     /// Refused unless the item is at `expected_revision`. Its pending id.
@@ -1146,7 +1147,7 @@ fn start_sweeper(factory: &ExecutionContextFactory, registry: &Arc<LeaseRegistry
     let address = std::ptr::from_ref(factory) as usize;
     let spawned = std::thread::Builder::new()
         .name("vault-lease-sweep".to_string())
-        .spawn(move || loop {
+        .spawn(framework_thread(move || loop {
             std::thread::sleep(SWEEP);
             let Some(registry) = weak.upgrade() else {
                 return;
@@ -1158,7 +1159,7 @@ fn start_sweeper(factory: &ExecutionContextFactory, registry: &Arc<LeaseRegistry
             if swept.is_err() {
                 tracing::error!("Vault: the lease sweep failed; it runs again");
             }
-        });
+        }));
     if let Err(err) = spawned {
         tracing::error!("Vault: the lease sweep did not start ({err}); leases end at their next use");
     }

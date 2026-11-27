@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Deploys to managed instances (plans/Vault-Instances.md §4.6, M3; Dogfood §8.6, DG10), in the steps of the plan:
+//! Deploys to managed instances (plans/archive/Vault-Instances.md §4.6, M3; Dogfood §8.6, DG10), in the steps of the plan:
 //!
 //! 1. **Trigger** ([`Change`]): a `GitDeployment` of an environment that names this `InstanceEnvironment`
 //!    (crates/moqui-git calls `prepare#GitDeployment` once its pipeline passed and `deploy#GitDeployment` once it is
@@ -51,6 +51,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use moqui_core::context::framework_thread;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::entity::{EntityFacade, EntityValue};
 use moqui_lib::error::Error as LibError;
@@ -1603,9 +1604,9 @@ pub fn request(
     let waiting = action_id.clone();
     let thread_lease = lease_id.clone();
     let user = moqui_core::user::current_user_id().ok().flatten();
-    let spawned = std::thread::Builder::new()
-        .name(format!("instance-deploy-{first}"))
-        .spawn(move || {
+    let name = format!("instance-deploy-{first}");
+    let start = move || -> std::io::Result<()> {
+        std::thread::Builder::new().name(name).spawn(framework_thread(move || {
             let context = factory.new_context();
             let _entered = context.enter();
             let Some(facade) = factory.entity() else {
@@ -1613,9 +1614,7 @@ pub fn request(
             };
             let _authz = crate::common::authz_off();
             if let Some(user) = &user {
-                if let Err(err) = moqui_core::user::internal_login_user(user) {
-                    tracing::warn!("Instances: the waiting deploy {waiting} runs with no user: {err}");
-                }
+                actions::sign_in_as(&facade, user, &format!("the waiting deploy {waiting}"));
             }
             let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 if let Err(err) = registry.wait_open(&facade, &thread_lease, limit) {
@@ -1649,16 +1648,11 @@ pub fn request(
             if let Err(err) = actions::finish(&facade, &waiting, status, &report) {
                 tracing::error!("Instances: the waiting deploy {waiting} was not updated: {err}");
             }
-        });
-    if let Err(err) = spawned {
-        actions::finish(
-            facade,
-            &action_id,
-            actions::FAILED,
-            "the deploy could not wait for its lease",
-        )?;
-        return Err(fail(format!("The deploy could not wait for its lease: {err}")));
-    }
+        }))?;
+        Ok(())
+    };
+    // it waits on the action and lease rows this request makes: it starts once they are committed
+    actions::start_after_commit(facade, &action_id, start)?;
     Ok(Requested {
         action_id,
         status: actions::WAITING.to_string(),

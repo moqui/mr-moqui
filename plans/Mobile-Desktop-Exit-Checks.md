@@ -342,8 +342,9 @@ as the local node of the edge node and the all-in-one node of [Setup](#setup), w
 
 ## V5: the vault in the apps
 
-The checks that close [Vault-Instances](Vault-Instances.md) V5 on installed apps ([Vaults](../docs/security/Vaults.md#the-desktop-and-mobile-apps)).
-Record the results in Vault-Instances §6's V5 row notes (a line per check), and file what fails as a fix.
+The checks that close [Vault-Instances](archive/Vault-Instances.md) V5 on installed apps ([Vaults](../docs/security/Vaults.md#the-desktop-and-mobile-apps)).
+The plan is archived, so record the results under this section (a line per check: date, OS and version, app version,
+pass or what failed), and file what fails as a fix.
 
 Set up the remote server of [Setup](#setup) with BOSS and a user who has a personal vault key, a shared-key vault with an
 item, and a second factor (the vault key is fetched only after a strong sign-in). The desktop app in its client mode
@@ -360,7 +361,9 @@ Android phone of MD6 (Android 11 or later) with a screen lock and a fingerprint 
    minutes; then open it again and go to another screen of the app (Commons › Calendar) and back by the app's menu. On
    the phone: open it, then press the power button and unlock again.
    - Record: each time the page shows the vault locked on its next call, and an item no longer opens without the
-     passphrase (or device memory). On Linux and Windows record what the screen lock does (not watched there yet).
+     passphrase (or device memory). On Linux the screen lock is logind's and the screen saver's (record the desktop,
+     GNOME or KDE, and Wayland or X11); on Windows the session's lock and the sleep (built 2026-11-25, compiled for
+     Windows here and not yet run on it).
 3. **Only the vault screens.** With the vault open in one app window, open another screen of the same account in a
    second window, and in its DevTools console (a development run with `MOQUI_DESKTOP_DEVTOOLS_PORT`) call
    `moquiDesktop.vault.call("status", {})`; also in the vault window after navigating to another screen.

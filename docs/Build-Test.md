@@ -65,7 +65,7 @@ accept tasks (once for the suites they start) and the tasks that run moqui with 
 warning). A plain `cargo build` does not: run the script first for a build with the production or all runtime built
 in, which refuses to build without the module ([Embedded runtime and programs](#embedded-runtime-and-programs)). Where
 the module is missing, the vault screens answer that it is not built and the `VaultModule` client spec fails saying
-so. The desktop and mobile shells will carry their own copy (plans/Vault-Instances.md §3.6); a shell build that
+so. The desktop and mobile shells will carry their own copy (plans/archive/Vault-Instances.md §3.6); a shell build that
 bundles it runs the script first.
 
 ### Browser libraries of a component
@@ -154,8 +154,10 @@ its checks of the builds (test-all needs no Node).
 - **Debug info.** The dev profile keeps debug info unpacked in the object files ([Profiles](#profiles)), which is
   not a Windows option, and cargo has no per-target profile, so `moq` sets `CARGO_PROFILE_DEV_SPLIT_DEBUGINFO=packed`
   on Windows (a PDB beside the binary). A dev `cargo build` or `cargo test` that does not go through `moq` needs that
-  variable set too. `.github/workflows/windows.yml` sets it and runs `cargo lint` and
-  `cargo test -p moqui-host --lib test_cmd::` on `windows-latest`, which is what compiles `#[cfg(windows)]`.
+  variable set too. `.github/workflows/windows.yml` sets it and runs `cargo lint`,
+  `cargo test -p moqui-host --lib test_cmd::` and the dev-aide's path confinement and git layer
+  (`cargo test -p dev-aide --lib -- confine:: vcs:: git::`) on `windows-latest`, which is what compiles
+  `#[cfg(windows)]`.
 
 ### Native code and C libraries
 
@@ -226,7 +228,7 @@ everything.
 
 Maximal is the default, with the dev tools: development wants git, SSH and the dev-aide, and one default build with
 everything is simpler than a smaller one that saves some build time. The dev tools act only on a dev instance
-([design-dev-aide](../plans/design-dev-aide.md) 3.3); a deployment that wants none builds Lite or Enterprise.
+([Dev-AIDE](tools/Dev-AIDE.md#loading-and-access)); a deployment that wants none builds Lite or Enterprise.
 `./moq build --lite -- --features devtools` adds them to Lite. (A Dev package, Lite with git, SSH and the dev tools on
 a `develop` profile, was the default before; it is commented out in `moq`, `.cargo/config.toml` and the crates'
 features, and likely to be removed.)
@@ -266,15 +268,16 @@ build, with no features of its own.
 | `xmpp` | host (`moqui-xmpp`; includes `axum`) | XMPP for local users: client streams with STARTTLS, direct TLS and WebSocket, SASL2 with SCRAM-SHA-256-PLUS and FAST, rooms as MUC, history, PEP and uploads over Moqui chat ([XMPP](interfaces/XMPP.md)); it starts only when `xmpp-server@domain` is set. In Debug too | | yes | yes |
 | `grpc` | host (includes `telemetry`, `axum`) | gRPC on tonic: the cluster's protocol on the cluster port (`cluster-member@protocol`, [Cluster](../plans/archive/Cluster.md)); the host's gRPC listener: the OTLP/gRPC receiver, opened only when `<telemetry><receiver grpc-enabled="true">` is set, and with `edge` the direct PASS authority ([Edge-Node](../plans/archive/Edge-Node.md) §5.5) | yes | yes | yes |
 | `edge` | host (includes `grpc`) | The edge link ([Edge-Node](../plans/archive/Edge-Node.md)): a local node's dialer when `edge/node@url` is set, and on an edge node (`moqui_conf__instance__node_role=front_edge`) the link's hand-off on the HTTPS listener, web access, delegated calls, the queue and replication; the PASS authority over gRPC (direct when `moqui_conf__pass_authority__grpc_enabled=true`, and on the link) and scripts' `ec.service.passAuthority` | | yes | yes |
-| `vault` | host (`moqui-vault-server`) | Vaults ([Vault-Instances](../plans/Vault-Instances.md) §3): personal and operational vaults, leases, machine access and recovery. The vault crypto (`moqui-vault`) is in every build, for `moqui vault` and `moqui operator` | yes | yes | yes |
-| `instances` | host (`moqui-instance`; includes `vault`) | Managed instances ([Vault-Instances](../plans/Vault-Instances.md) §4): instance kinds, provisioning on Docker and Podman hosts, deploys, rotation and transit by the manager | | yes | yes |
-| `manage` | host (includes `grpc`, `moqui-vault`) | The manager link ([Vault-Instances](../plans/Vault-Instances.md) §4.4): a managed instance dials its manager on ALPN `moqui-manage/1`; with `instances`, the manager's end on the HTTPS listener | yes | yes | yes |
-| `devtools` | host, moqui-devkit (`watch`) | What only development needs ([design-dev-aide](../plans/design-dev-aide.md) 3.3): the framework's file watcher that reloads changed artifacts on a dev instance, and in the binary crates the components/dev crates of `runtime/components/dev`; in Maximal (the default) and Debug | | | yes |
+| `vault` | host (`moqui-vault-server`) | Vaults ([Vault-Instances](../plans/archive/Vault-Instances.md) §3): personal and operational vaults, leases, machine access and recovery. The vault crypto (`moqui-vault`) is in every build, for `moqui vault` and `moqui operator` | yes | yes | yes |
+| `instances` | host (`moqui-instance`; includes `vault`) | Managed instances ([Vault-Instances](../plans/archive/Vault-Instances.md) §4): instance kinds, provisioning on Docker and Podman hosts, deploys, rotation and transit by the manager | | yes | yes |
+| `manage` | host (includes `grpc`, `moqui-vault`) | The manager link ([Vault-Instances](../plans/archive/Vault-Instances.md) §4.4): a managed instance dials its manager on ALPN `moqui-manage/1`; with `instances`, the manager's end on the HTTPS listener | yes | yes | yes |
+| `devtools` | host, moqui-devkit (`watch`) | What only development needs ([Dev-AIDE](tools/Dev-AIDE.md#loading-and-access)): the framework's file watcher that reloads changed artifacts on a dev instance, and in the binary crates the components/dev crates of `runtime/components/dev`; in Maximal (the default) and Debug | | | yes |
 | `smtp` | host (`moqui-mail`) | Outbound mail: `send#EmailMessage`, `send#EmailTemplate`, password reset and notification mail | yes | yes | yes |
 | `imap` | host (`moqui-mail`) | Inbound mail: `poll#EmailServer`, the mail client's sync, IDLE, rules and import (includes `smtp`) | | yes | yes |
 | `git` | host (`moqui-git`) | `git://` locations, git drives, `org.moqui.git.GitServices`, the git server over HTTP and SSH, LFS | | yes | yes |
 | `image` | core | `org.moqui.impl.ImageServices` (`convert#Image`) and elFinder thumbnails | | yes | yes |
 | `xlsx` | core, moqui-report | The `xlsx` render mode, `org.moqui.resource.SpreadsheetServices` and the xlsx format of a scheduled report: calamine reads, and the IronCalc engine (`moqui_core::workbook`, a pinned git revision) writes and calculates; the host's `xlsx` also links `moqui-calc` (CalcGrid, `org.moqui.calc.CalcServices`) | | yes | yes |
+| `overture` | host (`moqui-maps`) | Optional Overture data for Maps ([Maps](tools/Maps.md#overture-places-and-buildings), [Maps-Overture](../plans/archive/Maps-Overture.md)): our own GeoParquet reader (ZSTD on the pure-Rust `ruzstd`), the STAC catalog, the import of a region's Places, Buildings and Addresses (`OvertureServices.read#OvertureTheme`) and the local address geocoder ([Overture addresses](tools/Maps.md#overture-addresses)); without it imported places stay searchable and buildings drawn, the address geocoder is not asked, and an import says the feature is not built in | | yes | yes |
 | `llm` | host | The agents and the model providers (the `moqui-llm` crate, `org.moqui.agent.AgentAdminServices`; [LLM-A2A-Assist](../plans/LLM-A2A-Assist.md)) | yes | yes | yes |
 | `http`, `cluster-tls` | core | Remote REST, `http` locations, the OpenSearch client; the cluster certificate | yes | yes | yes |
 
@@ -608,6 +611,8 @@ sdkmanager 'platform-tools' 'emulator' 'platforms;android-37.0' 'build-tools;36.
 ./moq android build --target x86_64 --apk    # debug APK; --release for a release one; aarch64 for phones
 scripts/check-android.sh                     # clippy for both Android targets: moqui-client, moqui-client-tauri, the app
 scripts/android-smoke.sh                     # when asked, not in test-all: ready line, frame check, relaunch
+scripts/android-maps-offline.sh              # acceptance MapsOfflinePackage, when asked: offline map packages
+scripts/android-location-share.sh            # acceptance LocationShareWalk's phone half, when asked: live location
 # For debug sign-in, start this server in a separate terminal.
 moqui_conf__webapp_list__webapp__WEBROOT__http_bind=127.0.0.1 \
 moqui_conf__webapp_list__webapp__WEBROOT__https_enabled=false ./moq run --http-port 8080
@@ -670,9 +675,13 @@ In the Play Console, once:
   of the repository.
 - **The target SDK:** `targetSdk` in `gen/android/app/build.gradle.kts` (37); Play requires a recent one for new
   apps and updates each August.
-- **Declarations:** the full-screen intent (`USE_FULL_SCREEN_INTENT`, for an incoming call: a calling app), and the
+- **Declarations:** the full-screen intent (`USE_FULL_SCREEN_INTENT`, for an incoming call: a calling app), the
   foreground service of type `phoneCall` (`FOREGROUND_SERVICE_PHONE_CALL`, an ongoing call the user answered), each
-  with a short video or description of the incoming call.
+  with a short video or description of the incoming call, and the foreground service of type `location`
+  (`FOREGROUND_SERVICE_LOCATION`, `LocationShareService`): a live location share the user starts in Maps with its
+  audience and end, sent while it lasts with a notification and Stop, started only from the app in front, with a short
+  video of a share started, its notification and Stop. The app asks for no `ACCESS_BACKGROUND_LOCATION`, so Play's
+  background location declaration does not apply ([Mobile-Client, Live location](ui/Mobile-Client.md#live-location)).
 - **Privacy policy:** [docs/Privacy.md](Privacy.md), at its GitHub address, which the app's account menu and sign-in
   open (plans/Security-Review.md SEC-CLI-122).
 - **Data safety**, from the merged manifest's permissions (`app/build/intermediates/merged_manifest/release/`, which has
@@ -680,7 +689,13 @@ In the Play Console, once:
   mail (each account's store, for offline use), contacts' names in them, files attached, and a device key (a
   credential, sealed by the Android Keystore); it records audio (and video) in calls only, sent to the user's server;
   photos and videos the user takes or picks to send, and the precise or approximate location of a place the user
-  shares, go to the user's server; the device's name in the user's device list and as a chat encryption device, which
+  shares, go to the user's server; location is collected while a live share the user started is on, also with the app
+  in the background under its notification, and sent to the user's server, which shows it to the people the user chose
+  for that share until its end (shared: with them, by the user's act; not kept by the server past the share unless the
+  user keeps its trail): precise location for an exact share, approximate for an approximate share (the app asks for
+  approximate location only for it; where the user allowed precise location, for an exact share or a chat place, the
+  phone's fix is precise, and the server rounds it to about 1 km before it is stored or shown, so declare precise
+  location as collected whenever precise is asked for at all); the device's name in the user's device list and as a chat encryption device, which
   room members see, is the phone's model; the phone's contacts are read on the phone to search the dialer and never
   sent; it shows notifications; with Firebase, the FCM token goes to the user's server and Google; with a UnifiedPush
   distributor, that app gets an endpoint for each account under a random name; pushes are sealed to the account's keys.
@@ -715,7 +730,7 @@ help and their helpers, and `scripts/moq-test.sh` tests them all.
 ./moq test-apps                # the application tests: the specs of runtime/components/addon, no cargo
 ./moq test-framework           # the framework tests: cargo, moq, the specs of components/base and components/dev
 ./moq test-all                 # the whole regression suite: test-framework, then test-apps
-./moq accept mr-boss           # a component's acceptance suite (test/acceptance/), only when asked
+./moq accept mr-boss           # a component's acceptance suite (test/acceptance/), only with the user's permission
 ./moq accept-all               # every acceptance test, with the Rust opt-in and ignored tests
 sudo scripts/call-network.sh   # calls on shaped networks (tc netem in namespaces; root): docs/interfaces/WebRTC.md
 ./moq save-db before-upgrade   # and later: ./moq reload-save before-upgrade
@@ -750,7 +765,7 @@ its rows; a check named twice runs once.
 | Something a golden or generated file holds: a host member (`moqui-host.d.ts`), a proto, the bundled screens, a typegen fixture | the file rewritten by its variable and its diff read: `UPDATE_GOLDEN=1 cargo test -p moqui-devkit --lib typegen`, `MOQUI_REGENERATE_PROTO=1 cargo test -p moqui-host --lib the_checked_in_code_is_what_the_proto_generates`, `UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled` |
 | The framework's components (`runtime/components/base`, `runtime/components/dev`), the conf (`MoquiDefaultConf.xml`, the XSDs, `runtime/conf/**`), `moq` or `scripts/` | `./moq test-framework` (its cargo run holds the conf tests: every runtime conf parsed, merged and checked against the XSD) |
 | An application (`runtime/components/addon/*`, `runtime/components/test`) | `./moq test-apps`; for a changed screen `moqui lint --screens` with a report file (`./moq run lint --screens <file>`), its idiom count not grown |
-| An acceptance test you added or changed | that test (`./moq accept <component> --spec Name`), then its component's acceptance suite |
+| An acceptance test you added or changed | that test alone (`./moq accept <component> --spec Name`); its component's whole acceptance suite only with the user's permission |
 | Docs only (`docs/`, `plans/`, READMEs) | no build or test; the relative links still resolve |
 
 While working, run less: the specs of what you touch (`./moq test <component> --spec ...`) and `cargo test -p <crate>`
@@ -881,22 +896,35 @@ Acceptance tests can be deleted freely, since nothing depends on them.
   `component://<component>/test/...` stay in `test/`, for both suites.
 - **Rust.** Rust has no such directory: its acceptance tests are `#[ignore = "..."]` (`cargo test-slow`, which runs
   those of the host modules its alias in `.cargo/config.toml` names: `tools_screens`, `gate2`, `tool_components`,
-  `qvt_report`, `notws`, `git_storage`, `factory_restart` and `authz_revocation`; a new module of them is added there
+  `qvt_report`, `notws`, `git_storage`, `factory_restart`, `authz_revocation`, `managed_sealed_start` (the
+  framework's ManagedSealedStart, about two minutes) and `monitor_tui` (its sweep of every monitoring and report
+  screen in the terminal); a new module of them is added there
   and here; and moqui-core's sweep of screen generation on both script engines) or opt-in `[[test]]`s (`gate3`, `gate3_browser`, `client_browser`, `tui_screens`). `./moq accept-all` runs them, and no
   regression command does.
 - **Who runs it.** `./moq accept-all` on a schedule (nightly, or weekly while it is long) and before a release, with
   `--junit` for a dated summary. An agent runs an acceptance test only when the user asks, or when it adds or changes
-  one (then that test, and its component's acceptance suite), never because code it uses changed (AGENTS.md).
+  one (then that test alone), never because code it uses changed; a component's whole acceptance suite, or
+  `./moq accept-all`, only with the user's permission (AGENTS.md).
 - **In CI.** A server that hosts the repository runs the suites as pipelines ([Pipelines](interfaces/Pipelines.md)):
   the `ci.xml` at this repository's root runs the lints and `./moq test-framework` on every push and merge request,
   `./moq test-all` on main, and `./moq accept-all --junit` nightly, in the `moqui-build` image. `#[cfg(windows)]` is
-  compiled on `windows-latest` by `.github/workflows/windows.yml` (`cargo lint` and
-  `cargo test -p moqui-host --lib test_cmd::`), on a push to master and on a pull request. A component's own
+  compiled on `windows-latest` by `.github/workflows/windows.yml` (`cargo lint`,
+  `cargo test -p moqui-host --lib test_cmd::` and `cargo test -p dev-aide --lib -- confine:: vcs:: git::`), on a
+  push to master and on a pull request. A component's own
   repository needs no file and gets `./moq test <component> --junit` as its built-in pipeline. The same rules hold
   there: budgets are not raised, and acceptance is never part of a push's checks. The engine's own opt-in test, one
   container on a real Docker or Podman socket, is `cargo test -p moqui-git --test ci_docker` with
   `MOQUI_CI_DOCKER_SOCKET` set; the container driver's for containers that stay (a secret file put in, read back and
-  removed with its container) is `cargo test -p moqui-lib --features docker --test docker_real`, with the same variable.
+  removed with its container) is `cargo test -p moqui-lib --features docker --test docker_real`, with the same variable;
+  and a managed Postgres instance on it (provisioned with its password as a file, checked, both passwords rotated,
+  removed with its volume and network) is `cargo test -p moqui-instance docker_real -- --ignored`, whose variable is a
+  plain socket path (no `unix://`). Rootless Podman's socket is `/run/user/$UID/podman/podman.sock`
+  (`systemctl --user enable --now podman.socket`); on Ubuntu 26.04 its AppArmor profile for pasta refuses Podman's
+  signal when the last container leaves a network, so Podman answers a removal with a 500 though the container is gone,
+  which the driver takes as removed (and logs); a profile that lets pasta receive the signal ends the error
+  ([Testing-Needed](../plans/Testing-Needed.md#vaults-and-managed-instances)).
+  `InstanceDeploy`, the managed instances' acceptance walk, runs against a manager on this machine: its spec's header
+  has the steps.
 
 ### The regression budget
 
@@ -1084,10 +1112,11 @@ The tools component's suite (`test/agent/`): `assist.agent.js` (21 tasks in the 
 the `a2a` surface, run through the run engine; the spec lets the assist agent serve that surface while it runs). The
 surface of a spec is `drawer`, `chat`, `tui`, `job`, `a2a` or `mcp`; a headless one sends only the time in the tail.
 
-The dev agent's tasks are in `runtime/components/dev/dev-aide/test/agent/dev.agent.js` (plans/design-dev-aide.md P4): a
-field added to an upstream entity and shown on its form from the site component, a list column, where a service is used,
-and a spec written from a Try in the sim. A dev component's agents run on a dev instance; the example component stands in
-for the site component for the run, and the files a task writes are put back after it. With the hand-authored replies:
+The dev agent's tasks are in `runtime/components/dev/dev-aide/test/agent/dev.agent.js`
+([Dev-AIDE](tools/Dev-AIDE.md#tests)): a field added to an upstream entity and shown on its form from the site
+component, a list column, where a service is used, and a spec written from a Try in the sim. A dev component's agents
+run on a dev instance; the example component stands in for the site component for the run, and the files a task writes
+are put back after it. With the hand-authored replies:
 `moqui test dev-aide --agents --replay runtime/components/dev/dev-aide/test/agent/replay`. With a model (a key from the
 environment, nightly and before a phase closes; the design's `--live` is `--llm-profile`):
 `moqui test dev-aide --agents --llm-profile <profile> --runs 3 --min-pass 0.8`, a pass being the checks of the task: the

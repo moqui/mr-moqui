@@ -309,6 +309,13 @@ const $formList = (name, cols) => {
             return condition ? `if (${condition}) {\n${line}}\n` : line;
         }),
 
+        // a map-view as its places, one a line ("label: latitude, longitude (precision; source)"), and its attribution
+        "map-view": stmt((node) => {
+            const line = `for (const $line of (${S.mapViewLinesFn})(${S.mapViewExpr(node, true)}, ec.l10n)) {\n${pad("$line")}sri.write("\\n");\n}\n`;
+            const condition = attr(node, "condition");
+            return condition ? `if (${condition}) {\n${line}}\n` : line;
+        }),
+
         // a markdown-view as its markdown
         "markdown-view": stmt((node) => {
             const line = `{ const $v = ${S.markdownTextExpr(node)}; if ($v) sri.write($v + "\\n"); }\n`;

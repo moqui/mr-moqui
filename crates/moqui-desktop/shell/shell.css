@@ -7,3 +7,6 @@
 .m-shell-chat { position: absolute; inset: 0; }
 .m-shell-account-menu { min-width: 260px; }
 .m-shell-devices { width: 480px; max-width: 92vw; }
+/* the offline Maps screen (screens/MapsOffline.qvue, plans/archive/Maps-Offline.md §2.5): a readable column, the map its width */
+.m-maps-offline { max-width: 960px; margin: 0 auto; }
+.m-maps-offline-results { max-height: 40vh; overflow-y: auto; }

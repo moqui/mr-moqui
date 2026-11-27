@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The record of every write (plans/design-dev-aide.md 15): a `moqui.dev.DevAideAudit` row for each save, create, move,
+//! The record of every write (plans/archive/design-dev-aide.md 15): a `moqui.dev.DevAideAudit` row for each save, create, move,
 //! delete and git command that writes, with the user, the root and path, the hashes before and after, and a detail.
 
 use moqui_core::entity::EntityFacade;

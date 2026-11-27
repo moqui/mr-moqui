@@ -20,6 +20,8 @@ indexmap = { workspace = true }
 jiff = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+# A PMTiles archive's gzipped metadata (maps_archive.rs).
+flate2 = { workspace = true }
 # ETL and the grid's file source (etl/, files.rs): CSV read directly, format patterns to decimals.
 csv = { workspace = true }
 rust_decimal = { workspace = true }

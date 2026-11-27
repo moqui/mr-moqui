@@ -1,0 +1,4 @@
+<m-map id="Offices" :config="{'profileId':'OUTLINE','zoom':3,'points':[{'id':'p0','lon':-87.6298,'lat':41.8781,'label':'Chicago &lt;office&gt; {{x}}','precisionEnumId':'GPP_POSTAL_AREA','precision':'Postal-area representative point','source':'Census 2026'},{'id':'p1','lon':0,'lat':0,'label':'Null Island'}],'pick':true}" class="q-mt-sm"></m-map>
+<m-map :config="{'layers':['PARKS','TRAILS'],'extent':[-0.5,51.3,0.3,51.7],'points':[{'id':'p0','lon':-0.1278,'lat':51.5074,'label':'London &amp; Co','precisionEnumId':'GPP_USER_CONFIRMED','precision':'User-confirmed point','source':'Entered'}]}" config-url="/mapConfig" height="240px"></m-map>
+<m-map :config="{'center':[10,20],'zoom':4,'projection':'EPSG:4326','adapter':'party','recordKey':{'partyId':'P1'},'points':[]}"></m-map>
+<span class="text-inline">the places are on their map</span> 

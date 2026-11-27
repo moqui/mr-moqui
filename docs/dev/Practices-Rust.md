@@ -22,12 +22,12 @@ One workspace, one `src/` tree per crate. The cut and its reasons are in
 [Crate-Split](../../plans/archive/Crate-Split.md). Dependencies point one way:
 
 ```
-moqui (bin) → moqui-host → moqui-llm, moqui-git, moqui-mail, moqui-tui, moqui-calc (optional features), moqui-report, moqui-collab, moqui-tools, moqui-dav, moqui-devkit, moqui-embedded
+moqui (bin) → moqui-host → moqui-llm, moqui-git, moqui-mail, moqui-tui, moqui-calc, moqui-maps (optional features), moqui-report, moqui-collab, moqui-tools, moqui-dav, moqui-devkit, moqui-embedded
               moqui-host → moqui-drivers → moqui-core
               moqui-host → moqui-core → moqui-entity → moqui-db → moqui-lib
 moqui-llm → moqui-devkit
 moqui-calc → moqui-tools
-moqui-llm, moqui-git, moqui-mail, moqui-report, moqui-collab, moqui-tools, moqui-dav, moqui-devkit → moqui-core
+moqui-llm, moqui-git, moqui-mail, moqui-report, moqui-collab, moqui-tools, moqui-dav, moqui-devkit, moqui-maps → moqui-core
 moqui-browser → moqui-core (default-features = false), moqui-report, moqui-dav
 moqui-client → moqui-lib
 ```
@@ -45,6 +45,7 @@ moqui-client → moqui-lib
 | `moqui-collab` | Co-edited documents (a Yjs document per record, on yrs) and `org.moqui.resource.CollabServices`. A framework crate, as `moqui-git`, linked in every host build and left out of the browser. |
 | `moqui-tools` | The Tools app's server side ([Database](../tools/Database.md)): `org.moqui.dev.DatabaseServices` and `EtlServices`, with database capabilities and catalog queries per dialect, schema comparison plans and jobs, SQL runs, the data grid and its file source, ETL mappings and runs, external databases and settings. A framework crate, as `moqui-collab`. |
 | `moqui-calc` | CalcGrid, database-driven spreadsheets ([IronCalc-DB](../../plans/IronCalc-DB.md)): workbooks on the IronCalc engine whose data sheets are filled through the data grid's reader, their rooms, and `org.moqui.calc.CalcServices`. A framework crate, as `moqui-collab`, on `moqui-tools` too; the host links it under its `xlsx` feature. |
+| `moqui-maps` | Optional Overture data for Maps ([Maps-Overture](../../plans/archive/Maps-Overture.md)): our own GeoParquet reader (on `ruzstd`, no C), Overture's STAC catalog and the import of a region's Places, Buildings and Addresses, the local address matching (`address.rs`), `read#OvertureTheme`, `read#OvertureReleases` and `search#OvertureAddresses` of `org.moqui.maps.OvertureServices`. A framework crate, as `moqui-calc`; the host links it under its `overture` feature. |
 | `moqui-dav` | The DAV server (WebDAV over the drives, CalDAV and CardDAV), the `VCard` and `ICalendar` tools and the elFinder connector. A framework crate, as `moqui-git`, linked in every build and in the browser. |
 | `moqui-devkit` | The development kit: reload and the file watcher (its `watch` feature), `moqui check`, the artifact index, the Groovy converter, typegen (`moqui types`) and the spec runner (`moqui test`). A framework crate, linked in every host build; what core itself needs (`is_dev_instance`, restart, the observed calls) stays in `moqui_core::devtools`. |
 | `moqui-embedded` | The runtime files built into the binary, at the level its features choose (the framework and tools components, the webroot stub and the runtime confs; with `production` or `all` every component; `src/select.rs`, which build.rs includes, has the rules), each file deflated on its own: read where the runtime has no file (the host mounts them with `moqui_lib::vfs`), the startup comparison with the runtime's files, and `moqui embedded extract`; and under `opensearch` and `chromium` those programs' archives, which the host unpacks. No framework dependency, so a framework file edit rebuilds only it and relinks. |
@@ -341,6 +342,12 @@ are shared on purpose:
 - **`format!`** to join three or more strings and to fill in a template, not `+` chains or `str::replace` on a literal.
 - **Locks** go through `moqui_lib::sync::{lock, read, write}`, and `Condvar` waits through `wait` and `wait_timeout`
   there, which recover a poisoned lock (§8). Do not write a local helper or a non-test `.lock().unwrap()`.
+- **Framework threads.** A thread the framework starts for its own work that may enter an execution context is started
+  with `moqui_core::context::framework_thread` (`.spawn(framework_thread(move || ...))`, scoped threads too), so that
+  leaving its outermost context never runs an inline factory's queued work. That work belongs to the thread that owns
+  the queue and drains it: a test's thread, the spec runner's (`spawn_script_thread`), the browser's worker; those are
+  never wrapped. moqui-host's server threads run only under the threaded executor, which never drains there, and are
+  left unmarked.
 - **`unsafe`.** Add none. Every existing `unsafe` block has a `// SAFETY:` comment and every `unsafe fn` a `# Safety`
   doc (`clippy::undocumented_unsafe_blocks`).
 - **`#[must_use]`** on a function when dropping its result is a bug, such as a guard or a computed "changed" flag. The

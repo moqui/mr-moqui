@@ -73,7 +73,7 @@ pub const WEB_BAN: &str = "web-ban";
 /// what they keep from those sets (`crate::edge::cluster_state`).
 pub const EDGE_STATE: &str = "edge-state";
 
-/// A vault lease approved or revoked on one server (plans/Vault-Instances.md §3.7), `{"leaseId", "member", "kind":
+/// A vault lease approved or revoked on one server (plans/archive/Vault-Instances.md §3.7), `{"leaseId", "member", "kind":
 /// "approved"|"revoked"}`, so the member that holds the lease's key opens it, or forgets it, without waiting for its
 /// two-second poll of the row (moqui-vault-server `lease`).
 pub const VAULT_LEASE: &str = "vault-lease";

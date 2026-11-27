@@ -836,6 +836,8 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
         let mut notices = Vec::new();
         let mut inspections: Vec<Json> = Vec::new();
         let mut requests = Vec::new();
+        // how a view follows each query's source (a CalcGrid range's room), for the panel
+        let mut live = Vec::new();
         let mut inspection_budget = 1_048_576;
         for (query_index, query) in queries.iter().enumerate() {
             if !query.is_object() {
@@ -863,6 +865,11 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
             };
             frames.extend(take_frames(&mut result)?);
             notices.extend(result["notices"].as_array().into_iter().flatten().cloned());
+            match &result["live"] {
+                Json::Object(_) => live.push(result["live"].clone()),
+                Json::Array(items) => live.extend(items.iter().cloned()),
+                _ => {}
+            }
             if options["inspect"] == true {
                 for mut step in result["inspection"].as_array().into_iter().flatten().cloned() {
                     step["queryIndex"] = json!(query_index);
@@ -877,7 +884,7 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
             append_inspection(&mut inspections, step, &mut inspection_budget);
         }
         return Ok(
-            json!({"frames":frames,"inspection":inspections,"requests":requests,"notices":notices,"range":range}),
+            json!({"frames":frames,"inspection":inspections,"requests":requests,"notices":notices,"range":range,"live":live}),
         );
     }
     let dataset = dataset(ec, text(options, "datasetId", "otel_metrics"))?;
@@ -898,12 +905,24 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
                 parameters.insert(parameter.into(), moqui_lib::json::from_json(&range[key]));
             }
         }
-        let result = moqui_core::service::call::sync_checked(
+        // the service's refusal is this panel's diagnostic, not the page's: it runs in a transaction of its own, which
+        // its failure rolls back alone, and its errors are taken out of the messages, so one panel's failure (a
+        // CalcGrid range no longer shared with the viewer, DASH-UI-008) leaves the page and the other panels drawn
+        ec.message().push_errors();
+        let called = moqui_core::service::call::sync_checked(
             service,
             &parameters,
-            &moqui_core::service::call::CallOptions::default(),
-        )
-        .map_err(fail)?;
+            &moqui_core::service::call::CallOptions {
+                require_new_transaction: Some(true),
+                ..Default::default()
+            },
+        );
+        {
+            let mut message = ec.message();
+            message.clear_errors();
+            message.pop_errors();
+        }
+        let result = called.map_err(fail)?;
         let result = input(&result);
         let mut frame = if let Some(frame) = result.get("frame") {
             let frame = serde_json::from_value::<frame::Frame>(frame.clone()).map_err(fail)?;
@@ -934,7 +953,13 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
         };
         configure_frame(ec, &dataset, options, &mut frame)?;
         let (frames, inspection) = apply_transformations(vec![frame], options)?;
-        return Ok(json!({"frames":frames,"inspection":inspection,"notices":[],"range":range}));
+        // how a view follows the source (a CalcGrid range's room), passed on to the panel
+        let live = result
+            .get("live")
+            .filter(|live| live.is_object())
+            .cloned()
+            .unwrap_or(Json::Null);
+        return Ok(json!({"frames":frames,"inspection":inspection,"notices":[],"range":range,"live":live}));
     }
     let filter = constraints(ec, options, &dataset, now)?;
     let mut normalized = options.clone();
@@ -2151,6 +2176,8 @@ fn add_subtotal_metrics(value: &mut Json) -> Result<serde_json::Map<String, Json
     Ok(projected)
 }
 
+/// The datasets the viewer may read, each with its id, title and time field, and `service` for one whose service answers
+/// a report query with frames: it has no records to search, so Explore offers only the others.
 pub fn list_datasets(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -2159,13 +2186,13 @@ pub fn list_datasets(
     let mut items = Vec::new();
     for id in search::telemetry::TELEMETRY_INDEXES {
         if let Ok(dataset) = resolve_dataset(ec, id, false) {
-            items.push(json!({"id":id,"timeField":dataset.time_field}));
+            items.push(json!({"id":id,"timeField":dataset.time_field,"service":dataset.service.is_some()}));
         }
     }
     for definition in definitions::list(ec, Some("dataset"))? {
         let id = text(&definition, "id", "");
         if let Ok(dataset) = resolve_dataset(ec, id, false) {
-            items.push(json!({"id":id,"title":definition["title"],"timeField":dataset.time_field}));
+            items.push(json!({"id":id,"title":definition["title"],"timeField":dataset.time_field,"service":dataset.service.is_some()}));
         }
     }
     if let Some(entity) = ec.factory().entity() {
@@ -2179,7 +2206,9 @@ pub fn list_datasets(
         for index in indexes {
             let id = format!("index:{index}");
             if let Ok(dataset) = resolve_dataset(ec, &id, false) {
-                items.push(json!({"id":id,"title":index,"timeField":dataset.time_field}));
+                items.push(
+                    json!({"id":id,"title":index,"timeField":dataset.time_field,"service":dataset.service.is_some()}),
+                );
             }
         }
     }
@@ -2219,15 +2248,16 @@ pub fn get_dataset(
         field["config"] = config;
     }
     Ok(output(
-        json!({"dataset":{"id":id,"timeField":dataset.time_field,"fields":fields.into_values().collect::<Vec<_>>(),"capabilities":facade.capabilities().iter().map(|c|c.name()).collect::<Vec<_>>()}}),
+        json!({"dataset":{"id":id,"timeField":dataset.time_field,"service":dataset.service.is_some(),"fields":fields.into_values().collect::<Vec<_>>(),"capabilities":facade.capabilities().iter().map(|c|c.name()).collect::<Vec<_>>()}}),
     ))
 }
 
 pub use alert::evaluate_rules;
 pub use annotations::{create_annotation, record_release};
 pub use definitions::{
-    copy_definition, delete_definition, export_definitions, find_definition_uses, get_definition, get_definition_diff,
-    import_definitions, list_definitions, load_shipped, restore_definition, save_definition, versions_definition,
+    check_definition_read, copy_definition, delete_definition, export_definitions, find_definition_uses,
+    get_definition, get_definition_diff, import_definitions, list_definitions, load_shipped, restore_definition,
+    save_definition, versions_definition,
 };
 
 /// One rendering path for browser embeds and offline reports. Each panel retains its own
@@ -2551,6 +2581,7 @@ pub fn dashboard_frames_filtered(
         let mut notices = Vec::new();
         let mut inspection = Vec::new();
         let mut requests = Vec::new();
+        let mut live = Vec::new();
         if text(&panel, "visualization", text(&panel, "type", "")) == "text" {
             // Static content has no data source and remains renderable during a telemetry outage.
         } else if panel["queries"].as_array().is_none_or(Vec::is_empty) {
@@ -2598,6 +2629,7 @@ pub fn dashboard_frames_filtered(
                     notices.extend(result["notices"].as_array().into_iter().flatten().cloned());
                     inspection.extend(result["inspection"].as_array().into_iter().flatten().cloned());
                     requests.extend(result["requests"].as_array().into_iter().flatten().cloned());
+                    live.extend(result["live"].as_array().into_iter().flatten().cloned());
                 }
                 Err(error) => {
                     tracing::error!(panel=%id,error=%error,"report panel query failed");
@@ -2612,6 +2644,9 @@ pub fn dashboard_frames_filtered(
         rendered["annotations"] = json!(annotations);
         rendered["inspection"] = json!(inspection);
         rendered["requests"] = json!(requests);
+        // what the panel's view follows to read it again when its source changes (a CalcGrid range's room); none when
+        // the source was refused
+        rendered["live"] = json!(live);
         results.insert(id.clone(), rendered);
     }
     // A dashboard over business data also shows its domains' events (a price list published, a period closed): the
@@ -2790,6 +2825,7 @@ pub fn register(registry: &mut moqui_core::native::NativeRegistry) -> Result<(),
         ("list_datasets", list_datasets),
         ("get_dataset", get_dataset),
         ("get_definition", get_definition),
+        ("check_definition_read", check_definition_read),
         ("list_definitions", list_definitions),
         ("save_definition", save_definition),
         ("copy_definition", copy_definition),

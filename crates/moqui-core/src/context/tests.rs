@@ -87,11 +87,12 @@ fn component_conf_mounts_and_runtime_conf_wins() {
         r#"<moqui-conf><instance purpose="dev"/></moqui-conf>"#,
     )
     .unwrap();
+    // outside a test run: the framework's own test/MoquiConf.xml (the Maps spec adapter) merges only in one
     let none = super::merge_component_confs(
         &root.join("runtime/components/base/framework"),
         runtime.path(),
         &[root.join("runtime/components/base/framework")],
-        true,
+        false,
     );
     assert!(none.unwrap().is_none());
     // test/MoquiConf.xml merges after the component's own, in a moqui test run only

@@ -293,7 +293,7 @@ pub(super) fn note_session_token_checked() {
 
 /// Whether the render running on this thread is a program's HTTP request: its user came by a request header (Basic,
 /// `api_key`, `login_key`), or its session is one a header login made. As a hand-off takes no save of such a request,
-/// the dev tools take no write from one (plans/design-dev-aide.md 15). The terminal client, an agent and code in this
+/// the dev tools take no write from one (plans/archive/design-dev-aide.md 15). The terminal client, an agent and code in this
 /// process are not.
 #[must_use]
 pub fn header_authenticated_request() -> bool {

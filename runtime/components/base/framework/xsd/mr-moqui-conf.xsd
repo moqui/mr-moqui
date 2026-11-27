@@ -30,6 +30,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="channels"/>
                 <xs:element minOccurs="0" ref="push"/>
                 <xs:element minOccurs="0" ref="load-runner"/>
+                <xs:element minOccurs="0" ref="maps"/>
+                <xs:element minOccurs="0" ref="location"/>
                 <xs:element minOccurs="0" ref="cluster-member"/>
                 <xs:element minOccurs="0" ref="xmpp-server"/>
                 <xs:element minOccurs="0" ref="sip-server"/>
@@ -377,7 +379,9 @@ along with this software (see the LICENSE.md file). If not, see
             unsampled spans wait for the root's tail decision; spans of further traces are dropped. Default 1024.
             </xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="tail-trace-spans" type="xs:positiveInteger"><xs:annotation><xs:documentation>Spans one
-            trace may hold while it waits. Default 512.</xs:documentation></xs:annotation></xs:attribute>
+            trace holds while its root decides, on the thread under an open root and in the export's buffer; past it a
+            span is dropped and counted; on the thread a failed or slow frame takes the place of an ordinary one. Default
+            512.</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="interval-seconds" type="xs:positiveInteger"><xs:annotation><xs:documentation>How often
             metrics are collected. Metric documents are minute documents, which the rollups and dashboards assume, so
             anything but 60 is for tests and is warned about.</xs:documentation></xs:annotation></xs:attribute>
@@ -405,7 +409,7 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:annotation></xs:attribute>
         <xs:attribute name="service-version" type="xs:string"><xs:annotation><xs:documentation>The service.version of
             this server's telemetry; empty, the binary's version. A manager sets it on its instances at each deploy
-            (plans/Vault-Instances.md §4.8).</xs:documentation></xs:annotation></xs:attribute>
+            (plans/archive/Vault-Instances.md §4.8).</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="deployment-environment" type="xs:string"><xs:annotation><xs:documentation>The resource
             attribute deployment.environment of this server's telemetry (production, staging); none when empty. A
             manager sets its instance's environment.</xs:documentation></xs:annotation></xs:attribute>
@@ -1083,8 +1087,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:annotation><xs:documentation>Minimum number of other (non-alpha/numeric, not letters or digits) characters in the password</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="history-limit" type="xs:nonNegativeInteger" default="5">
                 <xs:annotation><xs:documentation>Number of old passwords to save that cannot be reused (0 means don't save any history)</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="change-weeks" type="xs:decimal" default="12">
-                <xs:annotation><xs:documentation>Require password change after this many months (0 means don't ever require change)</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="change-weeks" type="xs:decimal" default="104">
+                <xs:annotation><xs:documentation>Require password change after this many weeks (0 means don't ever require change)</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="email-require-change" type="boolean" default="false">
                 <xs:annotation><xs:documentation>Require password change after a password reset email?</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="email-expire-hours" type="xs:nonNegativeInteger" default="48">
@@ -1114,7 +1118,7 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:complexType>
             <xs:attribute name="max-failures" type="xs:nonNegativeInteger" default="3">
                 <xs:annotation><xs:documentation>Account is disabled after max failures</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="disable-minutes" type="xs:nonNegativeInteger" default="30">
+            <xs:attribute name="disable-minutes" type="xs:nonNegativeInteger" default="5">
                 <xs:annotation><xs:documentation>How long to disable the account (0 means no limit, ie forever)</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="history-store" type="boolean" default="true">
                 <xs:annotation><xs:documentation>Store records of login attempts?</xs:documentation></xs:annotation></xs:attribute>
@@ -1244,6 +1248,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="dbresource-blob-threshold" type="non-neg-int-expandable" default="65536"><xs:annotation><xs:documentation>A dbresource file over this many bytes is a content blob (stored once, streamed), not fileData. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="image-max-concurrent" type="non-neg-int-expandable" default="2"><xs:annotation><xs:documentation>Image conversions (convert#Image) and rich-text image uploads (upload#RichTextImage) that may run at once; a decoded image may take hundreds of MB. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="sftp-max-read" type="non-neg-int-expandable" default="67108864"><xs:annotation><xs:documentation>The largest file, in bytes, the SFTP client (SftpClient getText and getBinary, poll#SystemMessageSftp) reads from a remote server; a larger one is refused. 0 is the default, 64 MiB: there is no setting for no limit. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="pinned-max-age" type="non-neg-int-expandable" default="86400"><xs:annotation><xs:documentation>Seconds a browser keeps a file sent at a pinned revision (ec.web.sendPinnedResourceResponse, a map archive's ranges) without asking again: Cache-Control private, max-age, immutable. After access is taken away the ranges a browser already has stay readable in it until then; any other is refused at once. 0 asks the server each time (private, no-cache). Read on each response. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="script-module-cache" type="boolean" default="true"><xs:annotation><xs:documentation>A module ec.resource.script loads whose top level only declares gives the same value for the rest of the outermost script run, made once; false makes it again at each load. Read once.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="collab-max-state-bytes" type="xs:positiveInteger" default="8388608"><xs:annotation><xs:documentation>The most bytes a co-edited page's state may take; an update past it is refused (413). The whole state is held in memory and written again at each flush. Read on each update.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="drive-root" type="xs:string" default="dbresource://drive"><xs:annotation><xs:documentation>The location under which a new personal drive (personal/userId) and a new shared folder drive (shared/driveId) are made (FileServices ensure#PersonalDrive, create#Drive). A setting, not a user preference, so a user does not choose where their drive is. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
@@ -1351,14 +1356,24 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:annotation><xs:documentation>Providers of the hooks the framework asks for whoever acts, the system
                         with no user included, registered by a component apart from any app root (an app root's
                         shell-providers are in mr-xml-screen.xsd): asked by call#Providers after the apps' providers, for
-                        every caller, with authorization disabled, since this conf names them. Only sms-consent; another
-                        element is logged and left out. Merged by hook and name. No Java counterpart.</xs:documentation></xs:annotation>
+                        every caller, with authorization disabled, since this conf names them. Only sms-consent and
+                        shell-indicator; another element is logged and left out. Merged by hook and name. No Java
+                        counterpart.</xs:documentation></xs:annotation>
                     <xs:sequence>
                         <xs:element minOccurs="0" maxOccurs="unbounded" name="sms-consent"><xs:complexType>
                             <xs:annotation><xs:documentation>Whether a promotional text may go from one of our numbers to a
                                 number (org.moqui.comms.ProviderInterfaces.sms#Consent): consent true or false; one false
                                 refuses it, and with none saying true it is refused. Mantle answers from its consent
                                 records.</xs:documentation></xs:annotation>
+                            <xs:attribute name="name" type="xs:string" use="required"/>
+                            <xs:attribute name="service" type="xs:string" use="required"/>
+                            <xs:attribute name="sequence" type="xs:integer"/>
+                        </xs:complexType></xs:element>
+                        <xs:element minOccurs="0" maxOccurs="unbounded" name="shell-indicator"><xs:complexType>
+                            <xs:annotation><xs:documentation>Indicators of the shell's app bar for every signed-in user, whatever
+                                apps they may open (the provider hook of mr-xml-screen.xsd's shell-indicator). Run with
+                                authorization disabled, so its service reads only the caller's own rows: the framework's
+                                answers live location's "Sharing location".</xs:documentation></xs:annotation>
                             <xs:attribute name="name" type="xs:string" use="required"/>
                             <xs:attribute name="service" type="xs:string" use="required"/>
                             <xs:attribute name="sequence" type="xs:integer"/>
@@ -1710,6 +1725,9 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:attribute name="lease-seconds" type="xs:string" default="60"/>
                 <xs:attribute name="heartbeat-seconds" type="xs:string" default="15"/>
                 <xs:attribute name="event-text-flush-ms" type="xs:string" default="300"/>
+                <xs:attribute name="user-open-runs" type="xs:string" default="4">
+                    <xs:annotation><xs:documentation>The most agent runs of one user waiting or working at once, so one user
+                        does not fill the node's agent workers; a start past it is refused (429). 0 is no limit.</xs:documentation></xs:annotation></xs:attribute>
             </xs:complexType></xs:element>
             <xs:element name="content-log" minOccurs="0"><xs:complexType>
                 <xs:annotation><xs:documentation>Keep the request and response of each call in LlmCall. Off by default;
@@ -1913,6 +1931,10 @@ along with this software (see the LICENSE.md file). If not, see
                 The most rows of a find made from a request's search parameters with pageNoLimit=true (a screen's CSV,
                 XLSX, print or text export): pageNoLimit asks for no page, and gets this many rows at most (SEC-DAT-09).
                 No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-reply-bytes" type="non-neg-int-expandable" default="1073741824"><xs:annotation><xs:documentation>
+                The most bytes of rows one Postgres reply may bring to this server: past it the rest of the reply is read
+                and dropped and the query fails, so a server (or a query) cannot hold this process's memory with one
+                result (SEC-DAT-94). Read when a connection opens. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
@@ -2373,6 +2395,75 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="targets" type="xs:string"><xs:annotation><xs:documentation>URL prefixes (and ssh://host:port entries) a run may reach beside this server and loopback, comma separated.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-runs" type="non-neg-int-expandable" default="1"/>
             <xs:attribute name="max-users" type="non-neg-int-expandable" default="1000"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="maps">
+        <xs:annotation><xs:documentation>Maps (plans/archive/Maps.md §4.2): the switch for the server's outside map requests and
+            the hard limits of Geo data imports and feature queries. Providers, layers and profiles are entity rows
+            (moqui.maps), not settings.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="external-requests" type="boolean" default="true"><xs:annotation><xs:documentation>false
+                stops the server's own outside requests for maps (a geocoder, a Geo data download) and its handing a
+                browser a profile with outside URLs; local maps and postal lookup still work.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="import-max-bytes" type="non-neg-int-expandable" default="536870912"><xs:annotation><xs:documentation>
+                The largest Geo data download or operator file, and the most it may unzip to, in bytes (512 MiB).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-features" type="non-neg-int-expandable" default="5000"><xs:annotation><xs:documentation>
+                The most features one viewport query of a layer adapter returns, and one user's overlay or places file may
+                have; 0 returns none, which turns record layers off (an overlay may then have 5000). A value that is not a
+                whole number is logged and refuses the query (an overlay may then have 5000).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="overlay-max-bytes" type="non-neg-int-expandable" default="10485760"><xs:annotation><xs:documentation>
+                The largest GeoJSON, GPX or KML file a user adds as an overlay, and their places file, in bytes (10 MiB),
+                within import-max-bytes: an overlay is drawn whole in the browser. Its GeoJSON is served up to 4 MiB of
+                characters.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="overture-catalog" type="xs:string" default="https://stac.overturemaps.org/catalog.json"><xs:annotation><xs:documentation>
+                The root of the STAC catalog Overture releases are found in (plans/archive/Maps-Overture.md): its releases are
+                offered under Maps › Configuration › Overture, and an import reads only documents on its host and the
+                https files its items name. A mirror of the catalog, or a spec's fixtures.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="overture-max-area" type="xs:string" default="2500"><xs:annotation><xs:documentation>
+                The largest Overture region, in km² (a box's area near enough): a region of a few cities, not a country,
+                so an import reads a few row groups of a few files.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="package-max-bytes" type="non-neg-int-expandable" default="2147483648"><xs:annotation><xs:documentation>
+                The largest offline map package a user may build, in bytes (2 GiB): a package whose estimate passes it is
+                refused before anything is cut (plans/archive/Maps-Offline.md).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="package-user-max-bytes" type="non-neg-int-expandable" default="8589934592"><xs:annotation><xs:documentation>
+                The most bytes one user's offline map packages may hold in all, in bytes (8 GiB): their ready packages and
+                the new one's estimate; a package past it is refused at its estimate.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="package-concurrent-builds" type="non-neg-int-expandable" default="1"><xs:annotation><xs:documentation>
+                How many offline map packages the installation builds at once (the job workers are shared with the
+                scheduled jobs): another waits, pending, and starts when one ends. A user has at most one pending or
+                building.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="package-keep-days" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>
+                How many days an offline map package's file is kept with no download (from when it was built, or last
+                downloaded) before the hourly clean removes it; Update builds it again.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="location">
+        <xs:annotation><xs:documentation>Shared live location (plans/archive/Location-Sharing.md §3.1): the limits of the shares a
+            person starts (org.moqui.maps.LocationServices). The shares, their audiences, the latest positions and the kept
+            trails are entity rows, not settings.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="max-share-hours" type="non-neg-int-expandable" default="24"><xs:annotation><xs:documentation>
+                The longest a share runs, in hours from its start or from its owner's last extension; every share has an
+                end within it.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="trail-max-days" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>
+                The longest a trail stays after its share ends, in days, for a share whose owner chose to keep one; the
+                hourly clean#LocationShares deletes the points past the share's own trailKeepDays.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="min-interval-seconds" type="non-neg-int-expandable" default="5"><xs:annotation><xs:documentation>
+                The shortest time between two positions a share takes, in seconds: a sooner report is answered 429 and
+                dropped.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="approximate-interval-seconds" type="non-neg-int-expandable" default="60"><xs:annotation><xs:documentation>
+                The shortest time between two positions an approximate share takes, in seconds (at least
+                min-interval-seconds), so its cell changes tell less of a path.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-active-shares" type="non-neg-int-expandable" default="20"><xs:annotation><xs:documentation>
+                The most shares one person has on at once.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-audience" type="non-neg-int-expandable" default="50"><xs:annotation><xs:documentation>
+                The most people (a group's current members counted each), XMPP contacts and links one share
+                has.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="link-max-views-per-minute" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>
+                The most reads a minute of a guest link's page, for one link.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="link-max-failed-tries" type="non-neg-int-expandable" default="10"><xs:annotation><xs:documentation>
+                The wrong secrets given with a guest link's selector after which the link is refused (plans/archive/Location-Sharing.md
+                §3.7); its owner adds a new link.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="cluster-member">
@@ -3037,6 +3128,10 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="store-max-mb" type="xs:string" default="512"><xs:annotation><xs:documentation>The
                 size cap of an account's store on the device, in MB; past it the least recently read cached data goes
                 (never unsent items or drafts). At least 1.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="packages-max-mb" type="xs:string" default="4096"><xs:annotation><xs:documentation>The
+                size cap of an account's offline map packages on the device, in MB, outside store-max-mb
+                (plans/archive/Maps-Offline.md §2.4): a download that would pass it is refused. At least 1.</xs:documentation>
+                </xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
@@ -3258,7 +3353,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- ================= Development ================= -->
     <xs:element name="vault">
-        <xs:annotation><xs:documentation>Vaults (plans/Vault-Instances.md §3, docs/security/Vaults.md): secrets under keys
+        <xs:annotation><xs:documentation>Vaults (plans/archive/Vault-Instances.md §3, docs/security/Vaults.md): secrets under keys
             the server does not hold, served by org.moqui.security.VaultServices.</xs:documentation></xs:annotation>
         <xs:complexType>
             <xs:attribute name="key-fetch-max-age" type="xs:string" default="300"><xs:annotation><xs:documentation>Seconds
@@ -3267,13 +3362,13 @@ along with this software (see the LICENSE.md file). If not, see
                 get#WrappedPersonalKey sends a user their wrapped personal key, and rewrap#PersonalKey and
                 replace#PersonalKey take a change. Read at each call.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="lease-max-hours" type="xs:string" default="4"><xs:annotation><xs:documentation>The longest
-                a lease of an operational vault runs (plans/Vault-Instances.md §3.7), in hours, at most 4: a client
+                a lease of an operational vault runs (plans/archive/Vault-Instances.md §3.7), in hours, at most 4: a client
                 refuses to approve a longer one. Read at each ask#VaultLease.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="lease-key" type="xs:string"><xs:annotation><xs:documentation>A secret, generated into
                 the seal's store: the seed of the server's Ed25519 lease key, which signs each lease. Members check its
                 fingerprint once; a new value is a new key, which they check again.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="device-memory-max-hours" type="xs:string" default="8"><xs:annotation><xs:documentation>
-                The longest a desktop or mobile app may remember a user's open personal key (plans/Vault-Instances.md
+                The longest a desktop or mobile app may remember a user's open personal key (plans/archive/Vault-Instances.md
                 §3.5, V5), in hours, at most 24; 0 offers no device memory. A device asks for its time and gets the
                 shorter. Read at each remember#VaultDeviceMemory.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="screen-names" type="xs:string" default="Vault,Vaults,VaultKey,VaultContacts,RecoveryKeys">
@@ -3293,7 +3388,7 @@ along with this software (see the LICENSE.md file). If not, see
     </xs:element>
 
     <xs:element name="manage">
-        <xs:annotation><xs:documentation>The manager link (plans/Vault-Instances.md §4.4): a managed instance dials its
+        <xs:annotation><xs:documentation>The manager link (plans/archive/Vault-Instances.md §4.4): a managed instance dials its
             manager's HTTPS port with ALPN moqui-manage/1, both link keys pinned by SHA-256 of the public key. Read at
             start.</xs:documentation></xs:annotation>
         <xs:complexType>
@@ -3325,7 +3420,7 @@ along with this software (see the LICENSE.md file). If not, see
                 is live, such a link is always refused unless confirmed.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="monitor-url" type="xs:string" default=""><xs:annotation><xs:documentation>On a manager:
                 where its mr-moqui instances send their telemetry (OTLP/HTTP, telemetry@otlp-endpoint), which a
-                provision gives each with its ingest key (plans/Vault-Instances.md §4.8). Empty: the origin of link-url,
+                provision gives each with its ingest key (plans/archive/Vault-Instances.md §4.8). Empty: the origin of link-url,
                 this manager's HTTPS listener; empty both, a provision gives none. It must be https (http only to the
                 loopback) and on link-url's host unless monitor-other-host is true; else provisions give none, and say
                 so in the log.</xs:documentation></xs:annotation>
@@ -3335,7 +3430,7 @@ along with this software (see the LICENSE.md file). If not, see
                 then go.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="deploy-wait-seconds" type="xs:string" default="600"><xs:annotation>
                 <xs:documentation>On a manager: how long a deploy waits for a changed instance to report healthy and
-                unsealed (plans/Vault-Instances.md §4.6) before it puts its old container back and stops the roll. Read at
+                unsealed (plans/archive/Vault-Instances.md §4.6) before it puts its old container back and stops the roll. Read at
                 each deploy.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="drain-wait-seconds" type="xs:string" default="30"><xs:annotation><xs:documentation>On a
                 manager: how long a deploy lets a drained cluster member finish the requests it was serving, once it
@@ -3346,16 +3441,18 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="rotate-retry-days" type="xs:string" default="7"><xs:annotation><xs:documentation>On a
                 manager: how many days the rotation job (rotate#DueCredentials) leaves a due item whose last rotation
                 failed, telling the administrators (topic InstanceRotationFailed) instead of trying it each night
-                (plans/Vault-Instances.md §4.7). Read at each run of the job.</xs:documentation></xs:annotation></xs:attribute>
+                (plans/archive/Vault-Instances.md §4.7). Read at each run of the job.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
     <xs:element name="dev-reload">
-        <xs:annotation><xs:documentation>The dev file watcher (plans/design-dev-aide.md 6.3): on a dev instance
-            (instance@purpose dev) of a build with the devtools feature (the Dev and Debug packages), every component
-            directory is watched, and a changed file reloads what it defines: its services, its screen, the ECA rule
-            set of its kind, its REST API or skill; an entity, conf or Rust change logs that it needs a restart or a
-            rebuild. On unless enabled is false. Not on any other purpose.</xs:documentation></xs:annotation>
+        <xs:annotation><xs:documentation>The dev file watcher (plans/archive/design-dev-aide.md 6.3): on a dev instance
+            (instance@purpose dev) of a build with the devtools feature (the Maximal package, the default, and Debug,
+            or another package built with the feature), every component directory is watched, and a changed file
+            reloads what it defines: its services, its screen, the ECA rule set of its kind, its REST API or skill; an
+            entity file relinks the model, a conf file goes to the conf reload, and a component.xml or Rust change logs
+            that it needs a restart or a rebuild. On unless enabled is false. Not on any other
+            purpose.</xs:documentation></xs:annotation>
         <xs:complexType>
             <xs:attribute name="projects" type="xs:string" default="3"><xs:annotation><xs:documentation>How many projects
                 the dev tools' project cache keeps.</xs:documentation></xs:annotation></xs:attribute>
@@ -3363,11 +3460,15 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="debounce-ms" type="xs:string" default="300"><xs:annotation><xs:documentation>
                 How long after the last change in a burst the reload runs, so an editor's write and rename is one
                 change.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="index-writers" type="xs:string" default="3"><xs:annotation><xs:documentation>The
+                connections the artifact index writes its rows on at once, each batch of files in a transaction of its
+                own (a build's write is bound by the database); at most one more than the connections of the pool the
+                request and service workers leave, at least one.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
     <xs:element name="dev-aide">
-        <xs:annotation><xs:documentation>The settings of the dev-aide component (Dev AIDE, plans/design-dev-aide.md
+        <xs:annotation><xs:documentation>The settings of the dev-aide component (Dev AIDE, plans/archive/design-dev-aide.md
             16), in its MoquiConf.xml or a runtime conf; Settings in the app stores some of them over these.</xs:documentation></xs:annotation>
         <xs:complexType>
             <xs:sequence>
@@ -3383,7 +3484,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:complexType><xs:attribute name="pattern" type="xs:string" use="required"/></xs:complexType>
                 </xs:element>
                 <xs:element name="task-app" minOccurs="0" maxOccurs="unbounded">
-                    <xs:annotation><xs:documentation>An app a task opens in (plans/design-dev-aide.md 14): its paths to a
+                    <xs:annotation><xs:documentation>An app a task opens in (plans/archive/design-dev-aide.md 14): its paths to a
                         project, a task and a new task with {projectId} and {taskId}, and a base URL when it is another
                         instance.</xs:documentation></xs:annotation>
                     <xs:complexType>
@@ -3409,6 +3510,27 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="git-write-timeout" type="xs:string" default="120"><xs:annotation><xs:documentation>Seconds a write (which may run hooks) may take.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-edit-bytes" type="xs:string" default="2097152"><xs:annotation><xs:documentation>A
                 text over this many bytes opens read only.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="local-run-memory-mb" type="xs:string" default="4096"><xs:annotation><xs:documentation>Run
+                locally in a job's image: the memory of its container, in MB.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="local-run-pids" type="xs:string" default="1024"><xs:annotation><xs:documentation>The
+                processes a run in a job's image may have.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="local-run-timeout-minutes" type="xs:string" default="60"><xs:annotation><xs:documentation>A
+                run in a job's image is stopped after this many minutes, by its own watchdog and by the Dev AIDE that
+                follows it.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="local-run-limit" type="xs:string" default="2"><xs:annotation><xs:documentation>The runs in
+                a job's image a user may have going at once.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="local-run-copy-mb" type="xs:string" default="1024"><xs:annotation><xs:documentation>A run
+                in a job's image works on a copy of the working tree's files: a tree whose files come to more than this many
+                MB is refused.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="coedit-max-rooms" type="xs:string" default="20"><xs:annotation><xs:documentation>In
+                shared mode, the most files one user co-edits at once (plans/archive/design-dev-aide.md F15); a join past it is
+                refused.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="coedit-max-total-bytes" type="xs:string" default="67108864"><xs:annotation><xs:documentation>In
+                shared mode, the most bytes of every co-edited file's room on the server together (their state with its
+                edits); a join or an update past it is refused.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="hosted-max-deleted" type="xs:string" default="2000"><xs:annotation><xs:documentation>The
+                most files a delete of a folder of a hosted root removes in its one commit; a folder with more is
+                refused, never deleted in part.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

@@ -72,7 +72,7 @@
             working: "Working", waitingApproval: "Waiting for your approval", waitingAnswer: "Waiting for your answer", waitingHandoff: "Waiting for your save",
             thought: "Thought", step: "step", steps: "steps", tokens: "tokens", seconds: "s", cost: "cost", conflict: "changed since this was proposed",
             reviewAgain: "Review again", show: "Show", opened: "Assist opened", filled: "Assist filled", noConversations: "No conversations",
-            searchConversations: "Search conversations", waiting: "Waiting for you", running: "Running", failed: "Failed", recentlyDone: "Recently done",
+            searchConversations: "Search conversations", archive: "Archive", restore: "Restore", archived: "Archived", waiting: "Waiting for you", running: "Running", failed: "Failed", recentlyDone: "Recently done",
             open: "Open", answer: "Answer", continueRun: "Continue", stopRun: "Stop", copy: "Copy", image: "Image", unavailable: "Assist is not available",
             empty: "Ask about this page, or tell Assist what to do.", earlier: "Earlier messages", recommended: "recommended", other: "Other",
             commands: "Commands", help: "/new starts a conversation, /tier fast|balanced|thorough picks the tier, /skill <name> asks for a skill, /help shows this.",
@@ -1432,10 +1432,10 @@
         register(name, def) { assist.dialects.list[name] = Object.assign({ name }, def); return assist.dialects.list[name]; },
         get(name) { return assist.dialects.list[name || "openui"] || null; },
     };
-    // An approval kind's own card body (plans/design-dev-aide.md 13.3): a component name by targetKind, given the card; it
+    // An approval kind's own card body (plans/archive/design-dev-aide.md 13.3): a component name by targetKind, given the card; it
     // may emit "arguments" with the edited arguments that Approve then sends (the dev-aide registers "file").
     assist.approvalRenderers = {};
-    // Actions on the code blocks of an answer (plans/design-dev-aide.md 13.4): { key, label, icon, run(code, language) },
+    // Actions on the code blocks of an answer (plans/archive/design-dev-aide.md 13.4): { key, label, icon, run(code, language) },
     // registered by a page such as the dev-aide's Workspace (Insert at cursor, Replace selection, Propose as change).
     assist.codeActions = {
         list: [],
@@ -1450,7 +1450,7 @@
             return out;
         },
     };
-    // A page's editor for the page state (plans/design-dev-aide.md 13.4): a function answering { root, path, language, view,
+    // A page's editor for the page state (plans/archive/design-dev-aide.md 13.4): a function answering { root, path, language, view,
     // unsaved, element, line, selection, problems, artifact }, set by the dev-aide's Workspace while it is the page.
     assist.editorState = null;
     // The agent whose startPath (other than /apps) the page is under, the longest first: the dev agent on Dev AIDE's pages.
@@ -3310,7 +3310,7 @@
     // A card: an approval (current → proposed, Approve, Edit in screen, Reject with feedback, Preview effects; collapsed once
     // decided, a conflict with Review again), a question or form (options with the recommended one marked, typed fields, free
     // text; the budget question's Continue and Stop) or a hand-off (the values Assist filled, Skip). No keyboard accelerators.
-    // A change set's card body (approval kind "file", plans/design-dev-aide.md 13.3): what it changes as artifacts, its files
+    // A change set's card body (approval kind "file", plans/archive/design-dev-aide.md 13.3): what it changes as artifacts, its files
     // with their counts and side (site or upstream), the titles a business user may word (emitted as edited arguments), and
     // Preview: this page rendered with the proposed text in place (a dev instance's preview token), nothing saved.
     components["m-assist-change-set"] = {
@@ -3633,6 +3633,11 @@
         methods: {
             search() { clearTimeout(this.timer); this.timer = setTimeout(() => assist.loadHistory(), 250); },
             openOne(item) { assist.load(item.conversationId, { pane: "chat" }).catch((err) => { st().error = err.errors; }); },
+            // archive a conversation (what hears its end does then: a Dev AIDE session's worktree), or restore it
+            archive(item, archived) {
+                assist.call("archive", { conversationId: item.conversationId, archived }, "POST")
+                    .then((json) => { item.statusId = json.statusId; }, (err) => { st().error = err.errors; });
+            },
             when(date) { return date ? new Date(date).toLocaleString() : ""; }
         },
         template:
@@ -3641,8 +3646,10 @@
                 '<q-list class="col scroll" separator dense>' +
                     '<q-item v-if="!history.loading && !history.list.length"><q-item-section class="m-muted">{{labels.noConversations}}</q-item-section></q-item>' +
                     '<q-item v-for="item in history.list" :key="item.conversationId" clickable :data-conversation-id="item.conversationId" @click="openOne(item)">' +
-                        '<q-item-section><q-item-label lines="1">{{item.title || item.conversationId}}</q-item-label><q-item-label caption>{{when(item.lastMessageDate || item.createdDate)}}</q-item-label></q-item-section>' +
+                        '<q-item-section><q-item-label lines="1">{{item.title || item.conversationId}}</q-item-label><q-item-label caption>{{when(item.lastMessageDate || item.createdDate)}}{{item.statusId === \'AgcArchived\' ? \' · \' + labels.archived : \'\'}}</q-item-label></q-item-section>' +
                         '<q-item-section side><q-icon v-if="item.waiting" name="sym_o_pending_actions" color="warning" size="xs"></q-icon><q-spinner v-else-if="item.activeRunId" size="14px"></q-spinner></q-item-section>' +
+                        '<q-item-section side><q-btn dense flat round size="xs" :icon="item.statusId === \'AgcArchived\' ? \'sym_o_unarchive\' : \'sym_o_archive\'" :aria-label="item.statusId === \'AgcArchived\' ? labels.restore : labels.archive" ' +
+                            ':data-assist-archive="item.conversationId" @click.stop="archive(item, item.statusId !== \'AgcArchived\')"><q-tooltip>{{item.statusId === \'AgcArchived\' ? labels.restore : labels.archive}}</q-tooltip></q-btn></q-item-section>' +
                     '</q-item>' +
                 '</q-list>' +
             '</div>'

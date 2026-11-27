@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The dev agent (plans/design-dev-aide.md 13.1): Dev Assist in the drawer of Dev AIDE's pages (its startPath) and in the
+<!-- The dev agent (plans/archive/design-dev-aide.md 13.1): Dev Assist in the drawer of Dev AIDE's pages (its startPath) and in the
     agent picker of a Dev AIDE user elsewhere, with the dev tools (artifact, source, check, propose_edit, try_service; vcs
     and hosting from the lazy catalog), the screen-xml canvas, and writes only through the user's approval. Seed of the dev-aide,
     so it exists only where the component loads (a dev instance). -->

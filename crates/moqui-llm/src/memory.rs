@@ -140,10 +140,14 @@ pub fn set_conversation_gate(
     })
 }
 
+/// The tools whose results are the framework's own text, not text read from outside: what [`needs_confirmation`] does
+/// not count as tool output.
+const OWN_TOOLS: [&str; 3] = ["remember", "save_skill", "ask"];
+
 /// Whether a call that keeps something for the user (`remember`, `save_skill`) must be confirmed by the user first: on a
-/// surface where the request may not be the user's own (chat, a job, A2A, MCP), or when the run has read a tool's
-/// output since the user's last message, as that text (an email, a note, a page) can ask for it. A read that fails
-/// counts as read.
+/// surface where the request may not be the user's own (chat, a job, A2A, MCP), or when the conversation's active
+/// window holds any tool's output or a summary of compacted turns, as that text (an email, a note, a page) can ask for
+/// it and stays in the model's context after the user writes again (SEC-AI-93). A read that fails counts as read.
 pub fn needs_confirmation(ctx: &crate::run::context::TurnContext<'_>) -> bool {
     if !matches!(
         ctx.surface,
@@ -157,22 +161,61 @@ pub fn needs_confirmation(ctx: &crate::run::context::TurnContext<'_>) -> bool {
     let Some(facade) = crate::skills::facade() else {
         return true;
     };
-    let read = quietly(|| {
-        facade
-            .find("moqui.agent.AgentMessage")?
+    let read = quietly(|| -> Result<bool, Error> {
+        let conversation = facade
+            .find(CONVERSATION)?
             .eq("conversationId", Value::string(&run.conversation_id))
-            .order_by("messageSeq", true)
-            .limit(200)
             .disable_authz()
-            .list()
-    });
-    match read {
-        Ok(rows) => rows
+            .one()?;
+        if conversation
+            .as_ref()
+            .and_then(|row| text_of(row, "compactionSummary"))
+            .is_some()
+        {
+            return Ok(true);
+        }
+        let through = conversation.as_ref().and_then(|row| int_of(row, "compactedThroughSeq"));
+        let results: Vec<Value> = facade
+            .find("moqui.agent.AgentMessage")?
+            .condition(crate::window::active_messages(&run.conversation_id, through))
+            .eq("role", Value::string("tool"))
+            .select_field("messageId")
+            .disable_authz()
+            .list()?
             .values()
             .iter()
-            .map(|row| text_of(row, "role").unwrap_or_default())
-            .take_while(|role| role != "user")
-            .any(|role| role == "tool"),
+            .filter_map(|row| text_of(row, "messageId").map(Value::string))
+            .collect();
+        if results.is_empty() {
+            return Ok(false);
+        }
+        let calls: Vec<Value> = facade
+            .find("moqui.agent.AgentMessagePart")?
+            .condition(Condition::is_in("messageId", results))
+            .select_field("toolCallId")
+            .disable_authz()
+            .list()?
+            .values()
+            .iter()
+            .filter_map(|row| text_of(row, "toolCallId").map(Value::string))
+            .collect();
+        if calls.is_empty() {
+            return Ok(true);
+        }
+        // the framework's own answers (a fact kept, a skill saved, the user's answer to a question) are no outside text
+        let read_outside = facade
+            .find("moqui.agent.AgentToolCall")?
+            .condition(Condition::is_in("toolCallId", calls))
+            .select_field("toolName")
+            .disable_authz()
+            .list()?
+            .values()
+            .iter()
+            .any(|row| !OWN_TOOLS.contains(&text_of(row, "toolName").unwrap_or_default().as_str()));
+        Ok(read_outside)
+    });
+    match read {
+        Ok(read) => read,
         Err(error) => {
             tracing::error!(
                 "the messages of agent conversation {} could not be read: {error}",

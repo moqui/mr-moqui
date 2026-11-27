@@ -385,6 +385,49 @@ pub struct ResourceStat {
     pub last_modified: Option<i64>,
 }
 
+/// What the storage names a file's content by ([`ResourceFacade::content_address`]): what a reader records to stay on
+/// that content (`plans/archive/Maps.md` §5), with `tag`, the strong validator the content has when it is opened, to pin it by
+/// ([`crate::web::send_pinned_response`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContentAddress {
+    pub kind: ContentKind,
+    /// The SHA-256 of the bytes (hex) for an LFS object, a content blob or a digest; the git blob id for a git object.
+    pub id: String,
+    /// The size in bytes of the content (an LFS object's, not its pointer's).
+    pub size: u64,
+    /// The content's [`crate::resource::source::ByteSource::tag`] as [`ResourceFacade::open`] opens it (`sha256-<hex>`,
+    /// `git-<blob id>`): the checksum a pinned response compares with the content it sends.
+    pub tag: String,
+}
+
+/// How a [`ContentAddress`] is kept.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContentKind {
+    /// A Git LFS object whose content the repository has, read by range from its content blob.
+    GitLfs,
+    /// A git object that is not in LFS (or an LFS pointer whose content the repository lacks, which reads as the
+    /// pointer); a `db` repository's large object is read by range from its content blob, any other whole.
+    GitObject,
+    /// A content blob of a `dbresource://` file over the blob threshold, read by range.
+    ContentBlob,
+    /// Bytes kept in a row (a small `dbresource://` file or version), named by their SHA-256, read whole to work it
+    /// out.
+    Digest,
+}
+
+impl ContentKind {
+    /// The name a script or a record keeps: `git-lfs`, `git-object`, `content-blob`, `digest`.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::GitLfs => "git-lfs",
+            Self::GitObject => "git-object",
+            Self::ContentBlob => "content-blob",
+            Self::Digest => "digest",
+        }
+    }
+}
+
 /// A file opened by [`ResourceFacade::open`].
 #[derive(Clone)]
 pub struct Opened {
@@ -550,18 +593,11 @@ impl ResourceFacade {
     /// The file at a location to read a window at a time, for a response, with what it is: `None` when no file is
     /// there. A file on disk is read as it is sent; other storage on the first read, or a window at a time where it
     /// can (a content blob). A `#versionName` suffix opens that version on storage that keeps versions, as
-    /// [`Self::location_bytes`] reads it.
+    /// [`Self::location_bytes`] reads it ([`Self::open_version`]).
     pub fn open(&self, location: &str) -> Result<Option<Opened>, Error> {
         if let Some((path, version_name)) = split_version(location) {
             if self.supports_version(path) {
-                return Ok(self.read_version(path, version_name)?.map(|bytes| Opened {
-                    stat: ResourceStat {
-                        is_file: true,
-                        size: bytes.len() as u64,
-                        last_modified: None,
-                    },
-                    source: Arc::new(crate::resource::source::MemorySource::new(bytes)),
-                }));
+                return self.open_version(path, version_name);
             }
         }
         if let Some(provider) = self.provider(location) {
@@ -940,6 +976,75 @@ impl ResourceFacade {
         }
     }
 
+    /// One version of a file to read a window at a time, as [`Self::read_version`] reads it, or `None`. A version whose
+    /// storage reads by range is opened that way with a strong tag, never read whole into memory: a Git LFS object or
+    /// a `db` repository's large object (its content blob), a `dbresource://` version over the blob threshold (its
+    /// content blob). A git object on the filesystem store is deflated, so it is read whole on the first read; a
+    /// small row, or a `dbresource://` text version kept as a reverse delta, is in memory.
+    pub fn open_version(&self, location: &str, version_name: &str) -> Result<Option<Opened>, Error> {
+        let location = strip_hash(location);
+        let opened = match self.versioned(location)? {
+            Versioned::Provider(provider) => provider.open_version(location, version_name)?,
+            Versioned::Db(facade) => facade
+                .open_db_resource_version(location, version_name)
+                .map_err(Error::from)?
+                .map(|(stat, source)| {
+                    let stat = ResourceStat {
+                        is_file: true,
+                        size: stat.size,
+                        last_modified: stat.last_updated,
+                    };
+                    (stat, source)
+                }),
+            Versioned::None => None,
+        };
+        Ok(opened.map(|(stat, source)| Opened { stat, source }))
+    }
+
+    /// What the storage names the content of the file at `location` by (a `#versionName` suffix: that version's), for
+    /// a reader to record and pin: a Git LFS object's oid, a git object's id, a `dbresource://` content blob's SHA-256
+    /// or the digest of a small file kept in its row. `None` where the storage keeps no such address (a file on disk)
+    /// and when nothing is there.
+    pub fn content_address(&self, location: &str) -> Result<Option<ContentAddress>, Error> {
+        let (path, version_name) = match split_version(location) {
+            Some((path, version_name)) => (path, Some(version_name)),
+            None => (strip_hash(location), None),
+        };
+        if let Some(provider) = self.provider(path) {
+            return provider.content_address(path, version_name);
+        }
+        if scheme_of(path) != "dbresource" {
+            return Ok(None);
+        }
+        let facade = self.db_facade()?;
+        if let Some(info) = facade
+            .db_resource_content_blob(path, version_name)
+            .map_err(Error::from)?
+        {
+            return Ok(Some(ContentAddress {
+                kind: ContentKind::ContentBlob,
+                tag: format!("sha256-{}", info.id),
+                id: info.id,
+                size: info.size,
+            }));
+        }
+        // kept in its row (or rebuilt from reverse deltas): its digest, which the source opened for it is tagged by
+        let opened = match version_name {
+            Some(version_name) => facade.open_db_resource_version(path, version_name),
+            None => facade.open_db_resource(path),
+        }
+        .map_err(Error::from)?;
+        Ok(opened.and_then(|(_, source)| {
+            let tag = source.tag()?;
+            Some(ContentAddress {
+                kind: ContentKind::Digest,
+                id: tag.strip_prefix("sha256-").unwrap_or(&tag).to_string(),
+                size: source.len(),
+                tag,
+            })
+        }))
+    }
+
     /// The text of one version (`getText(versionName)`); bytes that are not UTF-8 are decoded lossily.
     pub fn version_text(&self, location: &str, version_name: &str) -> Result<Option<String>, Error> {
         Ok(self
@@ -1114,7 +1219,8 @@ fn db_snap(info: &DbResourceInfo, facade: EntityFacade) -> DbSnap {
     }
 }
 
-fn scheme_of(location: &str) -> &str {
+/// The scheme a location is served by: what is before its first `:` (two characters or more, with no `/`), else `file`.
+pub(crate) fn scheme_of(location: &str) -> &str {
     match location.split_once(':') {
         Some((scheme, _)) if scheme.len() > 1 && !scheme.contains('/') => scheme,
         _ => "file",

@@ -87,7 +87,8 @@ without booting a node (`client/conf.rs`: `MoquiDefaultConf.xml`, each component
 conf, merged as the framework would); the server does not read it.
 
 ```xml
-<client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"/>
+<client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"
+    packages-max-mb="4096"/>
 ```
 
 | Attribute | Default | What |
@@ -97,6 +98,7 @@ conf, merged as the framework would); the server does not read it.
 | `prefetch-rooms` | 20 | how many of the latest rooms a shared device reads ahead (each room's latest page); 0 for none |
 | `prefetch-mail` | 100 | how many of the inbox's latest threads a shared device reads ahead; 0 for none |
 | `store-max-mb` | 512 | the size cap of an account's store; past it the least recently read cached data goes, never unsent items or drafts |
+| `packages-max-mb` | 4096 | the size cap of an account's [offline map packages](#offline-map-packages), outside the store's; a download past it is refused |
 
 A bad value is logged and its default used; a runtime with no framework conf, or one that does not parse, gives the
 defaults. The element is in `mr-moqui-conf.xsd`; the parsing is `moqui_client::conf`.
@@ -105,8 +107,8 @@ defaults. The element is in `mr-moqui-conf.xsd`; the parsing is `moqui_client::c
   choice (password and SSO alike). An account already personal stays personal when shared is chosen: nothing is
   trimmed, and the shell says the account already has a personal device's mirrored data. An account with none follows
   the build's mode.
-- **Shared:** sign-out or a revocation deletes the account's store, its chat store keys and its entry in
-  `accounts.json`, and the pages clear its scoped browser storage and IndexedDB (the shell as it loads, the next app
+- **Shared:** sign-out or a revocation deletes the account's store, its offline map packages, its chat store keys and
+  its entry in `accounts.json`, and the pages clear its scoped browser storage and IndexedDB (the shell as it loads, the next app
   window once). Before a shared sign-out the shell lists what is unsent and asks. The next sign-in creates the account
   again with whatever mode is chosen then.
 - **Personal:** sign-out and revocation keep everything; removing the account deletes it.
@@ -174,6 +176,7 @@ while the window is hidden.
 | `mail-state` | a thread's read, flag, archive, move or trash, as absolute values, in order; shown in the stored rows at once; with `seen` at `clientApi` 4 |
 | `chat-edit`, `chat-redact`, `chat-react`, `poll-vote` | a message's edit, redaction, reaction or poll vote, once by its `clientRef`, the four of one message in order (`clientApi` 4) |
 | `internal-send` | an internal message's send, once by its `clientRef`, where the server's `server.features.internalSendRef` says so (a `mail-send` of one becomes it); no files |
+| `map-place` | a place saved on the offline Maps screen (`{clientRef, label, longitude, latitude}`), sent to Maps' `savePlace` once by its `clientRef`, all in one order, where the server's `server.features.placeRef` says so; a refusal keeps no ref, so its retry may be saved, and a 403 with the server's reason fails rather than waiting for a sign-in (plans/archive/Maps-Offline.md §2.5) |
 
 - **WebrootChat's rules:** no answer, 408, 429 and 5xx are tried again after 2, 5, 15 and 60 seconds; 401 and 403 hold
   until a sign-in or a renewed key, and an operation held three times in a row fails; another 4xx fails with the
@@ -198,6 +201,55 @@ while the window is hidden.
 
 The pages reach these through `moquiDesktop.outbox` and `moquiDesktop.drafts`, for the calling window's account
 ([Qvt-Client](Qvt-Client.md#in-the-desktop-app)); the shell's `outbox.unsent()` lists what a shared sign-out would delete.
+
+## Offline map packages
+
+A map region the user downloads to read with no network (plans/archive/Maps-Offline.md §2.4; what a package holds, how the
+server builds it, the offline screen and the limits are [Maps, Offline packages](../tools/Maps.md#offline-packages)),
+kept by `moqui_client::packages`, the commands in `moqui_client_tauri::packages`, read by the shell's bundled offline
+Maps screen.
+
+- **Where:** `client/data/<account>.packages/<packageId>/<revision>/`, beside the store, owner-only as it is (folders
+  0700, files 0600), outside `store-max-mb`, within `packages-max-mb` for the account's packages; a download starts
+  only when the disk has room for the rest of the file, its unpacked copy and 64 MB more (`statvfs`, or
+  `GetDiskFreeSpaceExW` on Windows; skipped, logged, where neither answers), and the cap counts what the account's other
+  downloads under way still have to fetch. A personal account keeps them across sign-outs; a shared one's go at its
+  sign-out or revocation, and removing an account deletes them (`Packages::forget`, with the store), no empty folder
+  named after the server left behind. A package id or member path that Windows keeps for a device (CON, NUL, COM1 and
+  the rest, with any extension) is refused on every system; an account id is refused one only on Windows, and only for
+  a new store or download there, never when its data is forgotten.
+- **The download** is a task of the host (a thread of its own), with the account's key as the outbox's requests: the
+  server's `packageList` for the revision's tag and size, the zip by ranges of 4 MiB with `If-Range` the tag into
+  `<revision>.zip.part`, resumed from its length by the next try; the whole file's SHA-256 against the tag; each member
+  the manifest lists unpacked with its size and SHA-256 checked (a stored zip read by its central directory: a member
+  outside the manifest, a missing, compressed, encrypted or symlink one, a path outside the folder or one member past
+  2 GiB refuses the package); then the revision's folder put in place by rename and the earlier one removed. A failed
+  check keeps the revision the device had; a 409 reads the list again and offers the new revision (`stale`). One run
+  at a time holds a package: a download asked while a cancelled or other revision's run is still stopping is refused
+  for a moment. A cancel with no run under way (a failed or paused download, or one of before the app started) removes
+  its part at once.
+- **The page reads it** at `/__moqui-app/maps/<packageId>/<path>` on the shell's origin, from the shell's own webview
+  only (every webview has the schemes, so a server page could otherwise embed it as an image or a font; a request whose
+  `Origin` or `Sec-Fetch-Site` names another origin is refused too), never forwarded and never on the app windows'
+  origin (every account's server pages share it and run the server's code): the current account's
+  installed revision, HEAD, GET and one `Range` as a 206 slice read from the file (at most 16 MiB; the body is whole,
+  as the runtimes take it, so a file past 16 MiB is not answered whole: 413, ask by range), the member's SHA-256 its
+  `ETag`, `Cache-Control: no-store` (the URL names no account), a path the manifest does not list 404, no 304.
+- **Commands** (the shell's, with its nonce, `moquiDesktop.packages`): `list` (`packages_list`: the server's list, null
+  offline, and the device's), `download(packageId, revision)` (`packages_download`), `cancel` (`packages_cancel`, its
+  part goes), `remove` (`packages_delete`) and `status` (`packages_status`: each installed package's id, name, revision,
+  size, region and zooms, and a download's `state`: `queued`, `downloading` with `done` and `total`, `checking`,
+  `installed`, `failed` with `code` and `retry`, `cancelled` or `stale` with the new `revision`), and
+  `addresses(packageId, text, {country, near, limit})` (`packages_addresses`: the package's Overture addresses matched
+  by the server's address matching, `moqui_lib::geo::address`, in the host). Never a path.
+- **The offline screen** (`Shell/MapsOffline`, plans/archive/Maps-Offline.md §2.5): the drawer's Maps opens Maps' Browse in an
+  app window when the server answers and this screen when it does not (the shell's `isOffline`, from
+  `moqui.connection`), Offline maps opens it always. It lists, downloads, updates, cancels and deletes the packages;
+  opens one with `m-map` in package mode (its manifest's configuration, every request under the package's path), says
+  it is offline and when the package was built, shows its sources as text, searches its places, postal codes, Overture
+  places and addresses, and saves a place as a `map-place` outbox item. What it reads of a package's files is kept in
+  memory for the account and revision only: the URL carries no account, so after a switch the same URL is another
+  account's.
 
 ## The server's sync contracts
 
@@ -329,11 +381,13 @@ goes by `uploadChunk` in 1 MB chunks, its progress kept, and after a restart or 
 
 ## Bundled screens and app windows
 
-`shell/bundled-screens.txt` lists the screens bundled with the app: the shell's own Root and SignIn, and BasicComms'
+`shell/bundled-screens.txt` lists the screens bundled with the app: the shell's own Root, SignIn and MapsOffline (the
+offline Maps screen, [above](#offline-map-packages)), and BasicComms'
 chat panel, Chat, Inbox (Mail), Compose, Calls/Call, Calls/Dialer and Settings/Devices (My devices), from their `.qvue`
 files, the web's own source.
 They are precompiled into `shell/js/bundled-screens.js` with WebrootCall.js's components in `WebrootCall.render.js`,
-and the libraries they load (tiptap, the crypto library) are in `libs.txt`; a golden test checks both
+and the libraries they load (tiptap, the crypto library, OpenLayers' main part: a line `<lib> <part>` stages only the
+files the library's `parts.json` lists for the part) are in `libs.txt`; a golden test checks both
 (`UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled`, `call_components_are_precompiled`).
 
 - **In the shell:** Root routes those screens with its own history under the account's comms app (`calls.appRoot` of the
@@ -424,6 +478,23 @@ the same as in a browser ([Comms, Boards and the stage](../tools/Comms.md)).
 - A window kept out of screen capture (`secureScreen`, a view-once photo open) is black in a share, as the OS keeps it.
 
 The live checks for each OS are in [Testing-Needed](../../plans/Testing-Needed.md#desktop-and-mobile-apps).
+
+## Live location
+
+A live location share started in Maps (plans/archive/Location-Sharing.md §3.4, [Maps, Live location](../tools/Maps.md#live-location))
+is sent from the desktop as from a browser: Browse's own `watchPosition` while its window is open, and nothing once it
+closes (the share stays on and goes stale; the desktop has no background sender and no `moquiDesktop.location`). Its
+requests carry the account's device key, so a share started here is bound to this computer, and Send from here takes
+one over from another device. Its reports carry the share's audience version the page read; on a change (409
+`AUDIENCE_CHANGED`) the page reads the shares again and goes on with the new version, shown in its banner: it is
+read again, not confirmed as the phone's own dialog confirms it. A server's page gets `Permissions-Policy`
+`geolocation=(self)` (`moqui_client_tauri::scheme::PAGE_PERMISSIONS_POLICY`), which lets Browse, the window's own
+document, ask and keeps a frame of another origin from it. The permission is left to CEF (`bridge::on_permission` answers the camera, the
+microphone and screen capture only): Chrome style (Linux, Windows) asks the person with Chromium's prompt; macOS's Alloy
+style takes it. Whether a position comes is Chromium's location providers' and is not yet tried on a built app: Linux's
+network provider wants a Google API key CEF builds lack, and macOS wants a location entitlement and purpose text the app
+does not declare ([proofs](../security/proofs/clients/README.md), MASVS-PRIVACY-1); with none, Browse says the browser
+gave no location and the share goes stale.
 
 ## Offline in the screens
 
@@ -517,12 +588,16 @@ leaves them alone (`pushDelivers`) and only tells the host which room shows (`ro
 All of these are framework tests in the regression suite, run while working on the client and before a commit
 ([the two suites](../Build-Test.md#the-two-suites)).
 
-- `cargo test -p moqui-client`: accounts, keys, sign-in, proxy, sockets, the store and the conf;
+- `cargo test -p moqui-client`: accounts, keys, sign-in, proxy, sockets, the store, the conf and the map packages
+  (`packages::tests`: ranges, resume, checksums, the manifest's bounds, the wipe, the caps, a 409; `packages::addresses`:
+  a package's addresses matched as the server matches them), a saved place's outbox item (`sync::flush`), a library
+  staged by its part (`assets`);
   `scripts/check-android.sh` for the Android build.
 - `cd crates/moqui-desktop && cargo test`: the schemes, offline answers, pushes, the
   mirror, modes, the outbox and flusher, windows.
 - `moqui test-client webroot --offline`: MoquiLib's drafts and connection, WebrootChat's host outbox and import, its
-  notification rules and missed rooms.
+  notification rules and missed rooms; m-map's package mode (`WebrootMap`) and the offline Maps screen with the shell's
+  Maps entry (`ShellMapsOffline`).
 - `moqui test-client basic-comms --offline`: MD5's states in the shell (`ShellSync`: a lost answer then a retry, a
   duplicate push, a reconnect after a feed reset, a thread change's and a send's conflict with the copy opened, a
   refusal with Retry and Discard, a revoked key mid-queue) and the notification check's rows, fix and test time.

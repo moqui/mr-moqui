@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The browser module's raw `extern "C"` ABI (plans/Vault-Instances.md §3.6), modelled on moqui-browser's exports:
+//! The browser module's raw `extern "C"` ABI (plans/archive/Vault-Instances.md §3.6), modelled on moqui-browser's exports:
 //! the worker copies a JSON request into a buffer from [`moqui_vault_alloc`], calls [`moqui_vault_call`], reads the
 //! answer by its handle ([`moqui_vault_result_ptr`], [`moqui_vault_result_len`]) and frees it
 //! ([`moqui_vault_result_free`], which zeroes it first). Randomness is the page's `crypto.getRandomValues`, imported

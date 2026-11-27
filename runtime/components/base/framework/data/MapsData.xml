@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The registry of Geo data sets (plans/archive/Maps.md §6.4): the sources the importer supports first, their identity, parser,
+    license and attribution; where each is downloaded from, its year and its priority are in MapsSetupData.xml
+    (seed-initial), which an administrator may change. Nothing here is downloaded or loaded until an administrator
+    imports a set from Maps › Configuration › Geo data, after acknowledging its license (licenseAckUserId, which these rows
+    leave alone, so loading the seed again keeps an acknowledgement). An administrator adds a row for a mirror or a later
+    year, with the same sourceKey. Each set's DataSource is the source of the GeoPoint rows it makes. -->
+<entity-facade-xml type="seed">
+    <moqui.basic.DataSource dataSourceId="CENSUS_ZCTA" dataSourceTypeEnumId="DST_GEO_DATA_SET" description="US Census Gazetteer: ZCTAs"/>
+    <moqui.basic.DataSource dataSourceId="CENSUS_COUNTY" dataSourceTypeEnumId="DST_GEO_DATA_SET" description="US Census Gazetteer: Counties"/>
+    <moqui.basic.DataSource dataSourceId="CENSUS_PLACE" dataSourceTypeEnumId="DST_GEO_DATA_SET" description="US Census Gazetteer: Places"/>
+    <moqui.basic.DataSource dataSourceId="CENSUS_ZCTA_COUNTY" dataSourceTypeEnumId="DST_GEO_DATA_SET" description="US Census 2020 ZCTA to County relationship"/>
+    <moqui.basic.DataSource dataSourceId="GEONAMES_POSTAL" dataSourceTypeEnumId="DST_GEO_DATA_SET" description="GeoNames postal codes"/>
+    <moqui.basic.DataSource dataSourceId="GEONAMES_COUNTRY" dataSourceTypeEnumId="DST_GEO_DATA_SET" description="GeoNames country information"/>
+    <moqui.basic.DataSource dataSourceId="GEONAMES_ADMIN1" dataSourceTypeEnumId="DST_GEO_DATA_SET" description="GeoNames first-level divisions"/>
+    <moqui.basic.DataSource dataSourceId="GEONAMES_ADMIN2" dataSourceTypeEnumId="DST_GEO_DATA_SET" description="GeoNames second-level divisions"/>
+    <moqui.basic.DataSource dataSourceId="GEONAMES_CITIES15000" dataSourceTypeEnumId="DST_GEO_DATA_SET" description="GeoNames cities over 15,000 people"/>
+    <moqui.basic.DataSource dataSourceId="OPERATOR_CSV" dataSourceTypeEnumId="DST_GEO_DATA_SET" description="An operator's postal code file"/>
+
+    <!-- US Census Gazetteer (public domain): yearly zips of pipe-delimited text with a header line. ZCTA: GEOID, areas,
+        INTPTLAT, INTPTLONG, no name or state; a ZCTA approximates a ZIP delivery area and not every ZIP has one. Counties and
+        Places: the state's USPS code, FIPS GEOID and NAME. -->
+    <moqui.maps.GeoDataSet dataSetId="CENSUS_ZCTA" sourceKey="CENSUS_ZCTA" publisher="US Census Bureau" parserEnumId="GDP_CENSUS" yieldsEnumId="GDY_POSTAL_POINTS"
+            description="Gazetteer ZIP Code Tabulation Areas: about 34,000 postal-area points (internal points). A ZCTA approximates a ZIP delivery area for statistics; it is not a USPS ZIP registry."
+            coverageGeoId="USA" perCountry="N"
+            licenseName="Public domain" attribution="Source: U.S. Census Bureau, Gazetteer Files"
+            sourceUrl="https://www.census.gov/geographies/reference-files/time-series/geo/gazetteer-files.html" dataSourceId="CENSUS_ZCTA"/>
+    <moqui.maps.GeoDataSet dataSetId="CENSUS_COUNTY" sourceKey="CENSUS_CNTY" publisher="US Census Bureau" parserEnumId="GDP_CENSUS" yieldsEnumId="GDY_COUNTIES"
+            description="Gazetteer Counties: county Geos with FIPS codes, names, state and internal points."
+            coverageGeoId="USA" perCountry="N"
+            licenseName="Public domain" attribution="Source: U.S. Census Bureau, Gazetteer Files"
+            sourceUrl="https://www.census.gov/geographies/reference-files/time-series/geo/gazetteer-files.html" dataSourceId="CENSUS_COUNTY"/>
+    <moqui.maps.GeoDataSet dataSetId="CENSUS_PLACE" sourceKey="CENSUS_PLC" publisher="US Census Bureau" parserEnumId="GDP_CENSUS" yieldsEnumId="GDY_PLACES"
+            description="Gazetteer Places: city and place Geos with FIPS codes, names, state and internal points; imported by choice."
+            coverageGeoId="USA" perCountry="N"
+            licenseName="Public domain" attribution="Source: U.S. Census Bureau, Gazetteer Files"
+            sourceUrl="https://www.census.gov/geographies/reference-files/time-series/geo/gazetteer-files.html" dataSourceId="CENSUS_PLACE"/>
+    <!-- Confirmed November 25, 2026: a bare text file (6.5 MB, not zipped), pipe-delimited, a header line that starts with a
+        UTF-8 byte order mark; 18 columns, GEOID_ZCTA5_20 second, GEOID_COUNTY_20 tenth, AREALAND_PART seventeenth. A row for
+        the part of a county outside every ZCTA has the ZCTA columns empty. The county of a ZCTA is the one with the largest
+        AREALAND_PART. -->
+    <moqui.maps.GeoDataSet dataSetId="CENSUS_ZCTA_COUNTY" sourceKey="CENSUS_ZCCO" publisher="US Census Bureau" parserEnumId="GDP_CENSUS" yieldsEnumId="GDY_POSTAL_COUNTY"
+            description="2020 ZCTA to County relationship file: the county, and through it the state, of each ZCTA (the largest land share where it spans several). Pipe-delimited text with a header, not zipped."
+            coverageGeoId="USA" perCountry="N" licenseName="Public domain"
+            attribution="Source: U.S. Census Bureau, 2020 ZCTA Relationship Files"
+            sourceUrl="https://www.census.gov/programs-surveys/geography/technical-documentation/records-layout/2020-zcta-record-layout.html"
+            dataSourceId="CENSUS_ZCTA_COUNTY"/>
+
+    <!-- GeoNames (CC BY 4.0, attribution shown): tab-delimited UTF-8 text, no header. {country} is the ISO alpha-2 code (US).
+        countryCodes: the 124 country files of download.geonames.org/export/zip/ (November 25, 2026), the countries Import
+        offers; CA_full, GB_full and NL_full are other sets an administrator adds. -->
+    <moqui.maps.GeoDataSet dataSetId="GEONAMES_POSTAL" sourceKey="GN_POSTAL" publisher="GeoNames" parserEnumId="GDP_GEONAMES" yieldsEnumId="GDY_POSTAL_POINTS"
+            description="Postal codes a country at a time (124 countries): code, place name, three levels of admin names and codes, point and accuracy (1 estimated, 4 the place's own, 6 centroid of addresses or shape). Some countries have partial codes or coverage (Chile, China, Ireland, Malta, Argentina, Brazil); Canada, the Netherlands and Great Britain have only the first part of the code here."
+            perCountry="Y"
+            countryCodes="AD,AE,AI,AL,AM,AR,AS,AT,AU,AX,AZ,BD,BE,BG,BM,BR,BY,CA,CC,CH,CL,CN,CO,CR,CX,CY,CZ,DE,DK,DO,DZ,EC,EE,ES,FI,FK,FM,FO,FR,GB,GF,GG,GI,GL,GP,GS,GT,GU,HK,HM,HN,HR,HT,HU,ID,IE,IM,IN,IO,IS,IT,JE,JP,KE,KR,LI,LK,LT,LU,LV,MA,MC,MD,MH,MK,MN,MO,MP,MQ,MT,MW,MX,MY,NC,NF,NL,NO,NR,NU,NZ,PA,PE,PF,PH,PK,PL,PM,PN,PR,PT,PW,PY,RE,RO,RS,RU,SE,SG,SI,SJ,SK,SM,TC,TH,TR,UA,US,UY,VA,VI,WF,WS,YT,ZA"
+            licenseName="CC BY 4.0" licenseUrl="https://creativecommons.org/licenses/by/4.0/"
+            attribution="GeoNames (geonames.org), CC BY 4.0" sourceUrl="https://download.geonames.org/export/zip/readme.txt"
+            dataSourceId="GEONAMES_POSTAL"/>
+    <moqui.maps.GeoDataSet dataSetId="GEONAMES_COUNTRY" sourceKey="GN_COUNTRY" publisher="GeoNames" parserEnumId="GDP_GEONAMES" yieldsEnumId="GDY_COUNTRIES"
+            description="Country information: codes, names, capital, postal code format and regular expression. Comment lines start with #."
+            perCountry="N"
+            licenseName="CC BY 4.0" licenseUrl="https://creativecommons.org/licenses/by/4.0/"
+            attribution="GeoNames (geonames.org), CC BY 4.0" sourceUrl="https://download.geonames.org/export/dump/readme.txt"
+            dataSourceId="GEONAMES_COUNTRY"/>
+    <moqui.maps.GeoDataSet dataSetId="GEONAMES_ADMIN1" sourceKey="GN_ADMIN1" publisher="GeoNames" parserEnumId="GDP_GEONAMES" yieldsEnumId="GDY_ADMIN1"
+            description="First-level divisions (states, provinces). Codes are FIPS except for the US, Switzerland, Belgium and Montenegro, which are ISO; a code is kept as the source's own, never written to an ISO field."
+            perCountry="N"
+            licenseName="CC BY 4.0" licenseUrl="https://creativecommons.org/licenses/by/4.0/"
+            attribution="GeoNames (geonames.org), CC BY 4.0" sourceUrl="https://download.geonames.org/export/dump/readme.txt"
+            dataSourceId="GEONAMES_ADMIN1"/>
+    <moqui.maps.GeoDataSet dataSetId="GEONAMES_ADMIN2" sourceKey="GN_ADMIN2" publisher="GeoNames" parserEnumId="GDP_GEONAMES" yieldsEnumId="GDY_ADMIN2"
+            description="Second-level divisions (counties, districts)."
+            perCountry="N"
+            licenseName="CC BY 4.0" licenseUrl="https://creativecommons.org/licenses/by/4.0/"
+            attribution="GeoNames (geonames.org), CC BY 4.0" sourceUrl="https://download.geonames.org/export/dump/readme.txt"
+            dataSourceId="GEONAMES_ADMIN2"/>
+    <moqui.maps.GeoDataSet dataSetId="GEONAMES_CITIES15000" sourceKey="GN_CITIES" publisher="GeoNames" parserEnumId="GDP_GEONAMES" yieldsEnumId="GDY_PLACES"
+            description="Cities of more than 15,000 people (about 25,000) with points. cities5000, cities1000 and cities500 (about 185,000) are rows of their own an administrator adds."
+            perCountry="N"
+            licenseName="CC BY 4.0" licenseUrl="https://creativecommons.org/licenses/by/4.0/"
+            attribution="GeoNames (geonames.org), CC BY 4.0" sourceUrl="https://download.geonames.org/export/dump/readme.txt"
+            dataSourceId="GEONAMES_CITIES15000"/>
+
+    <!-- An operator's file: no download. CSV with a header of our own: country, code, place, admin1, admin2, latitude,
+        longitude, precision. Chosen deliberately (a licensed or national set the operator converted), so its point is
+        preferred. -->
+    <moqui.maps.GeoDataSet dataSetId="OPERATOR_CSV" sourceKey="OPERATOR" publisher="Operator" parserEnumId="GDP_OPERATOR_CSV" yieldsEnumId="GDY_POSTAL_POINTS"
+            description="An operator's CSV, from an upload or a resource location: a licensed or national data set the operator converted, or an installation with no outside access. Columns: country, code, place, admin1, admin2, latitude, longitude, precision."
+            perCountry="N" licenseName="The operator's" dataSourceId="OPERATOR_CSV"/>
+
+    <!-- The importer's jobs (GeoDataServices.xml): GeoDataImport runs one import a Maps › Configuration › Geo data Import or
+        Refresh started (start#GeoDataImport makes its pending run, and the job runs as the administrator who started it);
+        GeoDataRefresh imports again every scope whose last run ended well (request#GeoDataRefresh runs it now; its schedule,
+        cronExpression and the runAsUserId parameter, is set by schedule#GeoDataRefresh and left alone by these rows). A run
+        downloads and loads for minutes, in transactions of its own: no time limit on its scripts, a day for the run. Each
+        notifies the user it ran as and the job's users. -->
+    <moqui.security.user.NotificationTopic topic="GeoDataImport" inboxEnumId="NinUpdates" description="Geo data import"
+            typeString="success" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="Geo data import ${results.geoDataImportId || ''}: ${results.statusId === 'GdiCompleted' ? 'completed' : results.statusId === 'GdiUnchanged' ? 'the source is unchanged' : results.statusId === 'GdiCancelled' ? 'cancelled' : 'did not complete'}"
+            errorTitleTemplate="Geo data import did not run: see Maps › Configuration › Geo data"
+            linkTemplate="/qapps/maps/Configuration/GeoData"/>
+    <moqui.security.user.NotificationTopic topic="GeoDataRefresh" inboxEnumId="NinUpdates" description="Geo data refresh"
+            typeString="success" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="Geo data refresh: ${results.outcome || 'done'}" errorTitleTemplate="Geo data refresh did not run: see Maps › Configuration › Geo data"
+            linkTemplate="/qapps/maps/Configuration/GeoData"/>
+    <moqui.service.job.ServiceJob jobName="GeoDataImport" description="Import a Geo data set"
+            serviceName="org.moqui.maps.GeoDataServices.import#GeoData" topic="GeoDataImport" transactionTimeout="86400" noTimeLimit="Y"/>
+    <moqui.service.job.ServiceJob jobName="GeoDataRefresh" description="Refresh the imported Geo data"
+            serviceName="org.moqui.maps.GeoDataServices.run#GeoDataRefresh" topic="GeoDataRefresh" transactionTimeout="86400" noTimeLimit="Y"/>
+    <!-- a user's overlay too large to draw whole, simplified into vector tiles beside its file (MapOverlays.js buildTiles,
+        docs/tools/Maps.md "Large overlays"): run as the user who asked, who is told when it ends -->
+    <moqui.security.user.NotificationTopic topic="MapOverlayTiles" inboxEnumId="NinUpdates" description="Map overlay simplified"
+            typeString="success" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="Map overlay ${results.label || ''}: ${results.tilesStatus === 'ready' ? 'simplified for drawing' : results.tilesStatus === 'cancelled' ? 'simplifying cancelled' : 'not simplified'}"
+            errorTitleTemplate="Map overlay not simplified: see Maps › Layers" linkTemplate="/qapps/maps/Browse"/>
+    <moqui.service.job.ServiceJob jobName="MapOverlayTiles" description="Simplify a map overlay into vector tiles"
+            serviceName="org.moqui.maps.MapSourceServices.build#OverlayTiles" topic="MapOverlayTiles" transactionTimeout="3600"/>
+    <!-- an offline map package built from what its owner may see (MapPackages.js buildPackage, plans/archive/Maps-Offline.md §2.2):
+        started by whichever request or build's end found the installation room for it, so the run signs in as the
+        package's owner, and the owner alone is told when it ends (the build sends the topic's notification itself, directly
+        to them: the job has no topic, which would tell the user who started it). A regional cut may take long, so its
+        transaction timeout is a day. The hourly clean removes the files of deleted packages and those not downloaded for
+        maps@package-keep-days, and starts a waiting build whose turn was missed. -->
+    <moqui.security.user.NotificationTopic topic="MapPackageBuild" inboxEnumId="NinUpdates" description="Offline map built"
+            typeString="success" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="Offline map ${name || ''}: ${outcome || ''}" linkTemplate="/qapps/maps/Offline"/>
+    <moqui.service.job.ServiceJob jobName="MapPackageBuild" description="Build an offline map package"
+            serviceName="org.moqui.maps.MapSourceServices.build#Package" transactionTimeout="86400" noTimeLimit="Y"/>
+    <moqui.service.job.ServiceJob jobName="clean_MapPackages_hourly" description="Remove the files of deleted and expired offline map packages"
+            serviceName="org.moqui.maps.MapSourceServices.clean#MapPackages" cronExpression="0 23 * * * ?" paused="N" errorHistoryOnly="Y"/>
+</entity-facade-xml>

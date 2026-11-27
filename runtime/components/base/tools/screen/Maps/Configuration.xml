@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Maps › Configuration (plans/archive/Maps.md §3.1, §4.2; docs/tools/Maps.md): the installation's map providers, profiles and
+    layers, the outside-request policy and readiness (Settings, with a provider's page in ConnectionDetail), and the Geo
+    data sets and their imports (GeoData). MAPS_ADMIN (data/MapsSecurityData.xml): ADMIN's, and denied to MAPS_USERS. The
+    always-actions ask for the caller's own grant of this screen (isPermittedOwn), which every render and transition below
+    runs: an allow of Maps.xml that some app grants its own group is inheritable and would otherwise reach Configuration
+    and the services its transitions call, so it confers nothing here, and an app that shows Configuration under its own
+    root has its administrators hold MAPS_ADMIN themselves (Maps.xml hides the tab from everyone else). Its route key is
+    mapsConfiguration (template/AdminMount.js), and the settings index names it (SettingsEntry maps.configuration). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
+        default-menu-title="Configuration" default-menu-index="9" menu-image="sym_o_settings" menu-image-type="icon">
+    <always-actions>
+        <script><![CDATA[
+            if (!ec.artifactExecution.isPermittedOwn('component://tools/screen/Maps/Configuration.xml', 'AT_XML_SCREEN', 'view')) {
+                // worded and marked as the framework's own refusal of an artifact (403 in a request)
+                const refusal = new Error('User ' + (ec.user.userId || '[No User]') + ' is not authorized for AT_XML_SCREEN'
+                    + ' [component://tools/screen/Maps/Configuration.xml] action view: Maps configuration needs the user\'s own MAPS_ADMIN grant')
+                refusal.moquiErrorKind = 'Unauthorized'
+                throw refusal
+            }
+        ]]></script>
+    </always-actions>
+    <subscreens default-item="Settings"/>
+    <widgets>
+        <subscreens-panel id="MapsConfigurationPanel" type="tab"/>
+    </widgets>
+</screen>

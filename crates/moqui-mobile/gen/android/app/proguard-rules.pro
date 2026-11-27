@@ -44,11 +44,24 @@
 # without these R8 may remove or rename ScreenSecurity.set and CalendarIntent.insert in a release build)
 -keep class org.moqui.mobile.ScreenSecurity { *; }
 -keep class org.moqui.mobile.CalendarIntent { *; }
+# ... and live location from the phone (src/android.rs location_allow, location_start, location_stop,
+# location_forget_account; plans/archive/Location-Sharing.md §3.4)
+-keep class org.moqui.mobile.LocationShare { *; }
+-keep class org.moqui.mobile.LocationStops { *; }
+-keep class org.moqui.mobile.LocationStopWorker { public <init>(android.content.Context, androidx.work.WorkerParameters); }
 # ... and Firebase's start once an account signs in, and its token's deletion once none is (src/android.rs fcm_start,
 # fcm_stop; SEC-CLI-121)
 -keep class org.moqui.mobile.Push {
     public static void startFcm(android.content.Context);
     public static void stopFcm(android.content.Context);
+}
+# ... and the offline map downloads' worker (src/android.rs package_worker_start, package_worker_cancel; plans/archive/Maps-Offline.md
+# §2.4)
+-keep class org.moqui.mobile.PackageDownloadWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+    public static java.lang.String start(android.content.Context, java.lang.String, java.lang.String, long, boolean);
+    public static void cancel(android.content.Context, java.lang.String, java.lang.String);
+    public static void cancelAccount(android.content.Context, java.lang.String);
 }
 # ... and whether the phone has a secure lock screen (src/android.rs device_secure; SEC-CLI-113)
 -keep class org.moqui.mobile.DeviceLock { *; }

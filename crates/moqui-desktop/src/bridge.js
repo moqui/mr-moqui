@@ -267,7 +267,7 @@
         // a File or Blob kept by the host for a draft or a send: resolves to its name in the store
         saveFile: (file, name) => base64Of(file).then((data) => ask("file_save", { name: String(name || (file && file.name) || "file"), data }))
     });
-    // The vault module the app runs natively for the window's account (moqui_client_tauri::vault, plans/Vault-Instances.md
+    // The vault module the app runs natively for the window's account (moqui_client_tauri::vault, plans/archive/Vault-Instances.md
     // V5): VaultClient.js calls it in place of its wasm worker, with the same ops; memory is device memory (state,
     // remember, restore, forget). The keys stay in the app.
     // the page's user activation (a click), read with the getter and navigator taken before any page script ran, so a
@@ -343,6 +343,21 @@
         ssoProviders: (server) => shellAsk("client_sso_providers", { server: String(server || "") }),
         ssoStart: (server, authFlowId, deviceMode) => shellAsk("client_sso_start", { server: String(server || ""), authFlowId: String(authFlowId || ""),
             deviceMode: deviceMode ? String(deviceMode) : null }),
-        ssoCancel: () => shellAsk("client_sso_cancel")
+        ssoCancel: () => shellAsk("client_sso_cancel"),
+        // the offline map packages on this computer (plans/archive/Maps-Offline.md §2.4): the server's list and this computer's,
+        // a download (a task of the host), its cancel, a delete and the states; never a path. A package's files are read
+        // at /__moqui-app/maps/<packageId>/<path> on the shell's origin.
+        packages: Object.freeze({
+            list: () => shellAsk("packages_list"),
+            download: (packageId, revision) => shellAsk("packages_download", { packageId: String(packageId || ""),
+                revision: Number(revision) }),
+            cancel: (packageId) => shellAsk("packages_cancel", { packageId: String(packageId || "") }),
+            remove: (packageId) => shellAsk("packages_delete", { packageId: String(packageId || "") }),
+            status: () => shellAsk("packages_status"),
+            // a package's Overture addresses searched by the server's matching (plans/archive/Maps-Offline.md §2.5)
+            addresses: (packageId, text, options) => shellAsk("packages_addresses", { packageId: String(packageId || ""), text: String(text || ""),
+                country: options && options.country ? String(options.country) : null, near: options && Array.isArray(options.near) ? options.near.map(Number) : null,
+                limit: options && options.limit ? Number(options.limit) : null })
+        })
     }));
 })();

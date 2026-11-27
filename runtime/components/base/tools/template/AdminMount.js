@@ -38,8 +38,8 @@ const systemLocation = "component://tools/screen/System.xml"
 // org.moqui.admin.ReadinessServices). Those of the framework's own registrations are here: the lists a check or a card
 // opens (adminJobRuns, adminSystemMessages, adminUsers, adminTopics, adminMessageTypes, adminVisits), a connection's
 // page with its two parameters (adminConnectionDetail), the protocols' home (adminProtocols), Monitor and its sources,
-// the Constitution, the email templates in Tools' data grid, Health narrowed to a provider (adminHealth) and the
-// support summary. Monitor, the Constitution and the visits are System's own screens beside the areas; an app that
+// the Constitution, the email templates in Tools' data grid, Maps' Configuration (mapsConfiguration, the Maps readiness
+// checks'), Health narrowed to a provider (adminHealth) and the support summary. Monitor, the Constitution and the visits are System's own screens beside the areas; an app that
 // shows them elsewhere gives its route. An app's own registrations name keys only its mount gives, so System links
 // none of them.
 const frameworkRoutes = {
@@ -70,7 +70,8 @@ const frameworkRoutes = {
     monitor: {url: "../../Monitor"},
     monitorSources: {url: "../../Monitor/Sources"},
     constitution: {url: "../../Constitution"},
-    emailTemplates: {url: "//apps/tools/Data/Grid", parameters: {entityName: "moqui.basic.email.EmailTemplate"}}
+    emailTemplates: {url: "//apps/tools/Data/Grid", parameters: {entityName: "moqui.basic.email.EmailTemplate"}},
+    mapsConfiguration: {url: "//apps/maps/Configuration"}
 }
 
 // The mount's map, or null. A value that is not a map (a request parameter under a root that set none) is a mount with

@@ -33,8 +33,7 @@ test("the view's builders make the operations of the vectors", async () => {
             const answer = ops[call.builder].apply(null, call.args.map(resolve));
             list = list.concat(call.take ? answer[call.take] : answer);
         }
-        // as JSON: a builder may share a path between two operations, which the comparison would read as a cycle
-        assert.deepEqual(JSON.parse(JSON.stringify(list)), vector.ops, vector.name);
+        assert.deepEqual(list, vector.ops, vector.name);
     }
 });
 
@@ -59,6 +58,19 @@ test("Add field names a field from words and types it by its kind", () => {
     assert.equal(ops.kindOf({ name: "dueDate", type: "date" }, []), "Date");
     assert.equal(ops.kindOf({ name: "partyId", type: "id" }, [{ type: "one", keyMap: { partyId: "partyId" } }]), "Reference");
     assert.equal(ops.xml("a", [["x", "1 < 2 & \"3\""], ["y", ""], ["z", true]]), "<a x=\"1 &lt; 2 &amp; &quot;3&quot;\" z=\"true\"/>");
+});
+
+test("an entity's seed tab shows its own records, or an empty table of its fields to add the first", () => {
+    const entity = { fullEntityName: "moqui.basic.Enumeration", entityName: "Enumeration", fields: [{ name: "enumId" }, { name: "description" }, { name: "lastUpdatedStamp" }] };
+    const outline = { name: "entity-facade-xml", path: [], attrs: [], children: [
+        { name: "moqui.basic.EnumerationType", path: [0], attrs: [["enumTypeId", "T"]] },
+        { name: "Enumeration", path: [1], attrs: [["enumId", "A"]] }] };
+    const own = ops.entityRecordTables(outline, entity);
+    assert.deepEqual(own.map((table) => [table.entity, table.rows.length]), [["Enumeration", 1]]);
+    assert.deepEqual(own[0].columns, ["enumId", "description"], "a row that sets no field still has the entity's cells");
+    const empty = ops.entityRecordTables({ name: "entity-facade-xml", path: [], attrs: [], children: [outline.children[0]] }, entity);
+    assert.deepEqual(empty, [{ entity: "moqui.basic.Enumeration", columns: ["enumId", "description"], rows: [] }]);
+    assert.deepEqual(ops.addRecord({ path: [] }, empty[0], {}).map((op) => [op.op, op.position]), [["insert", "last"]]);
 });
 
 test("a data file's records are tables by entity", () => {

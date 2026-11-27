@@ -78,6 +78,13 @@ For a request to a screen path (`render.rs` `render_screens`):
   `fail-widgets`, the condition only chooses between `widgets` and `fail-widgets`, and the screen is always offered.
 - A widget that fails does not fail the page: "Error rendering ..." is written where its output would have been. A
   security error (not logged in, not authorized, a tarpit) does stop the render.
+- A screen of the path that fails (its actions or its widgets, other than a section's or an included screen's) is
+  written in place the same way, inside the shell above it, but in an html or text render the page then answers the
+  error's status, 500 (503 when the database was unavailable), with `Cache-Control: no-store`: the screen the request
+  addresses is that screen or under it, so the page lost its own content. An error with a status of its own (a
+  `NotFound` thrown in a path screen's `actions`) answers with its error page instead. A qvt or tui subscreen's error is
+  shown inside the parents the client keeps, with the request's status as it was. The first screen's failure is the
+  render's: its error page.
 - `sri.sendRedirectAndStopRender(url)` in `pre-actions` or `always-actions` answers with a redirect and renders
   nothing.
 
@@ -418,6 +425,9 @@ The XML screen beside it declares the mode and the file:
     </render-mode></widgets>
 </screen>
 ```
+
+Such a screen has no html mode. Asked for in html under Standard's `/apps` (its menu, a link, a bookmark), it answers a
+redirect to the same path and query under `/qapps`, where Material renders it; elsewhere an html request is a 404.
 
 ## `moqui lint --screens`
 

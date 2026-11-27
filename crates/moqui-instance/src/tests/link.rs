@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! M2's rules on the manager's rows (plans/Vault-Instances.md §6): a pairing token or code works once, in time, for its
+//! M2's rules on the manager's rows (plans/archive/Vault-Instances.md §6): a pairing token or code works once, in time, for its
 //! instance only, and pins the instance's link key and its environment's approvers; a key not pinned is not linked; a
 //! code is made only for INSTANCE_ADMIN; and SSH, the other transport, runs only operator commands with the key in a
 //! file of its own and the value on standard input.

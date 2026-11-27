@@ -18,9 +18,10 @@ along with this software (see the LICENSE.md file). If not, see
         - allowScriptPages Y (a .fancy page renders as server script for its viewers, render#WikiPage) and a
           decoratorScreenLocation (a screen included around every page) are script stored in a record: DATABASE_ADMIN,
           as Security.eecas.xml's rules;
-        - allowAnyHtml Y and a rootPageLocation other than the space's own (dbresource://WikiSpace/<id>.<type>, or
-          git://WIKI_<id>/<id>.<type>, the repository made for it) need the ADMIN group, or for a git:// location update
-          access to its repository (get#GitRepositoryAccess); a location with .. never.
+        - allowAnyHtml Y needs the ADMIN group; a rootPageLocation other than the space's own
+          (dbresource://WikiSpace/<id>.<type>, or git://WIKI_<id>/<id>.<type>, the repository made for it) needs, for a
+          git:// location, update access to its repository (get#GitRepositoryAccess), for a component:// one the ADMIN
+          group, and for any other DATABASE_ADMIN (SEC-SCR-92); a location with .. never.
         Only a value that changes is checked, and a write with authorization disabled (a data load, a service writing as
         the system) is not, except that:
         - allowScriptPages Y holds only with the space's root at its own dbresource://WikiSpace/<id>.<type> place: a git
@@ -48,8 +49,12 @@ along with this software (see the LICENSE.md file). If not, see
                     const location = String(rootPageLocation)
                     const id = String(wikiSpaceId)
                     const own = (prefix) => location.startsWith(prefix) && !location.slice(prefix.length).includes('/')
+                    // another place: a component's for a system administrator, any other (another record's
+                    // dbresource text, a remote location) only with DATABASE_ADMIN, as Security.eecas.xml holds the
+                    // other location fields (plans/Security-Review-Low.md SEC-SCR-92)
                     let allowed = !location.includes('..') &&
-                            (admin || own(`dbresource://WikiSpace/${id}.`) || own(`git://WIKI_${id}/${id}.`))
+                            (own(`dbresource://WikiSpace/${id}.`) || own(`git://WIKI_${id}/${id}.`)
+                                || (admin && location.startsWith('component://')) || ec.user.hasPermission('DATABASE_ADMIN'))
                     const git = /^git:\/\/([^\/]+)\//.exec(location)
                     if (!allowed && git && !location.includes('..')) {
                         ec.message.pushErrors()
@@ -63,7 +68,7 @@ along with this software (see the LICENSE.md file). If not, see
                             ec.message.popErrors()
                         }
                     }
-                    if (!allowed) refuse("A space's pages go under its own place, or a repository the user may change: another needs a system administrator")
+                    if (!allowed) refuse("A space's pages go under its own place, a repository the user may change, or a component's place for a system administrator: another needs the DATABASE_ADMIN permission")
                 }
             }
         ]]></script></actions>

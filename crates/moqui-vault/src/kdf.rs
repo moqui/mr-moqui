@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Key derivation (plans/Vault-Instances.md §3.2): Argon2id for passwords and passphrases, with a floor that is
+//! Key derivation (plans/archive/Vault-Instances.md §3.2): Argon2id for passwords and passphrases, with a floor that is
 //! refused, a target that a wrap under it is wrapped again to, and a ceiling that is refused; HKDF-SHA256 for keys
 //! from keys.
 

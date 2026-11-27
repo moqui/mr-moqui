@@ -213,7 +213,7 @@ pub fn service_definition_info(name: &str) -> Option<moqui_lib::object::ValueMap
     Some(map)
 }
 
-/// A service as the dev-aide's service view reads it (plans/design-dev-aide.md 9.1): its names, type, location and method,
+/// A service as the dev-aide's service view reads it (plans/archive/design-dev-aide.md 9.1): its names, type, location and method,
 /// its settings, the file and line of its actions, what it implements, and its in- and out-parameters, nested, each
 /// with its type, required, default, allow-html, checks and description; an in-parameter that `auto-parameters`
 /// implies is marked `implied`. `None` when there is no such service.
@@ -494,7 +494,13 @@ fn service_xml(def: &define::ServiceDef) -> String {
     if !def.location.is_empty() {
         node.set_attribute("location", def.location.as_str());
     }
-    for (element, params) in [("in-parameters", &def.in_params), ("out-parameters", &def.out_params)] {
+    // merged by name with the auto-parameters expanded, as Java's node holds them once the definition is made; where
+    // they cannot be expanded (no facade), as declared, the auto-parameters elements kept
+    let facade = super::validate::current_facade();
+    let in_params: Vec<define::ParamDef> = super::validate::declared_in(def, facade.as_ref())
+        .map_or_else(|_| def.in_params.clone(), |params| params.to_vec());
+    let out_params: Vec<define::ParamDef> = super::validate::expanded_out(def).to_vec();
+    for (element, params) in [("in-parameters", &in_params), ("out-parameters", &out_params)] {
         if params.is_empty() {
             continue;
         }

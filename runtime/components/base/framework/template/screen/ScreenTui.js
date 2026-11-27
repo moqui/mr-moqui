@@ -1813,6 +1813,12 @@ ${children}$closeChildren();
     const $code = ((t) => (t && t !== "null" ? String(t).replace(/\\s+$/, "") : ""))(ec.resource.expandNoL10n(${jsString(attr(node, "text") || "")}));
     if ($code) ${htmlNode(jsString(idOf(node)), '"<pre>" + $code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") + "</pre>"')}}
 `)),
+        // a map-view as the map component: its places as a list over a braille land mask, the attribution, and with pick a typed
+        // latitude and longitude (ScreenSupport's mapViewExpr: WGS84, longitude first)
+        "map-view": stmt((node) => guarded(node, `{ const $map = ${S.mapViewExpr(node, true)};
+$emit({t:"component",id:$uid(${jsString(idOf(node))}),name:"map",props:Object.assign({}, $map.config, {attribution: $map.attribution})});
+}
+`)),
         "markdown-view": stmt((node) => guarded(node,
             `$emit({t:"markdown",id:$uid(${jsString(idOf(node))}),text:String(${S.markdownTextExpr(node)} || "")});\n`)),
         "status-bar": stmt((node) => guarded(node, statusBarCode(node))),

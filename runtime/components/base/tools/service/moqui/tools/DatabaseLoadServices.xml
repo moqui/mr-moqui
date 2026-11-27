@@ -30,6 +30,10 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="xmlText" allow-html="any"/>
             <parameter name="jsonText" allow-html="any"/>
             <parameter name="csvText" allow-html="any"/>
+            <parameter name="textLocation"><description>The load text in a private file of
+                ec.resource.writePrivateFile (runtime://tmp/private/, its extension xml, json or csv), which Data › Load
+                passes in place of the text, so the job run's parameters and notification do not keep it; read, and
+                deleted whatever the run did (SEC-DAT-96).</description></parameter>
             <parameter name="location"/>
             <parameter name="types"/>
             <parameter name="components"/>
@@ -53,10 +57,17 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="outcome"/>
         </out-parameters>
         <actions>
-            <!-- the ADMIN grant of this service is not enough to drop keys: the caller needs DATABASE_ADMIN, before anything runs -->
-            <if condition="!ec.user.hasPermission('DATABASE_ADMIN')">
-                <return error="true" message="A load with the foreign keys dropped needs the DATABASE_ADMIN permission"/></if>
             <script><![CDATA[
+            // the load text's private file: only one writePrivateFile made, deleted at the end whatever happened
+            const privateText = textLocation && /^runtime:\/\/tmp\/private\/[0-9a-f]{32}\.(xml|json|csv)$/.test(String(textLocation))
+                ? String(textLocation) : null
+            try {
+            if (textLocation && !privateText) {
+                ec.message.addError('The load text location is not a private file of the load')
+            } else if (!ec.user.hasPermission('DATABASE_ADMIN')) {
+                // the ADMIN grant of this service is not enough to drop keys: the caller needs DATABASE_ADMIN, before anything runs
+                ec.message.addError('A load with the foreign keys dropped needs the DATABASE_ADMIN permission')
+            } else {
             // a ServiceJob runs with authorization off: a data load is the user's, authorized as from the Tools app for all
             // actions (the Data › Load transition), so entity authorization and the security checks of what it writes apply;
             // a snapshot import is not (below)
@@ -69,6 +80,8 @@ along with this software (see the LICENSE.md file). If not, see
             loaded = false
             recordsLoaded = 0
             loadError = null
+            // the files or locations that failed while the others loaded, as "[location] reason" (TOOL-UI-006)
+            let failedFiles = []
 
             const dropped = runJob(dropJobId)
             dropStatusId = dropped.statusId || null
@@ -85,6 +98,13 @@ along with this software (see the LICENSE.md file). If not, see
                             dummyFks, useTryInsert, disableEntityEca, disableAuditLog, disableFkCreate, disableDataFeed,
                             transactionTimeout: transactionTimeout || 3600}).disableAuthz().call() || {}
                         recordsLoaded = Number(out.recordsLoaded || 0)
+                        // a file that failed while others loaded reads as in a data load: the records loaded, and the
+                        // failed files named (TOOL-UI-008); with nothing loaded the import's errors say why
+                        const failures = Array.from(out.failures || [])
+                        if (recordsLoaded > 0 && failures.length) {
+                            failedFiles = failures.map(failure => `[${failure.location}] ${failure.reason}`)
+                            ec.message.clearErrors()
+                        }
                     } else {
                         const edl = ec.entity.makeDataLoader()
                         if (types || components) {
@@ -93,6 +113,11 @@ along with this software (see the LICENSE.md file). If not, see
                         } else if (location) {
                             if (/^https?:/i.test(String(location))) throw new Error('Remote data load location is not allowed')
                             edl.location(location)
+                        } else if (privateText) {
+                            const text = ec.resource.getLocationText(privateText)
+                            if (privateText.endsWith('.csv')) edl.csvText(text)
+                            else if (privateText.endsWith('.json')) edl.jsonText(text)
+                            else edl.xmlText(text)
                         } else if (csvText) edl.csvText(csvText)
                         else if (jsonText) edl.jsonText(jsonText)
                         else if (xmlText) edl.xmlText(xmlText)
@@ -104,7 +129,9 @@ along with this software (see the LICENSE.md file). If not, see
                         // identity fields (SEC-TLS-81)
                         edl.restrictSensitiveEntities(true)
                         edl.protectUserAccounts(true)
-                        recordsLoaded = edl.load([])
+                        const failures = []
+                        recordsLoaded = edl.load([], failures)
+                        failedFiles = failures.map(failure => `[${failure.location}] ${failure.reason}`)
                     }
                     loaded = !ec.message.hasError()
                 } catch (e) {
@@ -119,14 +146,27 @@ along with this software (see the LICENSE.md file). If not, see
             const restored = runJob(restoreJobId)
             restoreStatusId = restored.statusId || null
             restoreFailedCount = Number(restored.failedCount || 0)
-            outcome = (loaded ? 'Loaded ' + recordsLoaded + ' records' : (loadError || 'Not loaded')) + '. Restoring the foreign keys (database job '
+            outcome = (loaded ? 'Loaded ' + recordsLoaded + (recordsLoaded == 1 ? ' record' : ' records') : (loadError || 'Not loaded'))
+                + (failedFiles.length ? '; could not load ' + failedFiles.join('; ') : '') + '. Restoring the foreign keys (database job '
                 + restoreJobId + ') ended ' + (restoreStatusId || 'with an error') + (restoreFailedCount ? ', ' + restoreFailedCount + ' failed' : '') + '.'
-            if (restoreStatusId == 'DbjsDone') ec.logger.info('Load wrap: ' + outcome)
-            else ec.logger.error('Load wrap: ' + outcome + ' Run database job ' + restoreJobId + ' again to make the rest of the keys.')
+            // a run with a failed file is not clean: the notification names the files to repair
+            const clean = loaded && !failedFiles.length && restoreStatusId == 'DbjsDone'
+            if (clean) ec.logger.info('Load wrap: ' + outcome)
+            else ec.logger.error('Load wrap: ' + outcome + (restoreStatusId == 'DbjsDone' ? '' : ' Run database job ' + restoreJobId + ' again to make the rest of the keys.'))
             // the outcome is the job run's results; the load's error is not the run's, as the restore did run
             ec.message.clearErrors()
-            if (!loaded || restoreStatusId != 'DbjsDone') ec.message.addError(outcome)
+            if (!clean) ec.message.addError(outcome)
             })
+            }
+            } finally {
+                if (privateText) {
+                    try {
+                        ec.resource.getLocationReference(privateText).delete()
+                    } catch (e) {
+                        ec.logger.error('Load wrap: the load text ' + privateText + ' was not deleted: ' + String(e && e.message || e))
+                    }
+                }
+            }
         ]]></script>
         </actions>
     </service>

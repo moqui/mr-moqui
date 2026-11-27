@@ -63,7 +63,7 @@ fn modified_of(path: &std::path::Path) -> Option<std::time::SystemTime> {
     std::fs::metadata(path).and_then(|meta| meta.modified()).ok()
 }
 
-/// Drop the kept text of every script file among `files` at once, rather than at the next check (plans/design-dev-aide.md
+/// Drop the kept text of every script file among `files` at once, rather than at the next check (plans/archive/design-dev-aide.md
 /// 6.1, F6). Answers the script locations dropped.
 pub fn forget_scripts(files: &[std::path::PathBuf]) -> Vec<String> {
     let canonical = |path: &std::path::Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
@@ -81,6 +81,14 @@ pub fn forget_scripts(files: &[std::path::PathBuf]) -> Vec<String> {
 
 /// [`read_script`], and whether the file's top level only declares, so its value may be kept for the run.
 pub(crate) fn read_module(location: &str) -> Result<(super::ScriptText, bool), Error> {
+    // a script file's unsaved or proposed text held on this thread (F14, for services): neither read from nor kept in
+    // the cache of the files' texts
+    if let Some(text) = crate::service::overlay::script_text(location) {
+        let library = crate::context::locate(location).is_ok_and(|path| component_library(&path, &text));
+        let inert = library || crate::script::parse::module_is_inert(&text);
+        let text: Arc<str> = crate::script::parse::file_function(&text).into();
+        return Ok((super::ScriptText::named(text, location), inert));
+    }
     let production = crate::web::is_production();
     {
         let mut texts = lock(script_texts());

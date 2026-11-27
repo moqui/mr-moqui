@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- An instance (plans/Vault-Instances.md §5): its state (desired, observed, seal and link), version, dependencies, settings,
+<!-- An instance (plans/archive/Vault-Instances.md §5): its state (desired, observed, seal and link), version, dependencies, settings,
     secret bindings (never a value), volumes, actions, and what a provision would make with the lease it needs
     (preview#AppInstanceProvision). Provision, Start, Stop, Restart and Remove post request#InstanceAction: it runs now
     when the action opens no vault item or the environment has machine access, else it asks for the lease and this page

@@ -47,11 +47,50 @@ object Native {
     @JvmStatic external fun chatReply(dataDir: String, account: String, chatRoomId: String, text: String): String?
     @JvmStatic external fun chatRead(dataDir: String, account: String, chatRoomId: String, eventSeq: Long): String?
     @JvmStatic external fun ackPush(dataDir: String, account: String, ackId: String)
+    /**
+     * A fix of a live location share ([LocationShareService]; JSON, empty for none: a point that waited) to Rust, the
+     * host command `report_location`, which keeps the newest point and sends it with the account's device key: what it
+     * came to, as JSON (`{state: sent | waiting | dropped | idle | stopped, waitMs, reason}`). Not on the main thread.
+     */
+    @JvmStatic external fun reportLocation(dataDir: String, account: String, shareId: String, fix: String): String?
+    /**
+     * A share stopped on the account's server (the notification's Stop, notifications off; [LocationStops]): `stopped`,
+     * `gone`, `signedOut`, or `retry` (no answer yet). Not on the main thread.
+     */
+    @JvmStatic external fun stopLocation(dataDir: String, account: String, shareId: String): String?
+    /**
+     * A share read again from its server with the account's device key (`get#AppShare`), to confirm its changed
+     * audience: `{state: ok, share}` (the share as `LocationShare.Sent.of` reads it, all of it the server's), `{state:
+     * gone}` (let go) or `{state: retry}` (kept paused). Not on the main thread.
+     */
+    @JvmStatic external fun readLocationShare(dataDir: String, account: String, shareId: String): String?
+    /** A share confirmed again (its JSON from [readLocationShare]): Rust reports it with that audience as the confirmed one. */
+    @JvmStatic external fun beginLocation(json: String): Boolean
+    /** A share no longer sent by the location service: Rust's reporter of it goes too. */
+    @JvmStatic external fun forgetLocation(account: String, shareId: String)
     @JvmStatic external fun vaultLock()
+    /**
+     * Download `revision` of an account's offline map package ([PackageDownloadWorker], plans/archive/Maps-Offline.md §2.4), on
+     * the worker's thread: [PackageDownloadRules.DONE] when it ended (installed, refused, cancelled, stale), or
+     * [PackageDownloadRules.RETRY] to be tried again from its kept part. `runner` is the work's id; on its `last` run a
+     * failure is told as final.
+     */
+    @JvmStatic external fun packageDownload(
+        dataDir: String,
+        account: String,
+        packageId: String,
+        revision: Long,
+        runner: String,
+        last: Boolean,
+    ): Int
+    /** The worker's last run failed before Rust answered (an exception): the download's state is made final. */
+    @JvmStatic external fun packageGiveUp(account: String, packageId: String, revision: Long, runner: String)
+    /** WorkManager stopped the work `runner`: Rust stops its download at its next range and keeps its part. */
+    @JvmStatic external fun packagePause(account: String, packageId: String, runner: String)
 
     /**
      * The app's screen went (the phone locked, or another app came to the front): every vault session locks
-     * (plans/Vault-Instances.md V5). Nothing to lock before the library is loaded.
+     * (plans/archive/Vault-Instances.md V5). Nothing to lock before the library is loaded.
      */
     fun lockVault() {
         if (ready != true) return

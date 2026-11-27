@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the vault crypto's browser module (crates/moqui-vault, feature wasm; plans/Vault-Instances.md §3.2, §3.6) on
+# Build the vault crypto's browser module (crates/moqui-vault, feature wasm; plans/archive/Vault-Instances.md §3.2, §3.6) on
 # demand. It is not kept in git: `./moq build` (every package and --embed level), `./moq archive`, podman/build.sh and
 # the tasks that run moqui (test, test-client, test-framework, test-apps, test-all, accept, run, ...) run this first.
 #   scripts/vault-wasm.sh            build it when it is missing or stale, else say it is up to date

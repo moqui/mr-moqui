@@ -34,6 +34,7 @@ use serde_json::{json, Value as Json};
 use super::{load_for_owner, DecideError, TargetKind, APPROVAL};
 use crate::run::{self, in_tx, quietly};
 use crate::screen::PendingWrite;
+use moqui_core::context::framework_thread;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::entity::cache::{self, SimChange};
 use moqui_core::entity::{fence, EntityFacade};
@@ -64,7 +65,7 @@ pub(crate) struct PreviewTarget<'a> {
 pub(crate) fn run_target(factory: &Arc<ExecutionContextFactory>, target: &PreviewTarget<'_>) -> Json {
     let outcome = std::thread::scope(|scope| {
         scope
-            .spawn(|| in_sim(factory, target))
+            .spawn(framework_thread(|| in_sim(factory, target)))
             .join()
             .unwrap_or_else(|_| Err(Error::new("the preview failed unexpectedly")))
     });
@@ -90,7 +91,7 @@ pub struct SimRun<T> {
 }
 
 /// Run `body` in the sim overlay on a thread of its own, logged in as `username`, as an approval's preview runs a write
-/// (the dev-aide's Try in sim, plans/design-dev-aide.md 9.4): entity writes go into the overlay and are answered as rows
+/// (the dev-aide's Try in sim, plans/archive/design-dev-aide.md 9.4): entity writes go into the overlay and are answered as rows
 /// against production, and an outside effect (a resource write, mail, a notification, a remote call) is refused.
 ///
 /// # Errors
@@ -122,7 +123,7 @@ pub fn run_in_sim_within<T: Send>(
 ) -> Result<SimRun<T>, Error> {
     std::thread::scope(|scope| {
         scope
-            .spawn(|| sim_body(factory, username, label, within, body))
+            .spawn(framework_thread(|| sim_body(factory, username, label, within, body)))
             .join()
             .unwrap_or_else(|_| Err(Error::new("the sim run failed unexpectedly")))
     })

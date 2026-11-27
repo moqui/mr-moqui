@@ -35,7 +35,7 @@ pub use server::require_gate;
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
 pub(crate) use server::{hook, sealed_now, stop_on_seal};
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
-pub(crate) use socket::set_serving;
+pub(crate) use socket::{set_serving, stop_asked};
 
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
 mod server {
@@ -84,7 +84,7 @@ mod server {
                 watches.push((request.runtime_dir.to_path_buf(), watch));
             }
         }
-        // a managed instance dials its manager while sealed: no listener opens (plans/Vault-Instances.md §4.4)
+        // a managed instance dials its manager while sealed: no listener opens (plans/archive/Vault-Instances.md §4.4)
         crate::manage_link::dial::start_for_gate(request.runtime_dir, request.conf);
         match keeper.start(Mode::Operator)? {
             Start::Unsealed => {

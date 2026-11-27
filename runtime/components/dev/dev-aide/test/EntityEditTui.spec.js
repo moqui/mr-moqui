@@ -1,4 +1,4 @@
-// The entity modeler's terminal twin (screen/DevAide/Entities/EditTui.xml, plans/design-dev-aide.md D14): Add field by
+// The entity modeler's terminal twin (screen/DevAide/Entities/EditTui.xml, plans/archive/design-dev-aide.md D14): Add field by
 // kind stages a Picklist's field and relationship in the entity's file and its records in the site's seed file, an
 // attribute edit and a Remove stage theirs, and nothing is written; the twin's one tui render (its own tui texts: the
 // tabs) shows the pending line, the staged field and Remove's question with what uses the field; Save of a throw-away

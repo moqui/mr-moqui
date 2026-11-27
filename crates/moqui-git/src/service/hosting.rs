@@ -57,6 +57,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
     rust_service!(map, find_repositories)?;
     rust_service!(map, set_repository_path)?;
     rust_service!(map, find_updates)?;
+    rust_service!(map, get_update_contexts)?;
     rust_service!(map, get_tree)?;
     rust_service!(map, create_ref)?;
     rust_service!(map, delete_ref)?;
@@ -331,6 +332,47 @@ fn find_repositories(parameters: &Parameters, facade: &EntityFacade) -> Out {
         ("repositoryListCount", count(total)),
         ("pageIndex", count(index)),
         ("pageSize", count(if size == usize::MAX { total } else { size })),
+    ]))
+}
+
+/// The most contexts `get#GitUpdateEventContexts` answers.
+const MAX_EVENT_CONTEXTS: usize = 50;
+
+/// `get#GitUpdateEventContexts`: the contexts the rules of `event` had from an update of the push log, built as the
+/// events build them (`events::context`), for trying a rule's condition against a recorded push. For who may push to
+/// the repository, as the whole log is (they hold the user, the push options and object ids), and listing only the
+/// commits that user reads by id. Out: `contextList`
+/// (`label`, `context`), `truncated` (some were left out).
+fn get_update_contexts(parameters: &Parameters, _facade: &EntityFacade) -> Out {
+    let Some((provider, id)) = allowed(parameters, "update") else {
+        return none();
+    };
+    let Some(update_id) = text(parameters, "updateId") else {
+        add_error("name the update (updateId) of the push log");
+        return none();
+    };
+    let event = text(parameters, "event").unwrap_or_else(|| "post-receive".to_string());
+    let contexts = match provider.event_contexts(&id, &update_id, &event, MAX_EVENT_CONTEXTS) {
+        Ok(contexts) => contexts,
+        Err(err) => {
+            add_error(err.message());
+            return none();
+        }
+    };
+    let truncated = contexts.truncated;
+    let list = contexts
+        .contexts
+        .into_iter()
+        .map(|context| {
+            map([
+                ("label", Value::string(context.label)),
+                ("context", Value::Map(context.fields.into_iter().collect())),
+            ])
+        })
+        .collect();
+    Ok(out([
+        ("contextList", Value::List(list)),
+        ("truncated", Value::Bool(truncated)),
     ]))
 }
 
@@ -738,10 +780,13 @@ fn get_compare(parameters: &Parameters, _facade: &EntityFacade) -> Out {
             let (mut insertions, mut deletions) = (0, 0);
             // the diffs a caller asks for: one file's (path), at most maxDiffLines changed lines in all and at most
             // maxFileDiffLines in one file (0: no bound; a file past either is listed with diffOmitted and no diff, and
-            // the files after it are still given), and the html only with withHtml
+            // the files after it are still given), and the html only with withHtml; with diffLineLimit a file's hunks
+            // have only the lines of that window from diffLineOffset (diff_window)
             let only = text(parameters, "path").filter(|path| !path.is_empty());
             let max_lines = number(parameters, "maxDiffLines", 0);
             let max_file_lines = number(parameters, "maxFileDiffLines", 0);
+            let line_offset = number(parameters, "diffLineOffset", 0);
+            let line_limit = number(parameters, "diffLineLimit", 0);
             let with_html =
                 text(parameters, "withHtml").is_none_or(|value| matches!(value.as_str(), "true" | "Y" | "y"));
             let mut given = 0usize;
@@ -770,11 +815,7 @@ fn get_compare(parameters: &Parameters, _facade: &EntityFacade) -> Out {
                             if with_html {
                                 entries.insert("html".to_string(), Value::string(text.render_html()));
                             }
-                            if let Value::Map(diff) = text.to_value() {
-                                if let Some(hunks) = diff.get("hunks") {
-                                    entries.insert("hunks".to_string(), hunks.clone());
-                                }
-                            }
+                            diff_window(entries, text, line_offset, line_limit);
                         } else if with_diffs && wanted {
                             entries.insert("diffOmitted".to_string(), Value::Bool(true));
                         }
@@ -2270,6 +2311,24 @@ fn merge_merge_request(parameters: &Parameters, facade: &EntityFacade) -> Out {
         ),
         ("mergeMethodEnumId", Value::string(method.enum_id())),
     ]))
+}
+
+/// A file's hunks for a diff's caller: every line, or with `limit` the lines of the window from `offset`
+/// ([`TextDiff::window`]) with `diffLineCount` (the lines of all its hunks, for the count of parts) and `diffLineOffset`
+/// (where the window starts: an offset past the end gives the last window). Only the lines a page shows become values,
+/// so a large file's diff is not made whole for each script that passes it on.
+pub(super) fn diff_window(
+    entries: &mut moqui_lib::object::ValueMap,
+    text: &moqui_core::resource::textdiff::TextDiff,
+    offset: usize,
+    limit: usize,
+) {
+    let window = text.window(offset, limit);
+    entries.insert("hunks".to_string(), text.hunks_value(&window));
+    if limit > 0 {
+        entries.insert("diffLineCount".to_string(), count(window.total));
+        entries.insert("diffLineOffset".to_string(), count(window.offset));
+    }
 }
 
 #[cfg(test)]

@@ -13,7 +13,7 @@
  */
 
 //! `org.moqui.devaide.ArtifactServices`: the framework's artifact index (`moqui_devkit::index`,
-//! plans/design-dev-aide.md 7) as the dev-aide shows it: each artifact with the root and path that open it in the
+//! plans/archive/design-dev-aide.md 7) as the dev-aide shows it: each artifact with the root and path that open it in the
 //! Workspace and whether it is the site's or upstream (D17), search for the screens and the shell's palette, the
 //! reference lists, go to definition, and the site's customizations with their state.
 
@@ -404,6 +404,7 @@ mod tests {
             worktree_of: None,
             conversation_id: None,
             worktree_user_id: None,
+            hosted_branch: None,
         }
     }
 

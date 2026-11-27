@@ -415,6 +415,56 @@ fn the_code_view_element() {
     assert!(tui.contains("pre") && tui.contains("{{x}} <b>"), "{tui}");
 }
 
+/// `map-view` is an m-map with its checked configuration as a literal of a bound attribute (so `{{` in a label is never
+/// compiled): WGS84, longitude first, a place off the globe left out and a zero kept, the transition of the effective
+/// configuration as config-url; a false condition writes nothing. html and print write the places as text with the
+/// attribution, the text modes a line a place, tui the map component with the places.
+#[test]
+fn the_map_view_element() {
+    let out = check("mapview", &[]);
+    for expected in [
+        r#"<m-map id="Offices" :config="{'profileId':'OUTLINE','zoom':3,'points':[{'id':'p0','lon':-87.6298,'lat':41.8781,'label':'Chicago &lt;office&gt; {{x}}','precisionEnumId':'GPP_POSTAL_AREA','precision':'Postal-area representative point','source':'Census 2026'},{'id':'p1','lon':0,'lat':0,'label':'Null Island'}],'pick':true}" class="q-mt-sm"></m-map>"#,
+        r#"'layers':['PARKS','TRAILS'],'extent':[-0.5,51.3,0.3,51.7]"#,
+        r#"config-url="/mapConfig" height="240px"></m-map>"#,
+        r#"'center':[10,20],'zoom':4,'projection':'EPSG:4326','adapter':'party','recordKey':{'partyId':'P1'},'points':[]"#,
+    ] {
+        assert!(out.contains(expected), "{expected} in {out}");
+    }
+    assert_eq!(out.matches("<m-map").count(), 3, "{out}");
+    assert!(!out.contains("Nowhere"), "{out}");
+    let html = render_mode("mapview", "", "html", &[]);
+    for expected in [
+        r#"<div id="Offices" class="map-view q-mt-sm"><ul class="map-view-places"><li><strong class="map-view-label">Chicago &lt;office&gt; {{x}}</strong> <span class="map-view-coordinates">41.87810, -87.62980</span> <span class="map-view-precision">Postal-area representative point</span> <span class="map-view-source">Census 2026</span></li><li><strong class="map-view-label">Null Island</strong> <span class="map-view-coordinates">0.00000, 0.00000</span></li></ul><div class="map-view-attribution">Map data: Natural Earth</div></div>"#,
+        r#"<strong class="map-view-label">London &amp; Co</strong> <span class="map-view-coordinates">51.50740, -0.12780</span> <span class="map-view-precision">User-confirmed point</span> <span class="map-view-source">Entered</span>"#,
+        r#"<div class="map-view-center">Center: 20.00000, 10.00000</div>"#,
+    ] {
+        assert!(html.contains(expected), "{expected} in {html}");
+    }
+    assert_eq!(html.matches("map-view-attribution").count(), 3, "{html}");
+    let print = render_mode("mapview", "", "html-print", &[]);
+    assert!(
+        print.contains(r#"<span class="map-view-coordinates">51.50740, -0.12780</span>"#),
+        "{print}"
+    );
+    let text = render_mode("mapview", "", "text", &[]);
+    for expected in [
+        "Chicago <office> {{x}}: 41.87810, -87.62980 (Postal-area representative point; Census 2026)",
+        "Null Island: 0.00000, 0.00000",
+        "London & Co: 51.50740, -0.12780 (User-confirmed point; Entered)",
+        "Center: 20.00000, 10.00000",
+        "Map data: Natural Earth",
+    ] {
+        assert!(text.contains(expected), "{expected} in {text}");
+    }
+    let tui = render_mode("mapview", "", "tui", &[]);
+    assert!(
+        tui.contains(r#""name":"map""#)
+            && tui.contains(r#""label":"Chicago <office> {{x}}""#)
+            && tui.contains(r#""pick":true"#),
+        "{tui}"
+    );
+}
+
 #[test]
 fn form_lists() {
     let out = check("lists", &[]);
@@ -1917,4 +1967,37 @@ fn an_action_disabled_for_a_reason_shows_it_and_does_nothing() {
         "{text}"
     );
     assert!(!text.contains(r#""reason":"Not yours""#), "{text}");
+}
+
+/// A qvue-only screen asked for in html under Standard's `/apps` (its menu, a link, a bookmark) opens at the same path
+/// under `/qapps`, with its query, where Material renders it; elsewhere an html request is still a 404
+/// (plans/ui-review-dev-aide-workspace.md DEVW-UI-002).
+#[test]
+fn a_qvue_only_screen_asked_for_in_html_under_apps_opens_in_material() {
+    let dir = std::env::temp_dir().join(format!("moqui-qvue-handoff-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root/apps")).unwrap();
+    let write = |name: &str, text: &str| std::fs::write(dir.join(name), text).unwrap();
+    let only = r#"<screen require-authentication="false" render-modes="qvue,tui"><widgets><render-mode><text type="qvue"><![CDATA[<template><p>only</p></template>]]></text></render-mode></widgets></screen>"#;
+    let parent = r#"<screen require-authentication="false"><widgets><subscreens-active/></widgets></screen>"#;
+    write("Root.xml", parent);
+    write("Root/apps.xml", parent);
+    write("Root/apps/Only.xml", only);
+    write("Root/Only.xml", only);
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = super::World::open("");
+    let get = |path: &str, query: &[(&str, &str)]| {
+        let mut asked = super::request("GET", path);
+        for (name, value) in query {
+            asked.query.push(((*name).to_string(), (*value).to_string()));
+        }
+        crate::screen::serve_at(&world.factory, asked, &root)
+    };
+
+    let handed = get("/apps/Only", &[("rootId", "site"), ("path", "a b")]);
+    assert_eq!(handed.status, 302, "{}", handed.body_text());
+    assert_eq!(handed.header("Location"), Some("/qapps/Only?path=a%20b&rootId=site"));
+    let elsewhere = get("/Only", &[]);
+    assert_eq!(elsewhere.status, 404, "{}", elsewhere.body_text());
+    let _ = std::fs::remove_dir_all(&dir);
 }

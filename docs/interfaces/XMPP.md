@@ -208,7 +208,59 @@ PEP (XEP-0163) keeps each user's nodes with their items (`XmppPepNode`, `XmppPep
 and the owner can configure the node or delete it. Access: `open` is any user of this server, `presence` the people
 the owner shares a room with, `whitelist` the owner alone. A publish notifies the sessions of the users who may read
 the node and asked for it (`<node>+notify` in the capabilities, XEP-0115, which the server resolves by asking the
-client). The bookmarks node lists the user's rooms too, with autojoin, so an app shows them.
+client). The bookmarks node lists the user's rooms too, with autojoin, so an app shows them. User location is no PEP
+node ([below](#user-location)): every generic request of it is `forbidden` (`REFUSED_NODES` in `session/pep.rs`, and
+the services' `get#PepNodeRefused`, which `publish#PepItem`, `get#PepItems`, `retract#PepItem`, `configure#PepNode` and
+`delete#PepNode` ask, both comparing the name with ASCII whitespace trimmed and in any ASCII case; a node the services
+refuse is `forbidden` too).
+
+## User location
+
+User location (XEP-0080, `http://jabber.org/protocol/geoloc`) is mapped onto Moqui's live location shares
+(`session/geoloc.rs`). Who sees a share, the opt-in and what an XMPP contact gets beside the web's audience are in the
+guide, [Maps, Live location](../tools/Maps.md#live-location) (its Over XMPP); this is the protocol's side. It is never
+kept as a PEP item: an items fetch, a retract, its configuration, a delete and a subscription are `forbidden`, and a
+location kept before is not served.
+
+- **A publish from the user's own client** feeds only a share whose owner turned on "Also use my XMPP app's location
+  (sent to my XMPP contacts only)" for it in Moqui (`takeXmppLocation`; turning it on raises the share's
+  `audienceVersion`, so a phone that sends the share pauses until its person confirms). A share the phone sends takes
+  it too, so its XMPP contacts may see the marker alternate between the phone and the XMPP app while those are
+  different devices. It is `LocationServices.report#XmppPosition`, taken by each of the user's active shares with the
+  opt-in and an XMPP contact, with each share's rules (the rate, the values, staleness, approximate rounding) against
+  that share's XMPP latest (`LocationXmppLatest`: its times, and for an approximate share the cell it holds; no
+  coordinates for an exact one). Such a position goes to the share's XMPP contacts only: it is never the share's latest
+  position or trail, and never reaches its users, groups or guest link, which see the page's or the phone's. With no
+  such share the publish is refused `not-allowed` (as is one for a share that ended meanwhile), so a client's setting
+  alone never starts a share or feeds one. The first position a share takes tells the owner's XMPP sessions by a
+  headline ("Your XMPP app's location is shared with jane@… until 15:30"). Of the payload `lat`, `lon`, `accuracy`
+  (metres) and `timestamp` are read, checked (in range, numbers, a time) before the service is called, and the rest
+  (altitude, bearing, speed, the street) are left out; a bad one is `bad-request` (`invalid-payload`); one too soon
+  after the last (the share's rate) or older than it is answered as taken, with nothing new kept, so a client that
+  publishes on every move sees no error; a timestamp more than a minute ahead is taken as now.
+- **An empty `geoloc`** (the XEP's "stopped") is answered and is no report: it ends no share. A share's start and end
+  are the owner's acts in Moqui, where every active share shows (the app bar's chip, Maps, the phone's notification),
+  and another source (a page, the phone) may still be sending it; a client sends the empty item on its own setting, at
+  a sign-out or a restart, and that setting neither starts a share nor ends one. The share goes stale, and its audience
+  sees the position's age, until the owner stops it or it ends.
+- **Out.** Each position a share takes (from the owner's XMPP app, a browser page or the phone) goes to its XMPP
+  contacts only, never to the owner's room co-members: the services push it on `locationShareXmpp:<shareId>` to those
+  contacts' users (each `LsaXmpp` entry keeps its contact's userId; the same users' browsers, whose notification socket
+  follows every topic, get the push too, as theirs), and the session sends a `geoloc` event (a headline `<message>` with
+  the pubsub event, from the owner's bare JID, item id `share-<shareId>`) to each of their sessions that asked for it
+  (`geoloc+notify`, the one interest in a refused node that is kept) and has not blocked the owner. It carries `lat`,
+  `lon`, `accuracy` and `timestamp` as the share's audience sees them: an approximate share's cell of about 1 km and
+  1000 m, its time to the minute. An ended, stopped or revoked share (or a contact taken out of it) sends them an empty
+  `geoloc` item; so does a share whose time ends, from the session at its next tick (each push carries the share's end,
+  and an extension sends the new one), not at the services' hourly clean. A contact added later is told
+  (`LocationSharedXmpp`: who shares with their XMPP app, until when), gets only positions received after it was added
+  (the push goes at the report), and adding one raises the share's `audienceVersion`, as any add does. The push goes
+  through the notification bus, so in a cluster it reaches a contact's sessions on every node.
+- **Local users only.** Server-to-server federation (C3b) is not built: a stanza to another server's JID is not
+  served, so a share's XMPP contacts are people of this server, the owner's roster contacts (`username@xmpp-server@domain`,
+  the other people of the owner's direct rooms), as `create#Share` checks.
+- No position is logged: stanzas are not logged, a refused service call is logged by its errors, which name no value,
+  and `report#XmppPosition` remembers no parameters.
 
 ## Files
 
@@ -251,7 +303,7 @@ sends a request for each advertised feature and checks it is served.
 | Rooms | XEP-0045 (members-only and public rooms, no configuration or private messages), XEP-0249, XEP-0410 |
 | History | XEP-0313 (rooms and the user's archive, RSM, `start` and `end`) |
 | Messages | XEP-0308, XEP-0424, XEP-0444, XEP-0461, XEP-0333 (displayed), XEP-0085, XEP-0359, XEP-0066 links to uploads |
-| PEP | XEP-0163 with publish-options, owner configure and delete; XEP-0084, XEP-0402, both OMEMO namespaces |
+| PEP | XEP-0163 with publish-options, owner configure and delete; XEP-0084, XEP-0402, both OMEMO namespaces; XEP-0080 mapped onto location shares ([User location](#user-location)) |
 | Mobile | XEP-0352, XEP-0357 (registration and the notification; delivery needs federation) |
 | Files and calls | XEP-0363, XEP-0215 (with `xmpp-server@turn-enabled`) |
 
@@ -266,7 +318,7 @@ message delivery outside the archive; reactions in the archive; receipts (XEP-01
 
 ## Tests
 
-- `cargo test -p moqui-xmpp` (23, under a second): the stream reader (stanzas split across reads, entities refused,
+- `cargo test -p moqui-xmpp` (34, under a second): the stream reader (stanzas split across reads, entities refused,
   the size limit, a deep stanza and a long stream header refused, WebSocket frames), SCRAM (RFC 7677's example, the binding to the exporter, a downgrade refused, an
   unknown user like a wrong password), FAST (bound to its TLS session, its count), and sessions on recorded stanzas
   against an in-memory backend: STARTTLS first, and SASL before it refused; SASL2 with SCRAM-PLUS, Bind 2 and a FAST token, then FAST, and the
@@ -275,10 +327,20 @@ message delivery outside the archive; reactions in the archive; receipts (XEP-01
   PLAIN and binding; a room message reflected with its id and reaching the other member, a correction, a reaction and
   the archive paged; a direct message, a carbon, and the roster; OMEMO kept as it came, refused in a bridged room, and
   an encrypted Moqui room refused; PEP for both OMEMO namespaces with notifications to who asked and a
-  precondition refused; every advertised feature answering (TURN on); TURN off by default, neither advertised nor
+  precondition refused; user location: a publish with no share refused, one with a share taken as a report (its four
+  fields, the rest left out), out to the share's contacts' sessions that asked only, a stop no report, bad values,
+  too soon and stale answered as taken, an ended share, a gone one and another device's not-allowed, an approximate
+  share's cell sent and not the fix, an end and a revoke an empty item, an end by time sent at the session's tick and
+  moved by an extension, a contact who blocked the owner reached by nothing, the owner's headline, and generic PEP on
+  the node (items, retract, configure, delete, subscribe) forbidden with no service called; every advertised feature answering (TURN on); TURN off by default, neither advertised nor
   issued; an unknown user's salt the same from a server with the same decoy key; stream management counts and resumption inside SASL2; a
   detached session's text-free push; at most 10 detached sessions a user, and no resumption once unacknowledged
   stanzas were let go.
+- `./moq test framework --spec LocationShares`, its XMPP feature: an XMPP position refused without the opt-in; the
+  opt-in raising the version once and audited; with it, pushed to the XMPP contact alone, never the share's latest,
+  trail, users, group or link, and the owner told once and shown the source; the rate, a clock ahead taken as now; a
+  page's report reaching the contact too; two shares that take it, the approximate one as its cell; a contact added
+  later told, the version raised, the end carried; a stop and a revoke as an empty item.
 - `cargo test -p moqui-host --test it edge_xmpp` (about 4 s, two servers): outside clients through an edge node's
   tunnel ports, tokio-xmpp over direct TLS and a raw SASL2 client over STARTTLS, both with SCRAM-SHA-256-PLUS on the
   local node's TLS, trading direct messages; refused with the link down; no XMPP server on the edge node.
@@ -292,8 +354,9 @@ message delivery outside the archive; reactions in the archive; receipts (XEP-01
   answer back; the room's archive paged; an upload put and fetched over HTTP; an OMEMO device list published), and a
   raw SASL2 client for the other (SCRAM-PLUS with Bind 2, stream management and a FAST token; the device list read over
   PEP; the connection dropped, a message while away, FAST and resumption inside SASL2 with the message replayed).
-- `./moq test framework --spec XmppServices` (7): TURN off by default, and on, an external user and a user past the
-  hour's rate refused with the parameters an allowed user has; an app password's verifiers sharing the user's salt, PLAIN taking
+- `./moq test framework --spec XmppServices` (10): TURN off by default, and on, an external user and a user past the
+  hour's rate refused with the parameters an allowed user has; user location refused by the PEP services (publish,
+  items, retract, configure, delete) in any spelling; an app password's verifiers sharing the user's salt, PLAIN taking
   app passwords only, a FAST token and the session check refused once the app password is revoked, and the archive, an event by clientRef, an OMEMO message, PEP by access model and an upload's
   attachment, each refused to another user with the same parameters; the calls with authorization on, as the session
   makes them.

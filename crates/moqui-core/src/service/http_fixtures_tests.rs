@@ -160,3 +160,88 @@ fn a_closed_test_run_refuses_all_but_loopback_and_opened_prefixes() {
     // outside a test run (no allow() in this binary) nothing is refused
     assert!(network_refusal("https://api.example.com/x").is_none());
 }
+
+#[test]
+fn a_bytes_body_is_answered_as_it_is() {
+    let fixtures = HttpFixtures::default();
+    let zip = vec![b'P', b'K', 3, 4, 0xff, 0x00, 0x80];
+    fixtures.add(fixture(&[
+        ("url", Value::string("https://data.test/US.zip")),
+        ("body", Value::Bytes(zip.clone())),
+        ("contentType", Value::string("application/zip")),
+    ]));
+    let answer = fixtures
+        .answer(&request(Method::Get, "https://data.test/US.zip", None))
+        .unwrap();
+    assert_eq!(answer.bytes, zip, "not text, not lossy");
+    assert_eq!(answer.body, "");
+    // a text body still answers as its UTF-8
+    fixtures.add(fixture(&[
+        ("url", Value::string("https://data.test/a.txt")),
+        ("body", Value::string("é")),
+    ]));
+    let answer = fixtures
+        .answer(&request(Method::Get, "https://data.test/a.txt", None))
+        .unwrap();
+    assert_eq!(answer.bytes, "é".as_bytes());
+}
+
+#[test]
+fn a_ranged_fixture_answers_the_part_a_range_asks_for() {
+    let fixtures = HttpFixtures::default();
+    let url = "https://files.test/data.parquet";
+    fixtures.add(fixture(&[
+        ("url", Value::string(url)),
+        ("body", Value::Bytes(b"0123456789".to_vec())),
+        ("ranges", Value::Bool(true)),
+    ]));
+    let ask = |range: Option<&str>| {
+        let mut asked = request(Method::Get, url, None);
+        if let Some(range) = range {
+            asked.headers.push(("Range".to_string(), range.to_string()));
+        }
+        fixtures.answer(&asked).unwrap()
+    };
+    let content_range = |response: &Response| {
+        response
+            .headers
+            .iter()
+            .find(|(name, _)| name == "Content-Range")
+            .map(|(_, value)| value.clone())
+    };
+    let middle = ask(Some("bytes=2-4"));
+    assert_eq!((middle.status, middle.bytes.as_slice()), (206, b"234".as_slice()));
+    assert_eq!(content_range(&middle).as_deref(), Some("bytes 2-4/10"));
+    let suffix = ask(Some("bytes=-3"));
+    assert_eq!((suffix.status, suffix.bytes.as_slice()), (206, b"789".as_slice()));
+    let open = ask(Some("bytes=8-"));
+    assert_eq!(open.bytes, b"89");
+    assert_eq!(ask(Some("bytes=10-12")).status, 416);
+    assert_eq!(ask(Some("bytes=0-1,4-5")).status, 200);
+    let backwards = ask(Some("bytes=5-3"));
+    assert_eq!((backwards.status, backwards.bytes.as_slice()), (200, b"0123456789".as_slice()));
+    assert_eq!(ask(None).bytes, b"0123456789");
+}
+
+#[test]
+fn a_ranged_fixture_with_an_etag_refuses_a_range_pinned_to_another() {
+    let fixtures = HttpFixtures::default();
+    let url = "https://files.test/pinned.parquet";
+    let mut headers = indexmap::IndexMap::default();
+    headers.insert("ETag".to_string(), Value::string("\"v2\""));
+    fixtures.add(fixture(&[
+        ("url", Value::string(url)),
+        ("body", Value::string("0123456789")),
+        ("ranges", Value::Bool(true)),
+        ("headers", Value::Map(headers)),
+    ]));
+    let ask = |condition: &str| {
+        let mut asked = request(Method::Get, url, None);
+        asked.headers.push(("Range".to_string(), "bytes=0-3".to_string()));
+        asked.headers.push(("If-Match".to_string(), condition.to_string()));
+        fixtures.answer(&asked).unwrap()
+    };
+    let held = ask("\"v2\"");
+    assert_eq!((held.status, held.bytes.as_slice()), (206, b"0123".as_slice()));
+    assert_eq!(ask("\"v1\"").status, 412);
+}

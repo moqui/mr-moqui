@@ -33,7 +33,7 @@ getrandom = { workspace = true }
 # hashes compared in constant time.
 zeroize = { workspace = true }
 subtle = { workspace = true }
-# The seal's AEAD, Argon2id, HKDF and Shamir shares (plans/Vault-Instances.md §3.2), shared with the vaults.
+# The seal's AEAD, Argon2id, HKDF and Shamir shares (plans/archive/Vault-Instances.md §3.2), shared with the vaults.
 moqui-vault = { workspace = true, features = ["std"] }
 # The script engine, safe Rust (plans/archive/Script-Engine-Oxide.md).
 quickjs-oxide = { workspace = true }

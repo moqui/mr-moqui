@@ -1040,12 +1040,17 @@ module.exports = {
                 { key: 'comments', label: t('Comments on my records'), icon: 'sym_o_comment', params: { view: 'comments' } },
                 { key: 'internalArchive', label: t('Archive'), icon: 'sym_o_archive', params: { view: 'internalArchive' } }];
         },
+        // the account an account folder or label belongs to
+        viewAccount() {
+            const p = this.params;
+            return p.account ? (this.mailAccounts.find((item) => item.emailAccountId === p.account) ||
+                (this.internalAccount && this.internalAccount.emailAccountId === p.account ? this.internalAccount : null)) : null;
+        },
         viewTitle() {
             const p = this.params;
             if (p.q) return t('Search results');
             if (p.mailbox) return (this.mailbox && this.mailbox.contactListName) || t('Mailbox');
-            const account = p.account ? (this.mailAccounts.find((item) => item.emailAccountId === p.account) ||
-                (this.internalAccount && this.internalAccount.emailAccountId === p.account ? this.internalAccount : null)) : null;
+            const account = this.viewAccount;
             if (account && p.folder) { const folder = account.folderList.find((item) => item.emailFolderId === p.folder); return folder ? folder.folderName + ' · ' + account.accountName : t('Folder'); }
             if (account && p.label) { const label = account.labelList.find((item) => item.emailLabelId === p.label); return label ? label.labelName : t('Label'); }
             const item = this.viewItems.concat(this.internalItems).find((entry) => entry.params.view === (p.view || 'inbox'));
@@ -1056,7 +1061,21 @@ module.exports = {
             const texts = { inbox: t('Your Inbox is empty'), flagged: t('Nothing flagged'), snoozed: t('Nothing snoozed'), scheduled: t('Nothing scheduled'),
                 drafts: t('No drafts'), sent: t('Nothing sent yet'), outbox: t('The Outbox is empty'), junk: t('No spam'), trash: t('The Trash is empty'),
                 internal: t('No internal messages'), comments: t('No comments on your records') };
-            return this.unreadOnly ? t('No unread conversations') : (texts[this.params.view || 'inbox'] || t('No conversations here'));
+            if (this.unreadOnly) return t('No unread conversations');
+            // an account's folder, label or a shared mailbox opens with no view: say what it is, not the Inbox (COM-UI-039)
+            const p = this.params;
+            const account = this.viewAccount;
+            if (account && p.folder) {
+                const folder = account.folderList.find((item) => item.emailFolderId === p.folder);
+                const kind = folder && { EfkInbox: 'inbox', EfkDrafts: 'drafts', EfkSent: 'sent', EfkJunk: 'junk', EfkTrash: 'trash' }[folder.folderKindEnumId];
+                return kind ? texts[kind] : (folder ? t('No conversations in') + ' ' + folder.folderName : t('No conversations here'));
+            }
+            if (account && p.label) {
+                const label = account.labelList.find((item) => item.emailLabelId === p.label);
+                return label ? t('Nothing labelled') + ' ' + label.labelName : t('No conversations here');
+            }
+            if (p.mailbox) return this.mailbox && this.mailbox.contactListName ? t('No conversations in') + ' ' + this.mailbox.contactListName : t('No conversations here');
+            return texts[p.view || 'inbox'] || t('No conversations here');
         },
         termChips() {
             return (this.termList || []).map((term) => ({ term, label: (term.negate ? '-' : '') + term.operator + ':' + term.value }));

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The development kit (plans/design-dev-aide.md 17, plans/archive/Crate-Split.md): the reload of what a changed file
+//! The development kit (plans/archive/design-dev-aide.md 17, plans/archive/Crate-Split.md): the reload of what a changed file
 //! defines ([`reload`], with the file watcher [`watch`] under the `watch` feature), `moqui check` ([`check`],
 //! [`schema`], [`screen_lint`], [`lint_hazards`]), the artifact index ([`index`]), other projects' artifacts
 //! ([`project`]) and references ([`refs`]), entity ECA rule lists ([`eca`]), the Groovy to JavaScript converter
@@ -47,7 +47,9 @@ pub mod typegen;
 #[cfg(feature = "watch")]
 pub mod watch;
 
-pub use reload::{note_restart, on_reload, recent_reports, reload_paths, ArtifactKind, FileReload, ReloadReport};
+pub use reload::{
+    note_rebuild, note_restart, on_reload, recent_reports, reload_paths, ArtifactKind, FileReload, ReloadReport,
+};
 
 moqui_core::extension::submit! {
     moqui_core::extension::Extension {

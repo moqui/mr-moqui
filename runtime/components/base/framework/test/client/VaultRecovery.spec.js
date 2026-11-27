@@ -1,5 +1,5 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
-// Organization recovery, split k of n, end to end over REST (/rest/s1/vault, plans/Vault-Instances.md V4,
+// Organization recovery, split k of n, end to end over REST (/rest/s1/vault, plans/archive/Vault-Instances.md V4,
 // docs/security/Vaults.md) with the test client's `vault` member: each user's client is the vault crate's own session,
 // as the browser's worker and `moqui vault recovery` are. Two holders make a recovery key split 2 of 2; a member turns
 // recovery on for their vault, loses their key and makes a new one; one holder starts the recovery, the other seals

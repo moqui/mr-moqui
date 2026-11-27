@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use moqui_core::entity::EntityFacade;
 
-use super::{new_holder, take, try_take, update, TTL};
+use super::{attempt, db_now, make_row, new_holder, take, try_take, update, LEASE, TTL};
 use moqui_core::entity::Condition;
 use moqui_lib::object::Value;
 
@@ -53,6 +53,35 @@ fn one_holder_at_a_time_and_a_lapsed_lease_is_taken_over() {
     });
     std::thread::sleep(Duration::from_millis(20));
     assert!(free_elsewhere(&entity, "t:lapse"), "lapsed");
+}
+
+/// Two members that both found no row of a lease both make it, the second after the first took it: one row is made,
+/// and the lease stays the first one's (the in-memory test database keeps no keys, so a second plain insert was a
+/// second row, free, and taken: two holders at once, two runners given a pool's one place).
+#[test]
+fn two_members_making_a_leases_row_at_once_make_one_and_one_holds_it() {
+    let entity = moqui_core::testing::open();
+    let name = "t:made-twice";
+    let now = db_now(&entity);
+    make_row(&entity, name, now).unwrap();
+    assert!(
+        attempt(&entity, name, "member-a", TTL).unwrap(),
+        "the first member takes it"
+    );
+    make_row(&entity, name, now).unwrap();
+    assert!(
+        !attempt(&entity, name, "member-b", TTL).unwrap(),
+        "held by the first member"
+    );
+    let rows = entity
+        .find(LEASE)
+        .unwrap()
+        .eq("leaseName", Value::string(name))
+        .use_cache(false)
+        .disable_authz()
+        .count()
+        .unwrap();
+    assert_eq!(rows, 1);
 }
 
 #[test]

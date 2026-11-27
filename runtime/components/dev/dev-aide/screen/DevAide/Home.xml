@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Dev AIDE Home (plans/design-dev-aide.md 1, D18): the site's unpublished changes with Publish, each repository and
+<!-- Dev AIDE Home (plans/archive/design-dev-aide.md 1, D18): the site's unpublished changes with Publish, each repository and
     directory with its branch and changes, the reload log (what each save or outside edit reloaded, and its problems), the
     restart a change needs, "No site component yet. Create one", and New component from the component template. Plain
     forms and lists, so the terminal reaches it. -->
@@ -23,18 +23,26 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><message type="${published ? 'success' : 'warning'}">${(message || 'Published')}</message></actions>
         <default-response url="."/></transition>
     <transition name="createSite"><service-call name="org.moqui.devaide.WorkspaceServices.create#SiteComponent"/>
-        <actions><message type="success">Created ${location}: it loads after a restart</message></actions>
+        <actions><if condition="location"><message type="success">Created ${location}: it loads after a restart</message></if></actions>
         <default-response url="."/></transition>
     <transition name="createComponent"><service-call name="org.moqui.devaide.WorkspaceServices.create#Component"/>
-        <actions><message type="success">Created ${location}: it loads after a restart</message></actions>
+        <actions><if condition="location"><message type="success">Created ${location}: it loads after ${rebuild ? 'a rebuild and ' : ''}a restart</message></if></actions>
         <default-response url="."/></transition>
     <transition name="restart"><service-call name="org.moqui.dev.DevToolsServices.restart#Server"/>
         <actions><message type="warning">Restarting: the server comes back in a few seconds</message></actions>
+        <default-response url="."/></transition>
+    <!-- Rebuild (plans/archive/design-dev-aide.md 6.5): ./moq build in a host session of the Terminal; the banner follows it -->
+    <transition name="rebuild"><service-call name="org.moqui.devaide.LocalRunServices.rebuild#Server" out-map="built"/>
+        <actions><if condition="built.sessionId"><message type="info">Building in the Terminal: ${built.command}</message></if></actions>
         <default-response url="."/></transition>
     <transition name="workspace"><default-response url="../Workspace"/></transition>
 
     <actions>
         <service-call name="org.moqui.devaide.WorkspaceServices.get#Overview" out-map="overview"/>
+        <set field="rebuild" from="{}"/>
+        <if condition="overview.restartNeeded">
+            <service-call name="org.moqui.devaide.LocalRunServices.get#Rebuild" out-map="rebuild" ignore-error="true"/></if>
+        <set field="building" from="rebuild.state == 'running'"/>
         <set field="roots" from="overview.roots"/>
         <set field="reloads" from="overview.reloads"/>
         <set field="siteRoots" from="(overview.roots || []).filter(root => root.siteChanges > 0)"/>
@@ -51,10 +59,27 @@ along with this software (see the LICENSE.md file). If not, see
         <container id="DevAideRestart"><section name="RestartSection" condition="overview.restartNeeded"><widgets>
             <container-box><box-header title="A change needs a restart"/><box-body>
                 <label type="p" text="A change that waits for a restart (a part of the conf that is not applied live, a component.xml, a component not loaded live) takes effect when the server restarts. Sessions and the sim overlay are lost."/>
-                <label type="p" text="A Rust change needs a rebuild first: ./moq build" condition="overview.rebuildNeeded"/>
-                <form-single name="RestartForm" transition="restart">
-                    <field name="submitButton"><default-field title="Restart"><submit confirmation="Restart the server now?"/></default-field></field>
-                </form-single>
+                <label type="p" text="A Rust change needs a rebuild first: ./moq build" condition="overview.rebuildNeeded &amp;&amp; !rebuild.available"/>
+                <section name="RebuildSection" condition="overview.rebuildNeeded &amp;&amp; rebuild.available"><widgets>
+                    <label type="p" text="A Rust change needs a rebuild first: Rebuild runs ./moq build in a terminal on this machine." condition="!rebuild.state || rebuild.state == 'gone'"/>
+                    <label type="p" text="Building in the Terminal (./moq build). This shows how it ended once it has." condition="building" id="DevAideRebuilding"/>
+                    <label type="p" text="The build succeeded: restart to run it." condition="rebuild.state == 'succeeded'" id="DevAideRebuilt"/>
+                    <label type="p" text="The build failed (status ${rebuild.exitStatus}): its output is in the Terminal. Fix it and rebuild." condition="rebuild.state == 'failed'" id="DevAideRebuildFailed"/>
+                    <container style="row items-center q-gutter-sm">
+                        <link url="/qapps/Terminal" url-type="plain" text="Open the Terminal" link-type="anchor" condition="rebuild.state &amp;&amp; rebuild.state != 'gone'"/>
+                        <link url="." text="Check again" link-type="anchor" condition="building"/>
+                    </container>
+                    <section name="RebuildButton" condition="!building"><widgets>
+                        <form-single name="RebuildForm" transition="rebuild">
+                            <field name="submitButton"><default-field title="Rebuild"><submit confirmation="Run ./moq build in a terminal on this machine?"/></default-field></field>
+                        </form-single>
+                    </widgets></section>
+                </widgets></section>
+                <section name="RestartButton" condition="!building"><widgets>
+                    <form-single name="RestartForm" transition="restart">
+                        <field name="submitButton"><default-field title="Restart"><submit confirmation="Restart the server now?"/></default-field></field>
+                    </form-single>
+                </widgets></section>
             </box-body></container-box>
         </widgets></section></container>
 
@@ -92,10 +117,12 @@ along with this software (see the LICENSE.md file). If not, see
                         <container-dialog id="DevAideCreateSite" button-text="Create site component" title="Create site component">
                             <form-single name="CreateSiteForm" transition="createSite">
                                 <field name="componentName"><default-field title="Name"><text-line size="20" default-value="my-site"/></default-field></field>
-                                <field name="dependsOn"><default-field title="Extends (components, comma separated)"><text-line size="40"/></default-field></field>
+                                <field name="dependsOn"><default-field title="Extends (components, comma separated)" tooltip="Components that load on every instance, as the site does: not a dev-only one such as example"><text-line size="40"/></default-field></field>
+                                <field name="gitRemote"><default-field title="Git remote (optional)" tooltip="The repository starts with it as origin: an https URL with no user name or token, ssh://, git:// or git@host:path"><text-line size="50"/></default-field></field>
                                 <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
                                 <field-layout>
                                     <field-row><field-ref name="componentName"/><field-ref name="dependsOn"/></field-row>
+                                    <field-ref name="gitRemote"/>
                                     <field-row-big><field-ref name="submitButton"/></field-row-big>
                                 </field-layout>
                             </form-single>
@@ -110,21 +137,28 @@ along with this software (see the LICENSE.md file). If not, see
                 <row-col md="6">
                     <container id="DevAideNewComponent">
                         <label type="h6" text="New component"/>
-                        <label type="p" text="Start an application with entities, services, screens or a REST API, security, demo data and specs."/>
+                        <label type="p" text="Start an application with entities, services, screens or a REST API, security, demo data and specs; or data only, Rust, a theme, a skill pack or a dev tool."/>
                         <container-dialog id="DevAideCreateComponent" button-text="Create component" title="Create component">
                             <form-single name="CreateComponentForm" transition="createComponent">
                                 <field name="componentName"><default-field title="Name"><text-line size="20" default-value="my-app"/></default-field></field>
-                                <field name="part"><default-field title="Kind"><drop-down no-current-selected-key="all">
-                                    <option key="all" text="Screens and REST API"/>
-                                    <option key="screens" text="Screens only"/>
-                                    <option key="rest" text="REST API only"/>
+                                <field name="kind"><default-field title="Kind"><drop-down no-current-selected-key="all">
+                                    <option key="all" text="App: screens and REST API"/>
+                                    <option key="screens" text="App: screens only"/>
+                                    <option key="rest" text="App: REST API only"/>
+                                    <option key="data" text="Data only"/>
+                                    <option key="native" text="Native (Rust, built by ./moq build)"/>
+                                    <option key="theme" text="Theme of the apps shell"/>
+                                    <option key="skills" text="Skill pack (skills and prompts)"/>
+                                    <option key="dev-tool" text="Dev tool (mock services, test data; dev only)"/>
                                 </drop-down></default-field></field>
                                 <field name="dev"><default-field title="Dev only (runtime/components/dev)"><check><option key="true" text=" "/></check></default-field></field>
                                 <field name="test"><default-field title="Test only (runtime/components/test)"><check><option key="true" text=" "/></check></default-field></field>
+                                <field name="gitRemote"><default-field title="Git remote (optional)" tooltip="The repository starts with it as origin: an https URL with no user name or token, ssh://, git:// or git@host:path"><text-line size="50"/></default-field></field>
                                 <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
                                 <field-layout>
-                                    <field-row><field-ref name="componentName"/><field-ref name="part"/></field-row>
+                                    <field-row><field-ref name="componentName"/><field-ref name="kind"/></field-row>
                                     <field-row><field-ref name="dev"/><field-ref name="test"/></field-row>
+                                    <field-ref name="gitRemote"/>
                                     <field-row-big><field-ref name="submitButton"/></field-row-big>
                                 </field-layout>
                             </form-single>

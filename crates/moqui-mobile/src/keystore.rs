@@ -231,7 +231,7 @@ impl<S: Sealer> SealedFileStore<S> {
 }
 
 /// Seals and opens with a Keystore key that the user authorizes at each use with the device's lock screen or a strong
-/// biometric (`KeyVault.sealAuth`, `openAuth`): the vault's device memory keys (plans/Vault-Instances.md §3.5, V5).
+/// biometric (`KeyVault.sealAuth`, `openAuth`): the vault's device memory keys (plans/archive/Vault-Instances.md §3.5, V5).
 pub(crate) trait AuthSealer: Send + Sync {
     /// `plain` sealed; refused on a phone with no secure lock screen.
     fn seal(&self, plain: &[u8]) -> Result<Vec<u8>, String>;

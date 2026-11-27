@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `moqui vault recovery ...` (plans/Vault-Instances.md §3.10; docs/security/Vaults.md, Recovery): the steps of an
+//! `moqui vault recovery ...` (plans/archive/Vault-Instances.md §3.10; docs/security/Vaults.md, Recovery): the steps of an
 //! organization's recovery holder, and a manager's turning recovery on, in the vault crate's own session on this
 //! machine. The shares, the combined recovery key and the vault key stay in this process.
 //!

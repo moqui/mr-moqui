@@ -136,7 +136,7 @@
                     const lib = Promise.all([...defaultLibraries, ...(this.libraries || [])].map(async path =>
                         (await fetchJson(path)).libraryItems));
                     const loads = [lib, moqui.loadScript(base + "editor.js", null, () => !!root.MoquiBoardEditor)];
-                    if (this.wikiPageId) loads.push(moqui.loadScript("/libs/tiptap/tiptap.min.js", null, () => !!root.Tiptap));
+                    if (this.wikiPageId) loads.push(moqui.loadScript("/libs/yjs/yjs.min.js", null, () => !!root.Yjs));
                     const [groups] = await Promise.all(loads);
                     if (this.closed) return;
                     this.libItems = groups.flat();
@@ -151,7 +151,7 @@
             connect() {
                 const client = this.socketClient || (this.$root && this.$root.notificationClient);
                 if (!client) throw Error(this.t("The collaboration connection is unavailable"));
-                const T = root.Tiptap;
+                const T = root.Yjs;
                 this.doc = root.Vue.markRaw(new T.Y.Doc());
                 this.awareness = root.Vue.markRaw(new T.Awareness(this.doc));
                 const name = this.userName || this.$root.userFullName || this.$root.username || this.$root.userId || this.t("Guest");
@@ -240,9 +240,18 @@
                 for (const [id, state] of this.awareness.getStates()) {
                     const peer = peers.get(Number(id));
                     if (id === this.awareness.clientID || !state.user || !peer) continue;
-                    const c = state.user.color || "#4267aa";
-                    collaborators.set(String(id), Object.assign({ username: peer.name, color: { stroke: c, background: c },
-                        selectedElementIds: state.selection || {} }, state.cursor));
+                    // the peer's own fields only, never spread: a pointer of finite numbers, a button, the selection's ids
+                    const c = typeof state.user.color === "string" && moqui.coedit.COLOR.test(state.user.color) ? state.user.color : "#4267aa";
+                    const cursor = state.cursor && typeof state.cursor === "object" ? state.cursor : {};
+                    const point = cursor.pointer && typeof cursor.pointer === "object" ? cursor.pointer : null;
+                    const pointer = point && Number.isFinite(point.x) && Number.isFinite(point.y)
+                        ? { x: point.x, y: point.y, tool: point.tool === "laser" ? "laser" : "pointer" } : undefined;
+                    const selectedElementIds = {};
+                    if (state.selection && typeof state.selection === "object") {
+                        for (const key of Object.keys(state.selection).slice(0, 2000)) if (state.selection[key] === true) selectedElementIds[key] = true;
+                    }
+                    collaborators.set(String(id), { username: peer.name, color: { stroke: c, background: c }, selectedElementIds,
+                        pointer, button: cursor.button === "down" ? "down" : "up" });
                     if (this.follow && peer.legId && this.follow === peer.legId) viewport = state.viewport;
                 }
                 const data = { collaborators, captureUpdate: "NEVER" };

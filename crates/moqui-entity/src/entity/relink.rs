@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Relink the entity model after entity files changed or a component was added (plans/design-dev-aide.md F5, 6.1;
+//! Relink the entity model after entity files changed or a component was added (plans/archive/design-dev-aide.md F5, 6.1;
 //! plans/archive/Component-Deploy.md): every entity file read again with the configuration the model was loaded with, the
 //! tables of the entities the changed files define or extend checked against the new model, creating what is missing,
 //! then the new model swapped in (calls in flight keep the one they took) and the caches read from the old one dropped.

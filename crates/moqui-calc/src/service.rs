@@ -570,6 +570,11 @@ fn room_of(parameters: &BTreeMap<String, Value>, access: &Access, facade: &Entit
         add_error(ROOM_GONE);
         return None;
     }
+    if let Err(reason) = may_still_read(&room) {
+        leave_revoked(facade, &rooms, &room, &user_id, &reason);
+        add_error(ROOM_GONE);
+        return None;
+    }
     let caught = together::catch_up(facade, &mut moqui_lib::sync::lock(&room));
     if let Err(err) = caught {
         tracing::info!(room = %id, error = %err, "A CalcGrid room is opened anew");
@@ -578,6 +583,54 @@ fn room_of(parameters: &BTreeMap<String, Value>, access: &Access, facade: &Entit
         return None;
     }
     Some(room)
+}
+
+/// Whether the caller may still read the saved document `room` was opened from, asked again on each call: a room is
+/// opened only by one who may read its document ([`read_definition`]), and the owner's taking a share away, or a
+/// member's leaving the group it was shared with, ends their editing, reading and frames of it at their next call,
+/// not when they open it again (DASH-UI-008). The answer reads only the definition's owner, group and read-only flag
+/// (`check#DefinitionRead`); one that cannot be had refuses. A scratch room is its one person's.
+fn may_still_read(room: &SharedRoom) -> Result<(), String> {
+    let Some(definition_id) = moqui_lib::sync::lock(room).definition_id.clone() else {
+        return Ok(());
+    };
+    may_read_definition(&definition_id)
+}
+
+fn may_read_definition(definition_id: &str) -> Result<(), String> {
+    let mut parameters = BTreeMap::new();
+    parameters.insert("definitionId".to_string(), Value::string(definition_id));
+    let out = call("org.moqui.report.ReportServices.check#DefinitionRead", parameters)
+        .map_err(|err| err.message().to_string())?;
+    if matches!(out.get("readable"), Some(Value::Bool(true))) {
+        return Ok(());
+    }
+    Err(out
+        .get("reason")
+        .map(to_plain_string)
+        .filter(|reason| !reason.is_empty())
+        .unwrap_or_else(|| format!("viewer may not read definition {definition_id}")))
+}
+
+/// The caller may no longer read `room`'s document: they leave it, and the room stays open for its other members (an
+/// owner of the same scope shares it). Their views are no longer told of its edits or its viewers: every server's
+/// sockets of the document hear it ([`crate::log::announce`], kind `left`), and a view whose person left its room is
+/// told to open the document again, which is refused.
+fn leave_revoked(facade: &EntityFacade, rooms: &Rooms, room: &SharedRoom, user_id: &str, reason: &str) {
+    let (id, definition_id, seq) = {
+        let held = moqui_lib::sync::lock(room);
+        (
+            held.id.clone(),
+            held.definition_id.clone().unwrap_or_default(),
+            held.seq,
+        )
+    };
+    tracing::info!(room = %id, document = %definition_id, user = user_id, reason, "A CalcGrid room is left: its document may no longer be read");
+    rooms.close(user_id, &id);
+    if let Some(presence) = ExecutionContext::with_current(|ec| Presence::of(ec.factory())) {
+        presence.leave_user(&definition_id, user_id);
+    }
+    crate::log::announce(facade, &definition_id, seq, user_id, "left");
 }
 
 /// Whether `room` holds the rows of the caller's scope under `access` now: a saved document's shared room is the room of
@@ -647,6 +700,9 @@ fn room_out(facade: &EntityFacade, room: &Room, user_id: &str) -> BTreeMap<Strin
 /// A workbook file as a model: the engine's reader for an xlsx it takes, else the cells of each sheet as values
 /// (`read#Spreadsheet`'s reader: xls, xlsb, ods, and an xlsx without the parts the engine needs).
 fn workbook_model(bytes: &[u8], name: &str) -> Result<moqui_core::workbook::ironcalc::base::Model<'static>, Error> {
+    // refused before either reader parses it (SEC-TLS-114)
+    moqui_core::service::spreadsheet::check_expanded_size(bytes, moqui_core::service::spreadsheet::MAX_EXPANDED_BYTES)
+        .map_err(|err| Error::new(err.to_string()))?;
     match workbook::open_xlsx(bytes, name) {
         Ok(model) => Ok(model),
         Err(engine_error) => {
@@ -1309,6 +1365,14 @@ fn get_calc_frame(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -
         return refused("no execution context is entered");
     };
     let profile_id = access.profile_id();
+    // a room the caller has of the document is read only while they may read the document now: a share taken away
+    // ends a mounted range's reads at once, and the room is left (DASH-UI-008)
+    if let Err(reason) = may_read_definition(&definition_id) {
+        if let Some(room) = rooms.find_document(&user_id, &definition_id, profile_id.as_deref()) {
+            leave_revoked(facade, &rooms, &room, &user_id, &reason);
+        }
+        return refused(reason);
+    }
     // a room of the document the caller is in is read only while it is of their scope now; one of another scope is
     // left, and the document opened in theirs (SEC-TLS-94)
     let found = match rooms.find_document(&user_id, &definition_id, profile_id.as_deref()) {
@@ -1360,6 +1424,9 @@ fn get_calc_frame(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -
         Ok(frame) => {
             let mut out = BTreeMap::new();
             out.insert("frame".to_string(), from_json(&frame));
+            // the room the frame was read from: a dashboard watches its topic and reads the frame again when the
+            // document changes, or when a share taken away leaves the viewer out of it (DASH-UI-008)
+            out.insert("live".to_string(), from_json(&json!({"kind": "calc", "room": room.id})));
             Ok(out)
         }
         Err(err) => refused(err.message()),

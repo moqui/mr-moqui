@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The lease services of `org.moqui.security.VaultServices` (plans/Vault-Instances.md §3.7): ask, read and list
+//! The lease services of `org.moqui.security.VaultServices` (plans/archive/Vault-Instances.md §3.7): ask, read and list
 //! leases, approve one (the approve role and a recent sign-in, on any cluster member), revoke one, and the lease key
 //! that approvers check. The SSH admin shell lists and revokes but never approves: an approval is made in the member's
 //! client, where their passphrase is.

@@ -1045,8 +1045,8 @@
             if (!skipStart) {
                 out += "<form" + A({
                     name: formId, id: formId, method: "post", action: url.url, enctype: upload ? "multipart/form-data" : null,
-                    "data-bg": at(n, "background-submit") === "true" ? true : null, "data-reload": at(n, "background-reload-id") || null,
-                    "data-msg": at(n, "background-message") || null, "data-hide": at(n, "background-hide-id") || null,
+                    "data-bg": at(n, "background-submit") === "true" ? true : null, "data-reload": xn(at(n, "background-reload-id")) || null,
+                    "data-msg": at(n, "background-message") || null, "data-hide": xn(at(n, "background-hide-id")) || null,
                     "data-exclude-empty-fields": at(n, "exclude-empty-fields") === "true" ? "true" : null,
                     "data-focus": at(n, "focus-field") || null
                 }) + ">" + hiddenInput("moquiFormName", at(n, "name")) + hiddenInput("moquiSessionToken", token());
@@ -2373,6 +2373,16 @@
 
     const tableOfFormNoops = noops(S.allElements);
 
+    // map-view (plans/archive/Maps.md §3.2): the page draws no map, so its places as text (ScreenSupport's mapViewHtmlFn: label,
+    // coordinates as latitude, longitude, precision, source; the center or area when there is no place; the attribution),
+    // every value escaped. Nothing for a false condition.
+    const mapViewWidget = stmt((node) => {
+        const style = attr(node, "style");
+        const id = attr(node, "id") ? "$h.nodeId(" + bareLit(node) + ")" : "null";
+        const body = `sri.write((${S.mapViewHtmlFn})(${S.mapViewExpr(node, true)}, $h.e, ec.l10n, ${id}, ${style ? noL10n(style) : "null"}));\n`;
+        return attr(node, "condition") ? `if (${attr(node, "condition")}) {\n${body}}\n` : body;
+    });
+
     const reportWidget = stmt((node) => {
         const body = `sri.write(${S.reportRenderExpr(node, "html")});\n`;
         return attr(node, "condition") ? `if (${attr(node, "condition")}) {\n${body}}\n` : body;
@@ -2382,6 +2392,7 @@
         "report-panel": reportWidget,
         "report-dashboard": reportWidget,
         "report-embed": reportWidget,
+        "map-view": mapViewWidget,
         "screen": stmt((node, children) => children),
         "widgets": widgetsMacro("widgets"),
         "fail-widgets": widgetsMacro("fail-widgets"),

@@ -871,7 +871,7 @@ fn the_socket_pacing_and_tpm_program_settings_come_only_from_the_conf_files() {
 
 #[test]
 fn a_new_share_set_is_kept_only_when_committed_and_the_proof_key_follows_the_root_key() {
-    // a managed instance whose recovery holder was replaced (plans/Vault-Instances.md §4.5, M6)
+    // a managed instance whose recovery holder was replaced (plans/archive/Vault-Instances.md §4.5, M6)
     let scratch = Scratch::new();
     let made = keeper(&scratch, "test");
     let issued = init(&made, MethodKind::Shamir, None);

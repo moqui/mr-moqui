@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Shared live location (plans/archive/Location-Sharing.md §3.1, §3.2; entity/MapLocationEntities.xml,
+    service/org/moqui/maps/LocationServices.xml): the precision and audience kinds, the notice an audience member gets, the
+    hourly clean job, and the grant of the owner's and the audience's services to every signed-in user. -->
+<entity-facade-xml type="seed">
+    <moqui.basic.EnumerationType enumTypeId="LocationSharePrecision" description="Location Share Precision"/>
+    <moqui.basic.Enumeration enumId="LspExact" enumTypeId="LocationSharePrecision" sequenceNum="1" description="Exact"/>
+    <moqui.basic.Enumeration enumId="LspApproximate" enumTypeId="LocationSharePrecision" sequenceNum="2" description="Approximate (about 1 km)"/>
+
+    <moqui.basic.EnumerationType enumTypeId="LocationShareAudienceType" description="Location Share Audience Type"/>
+    <moqui.basic.Enumeration enumId="LsaUser" enumTypeId="LocationShareAudienceType" sequenceNum="1" description="User"/>
+    <moqui.basic.Enumeration enumId="LsaUserGroup" enumTypeId="LocationShareAudienceType" sequenceNum="2" description="User group"/>
+    <moqui.basic.Enumeration enumId="LsaXmpp" enumTypeId="LocationShareAudienceType" sequenceNum="3" description="XMPP contact"/>
+    <moqui.basic.Enumeration enumId="LsaLink" enumTypeId="LocationShareAudienceType" sequenceNum="4" description="Guest link"/>
+
+    <!-- A person told that someone shares their location with them, and until when (create#Share, update#Share): ownerName,
+        label, untilText (in the person's own time zone) and shareId in the message, never a position. The live positions
+        go on the topic locationShare:<shareId>, sent only to the audience's current users and never saved or pushed to a
+        phone (LocationShares.js). -->
+    <moqui.security.user.NotificationTopic topic="LocationShared" inboxEnumId="NinNotifications" description="Shares their location with you"
+            typeString="info" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y"
+            titleTemplate="${ownerName} shares their location with you until ${untilText}" linkTemplate=""/>
+    <!-- A person told that someone shares their location with their XMPP app, as an XMPP contact of a share (LsaXmpp,
+        plans/archive/Location-Sharing.md §3.6): the positions reach them only there, as user location (XEP-0080) -->
+    <moqui.security.user.NotificationTopic topic="LocationSharedXmpp" inboxEnumId="NinNotifications"
+            description="Shares their location with your XMPP app" typeString="info" showAlert="Y" persistOnSend="Y"
+            receiveNotifications="Y" isPrivate="Y"
+            titleTemplate="${ownerName} shares their location with your XMPP app until ${untilText}" linkTemplate=""/>
+
+    <!-- Every hour: the shares past their end are ended (their latest positions deleted, the audience told), the trail points
+        past each share's trailKeepDays deleted, and the shares ended past location@trail-max-days with no trail left
+        removed. Each share is on its own. A success is not kept. -->
+    <moqui.service.job.ServiceJob jobName="clean_LocationShares_hourly" description="End expired location shares and delete their positions"
+            serviceName="org.moqui.maps.LocationServices.clean#LocationShares" cronExpression="0 7 * * * ?" paused="N"
+            errorHistoryOnly="Y"/>
+
+    <!-- The services of a person's own shares and of the shares shared with them, for every signed-in user. Each acts on the
+        caller's own shares (the owner's: create, change, stop, report, from the owner's XMPP client too, delete the trail) or on those whose current audience
+        holds the caller (get#Share, find#SharedWithMe), and answers another's as not found; get#ShellIndicator counts the caller's own. No grant reads another person's
+        shares: not ADMIN, not a group's owner. Inheritable, so their own reads and writes and the chat directory's rule
+        (ChatServices.get#RefusedUsers) are authorized as the caller. -->
+    <moqui.security.ArtifactGroup artifactGroupId="LocationShareServices" description="Shared live location: own shares and those shared with me"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="LocationShareServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.maps\.LocationServices\.(create#Share|update#Share|stop#Share|revoke#Audience|report#Position|report#XmppPosition|find#MyShares|find#SharedWithMe|get#Share|delete#Trail|get#ShellIndicator|get#AppShare)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="LocationShareServicesALL" userGroupId="ALL_USERS" artifactGroupId="LocationShareServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+</entity-facade-xml>

@@ -256,6 +256,12 @@ impl Store {
         let Some((db, files)) = paths(dir, account_id) else {
             return Err(Error::new(format!("Client store: {account_id} is not an account id")));
         };
+        // a device's name on Windows (an account of aux.corp.net) is no file there; elsewhere it is one
+        if !crate::files::writable_name(account_id) {
+            return Err(Error::new(format!(
+                "Client store: {account_id} is a name this system keeps for a device"
+            )));
+        }
         if let Some(data) = db.parent() {
             crate::files::create_private_dir(data)
                 .map_err(|err| Error::new(format!("Client store {}: {err}", data.display())))?;

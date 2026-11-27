@@ -72,6 +72,10 @@ const SERVICES: &str = r#"<services>
             } else if (operation === 'account.login') {
                 ec.user.internalLoginUser('john.doe')
                 result = {credential: 'c1', user: ec.user.username}
+            } else if (operation === 'account.security') {
+                // as an account action sent with a delegation: the delegation signs the session in, no credential answered
+                ec.user.internalLoginUser('john.doe')
+                result = {changed: true, user: ec.user.username}
             } else if (operation === 'account.whoami') {
                 result = {user: ec.user.username || null}
             } else if (operation === 'fail') {
@@ -346,6 +350,12 @@ fn round_trips(gate: &Gate, endpoint: &str, client_id: &str, big: &str) -> Strin
         serde_json::json!({}),
         &signed_in,
     );
+    assert!(who["result"]["user"].is_null(), "{who}");
+    // nor after an account action a delegation signed in, which answers no credential (SEC-PSA-10)
+    let action = client(gate, endpoint, "call", "account.security", serde_json::json!({}), "");
+    assert_eq!(action["result"]["user"], "john.doe", "{action}");
+    let after = action["sessionHandle"].as_str().unwrap_or_default().to_string();
+    let who = client(gate, endpoint, "call", "account.whoami", serde_json::json!({}), &after);
     assert!(who["result"]["user"].is_null(), "{who}");
 
     let download = client(

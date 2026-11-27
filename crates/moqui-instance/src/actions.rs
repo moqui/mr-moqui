@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Instance actions (plans/Vault-Instances.md §4.1, §4.3 step 3): each change to an instance is an `InstanceAction`
+//! Instance actions (plans/archive/Vault-Instances.md §4.1, §4.3 step 3): each change to an instance is an `InstanceAction`
 //! row with its state, the lease it ran under (or the environment's machine access), who did it, the versions before
 //! and after and a report that names what was made, never a value.
 //!
@@ -29,6 +29,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use moqui_core::context::framework_thread;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::entity::{EntityFacade, EntityValue};
 use moqui_lib::error::Error as LibError;
@@ -56,7 +57,7 @@ pub const ACTIONS: &[(&str, &str)] = &[
     ("IatRollback", "rollback"),
 ];
 
-/// The actions a deploy records (plans/Vault-Instances.md §4.6), which are not asked for by request#InstanceAction.
+/// The actions a deploy records (plans/archive/Vault-Instances.md §4.6), which are not asked for by request#InstanceAction.
 pub const DEPLOY_ACTIONS: &[(&str, &str)] = &[("IatDeploy", "deploy"), ("IatBackup", "backup")];
 
 /// The action a rotation records on each instance whose credential it rotates (M5, [`crate::rotate`]), which is asked
@@ -446,6 +447,53 @@ pub fn request(
     })
 }
 
+/// Signs in the thread's context as the user `user_id`, by the username their account has, for an action that runs on
+/// a thread of its own (`what` names it in the warning when that cannot be done: it then runs as no user).
+pub(crate) fn sign_in_as(facade: &EntityFacade, user_id: &str, what: &str) {
+    let username = one(facade, "moqui.security.UserAccount", "userId", user_id)
+        .ok()
+        .flatten()
+        .map(|account| field(&account, "username"))
+        .filter(|name| !name.is_empty());
+    let signed_in = match &username {
+        Some(username) => moqui_core::user::internal_login_user(username).map_err(|err| err.to_string()),
+        None => Err(format!("no account of user {user_id}")),
+    };
+    if let Err(err) = signed_in {
+        tracing::warn!("Instances: {what} runs with no user: {err}");
+    }
+}
+
+/// Starts `start` (a thread that waits on the action and lease rows the caller wrote) once the caller's transaction
+/// commits, so it reads them; a rollback writes none and starts nothing. With no transaction, now. When the thread
+/// cannot be started the waiting action `action_id` is marked failed: then, or at the commit (logged).
+pub(crate) fn start_after_commit(
+    facade: &EntityFacade,
+    action_id: &str,
+    start: impl FnOnce() -> std::io::Result<()> + Send + 'static,
+) -> Result<(), LibError> {
+    const FAILED_START: &str = "the action could not wait for its lease";
+    let in_transaction = facade.transactions_for(ACTION).ok().filter(|tx| tx.in_transaction());
+    match in_transaction {
+        Some(tx) => {
+            let (facade, action_id) = (facade.clone(), action_id.to_string());
+            tx.on_commit(move || {
+                if let Err(err) = start() {
+                    tracing::error!("Instances: the action {action_id} could not wait for its lease: {err}");
+                    if let Err(err) = finish(&facade, &action_id, FAILED, FAILED_START) {
+                        tracing::error!("Instances: the waiting action {action_id} was not updated: {err}");
+                    }
+                }
+            })?;
+            Ok(())
+        }
+        None => start().or_else(|err| {
+            finish(facade, action_id, FAILED, FAILED_START)?;
+            Err(fail(format!("The action could not wait for its lease: {err}")))
+        }),
+    }
+}
+
 /// The thread on this member that waits for `lease_id` to open (at most `limit`) and then runs `body` under it, as the
 /// user who asked, for the waiting action `action_id`: marked running, then done with `body`'s line or failed with its
 /// error. An action cancelled while it waited ([`cancel_waiting`]) runs nothing; its lease is ended. A request#
@@ -459,16 +507,15 @@ pub fn wait_then_run(
     thread_name: &str,
     body: impl FnOnce(&EntityFacade, &LeaseRegistry, &str) -> Result<String, LibError> + Send + 'static,
 ) -> Result<(), LibError> {
-    // the facade a spawn that fails marks the waiting row failed with
-    let here = factory.entity();
+    let here = factory.entity().ok_or_else(|| fail("No entity facade is installed"))?;
     let (factory, registry) = (Arc::clone(factory), Arc::clone(registry));
     let waiting_action = action_id.to_string();
     let thread_lease = lease_id.to_string();
     // the user who asked, so the action and its lease's use are theirs on the thread too
     let user = moqui_core::user::current_user_id().ok().flatten();
-    let spawned = std::thread::Builder::new()
-        .name(thread_name.chars().take(60).collect())
-        .spawn(move || {
+    let name: String = thread_name.chars().take(60).collect();
+    let start = move || {
+        std::thread::Builder::new().name(name).spawn(framework_thread(move || {
             let context = factory.new_context();
             let _entered = context.enter();
             let Some(facade) = factory.entity() else {
@@ -476,9 +523,7 @@ pub fn wait_then_run(
             };
             let _authz = crate::common::authz_off();
             if let Some(user) = &user {
-                if let Err(err) = moqui_core::user::internal_login_user(user) {
-                    tracing::warn!("Instances: the waiting action {waiting_action} runs with no user: {err}");
-                }
+                sign_in_as(&facade, user, &format!("the waiting action {waiting_action}"));
             }
             // the waiting row's state now: an action cancelled while it waited ([`cancel_waiting`]) runs nothing
             let status_now = || {
@@ -523,11 +568,8 @@ pub fn wait_then_run(
             if let Err(err) = finish(&facade, &waiting_action, status, &report) {
                 tracing::error!("Instances: the waiting action {waiting_action} was not updated: {err}");
             }
-        });
-    if let Err(err) = spawned {
-        let facade = here.ok_or_else(|| fail("No entity facade is installed"))?;
-        finish(&facade, action_id, FAILED, "the action could not wait for its lease")?;
-        return Err(fail(format!("The action could not wait for its lease: {err}")));
-    }
-    Ok(())
+        }))?;
+        Ok(())
+    };
+    start_after_commit(&here, action_id, start)
 }

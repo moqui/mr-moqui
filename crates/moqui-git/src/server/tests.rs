@@ -414,7 +414,13 @@ pub(crate) fn git_in_with(dir: &Path, home: &Path, args: &[&str], stdin: std::pr
         .env("GIT_ASKPASS", "false")
         .env("SSH_ASKPASS", "false")
         .env_remove("SSH_ASKPASS_REQUIRE")
-        .env("GIT_ALLOW_PROTOCOL", "file:git:http:https");
+        .env("GIT_ALLOW_PROTOCOL", "file:git:http:https")
+        // a test run from a git hook (a pre-commit or pre-push check) inherits the outer repository's: never touch it
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_OBJECT_DIRECTORY");
     // MOQUI_GIT_TRACE=1 shows each pkt-line in the failure output
     if std::env::var_os("MOQUI_GIT_TRACE").is_some() {
         command.env("GIT_TRACE_PACKET", "1");
@@ -2144,10 +2150,212 @@ fn git_eca_rules_check_pushes_and_see_their_commits_and_tags() {
         "2"
     );
 
+    // the push log gives back each event's contexts as the rules had them (the Dev AIDE's Try the condition against a
+    // push, events::context)
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let provider = crate::provider(fixture.context.factory()).unwrap();
+        let contexts = |update: &EntityValue, event: &str| {
+            provider
+                .event_contexts("eca", &field(update, "updateId"), event, 50)
+                .unwrap()
+                .contexts
+        };
+        let at = |context: &crate::events::context::EventContext, name: &str| {
+            context
+                .fields
+                .get(name)
+                .map(moqui_lib::object::to_plain_string)
+                .unwrap_or_default()
+        };
+        let commits = contexts(&updates[1], "commit");
+        let summaries: Vec<String> = commits
+            .iter()
+            .map(|context| match context.fields.get("commit") {
+                Some(Value::Map(commit)) => commit
+                    .get("summary")
+                    .map(moqui_lib::object::to_plain_string)
+                    .unwrap_or_default(),
+                _ => String::new(),
+            })
+            .collect();
+        assert_eq!(summaries, ["First commit", "Second commit"]);
+        assert_eq!(at(&commits[0], "refName"), "refs/heads/main");
+        assert_eq!(at(&commits[0], "updateId"), field(&updates[1], "updateId"));
+        let refs = contexts(&updates[1], "ref-update");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(
+            (at(&refs[0], "changeType"), at(&refs[0], "isDefaultBranch")),
+            ("create".into(), "true".into())
+        );
+        let tags: Vec<String> = contexts(&updates[2], "tag")
+            .iter()
+            .map(|context| context.label.clone())
+            .collect();
+        assert_eq!(tags, ["refs/tags/light", "refs/tags/v1"]);
+        assert_eq!(contexts(&updates[2], "post-receive").len(), 1);
+        // the refused push: its pre events with every ref it asked for, its objects gone, so no commits and said so
+        let refused = contexts(&updates[0], "pre-receive");
+        assert_eq!(refused.len(), 1);
+        assert_eq!(at(&refused[0], "newCommitsTruncated"), "true");
+        assert_eq!(contexts(&updates[0], "pre-ref-update")[0].label, "refs/heads/main");
+        assert!(provider
+            .event_contexts("eca", &field(&updates[0], "updateId"), "nothing", 50)
+            .is_err());
+        assert!(provider
+            .event_contexts("other", &field(&updates[0], "updateId"), "commit", 50)
+            .is_err());
+    }
+
     // a pre-ref-update rule protects main from a force push
     git_ok(&work, &home, &["commit", "--amend", "-m", "Second commit, rewritten"]);
     let (ok, out) = git_in(&work, &home, &["push", "--force", "origin", "main"]);
     assert!(!ok && out.contains("main cannot be forced"), "{out}");
+}
+
+/// SEC-GIT-94: the events of an update run as its pusher in a context of their own, and the caller is the caller after;
+/// a pusher who may not sign in (a disabled account) has them run with no user, never as the caller.
+#[test]
+fn an_updates_events_run_as_its_pusher_or_no_one_never_as_the_caller() {
+    let fixture = fixture("eca-pusher");
+    moqui_core::service::git_eca::install(
+        fixture.context.factory(),
+        r#"<gitecas>
+            <giteca rule-name="Who" event="post-receive"><actions>
+                <entity-make-value entity-name="moqui.test.TestEntity" value-field="row"
+                    map="{testId: 'U' + updateId + '-' + (ec.user.userId || 'none')}"/>
+                <entity-create value-field="row"/></actions></giteca>
+        </gitecas>"#,
+    );
+    define(&fixture, "pushed", "db");
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        user(&fixture.entity, "git.disabled");
+        let mut account = fixture
+            .entity
+            .find("moqui.security.UserAccount")
+            .unwrap()
+            .eq("userId", Value::string("git.disabled"))
+            .one()
+            .unwrap()
+            .unwrap();
+        account.set("disabled", Value::string("Y"));
+        account.update(&fixture.entity).unwrap();
+        // and one whose account is gone (a deleted user): no user, never the caller
+        for (id, pusher) in [
+            ("BY_READER", READER),
+            ("BY_DISABLED", "git.disabled"),
+            ("BY_GONE", "git.no.such.user"),
+        ] {
+            let mut update = EntityValue::make(&fixture.entity, crate::events::GIT_UPDATE).unwrap();
+            for (name, value) in [
+                ("updateId", id),
+                ("repositoryId", "pushed"),
+                ("source", "push"),
+                ("ecaStatus", "pending"),
+                ("userId", pusher),
+            ] {
+                update.set(name, Value::string(value));
+            }
+            update.create(&fixture.entity).unwrap();
+        }
+    }
+    let _entered = fixture.context.enter();
+    moqui_core::user::internal_login_user(WRITER).unwrap();
+    let provider = crate::provider(fixture.context.factory()).unwrap();
+    for id in ["BY_READER", "BY_DISABLED", "BY_GONE"] {
+        provider.process_update(id).unwrap();
+        assert_eq!(
+            moqui_core::user::current_user_id().unwrap().as_deref(),
+            Some(WRITER),
+            "the caller after {id}"
+        );
+    }
+    drop(_entered);
+    let rows = test_rows(&fixture);
+    assert!(rows.contains_key(&format!("UBY_READER-{READER}")), "{:?}", rows.keys());
+    assert!(rows.contains_key("UBY_DISABLED-none"), "{:?}", rows.keys());
+    assert!(rows.contains_key("UBY_GONE-none"), "{:?}", rows.keys());
+    assert!(
+        !rows.keys().any(|key| key.ends_with(&format!("-{WRITER}"))),
+        "{:?}",
+        rows.keys()
+    );
+}
+
+#[test]
+fn a_tag_that_cannot_be_read_fails_alone_and_the_other_events_run() {
+    let fixture = fixture("eca-tolerant");
+    moqui_core::service::git_eca::install(
+        fixture.context.factory(),
+        r#"<gitecas>
+            <giteca rule-name="Tags" event="tag"><actions>
+                <entity-make-value entity-name="moqui.test.TestEntity" value-field="row" map="{testId: 'T' + tag.tagName}"/>
+                <entity-create value-field="row"/></actions></giteca>
+            <giteca rule-name="Refs" event="ref-update" run-on-error="true"><actions>
+                <entity-make-value entity-name="moqui.test.TestEntity" value-field="row" map="{testId: 'R' + shortName}"/>
+                <entity-create value-field="row"/></actions></giteca>
+            <giteca rule-name="After" event="post-receive" run-on-error="true"><actions>
+                <entity-make-value entity-name="moqui.test.TestEntity" value-field="row" map="{testId: 'P' + updateId}"/>
+                <entity-create value-field="row"/></actions></giteca>
+        </gitecas>"#,
+    );
+    define(&fixture, "tolerant", "db");
+    let _entered = fixture.context.enter();
+    let _authz = fixture.context.disable_authz();
+    let provider = crate::provider(fixture.context.factory()).unwrap();
+    let repo = provider.repo("tolerant").unwrap();
+    let tree = repo.store.write(Kind::Tree, b"").unwrap();
+    let commit = repo
+        .store
+        .write(
+            Kind::Commit,
+            format!("tree {tree}\nauthor A <a@example.com> 0 +0000\ncommitter A <a@example.com> 0 +0000\n\nFirst\n")
+                .as_bytes(),
+        )
+        .unwrap();
+    // a tag object that does not parse
+    let bad = repo.store.write(Kind::Tag, b"not a tag at all").unwrap();
+    let mut update = EntityValue::make(&fixture.entity, crate::events::GIT_UPDATE).unwrap();
+    for (name, value) in [
+        ("updateId", "TOLERANT"),
+        ("repositoryId", "tolerant"),
+        ("source", "push"),
+        ("ecaStatus", "pending"),
+    ] {
+        update.set(name, Value::string(value));
+    }
+    update.create(&fixture.entity).unwrap();
+    for (name, new) in [("refs/heads/main", commit), ("refs/tags/bad", bad)] {
+        let mut row = EntityValue::make(&fixture.entity, crate::events::GIT_UPDATE_REF).unwrap();
+        row.set("updateId", Value::string("TOLERANT"));
+        row.set("refName", Value::string(name));
+        row.set("newObjectId", Value::string(new.to_string()));
+        row.set("changeType", Value::string("create"));
+        row.set("result", Value::string("ok"));
+        row.create(&fixture.entity).unwrap();
+    }
+    assert_eq!(provider.process_update("TOLERANT").unwrap(), "failed");
+    drop((_authz, _entered));
+    let rows = test_rows(&fixture);
+    // the tag's rule did not run; the rules that run after an error (as the framework's own: merge requests, webhooks)
+    // still ran for both refs and post-receive, where the unread tag stopped them all before
+    assert!(!rows.contains_key("Tbad"), "{:?}", rows.keys());
+    assert!(
+        rows.contains_key("Rmain") && rows.contains_key("Rbad"),
+        "{:?}",
+        rows.keys()
+    );
+    assert!(rows.contains_key("PTOLERANT"), "{:?}", rows.keys());
+    let updates = settled(&fixture);
+    let failed = updates
+        .iter()
+        .find(|row| row.get("updateId").and_then(Value::as_str) == Some("TOLERANT"))
+        .unwrap();
+    let error = failed.get("ecaError").and_then(Value::as_str).unwrap_or_default();
+    assert!(error.contains("refs/tags/bad"), "{error}");
 }
 
 #[test]

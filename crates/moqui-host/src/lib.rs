@@ -51,6 +51,9 @@ use moqui_vault_server as _;
 // CalcGrid, the same way, where xlsx (the spreadsheet engine) is built in.
 #[cfg(feature = "xlsx")]
 use moqui_calc as _;
+// Optional Overture data for Maps, the same way, under its feature.
+#[cfg(feature = "overture")]
+use moqui_maps as _;
 // The business messaging channels (the sms chat bridge adapter), the same way.
 #[cfg(feature = "channels")]
 use moqui_channels as _;
@@ -83,7 +86,7 @@ mod vault_cmd;
 // What the edge link and the manager link share: the role answer, the backoff, the link key's certificate.
 #[cfg(any(feature = "edge", feature = "manage"))]
 mod link;
-// The manager link (plans/Vault-Instances.md §4.4): a managed instance's dialer, and a manager's moqui-manage/1.
+// The manager link (plans/archive/Vault-Instances.md §4.4): a managed instance's dialer, and a manager's moqui-manage/1.
 mod embedded_checksum;
 mod embedded_files;
 mod embedded_programs;
@@ -282,6 +285,12 @@ fn run_server(detached: bool) -> Result<(), moqui_lib::error::Error> {
                 println!("Listening on {}", server.address());
             }
             server.wait();
+            // a signal while a restart's or a seal's shutdown ran asked the process to stop: it does, rather than boot
+            // again as if nothing had been asked
+            if stop_asked() {
+                tracing::warn!("Stopping: a signal came while the server shut down");
+                return Ok(());
+            }
             if moqui_core::devtools::restart::restart_requested() {
                 return run_again();
             }
@@ -301,8 +310,22 @@ fn run_server(detached: bool) -> Result<(), moqui_lib::error::Error> {
     }
 }
 
+/// Whether a signal asked this process to stop while its server shut down ([`operator`]'s signal handler): then it
+/// neither runs again nor waits sealed. Never on a host with no Unix signals.
+#[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
+fn stop_asked() -> bool {
+    #[cfg(unix)]
+    {
+        operator::stop_asked()
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
 /// Run this binary again with the arguments it was given, after a restart asked for from the app has shut the server
-/// down (plans/design-dev-aide.md 6.5). On Unix the process is replaced, so its id and `./moq run` stay; elsewhere the
+/// down (plans/archive/design-dev-aide.md 6.5). On Unix the process is replaced, so its id and `./moq run` stay; elsewhere the
 /// new process is started and this one ends.
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
 fn run_again() -> Result<(), moqui_lib::error::Error> {
@@ -995,7 +1018,8 @@ where
             {
                 let _ = rest;
                 Err(moqui_lib::error::Error::new(
-                    "moqui lsp is not built into this host: it is in the Dev and Debug packages (the devtools feature)",
+                    "moqui lsp is not built into this host: it is in the Maximal (default) and Debug packages, and in Lite \
+                     built with --features devtools (the devtools feature)",
                 ))
             }
         }
@@ -1694,6 +1718,9 @@ fn serve_thread(
     ready_tx: std::sync::mpsc::Sender<Result<http::ListenReport, String>>,
 ) -> Result<(), moqui_lib::error::Error> {
     let mut ready = Ready { tx: Some(ready_tx) };
+    // booting: a signal from here until the listener serves ends the process (the operator socket's handler)
+    #[cfg(unix)]
+    operator::set_serving(false);
     let process = match boot_server(&runtime_dir, &framework_dir, &cluster_dir, &bind) {
         Ok(process) => process,
         Err(err) => {
@@ -1716,7 +1743,7 @@ fn serve_thread(
         .ok_or_else(|| moqui_lib::error::Error::new("http server has no factory"))?;
     // what uploads cut short by a stop left behind
     moqui_core::web::multipart::Spool::under(factory.runtime_dir()).sweep();
-    // The dev file watcher (plans/design-dev-aide.md 6.3) for the server a `moqui` run starts, not one a test starts on
+    // The dev file watcher (plans/archive/design-dev-aide.md 6.3) for the server a `moqui` run starts, not one a test starts on
     // a port of its own: on a dev instance a changed file reloads what it defines.
     #[cfg(feature = "devtools")]
     if matches!(bind, ListenBind::Property) {
@@ -1733,12 +1760,12 @@ fn serve_thread(
             build_package()
         );
     }
-    // The artifact index (plans/design-dev-aide.md 7.1) of the same server, built in the background; a test's server
+    // The artifact index (plans/archive/design-dev-aide.md 7.1) of the same server, built in the background; a test's server
     // builds it at first use.
     if matches!(bind, ListenBind::Property) {
         moqui_devkit::index::start(&factory);
     }
-    // The dev-aide gives its users code execution as this process's user (plans/design-dev-aide.md 15): say so when the
+    // The dev-aide gives its users code execution as this process's user (plans/archive/design-dev-aide.md 15): say so when the
     // listener is reachable from other machines.
     if moqui_core::devtools::is_dev_instance()
         && factory
@@ -1809,6 +1836,12 @@ fn serve_thread(
         tracing::warn!("Sealed while the server started: the listener stays closed");
         return Ok(());
     }
+    // the listener's signal streams, registered before it says it serves: from then on the operator socket leaves the
+    // first signal to it, so one that came before its shutdown task ran would otherwise be lost
+    let termination = {
+        let _entered = runtime.enter();
+        http::Termination::listen()
+    };
     #[cfg(unix)]
     operator::set_serving(true);
     let listened = runtime.block_on(http::listen(
@@ -1818,10 +1851,12 @@ fn serve_thread(
         cluster_address,
         posts,
         stop,
+        termination,
         sender,
     ));
-    #[cfg(unix)]
-    operator::set_serving(false);
+    // still serving for the operator socket's signal handler, which must not end the process now: the signal that
+    // stopped the listener (or a restart's, or a seal's stop) is shutting the server down, and its embedded Postgres
+    // stops with it. Ending here would leave the postmaster running. The next boot sets it back.
     tracing::info!("HTTP listener stopped, shutting down");
     if let Some(factory) = process.factory.as_ref() {
         moqui_core::web::servlet::stopping(factory);
@@ -2756,7 +2791,7 @@ fn load_one(
     tracing::info!("Loading entity data from {location}");
     let loaded = moqui_core::entity::load_feed::load_entity_data(facade, location, options)?;
     let records = loaded.records;
-    *failed_files += loaded.failed_files;
+    *failed_files += u64::try_from(loaded.failures.len()).unwrap_or(u64::MAX);
     report_message_errors(location);
     tracing::info!(
         "Loaded {records} records from {location} in {:.2}s",

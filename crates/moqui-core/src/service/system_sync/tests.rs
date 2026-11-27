@@ -168,6 +168,188 @@ fn entity_sync_data_keeps_login_keys_and_password_hashes_from_a_partner() {
     assert!(err.to_string().contains("moqui.service.job.ServiceJob"), "{err}");
 }
 
+const SPLIT: i64 = 60_000;
+
+/// A `moqui.test.TestEntity` row whose `lastUpdatedStamp` is `millis`: a create keeps a given stamp.
+fn stamped(facade: &EntityFacade, id: &str, millis: i64) {
+    let mut row = facade.make_value("moqui.test.TestEntity").expect("make");
+    row.set("testId", Value::string(id));
+    row.set("lastUpdatedStamp", super::stamp(millis));
+    row.create(facade).expect("create");
+}
+
+/// One `get#EntitySyncData` of the test entity in 60-second splits after `last` (none for a first run), with `delay`
+/// and `threshold`: the ids it read, in order, and the `inclusiveThruTime` it answered.
+fn sync_window(facade: &EntityFacade, last: Option<i64>, delay: i64, threshold: i64) -> (Vec<String>, i64) {
+    let mut parameters = params(&[]);
+    for (name, value) in [
+        ("syncSplitMillis", Value::I64(SPLIT)),
+        ("delayBufferMillis", Value::I64(delay)),
+        ("recordThreshold", Value::I64(threshold)),
+    ] {
+        parameters.insert(name.to_string(), value);
+    }
+    if let Some(last) = last {
+        parameters.insert("lastSuccessfulSyncTime".to_string(), super::stamp(last));
+    }
+    let include = Value::Map(
+        [("entityName".to_string(), Value::string("moqui.test.TestEntity"))]
+            .into_iter()
+            .collect(),
+    );
+    parameters.insert("entityIncludeList".to_string(), Value::List(vec![include]));
+    let out = super::entity_sync::get_data(&parameters, facade).unwrap();
+    let data = out.get("entityData").map(to_plain_string).unwrap_or_default();
+    let ids: Vec<String> = data
+        .split("testId=\"")
+        .skip(1)
+        .filter_map(|rest| rest.split('"').next().map(str::to_string))
+        .collect();
+    let count = out.get("recordCount").map(to_plain_string).unwrap_or_default();
+    assert_eq!(count, ids.len().to_string(), "{data}");
+    let thru = super::millis_of(out.get("inclusiveThruTime")).expect("inclusiveThruTime");
+    (ids, thru)
+}
+
+fn ids(names: &[&str]) -> Vec<String> {
+    names.iter().map(|name| name.to_string()).collect()
+}
+
+/// `get#EntitySyncData` answers the end of the last split it read, never the split after it, so a run stores no
+/// lastSuccessfulSyncTime past a record it did not send: with no split old enough it reads none and answers where it
+/// started, a record at either end of a split goes once (one at the last success time does not), the threshold leaves
+/// the next split for the next run, and a first run reads up to the buffer (plans/ui-review-system-ai-integrations.md
+/// AI-UI-004).
+#[test]
+fn entity_sync_data_answers_the_end_of_the_last_split_it_read() {
+    let setup = setup("entity-sync-splits");
+    let _entered = setup.context.enter();
+    let _authz = setup.context.disable_authz();
+    let facade = &setup.facade;
+    let now = super::now_millis();
+
+    // the split after the last success is still inside the buffer: nothing read, the end where it started
+    let early = now - 30_000;
+    stamped(facade, "EARLY", early + 10_000);
+    assert_eq!(sync_window(facade, Some(early), 0, 1000), (ids(&[]), early));
+    // once that split is old enough (a buffer of -60 s here, for the minute to pass) the record goes, the end at the
+    // split's boundary
+    assert_eq!(
+        sync_window(facade, Some(early), -60_000, 1000),
+        (ids(&["EARLY"]), early + SPLIT)
+    );
+
+    // one whole split old enough: a record just after its start and one at its end go, once, and one at its start, the
+    // last success time, went with the run before
+    let last = now - 400_000;
+    stamped(facade, "AT_LAST", last);
+    stamped(facade, "FIRST", last + 1);
+    stamped(facade, "EDGE", last + SPLIT);
+    stamped(facade, "NEXT", last + SPLIT + 1);
+    let one_split = 400_000 - SPLIT - 30_000;
+    let (read, thru) = sync_window(facade, Some(last), one_split, 1000);
+    assert_eq!((read, thru), (ids(&["FIRST", "EDGE"]), last + SPLIT));
+    assert_eq!(sync_window(facade, Some(thru), one_split, 1000), (ids(&[]), thru));
+
+    // a threshold of one stops after the first split with a record; the next run reads the split after it, then on
+    // through the empty splits to the last one old enough
+    let (read, thru) = sync_window(facade, Some(last), 0, 1);
+    assert_eq!((read, thru), (ids(&["FIRST", "EDGE"]), last + SPLIT));
+    let (read, thru) = sync_window(facade, Some(thru), 0, 1);
+    assert_eq!((read, thru), (ids(&["NEXT"]), last + 2 * SPLIT));
+    assert_eq!(sync_window(facade, Some(thru), 0, 1), (ids(&[]), last + 6 * SPLIT));
+
+    // a first run reads everything up to now less the buffer, and answers that, never past it
+    let (mut read, thru) = sync_window(facade, None, 30_000, 1000);
+    read.sort();
+    assert_eq!(read, ids(&["AT_LAST", "EDGE", "FIRST", "NEXT"]));
+    assert!(thru >= now - 30_000 && thru <= super::now_millis() - 30_000, "{thru}");
+}
+
+/// A run follows itself only after it moved lastSuccessfulSyncTime and while the next whole split is past the buffer
+/// (AI-UI-004): a run that answered the same end (a failure, or a pull from a remote whose clock is behind) or whose
+/// next split is not old enough would read nothing, again and again.
+#[test]
+fn an_entity_sync_run_follows_itself_only_when_it_moved_and_a_split_is_due() {
+    use super::entity_sync::{follow_up, split_due};
+    assert!(split_due(1_000, SPLIT, 1, 1_000 + SPLIT + 1));
+    assert!(!split_due(1_000, SPLIT, 1, 1_000 + SPLIT));
+    assert!(!split_due(1_000, SPLIT, 300_000, 1_000 + SPLIT + 299_999));
+
+    let now = 10 * SPLIT;
+    // moved and the next split due
+    assert!(follow_up(Some(SPLIT), Some(2 * SPLIT), SPLIT, 1, now));
+    assert!(follow_up(None, Some(2 * SPLIT), SPLIT, 1, now));
+    // the same end, or none
+    assert!(!follow_up(Some(2 * SPLIT), Some(2 * SPLIT), SPLIT, 1, now));
+    assert!(!follow_up(Some(2 * SPLIT), None, SPLIT, 1, now));
+    // moved, but the next split is still inside the buffer
+    assert!(!follow_up(Some(SPLIT), Some(now - SPLIT / 2), SPLIT, 1, now));
+}
+
+/// A run waits for a whole split older than the buffer, writing no History row before then and saying when the next
+/// split is ready (AI-UI-004).
+#[test]
+fn an_entity_sync_run_waits_for_a_whole_split_past_the_buffer() {
+    let setup = setup("entity-sync-run");
+    let _entered = setup.context.enter();
+    let _authz = setup.context.disable_authz();
+    let facade = &setup.facade;
+
+    let history = |id: &str| {
+        facade
+            .find("moqui.entity.sync.EntitySyncHistory")
+            .unwrap()
+            .eq("entitySyncId", Value::string(id))
+            .list()
+            .unwrap()
+            .iter()
+            .map(|row| super::millis_of(row.get("inclusiveThruTime")).unwrap_or_default())
+            .collect::<Vec<i64>>()
+    };
+    let run = |id: &str, last: i64| {
+        let mut row = facade.make_value("moqui.entity.sync.EntitySync").expect("make");
+        for (name, value) in [
+            ("entitySyncId", Value::string(id)),
+            ("statusId", Value::string("EsNotStarted")),
+            ("forPull", Value::string("N")),
+            ("syncSplitMillis", Value::I64(SPLIT)),
+            ("delayBufferMillis", Value::I64(1)),
+            ("lastSuccessfulSyncTime", super::stamp(last)),
+        ] {
+            row.set(name, value);
+        }
+        row.create(facade).expect("create");
+        super::call_service(super::RUN_SYNC, params(&[("entitySyncId", id)]));
+        assert_eq!(errors(&setup.context), "");
+    };
+    let status = |id: &str| {
+        let row = facade
+            .find("moqui.entity.sync.EntitySync")
+            .unwrap()
+            .eq("entitySyncId", Value::string(id))
+            .one()
+            .unwrap()
+            .expect("the EntitySync");
+        row.get("statusId").map(to_plain_string).unwrap_or_default()
+    };
+
+    // half a split since the last success: not run, no History row, a message saying why
+    let now = super::now_millis();
+    run("ES_EARLY", now - SPLIT / 2);
+    assert_eq!(status("ES_EARLY"), "EsNotStarted");
+    assert!(history("ES_EARLY").is_empty());
+    let told = setup.context.message().messages().join("\n");
+    assert!(told.contains("EntitySync ES_EARLY not run: the next split"), "{told}");
+    setup.context.message().clear();
+
+    // a split and a half: the one split read, the end at its boundary
+    let last = now - SPLIT * 3 / 2;
+    run("ES_ONE", last);
+    assert_eq!(status("ES_ONE"), "EsComplete");
+    assert_eq!(history("ES_ONE"), vec![last + SPLIT]);
+}
+
 #[test]
 fn a_queued_message_is_sent_received_and_consumed_by_the_direct_local_sender() {
     let setup = setup("direct");

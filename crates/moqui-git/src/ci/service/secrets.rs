@@ -312,7 +312,7 @@ fn find_ci_environments(parameters: &Parameters, facade: &EntityFacade) -> Out {
 }
 
 /// `store#CiEnvironment`: make or change an environment. A target's token is an item of the vault it names, never a
-/// row's (plans/Vault-Instances.md §4.6); naming managed instances' environment needs `INSTANCE_ADMIN`, and machine
+/// row's (plans/archive/Vault-Instances.md §4.6); naming managed instances' environment needs `INSTANCE_ADMIN`, and machine
 /// access to the token `VAULT_ADMIN`. Out: `environmentId`, `cleared`.
 fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let Some(scope) = scope_of(parameters, "writing an environment") else {
@@ -419,7 +419,7 @@ fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
     if parameters.contains_key("approvalRequired") {
         row.set("approvalRequired", yes_no(flag(parameters, "approvalRequired")));
     }
-    // managed instances: deploying to them is their administrators' to give (plans/Vault-Instances.md §4.6)
+    // managed instances: deploying to them is their administrators' to give (plans/archive/Vault-Instances.md §4.6)
     if parameters.contains_key("instanceEnvironmentId") {
         let given = text(parameters, "instanceEnvironmentId");
         if given != field(&row, "instanceEnvironmentId") {

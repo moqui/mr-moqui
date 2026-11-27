@@ -341,6 +341,48 @@ fn deny_beats_allow_and_always_beats_deny() {
     world.facade.find(ENTITY).unwrap().list().expect("always wins");
 }
 
+/// Rows created together are authorized as their creates are, by the entity's full name though the call gives its short
+/// one: allowed, they are written; with a deny on the full name, none is.
+#[test]
+fn rows_created_together_are_authorized_by_the_full_name() {
+    let world = world();
+    let _entered = world.context.enter();
+    session::set_user("nobody", "nobody");
+    let rows = |ids: &[&str]| {
+        ids.iter()
+            .map(|id| {
+                let mut row = world.facade.make_value(ENTITY).unwrap();
+                row.set("testId", Value::string(*id));
+                row
+            })
+            .collect::<Vec<_>>()
+    };
+    let count = || {
+        let _guard = world.context.disable_authz();
+        world.facade.find(ENTITY).unwrap().count().unwrap()
+    };
+    let err = world
+        .facade
+        .create_values("TestEntity", rows(&["N1"]))
+        .expect_err("no allow");
+    assert!(err.to_string().contains("not authorized"), "{err}");
+    grant(&world, "ALLOW_ROWS", "AT_ENTITY", ENTITY, "AUTHZT_ALLOW", "N");
+    session::set_user("nobody", "nobody");
+    world
+        .facade
+        .create_values("TestEntity", rows(&["A1", "A2"]))
+        .expect("allowed");
+    assert_eq!(count(), 2);
+    grant(&world, "DENY_ROWS", "AT_ENTITY", ENTITY, "AUTHZT_DENY", "N");
+    session::set_user("nobody", "nobody");
+    let err = world
+        .facade
+        .create_values("TestEntity", rows(&["D1", "D2"]))
+        .expect_err("deny wins");
+    assert!(err.to_string().contains("deny record"), "{err}");
+    assert_eq!(count(), 2, "nothing written");
+}
+
 /// A filterMap that is not a valid expression, so it cannot be evaluated.
 const BAD_FILTER: &str = "[ this is not an expression";
 

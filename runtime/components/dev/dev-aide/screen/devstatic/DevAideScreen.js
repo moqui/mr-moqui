@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The screen view of the Dev AIDE (plans/design-dev-aide.md 11): m-dev-screen-view, a visual view of a screen or
+ * The screen view of the Dev AIDE (plans/archive/design-dev-aide.md 11): m-dev-screen-view, a visual view of a screen or
  * screen-extend file's tab. The canvas is the real render of the screen in a same-origin frame (11.2): it renders the
  * tab's buffers, not the files (put#CanvasBuffer and the frame's buffer:<id> preview token, F14), each widget stamped
  * with the file and line that wrote it (moquiAide=source, F10), under an overlay that outlines and names the element
@@ -344,6 +344,10 @@
             }
         },
         watch: {
+            // an edit answers a new outline: the selection follows to its element there, so the properties show the
+            // values the edit made (DEVA-UI-002)
+            editOutline(outline) { this.followSelection("edit", outline); },
+            baseOutline(outline) { this.followSelection("base", outline); },
             width() { this.$nextTick(() => this.drawHover()); },
             dark() { this.applyDark(); }
         },
@@ -356,6 +360,12 @@
         beforeUnmount() { clearTimeout(this.renderTimer); root.removeEventListener("resize", this.onScroll); if (this.offSaved) this.offSaved(); },
         methods: {
             t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
+            followSelection(which, outline) {
+                const selection = this.selection;
+                if (!selection || !selection.node || selection.which !== which || !outline) return;
+                const node = pure.sameNodeIn(outline, selection.node);
+                if (node && node !== selection.node) this.selection = Object.assign({}, selection, { node });
+            },
             load() {
                 const params = this.tab.page ? { page: this.tab.page } : { rootId: this.ctx.rootId, path: this.tab.path };
                 this.ctx.get("screenView", params).then((answer) => {

@@ -435,6 +435,10 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         "client-sync",
         // load runs from Tools (plans/archive/LoadRunner.md §10)
         "load-runner",
+        // maps: the outside-request switch and the import and feature limits (plans/archive/Maps.md §4.2)
+        "maps",
+        // shared live location: the longest share and trail, the report interval (plans/archive/Location-Sharing.md §3.1)
+        "location",
         // this server as a cluster member (plans/archive/Cluster.md)
         "cluster-member",
         // voicemail (docs/interfaces/Voicemail.md)
@@ -456,7 +460,7 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         "board",
         // the thresholds of the resource readings (plans/archive/Tools-Fancy.md B2)
         "resource-watch",
-        // the dev tools (plans/design-dev-aide.md 16): the file watcher, and the dev-aide component's settings
+        // the dev tools (plans/archive/design-dev-aide.md 16): the file watcher, and the dev-aide component's settings
         "dev-reload",
         "dev-aide",
         // a client's settings (plans/Mobile-Desktop.md §6, MD4): read by the desktop and mobile apps, not the server
@@ -464,9 +468,9 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         // attested deploys and the gate (docs/tools/Component-Deploy.md): a runtime conf's allow entries replace the
         // default's (none)
         "component-deploy",
-        // vaults (plans/Vault-Instances.md §3)
+        // vaults (plans/archive/Vault-Instances.md §3)
         "vault",
-        // the manager link (plans/Vault-Instances.md §4.4)
+        // the manager link (plans/archive/Vault-Instances.md §4.4)
         "manage",
     ] {
         base.merge_single_child(over, name);

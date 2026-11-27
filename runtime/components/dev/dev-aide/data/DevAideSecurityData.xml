@@ -12,15 +12,17 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Who may use Dev AIDE (plans/design-dev-aide.md 3.4): the app's screens for ADMIN and the two dev-aide groups, and the
+<!-- Who may use Dev AIDE (plans/archive/design-dev-aide.md 3.4): the app's screens for ADMIN and the two dev-aide groups, and the
     three tiers the services check: DEV_AIDE_VIEW reads, DEV_AIDE_EXTEND writes inside site components, DEV_AIDE does
     everything. Seed of the dev-aide, so it exists only where the component loads (a dev instance). -->
 <entity-facade-xml type="seed">
     <moqui.security.UserGroup userGroupId="DEV_AIDE_USERS" description="Dev AIDE developers (the full tier)"/>
-    <moqui.security.UserGroup userGroupId="DEV_AIDE_EXTENDERS" description="Dev AIDE extenders (writes in site components)"/>
+    <!-- the extend tier runs code as the server (a service run for real, JavaScript in the sim, specs, seed loads, a ci.xml
+        script in a host terminal): give it only to whom the server itself is given (SEC-DEV-07) -->
+    <moqui.security.UserGroup userGroupId="DEV_AIDE_EXTENDERS" description="Dev AIDE extenders (writes in site components; runs code as the server)"/>
 
     <moqui.security.UserPermission userPermissionId="DEV_AIDE_VIEW" description="Dev AIDE: browse, search and read files"/>
-    <moqui.security.UserPermission userPermissionId="DEV_AIDE_EXTEND" description="Dev AIDE: write site components, publish"/>
+    <moqui.security.UserPermission userPermissionId="DEV_AIDE_EXTEND" description="Dev AIDE: write site components, publish, and run code as the server (services for real, scripts, specs, seed loads, ci.xml in a terminal)"/>
     <moqui.security.UserPermission userPermissionId="DEV_AIDE" description="Dev AIDE: everything, upstream edits and every git command"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="DEV_AIDE" fromDate="0"/>
     <moqui.security.UserGroupPermission userGroupId="DEV_AIDE_USERS" userPermissionId="DEV_AIDE" fromDate="0"/>
@@ -62,7 +64,21 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.Enumeration enumId="DAA_LOAD" enumTypeId="DevAideAction" description="Data file loaded"/>
     <moqui.basic.Enumeration enumId="DAA_TRY" enumTypeId="DevAideAction" description="Service run for real"/>
     <moqui.basic.Enumeration enumId="DAA_EXPORT" enumTypeId="DevAideAction" description="Docs exported"/>
+    <moqui.basic.Enumeration enumId="DAA_BUILD" enumTypeId="DevAideAction" description="Rebuild (./moq build)"/>
+    <moqui.basic.Enumeration enumId="DAA_CONVERT" enumTypeId="DevAideAction" description="DbForm converted to a site extension"/>
+
+    <!-- The preference an admin sets for a user on System › User (src/vcs.rs PUBLISH_BRANCH): the branch Publish pushes
+        to when the root has none in Settings, `{user}` the username, as `review/{user}`. -->
+    <moqui.basic.Enumeration enumId="DEV_AIDE_PUBLISH_BRANCH" enumTypeId="UserPreferenceKey"
+            description="Dev AIDE publish branch ({user} is the username)"/>
+    <!-- A user's editor settings (src/editor.rs EDITOR), JSON that Dev AIDE › Settings › Editor writes: fontSize, tabSize,
+        wrap, whitespace, keymap, and keys (a command's keys by its name, over the keymap). -->
+    <moqui.basic.Enumeration enumId="DEV_AIDE_EDITOR" enumTypeId="UserPreferenceKey"
+            description="Dev AIDE editor settings (JSON: font size, tab size, wrap, white space, keymap, keys)"/>
 
     <moqui.security.user.NotificationTopic topic="DevReload" description="Dev AIDE reload" typeString="info" showAlert="N"
             persistOnSend="N"/>
+    <!-- an Assist session ended while its worktree had uncommitted changes: the worktree is kept (21.8) -->
+    <moqui.security.user.NotificationTopic topic="DevAideWorktreeKept" description="Dev AIDE worktree kept"
+            typeString="warning" showAlert="Y" persistOnSend="Y"/>
 </entity-facade-xml>

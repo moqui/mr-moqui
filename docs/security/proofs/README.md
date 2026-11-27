@@ -62,13 +62,13 @@ A requirement met only in part takes the status of the part that is not met, and
 | [V9 Self-contained Tokens](V9-Self-contained-Tokens.md) | 7 | 6 | 0 | 0 | 1 | 0 |
 | [V10 OAuth and OIDC](V10-OAuth-and-OIDC.md) | 29 | 4 | 0 | 0 | 4 | 21 |
 | [V11 Cryptography](V11-Cryptography.md) | 14 | 2 | 0 | 0 | 12 | 0 |
-| [V12 Secure Communication](V12-Secure-Communication.md) | 9 | 2 | 5 | 0 | 2 | 0 |
+| [V12 Secure Communication](V12-Secure-Communication.md) | 9 | 3 | 5 | 0 | 1 | 0 |
 | [V13 Configuration](V13-Configuration.md) | 13 | 5 | 4 | 0 | 4 | 0 |
 | [V14 Data Protection](V14-Data-Protection.md) | 9 | 2 | 0 | 2 | 5 | 0 |
 | [V15 Secure Coding and Architecture](V15-Secure-Coding-and-Architecture.md) | 13 | 3 | 2 | 4 | 4 | 0 |
 | [V16 Security Logging and Error Handling](V16-Security-Logging-and-Error-Handling.md) | 16 | 7 | 3 | 0 | 6 | 0 |
 | [V17 WebRTC](V17-WebRTC.md) | 7 | 3 | 0 | 0 | 4 | 0 |
-| **All** | 253 | 90 | 22 | 28 | 84 | 29 |
+| **All** | 253 | 91 | 22 | 28 | 83 | 29 |
 
 ## Running the proofs
 

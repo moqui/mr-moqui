@@ -28,8 +28,15 @@ const PALETTE: [Role; 6] = [
 const FILLS: [char; 4] = ['█', '▓', '▒', '░'];
 const EIGHTHS: [char; 7] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉'];
 
-/// The chart for a panel's visualization, when it has one in a terminal.
-pub(super) fn chart(frame: &Value, panel: &Value, visual: &str, width: usize) -> Option<Vec<Line>> {
+/// The chart for a panel's visualization, when it has one in a terminal; `place` is a geomap's selected place, where it
+/// opens in Maps.
+pub(super) fn chart(
+    frame: &Value,
+    panel: &Value,
+    visual: &str,
+    width: usize,
+    place: Option<usize>,
+) -> Option<Vec<Line>> {
     if width < MIN_WIDTH {
         return None;
     }
@@ -42,7 +49,7 @@ pub(super) fn chart(frame: &Value, panel: &Value, visual: &str, width: usize) ->
         "funnel" => super::graph::funnel(frame, panel, width),
         "nodeGraph" => super::graph::node_graph(frame, panel, width),
         "flameGraph" => super::graph::flame(frame, panel, width),
-        "geomap" => super::graph::geomap(frame, panel, width),
+        "geomap" => super::graph::geomap(frame, panel, width, place),
         _ => None,
     }
 }
@@ -666,7 +673,7 @@ mod tests {
             {"name":"status","type":"string","values":["Approved and shipped","Cancelled"]},
             {"name":"orders","type":"number","values":[40,10]}
         ]});
-        let lines = chart(&frame, &json!({}), "bar", 60).unwrap();
+        let lines = chart(&frame, &json!({}), "bar", 60, None).unwrap();
         let shown = text(&lines);
         assert!(shown.contains("Approved and shipped"), "{shown}");
         let full = line_text(&lines[0]).matches('█').count();
@@ -674,7 +681,7 @@ mod tests {
         assert!(full > 3 * quarter && quarter > 0, "{shown}");
         assert!(line_text(&lines[0]).trim_end().ends_with("40"));
         // Too narrow for a chart: the table.
-        assert!(chart(&frame, &json!({}), "bar", 20).is_none());
+        assert!(chart(&frame, &json!({}), "bar", 20, None).is_none());
     }
 
     #[test]
@@ -684,7 +691,7 @@ mod tests {
             {"name":"sales","type":"number","values":[5,7]},
             {"name":"returns","type":"number","values":[1,null]}
         ]});
-        let lines = chart(&frame, &json!({}), "bar", 60).unwrap();
+        let lines = chart(&frame, &json!({}), "bar", 60, None).unwrap();
         assert!(line_text(&lines[0]).contains("sales") && line_text(&lines[0]).contains("returns"));
         assert_eq!(lines.len(), 5);
         assert!(line_text(&lines[4]).contains('—'), "a missing value is not a zero bar");
@@ -697,7 +704,7 @@ mod tests {
             {"name":"status","type":"string","values":["Paid","Open","Void"]},
             {"name":"amount","type":"number","unit":"USD","values":[75,25,0]}
         ]});
-        let lines = chart(&frame, &json!({}), "pie", 42).unwrap();
+        let lines = chart(&frame, &json!({}), "pie", 42, None).unwrap();
         let track = line_text(&lines[0]);
         assert_eq!(track.chars().filter(|fill| *fill == '█').count(), 30);
         assert_eq!(track.chars().filter(|fill| *fill == '▓').count(), 10);
@@ -708,10 +715,10 @@ mod tests {
             "{shown}"
         );
         assert!(!shown.contains("Void"), "an empty slice has no share");
-        let donut = text(&chart(&frame, &json!({}), "donut", 42).unwrap());
+        let donut = text(&chart(&frame, &json!({}), "donut", 42, None).unwrap());
         assert!(donut.contains("Total $100.00"), "{donut}");
         let empty = json!({"fields":[{"name":"status","type":"string","values":["A"]},{"name":"n","type":"number","values":[0]}]});
-        assert!(chart(&empty, &json!({}), "pie", 42).is_none());
+        assert!(chart(&empty, &json!({}), "pie", 42, None).is_none());
     }
 
     #[test]
@@ -722,7 +729,7 @@ mod tests {
             {"name":"latency.bucket.1","type":"number","values":[2,null]},
             {"name":"latency.p50","type":"number","values":[1,1],"hidden":true}
         ]});
-        let lines = chart(&frame, &json!({}), "heatmap", 40).unwrap();
+        let lines = chart(&frame, &json!({}), "heatmap", 40, None).unwrap();
         // The highest bucket on top; time runs left to right in time order.
         assert!(line_text(&lines[0]).starts_with("bucket 1"), "{}", text(&lines));
         let top = line_text(&lines[0]);
@@ -735,7 +742,8 @@ mod tests {
             &json!({"fields":[{"name":"time","type":"time","values":[1]}]}),
             &json!({}),
             "heatmap",
-            40
+            40,
+            None
         )
         .is_none());
     }
@@ -749,7 +757,7 @@ mod tests {
             {"name":"load","type":"number","values":[10,95,20,30],
                 "thresholds":[{"value":null,"color":"positive"},{"value":90,"color":"negative"}]}
         ]});
-        let lines = chart(&frame, &json!({}), "stateTimeline", 40).unwrap();
+        let lines = chart(&frame, &json!({}), "stateTimeline", 40, None).unwrap();
         let health = &lines[0];
         assert!(line_text(health).starts_with("health"));
         assert!(health
@@ -778,22 +786,22 @@ mod tests {
             {"name":"cpu","type":"number","unit":"percent","values":[10,75],
                 "thresholds":[{"value":null,"color":"positive"},{"value":70,"color":"warning"}]}
         ]});
-        let lines = chart(&frame, &json!({}), "gauge", 50).unwrap();
+        let lines = chart(&frame, &json!({}), "gauge", 50, None).unwrap();
         let line = &lines[0];
         assert_eq!(line[1].role, Role::Warning);
         let filled = line[1].text.chars().count();
         let rest = line[2].text.chars().count();
         assert_eq!((filled, rest), (30, 10), "three quarters of the room");
         assert!(line_text(line).ends_with("75%"));
-        let bars = chart(&frame, &json!({}), "barGauge", 50).unwrap();
+        let bars = chart(&frame, &json!({}), "barGauge", 50, None).unwrap();
         assert!(bars[0][1].text.contains('█') && bars[0][2].text.contains('░'));
         // A value past 100 without a max scales to the largest value.
         let big = json!({"fields":[{"name":"requests","type":"number","values":[400]},{"name":"errors","type":"number","values":[200]}]});
-        let lines = chart(&big, &json!({}), "gauge", 50).unwrap();
+        let lines = chart(&big, &json!({}), "gauge", 50, None).unwrap();
         assert!(lines[0][2].text.is_empty() && !lines[1][2].text.is_empty());
         // Over categories, a gauge a category.
         let warehouses = json!({"fields":[{"name":"warehouse","type":"string","values":["North","South"]},{"name":"full","type":"number","unit":"percent","values":[40,90]}]});
-        let lines = chart(&warehouses, &json!({}), "barGauge", 50).unwrap();
+        let lines = chart(&warehouses, &json!({}), "barGauge", 50, None).unwrap();
         assert_eq!(lines.len(), 2);
         assert!(line_text(&lines[0]).starts_with("North") && line_text(&lines[1]).ends_with("90%"));
     }

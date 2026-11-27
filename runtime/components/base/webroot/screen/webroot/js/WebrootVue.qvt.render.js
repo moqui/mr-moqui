@@ -1875,8 +1875,8 @@
               ], 40, ["onDragover", "onDrop", "onPaste"]))
             }
         } },
-        "m-assist-history": { hash: "6633506c", make: function (Vue) {
-            const { resolveComponent: _resolveComponent, createVNode: _createVNode, withCtx: _withCtx, createElementVNode: _createElementVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, renderList: _renderList, Fragment: _Fragment, createElementBlock: _createElementBlock } = Vue
+        "m-assist-history": { hash: "b319f0c6", make: function (Vue) {
+            const { resolveComponent: _resolveComponent, createVNode: _createVNode, withCtx: _withCtx, createElementVNode: _createElementVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, renderList: _renderList, Fragment: _Fragment, createElementBlock: _createElementBlock, withModifiers: _withModifiers } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_icon = _resolveComponent("q-icon")
@@ -1885,6 +1885,8 @@
               const _component_q_item = _resolveComponent("q-item")
               const _component_q_item_label = _resolveComponent("q-item-label")
               const _component_q_spinner = _resolveComponent("q-spinner")
+              const _component_q_tooltip = _resolveComponent("q-tooltip")
+              const _component_q_btn = _resolveComponent("q-btn")
               const _component_q_list = _resolveComponent("q-list")
 
               return (_openBlock(), _createElementBlock("div", {
@@ -1946,7 +1948,7 @@
                               }, 1024),
                               _createVNode(_component_q_item_label, { caption: "" }, {
                                 default: _withCtx(() => [
-                                  _createTextVNode(_toDisplayString(_ctx.when(item.lastMessageDate || item.createdDate)), 1)
+                                  _createTextVNode(_toDisplayString(_ctx.when(item.lastMessageDate || item.createdDate)) + _toDisplayString(item.statusId === 'AgcArchived' ? ' · ' + _ctx.labels.archived : ''), 1)
                                 ]),
                                 _: 2
                               }, 1024)
@@ -1968,6 +1970,31 @@
                                       size: "14px"
                                     }))
                                   : _createCommentVNode("", true)
+                            ]),
+                            _: 2
+                          }, 1024),
+                          _createVNode(_component_q_item_section, { side: "" }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_btn, {
+                                dense: "",
+                                flat: "",
+                                round: "",
+                                size: "xs",
+                                icon: item.statusId === 'AgcArchived' ? 'sym_o_unarchive' : 'sym_o_archive',
+                                "aria-label": item.statusId === 'AgcArchived' ? _ctx.labels.restore : _ctx.labels.archive,
+                                "data-assist-archive": item.conversationId,
+                                onClick: _withModifiers($event => (_ctx.archive(item, item.statusId !== 'AgcArchived')), ["stop"])
+                              }, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_tooltip, null, {
+                                    default: _withCtx(() => [
+                                      _createTextVNode(_toDisplayString(item.statusId === 'AgcArchived' ? _ctx.labels.restore : _ctx.labels.archive), 1)
+                                    ]),
+                                    _: 2
+                                  }, 1024)
+                                ]),
+                                _: 2
+                              }, 1032, ["icon", "aria-label", "data-assist-archive", "onClick"])
                             ]),
                             _: 2
                           }, 1024)
@@ -8766,6 +8793,81 @@
               ], 10, ["id", "data-view"]))
             }
         } },
+        "m-map": { hash: "a563f059", make: function (Vue) {
+            const { renderSlot: _renderSlot, resolveDynamicComponent: _resolveDynamicComponent, withCtx: _withCtx, createSlots: _createSlots, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createVNode: _createVNode, normalizeStyle: _normalizeStyle, renderList: _renderList, Fragment: _Fragment, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_spinner = _resolveComponent("q-spinner")
+
+              return (_ctx.view)
+                ? (_openBlock(), _createBlock(_resolveDynamicComponent(_ctx.view), {
+                    key: 0,
+                    ref: "view",
+                    id: _ctx.id,
+                    config: _ctx.config,
+                    "config-url": _ctx.configUrl,
+                    height: _ctx.height,
+                    pick: _ctx.pick,
+                    "library-error": _ctx.libraryError,
+                    onPick: $event => (_ctx.$emit('pick', $event)),
+                    onSelect: $event => (_ctx.$emit('select', $event)),
+                    onViewChange: $event => (_ctx.$emit('view-change', $event)),
+                    onEditChange: $event => (_ctx.$emit('edit-change', $event))
+                  }, _createSlots({ _: 2 }, [
+                    (_ctx.$slots.notice)
+                      ? {
+                          name: "notice",
+                          fn: _withCtx(() => [
+                            _renderSlot(_ctx.$slots, "notice")
+                          ]),
+                          key: "0"
+                        }
+                      : undefined
+                  ]), 1064, ["id", "config", "config-url", "height", "pick", "library-error", "onPick", "onSelect", "onViewChange", "onEditChange"]))
+                : (_openBlock(), _createElementBlock("div", {
+                    key: 1,
+                    class: "m-map m-map-waiting",
+                    id: _ctx.id
+                  }, [
+                    (_ctx.failed)
+                      ? (_openBlock(), _createElementBlock("div", {
+                          key: 0,
+                          class: "m-map-fallback",
+                          role: "status"
+                        }, _toDisplayString(_ctx.failed), 1))
+                      : (_openBlock(), _createElementBlock("div", {
+                          key: 1,
+                          class: "m-map-frame flex flex-center",
+                          style: _normalizeStyle({height: _ctx.frameHeight})
+                        }, [
+                          _createVNode(_component_q_spinner, { size: "2em" })
+                        ], 4)),
+                    (_ctx.places.length)
+                      ? (_openBlock(), _createElementBlock("ul", {
+                          key: 2,
+                          class: "m-map-places"
+                        }, [
+                          (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.places, (place) => {
+                            return (_openBlock(), _createElementBlock("li", {
+                              key: place.key,
+                              class: "m-map-place"
+                            }, [
+                              _createElementVNode("span", { class: "m-map-place-label" }, _toDisplayString(place.label), 1),
+                              _createTextVNode(),
+                              _createElementVNode("span", { class: "m-map-place-coordinates" }, _toDisplayString(place.lat.toFixed(5)) + ", " + _toDisplayString(place.lon.toFixed(5)), 1),
+                              (place.details)
+                                ? (_openBlock(), _createElementBlock("span", {
+                                    key: 0,
+                                    class: "m-map-place-details"
+                                  }, _toDisplayString(place.details), 1))
+                                : _createCommentVNode("", true)
+                            ]))
+                          }), 128))
+                        ]))
+                      : _createCommentVNode("", true)
+                  ], 8, ["id"]))
+            }
+        } },
         "m-markdown": { hash: "94bdf7ee", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, withModifiers: _withModifiers, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, normalizeClass: _normalizeClass } = Vue
 
@@ -9198,8 +9300,8 @@
                 : _createCommentVNode("", true)
             }
         } },
-        "m-qapps-root": { hash: "d1001d49", make: function (Vue) {
-            const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, renderList: _renderList, Fragment: _Fragment, withModifiers: _withModifiers, withKeys: _withKeys, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeClass: _normalizeClass, resolveDynamicComponent: _resolveDynamicComponent, createElementVNode: _createElementVNode, vShow: _vShow } = Vue
+        "m-qapps-root": { hash: "73ff1c4", make: function (Vue) {
+            const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, renderList: _renderList, Fragment: _Fragment, withModifiers: _withModifiers, withKeys: _withKeys, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeClass: _normalizeClass, createElementVNode: _createElementVNode, resolveDynamicComponent: _resolveDynamicComponent, vShow: _vShow } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_btn = _resolveComponent("q-btn")
@@ -9214,6 +9316,7 @@
               const _component_q_breadcrumbs_el = _resolveComponent("q-breadcrumbs-el")
               const _component_q_breadcrumbs = _resolveComponent("q-breadcrumbs")
               const _component_q_space = _resolveComponent("q-space")
+              const _component_q_chip = _resolveComponent("q-chip")
               const _component_q_separator = _resolveComponent("q-separator")
               const _component_q_badge = _resolveComponent("q-badge")
               const _component_m_dynamic_dialog = _resolveComponent("m-dynamic-dialog")
@@ -9515,6 +9618,32 @@
                                 }))
                               : _createCommentVNode("", true),
                             _createVNode(_component_q_space),
+                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.shellIndicatorList, (indicator) => {
+                              return (_openBlock(), _createBlock(_component_q_chip, {
+                                key: indicator.key,
+                                id: 'm-indicator-' + indicator.key,
+                                dense: "",
+                                square: "",
+                                clickable: "",
+                                class: "m-shell-indicator q-mx-xs",
+                                color: indicator.tone,
+                                "text-color": "white",
+                                icon: indicator.icon,
+                                "aria-label": indicator.text,
+                                onClick: $event => (_ctx.indicatorClick(indicator))
+                              }, {
+                                default: _withCtx(() => [
+                                  _createElementVNode("span", { class: "m-shell-indicator-label gt-xs" }, _toDisplayString(indicator.text), 1),
+                                  _createVNode(_component_q_tooltip, null, {
+                                    default: _withCtx(() => [
+                                      _createTextVNode(_toDisplayString(indicator.title ? indicator.text + ': ' + indicator.title : indicator.text), 1)
+                                    ]),
+                                    _: 2
+                                  }, 1024)
+                                ]),
+                                _: 2
+                              }, 1032, ["id", "color", "icon", "aria-label", "onClick"]))
+                            }), 128)),
                             (!_ctx.handheld)
                               ? (_openBlock(), _createElementBlock(_Fragment, { key: 5 }, [
                                   _createVNode(_component_q_btn, {

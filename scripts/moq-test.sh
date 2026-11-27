@@ -15,7 +15,18 @@ unset MOQUI_RUNTIME MOQ_TEST_WORKERS VAULT_WASM_ENSURED
 SRC=$(cd "$(dirname "$0")/.." && pwd)
 # The physical path: moq resolves its root with cd -P, so its output names /private/var/... on macOS, where TMPDIR is
 # /var/folders/.../T/ (a symlink, and a trailing slash).
-FIX=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/moq-test.XXXXXX")" && pwd -P)
+# A mktemp that fails (a full disk) prints nothing, and `cd ""` stays where it is, so FIX would name the current
+# directory, the checkout, and the trap below would remove it: stop unless FIX is a new directory of its own.
+FIX=$(mktemp -d "${TMPDIR:-/tmp}/moq-test.XXXXXX") && [ -n "$FIX" ] && [ -d "$FIX" ] && FIX=$(cd "$FIX" && pwd -P) || {
+    echo "moq-test.sh: could not make a temp directory (is the disk full?)" >&2
+    exit 1
+}
+case "$FIX" in
+    "" | / | "$SRC" | "$SRC"/* | "$HOME" | "$(pwd -P)")
+        echo "moq-test.sh: refusing temp directory $FIX" >&2
+        exit 1
+        ;;
+esac
 trap 'rm -rf "$FIX"' EXIT
 pass=0
 fail=0
@@ -180,6 +191,20 @@ check "a relative shared path cannot install trust" 1 'absolute directory' -- \
     env MOQUI_SHARED_RUNTIME=relative "$M" trust-dev-cert
 check "trust dry run" 0 'would update dev CA trust' -- \
     env MOQ_DRY_RUN=1 MOQUI_SHARED_RUNTIME="$FIX/no-signer" "$M" trust-dev-cert --system
+# Linux system removal refreshes with --fresh, which drops the removed root's /etc/ssl/certs links; sudo, certutil and
+# update-ca-certificates are stubs that change nothing, and HOME has no NSS store
+if [ "$(uname -s)" = Linux ] && command -v openssl >/dev/null; then
+    mkdir -p "$FIX/trust/bin" "$FIX/trust/home" "$FIX/trust/shared/cert/dev-ca"
+    printf '#!/bin/sh\necho "sudo: $*"\n' > "$FIX/trust/bin/sudo"
+    printf '#!/bin/sh\nexit 0\n' > "$FIX/trust/bin/certutil"
+    cp "$FIX/trust/bin/certutil" "$FIX/trust/bin/update-ca-certificates"
+    chmod +x "$FIX/trust/bin/"*
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout "$FIX/trust/root.key" \
+        -subj '/CN=MR Moqui development root' -days 1 -out "$FIX/trust/shared/cert/dev-ca/ca.crt" 2>/dev/null
+    check "system untrust refreshes the store fresh" 0 'sudo: update-ca-certificates --fresh' -- \
+        env HOME="$FIX/trust/home" PATH="$FIX/trust/bin:$PATH" MOQUI_SHARED_RUNTIME="$FIX/trust/shared" \
+        "$M" trust-dev-cert --system --untrust
+fi
 
 # ========== run and load ==========
 
@@ -1098,8 +1123,9 @@ EOF
     check "component-create" 0 'Created runtime/components/addon/my-shop from template' -- \
         "$M" component-create my-shop --myaddons me --git-remote https://example.com/my-shop.git
     S=$R/runtime/components/addon/my-shop
+    # an App has every file of the template but its other kinds (kinds/, components.sh)
     check "create names every file" 0 '' -- test "$(files_of "$S")" = "$(files_of "$R/runtime/components/dev/template" \
-        | sed -e 's/@component@/my-shop/g' -e 's/@Class@/MyShop/g' -e 's/@package@/myshop/g' | LC_ALL=C sort)"
+        | grep -v '^\./kinds/' | sed -e 's/@component@/my-shop/g' -e 's/@Class@/MyShop/g' -e 's/@package@/myshop/g' | LC_ALL=C sort)"
     check "create directories" 0 '' -- test -f "$S/service/myshop/MyShopServices.xml" -a -f "$S/screen/MyShop/FindItem.xml"
     check "create leaves no placeholder" 1 '' -- grep -rE --exclude-dir=.git '@(component|Title|Class|package|ID)@' "$S"
     check "create takes out disabled" 1 '' -- grep -q 'disabled=' "$S/component.xml"

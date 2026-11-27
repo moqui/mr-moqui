@@ -200,6 +200,8 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="lockVersion" type="Long"/>
             <parameter name="serviceClassification"/>
+            <parameter name="everyAgentUser" type="Boolean"><description>The service needs no authentication, so every
+                user of an agent with the tool may run it (a message says so too)</description></parameter>
         </out-parameters>
     </service>
 

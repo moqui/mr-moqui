@@ -15,14 +15,16 @@
 //! Notification message builder. Recipient rows are one find per source, not one find per user.
 
 use std::collections::{BTreeSet, HashMap};
+use std::sync::{Arc, Mutex, Weak};
 
 use indexmap::IndexMap;
 use moqui_lib::object::{basic_convert, to_plain_string, Value};
+use moqui_lib::sync::lock;
 
 use super::topic::{self, TopicMessage, NOTIFICATION_MESSAGE};
-use crate::context::{Error, ExecutionContext};
+use crate::context::{Error, ExecutionContext, ExecutionContextFactory};
 use crate::entity::{Condition, EntityFacade, EntityValue};
-use crate::transaction::TransactionAttribute;
+use crate::transaction::{TransactionAttribute, TransactionManager};
 
 const TOPIC: &str = "moqui.security.user.NotificationTopic";
 const TOPIC_USER: &str = "moqui.security.user.NotificationTopicUser";
@@ -280,18 +282,30 @@ impl NotificationMessage {
     }
 
     /// The `EmailMessage` id each recipient's email saved in the last [`Self::send`], when the send
-    /// created one (`emailMessageSave`).
+    /// created one (`emailMessageSave`). Empty for a send that waits for its transaction's commit.
     pub fn email_message_id_by_user_id(&self) -> &HashMap<String, String> {
         &self.email_message_id_by_user_id
     }
 
-    /// Resolve recipients, persist when required, publish, then try email.
+    /// Resolve recipients, persist when required, publish, then try email and Web Push.
     ///
-    /// Email failure is logged. It does not fail this call.
+    /// Inside a transaction the topic, the settings and the recipients are read in it and the rows written in it, so
+    /// they commit or roll back with it, but nothing leaves the process until it commits: the socket message, the
+    /// emails and the pushes go then, and none of them if it rolls back. A row write that fails is a statement of that
+    /// transaction, so besides this call's error it marks the transaction rollback-only. The rest runs in a commit hook
+    /// on this thread, in the context the commit ran in (so as the user signed in there, with authorization disabled as
+    /// in this call), or in a new context with no user when none is entered then. [`Self::email_message_id_by_user_id`]
+    /// stays empty, the emails being sent later. With no transaction in place all of it happens in this call, the rows
+    /// in a transaction of their own.
+    ///
+    /// A failed email or push is logged. It does not fail this call, nor does a failed publish stop the emails and
+    /// pushes.
     ///
     /// # Errors
     ///
-    /// Returns an error when the topic name or type is invalid, expansion fails, or the rows cannot be written.
+    /// Returns an error when the topic name or type is invalid, expansion fails, or the rows cannot be written. A failed
+    /// publish is logged, not returned, as its rows are stored and its emails and pushes tried by then: a caller that
+    /// retries on an error sends nothing twice. After a commit every failure is logged.
     pub fn send(&mut self) -> Result<(), Error> {
         if self.topic.is_empty() {
             return Err(Error::new("notification topic is required"));
@@ -333,9 +347,10 @@ impl NotificationMessage {
             self.direct_only,
         )?;
         self.notify_user_ids = resolved.users;
-        let sent = if persist {
+        let caller_tx = open_transaction(&facade);
+        let (stored, sent) = if persist {
             let sent = now_value();
-            let id = persist_rows(
+            let row = message_row(
                 &facade,
                 &self.topic,
                 self.sub_topic.as_deref(),
@@ -349,12 +364,27 @@ impl NotificationMessage {
                 // message sent now, which wrapped_message gives it
                 self.show_alert.unwrap_or(false),
                 &self.record,
-                &self.notify_user_ids,
             )?;
+            let id = field_str(&row, "notificationMessageId").unwrap_or_default();
+            // In a transaction the rows are its own: they commit or roll back with the change they tell of, a write
+            // that fails is this call's error, and a later find in the transaction sees them. Else they go out with
+            // the rest, below.
+            let stored = if caller_tx.is_some() {
+                persist_rows(
+                    &facade,
+                    &row,
+                    &id,
+                    &self.notify_user_ids,
+                    TransactionAttribute::UseOrBegin,
+                )?;
+                None
+            } else {
+                Some(row)
+            };
             self.notification_message_id = Some(id);
-            Some(sent)
+            (stored, Some(sent))
         } else {
-            None
+            (None, None)
         };
         let wrapped = wrapped_message(
             self,
@@ -370,54 +400,60 @@ impl NotificationMessage {
             Some(id) => id,
             None => new_id()?,
         };
-        // The topic carries who the message is for, beside Java's wrapped message, so a socket (here or on a cluster
-        // peer) can pick its users. The socket sends the client the wrapped message without it.
-        let mut routed = wrapped.clone();
-        routed.insert(
-            ROUTE_USER_IDS.to_string(),
-            Value::List(self.notify_user_ids.iter().map(Value::string).collect()),
-        );
-        crate::cluster::publish(
-            &facade,
-            NOTIFICATION_MESSAGE,
-            &TopicMessage {
-                origin_id: topic::origin_id().to_string(),
-                message_id,
-                body: moqui_lib::json::to_json(&Value::Map(routed)),
-            },
-        )?;
-        self.email_message_id_by_user_id = send_emails(
-            &facade,
-            topic.as_ref(),
-            &resolved.topic_users,
-            &resolved.emails,
-            &self.notify_user_ids,
-            self.email_template_id.as_deref(),
-            self.email_message_save,
-            &wrapped,
-            self.notification_message_id.as_deref(),
-        );
         // A persisted message is in its users' lists; those who want it pushed get a Web Push to each browser they
         // subscribed. A socket-only message (a chat event, a signal) never is, nor a topic the chat push worker pushes
         // (a mention goes with its message, by the room's level: plans/Comms-Messaging.md §7.3), so none goes twice.
-        if persist && !crate::service::chat_push::PUSHED_TOPICS.contains(&self.topic.as_str()) {
-            let push_users: Vec<String> = self
-                .notify_user_ids
-                .iter()
-                .filter(|user_id| wants_push(user_id, &resolved.topic_users, topic.as_ref()))
-                .cloned()
-                .collect();
-            crate::service::web_push::queue(
-                &facade,
-                &push_users,
-                &crate::service::web_push::PushNotice {
-                    title: self.title_text.as_deref().unwrap_or(""),
-                    link: self.link_text.as_deref().unwrap_or(""),
-                    topic: &self.topic,
-                    tag: self.notification_message_id.as_deref().unwrap_or(""),
-                },
-            );
-        }
+        let push_users: Vec<String> =
+            if persist && !crate::service::chat_push::PUSHED_TOPICS.contains(&self.topic.as_str()) {
+                self.notify_user_ids
+                    .iter()
+                    .filter(|user_id| wants_push(user_id, &resolved.topic_users, topic.as_ref()))
+                    .cloned()
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        let delivery = Delivery {
+            topic_name: self.topic.clone(),
+            stored,
+            notification_message_id: self.notification_message_id.clone(),
+            message_id,
+            wrapped,
+            topic,
+            topic_users: resolved.topic_users,
+            emails: resolved.emails,
+            users: self.notify_user_ids.clone(),
+            email_template_id: self.email_template_id.clone(),
+            email_message_save: self.email_message_save,
+            push_users,
+            title: self.title_text.clone().unwrap_or_default(),
+            link: self.link_text.clone().unwrap_or_default(),
+        };
+        self.email_message_id_by_user_id = match caller_tx {
+            Some(tx) => {
+                defer_to_commit(&tx, facade, delivery);
+                HashMap::new()
+            }
+            None => match delivery.deliver(&facade) {
+                // the rows are stored and the emails and pushes went out: a publish failure is logged, not returned,
+                // so a caller that retries on an error sends nothing twice
+                Ok(delivered) => {
+                    if let Some(err) = delivered.publish_error {
+                        tracing::error!(
+                            topic = %self.topic,
+                            error = %err,
+                            "A notification was stored and its emails and pushes tried, but it was not published"
+                        );
+                    }
+                    delivered.email_message_ids
+                }
+                // no row was written: no id to give
+                Err(err) => {
+                    self.notification_message_id = None;
+                    return Err(err);
+                }
+            },
+        };
         Ok(())
     }
 
@@ -569,10 +605,10 @@ fn as_timestamp(value: &Value) -> Option<jiff::Timestamp> {
     }
 }
 
-/// ForceNew commits before the caller can roll back; force-cache, so the message and its users go to the database in
-/// one batch at the commit (plans/archive/TX-Cache.md F1).
+/// The `NotificationMessage` row, its id sequenced (from the in-memory bank, so in no transaction of the caller's) and not
+/// yet written.
 #[allow(clippy::too_many_arguments)]
-fn persist_rows(
+fn message_row(
     facade: &EntityFacade,
     topic: &str,
     sub_topic: Option<&str>,
@@ -584,48 +620,208 @@ fn persist_rows(
     type_name: &str,
     show_alert: bool,
     record: &RecordFields,
+) -> Result<EntityValue, Error> {
+    let mut row = facade.make_value(MESSAGE)?;
+    row.set_sequenced_id_primary(facade)?;
+    if field_str(&row, "notificationMessageId").is_none() {
+        return Err(Error::new("notification message id was not sequenced"));
+    }
+    row.set("topic", Value::string(topic));
+    if let Some(sub_topic) = sub_topic.filter(|text| !text.is_empty()) {
+        row.set("subTopic", Value::string(sub_topic));
+    }
+    if let Some(user_group_id) = user_group_id.filter(|text| !text.is_empty()) {
+        row.set("userGroupId", Value::string(user_group_id));
+    }
+    row.set("sentDate", sent.clone());
+    if let Some(message_json) = &message_json {
+        row.set("messageJson", Value::string(message_json));
+    }
+    if !title.is_empty() {
+        row.set("titleText", Value::string(title));
+    }
+    if !link.is_empty() {
+        row.set("linkText", Value::string(link));
+    }
+    row.set("typeString", Value::string(type_name));
+    row.set("showAlert", Value::string(if show_alert { "Y" } else { "N" }));
+    for (field, value) in record.fields() {
+        if let Some(value) = value {
+            row.set(field, Value::string(value));
+        }
+    }
+    Ok(row)
+}
+
+/// Write the message and its users: in the sender's transaction (`UseOrBegin`), so they are kept only if it commits,
+/// or with none in place in one of their own, force-cache, so they go to the database in one batch at its commit
+/// (plans/archive/TX-Cache.md F1).
+fn persist_rows(
+    facade: &EntityFacade,
+    row: &EntityValue,
+    id: &str,
     users: &[String],
-) -> Result<String, Error> {
+    attribute: TransactionAttribute,
+) -> Result<(), Error> {
     let tx = facade.transactions_for(MESSAGE)?;
-    tx.run(TransactionAttribute::ForceCache, None, || {
-        let mut row = facade.make_value(MESSAGE)?;
-        row.set_sequenced_id_primary(facade)?;
-        let id = field_str(&row, "notificationMessageId")
-            .ok_or_else(|| moqui_lib::error::Error::new("notification message id was not sequenced"))?;
-        row.set("topic", Value::string(topic));
-        if let Some(sub_topic) = sub_topic.filter(|text| !text.is_empty()) {
-            row.set("subTopic", Value::string(sub_topic));
-        }
-        if let Some(user_group_id) = user_group_id.filter(|text| !text.is_empty()) {
-            row.set("userGroupId", Value::string(user_group_id));
-        }
-        row.set("sentDate", sent.clone());
-        if let Some(message_json) = &message_json {
-            row.set("messageJson", Value::string(message_json));
-        }
-        if !title.is_empty() {
-            row.set("titleText", Value::string(title));
-        }
-        if !link.is_empty() {
-            row.set("linkText", Value::string(link));
-        }
-        row.set("typeString", Value::string(type_name));
-        row.set("showAlert", Value::string(if show_alert { "Y" } else { "N" }));
-        for (field, value) in record.fields() {
-            if let Some(value) = value {
-                row.set(field, Value::string(value));
-            }
-        }
+    tx.run(attribute, None, || {
         row.create(facade)?;
         for user_id in users {
             let mut user = facade.make_value(MESSAGE_USER)?;
-            user.set("notificationMessageId", Value::string(&id));
+            user.set("notificationMessageId", Value::string(id));
             user.set("userId", Value::string(user_id));
             user.create(facade)?;
         }
-        Ok(id)
+        Ok(())
     })
     .map_err(Error::from)
+}
+
+/// What [`Delivery::deliver`] did once the rows were written.
+struct Delivered {
+    email_message_ids: HashMap<String, String>,
+    /// The publish's failure: the emails and pushes were still tried.
+    publish_error: Option<Error>,
+}
+
+/// What a send does once its recipients, title and link are known: publish to the sockets, email and push, and with no
+/// transaction in place write the rows first. Built in [`NotificationMessage::send`] from the topic, the user settings
+/// and the recipients read then, in the sender's transaction, so a setting the sender just changed counts; done at
+/// once, or at the sender's commit.
+struct Delivery {
+    topic_name: String,
+    /// The `NotificationMessage` row still to write: a persisted message sent with no transaction in place.
+    stored: Option<EntityValue>,
+    notification_message_id: Option<String>,
+    message_id: String,
+    wrapped: moqui_lib::object::ValueMap,
+    topic: Option<EntityValue>,
+    topic_users: Vec<EntityValue>,
+    emails: HashMap<String, String>,
+    users: Vec<String>,
+    email_template_id: Option<String>,
+    email_message_save: Option<bool>,
+    push_users: Vec<String>,
+    title: String,
+    link: String,
+}
+
+impl Delivery {
+    /// Persist (when the rows are still to write), publish, then email and push. A failed write is an error and nothing
+    /// after it is done; a failed publish is kept in the result and the emails and pushes still go, as one recipient's
+    /// email or push failing leaves the rest.
+    fn deliver(self, facade: &EntityFacade) -> Result<Delivered, Error> {
+        let notification_message_id = self.notification_message_id;
+        if let (Some(row), Some(id)) = (&self.stored, &notification_message_id) {
+            persist_rows(facade, row, id, &self.users, TransactionAttribute::ForceCache)?;
+        }
+        // The topic carries who the message is for, beside Java's wrapped message, so a socket (here or on a cluster
+        // peer) can pick its users. The socket sends the client the wrapped message without it.
+        let mut routed = self.wrapped.clone();
+        routed.insert(
+            ROUTE_USER_IDS.to_string(),
+            Value::List(self.users.iter().map(Value::string).collect()),
+        );
+        let publish_error = crate::cluster::publish(
+            facade,
+            NOTIFICATION_MESSAGE,
+            &TopicMessage {
+                origin_id: topic::origin_id().to_string(),
+                message_id: self.message_id.clone(),
+                body: moqui_lib::json::to_json(&Value::Map(routed)),
+            },
+        )
+        .err();
+        let email_message_ids = send_emails(
+            facade,
+            self.topic.as_ref(),
+            &self.topic_users,
+            &self.emails,
+            &self.users,
+            self.email_template_id.as_deref(),
+            self.email_message_save,
+            &self.wrapped,
+            notification_message_id.as_deref(),
+        );
+        crate::service::web_push::queue(
+            facade,
+            &self.push_users,
+            &crate::service::web_push::PushNotice {
+                title: &self.title,
+                link: &self.link,
+                topic: &self.topic_name,
+                tag: notification_message_id.as_deref().unwrap_or(""),
+            },
+        );
+        Ok(Delivered {
+            email_message_ids,
+            publish_error,
+        })
+    }
+}
+
+/// The transaction a send joins, if any: the default group's or the notification group's. The rows are written through
+/// the notification group's manager (`UseOrBegin`), so they roll back with the caller only when that group shares the
+/// caller's transaction, as every linked group does (`link_groups`); a notification group of its own, apart from a
+/// caller in the default group, commits the rows at once, while delivery still waits for the caller's commit.
+fn open_transaction(facade: &EntityFacade) -> Option<TransactionManager> {
+    [facade.default_transactions(), facade.transactions_for(MESSAGE)]
+        .into_iter()
+        .flatten()
+        .find(TransactionManager::in_transaction)
+}
+
+/// Publish, email and push at the commit of `tx`, and never on its rollback, so no notice leaves the process for a change
+/// that did not happen (plans/ui-review-basic-comms.md COM-UI-032); the rows are written in `tx` already. The hook runs
+/// after the commit, on this thread, with no transaction in place, so its failures are logged and reach no caller, and
+/// a send from inside it goes at once. A hook that cannot be registered delivers now.
+fn defer_to_commit(tx: &TransactionManager, facade: EntityFacade, delivery: Delivery) {
+    let factory = ExecutionContext::with_current(|ec| Arc::downgrade(ec.factory()));
+    let topic_name = delivery.topic_name.clone();
+    let pending = Arc::new(Mutex::new(Some((facade, delivery))));
+    let held = Arc::clone(&pending);
+    let registered = tx.on_commit(move || {
+        if let Some((facade, delivery)) = lock(&held).take() {
+            deliver_after_commit(factory.as_ref(), &facade, delivery);
+        }
+    });
+    if let Err(err) = registered {
+        tracing::error!(topic = %topic_name, error = %err, "Could not wait for the commit to send a notification, sending now");
+        if let Some((facade, delivery)) = lock(&pending).take() {
+            deliver_after_commit(None, &facade, delivery);
+        }
+    }
+}
+
+/// Deliver in the thread's context, or in a new one of `factory` when the hook runs where none is entered.
+fn deliver_after_commit(factory: Option<&Weak<ExecutionContextFactory>>, facade: &EntityFacade, delivery: Delivery) {
+    let topic_name = delivery.topic_name.clone();
+    let outcome = if ExecutionContext::with_current(|_| ()).is_some() {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        delivery.deliver(facade)
+    } else if let Some(factory) = factory.and_then(Weak::upgrade) {
+        let ctx = factory.new_context();
+        let _entered = ctx.enter();
+        let _authz = ctx.disable_authz();
+        delivery.deliver(facade)
+    } else {
+        tracing::error!(topic = %topic_name, "A notification was not sent: its server stopped before the commit");
+        return;
+    };
+    match outcome {
+        Ok(Delivered {
+            publish_error: Some(err),
+            ..
+        }) => tracing::error!(
+            topic = %topic_name,
+            error = %err,
+            "A notification was not published after its transaction committed; its emails and pushes were tried"
+        ),
+        Ok(_) => {}
+        Err(err) => {
+            tracing::error!(topic = %topic_name, error = %err, "A notification was not sent after its transaction committed")
+        }
+    }
 }
 
 /// The key of the recipients in a `notification-message` topic body. It is for routing and is not sent to a client.

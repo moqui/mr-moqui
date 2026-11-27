@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The Workspace (plans/design-dev-aide.md 4 and 5): the IDE of the roots' files, the editor, changes and commits. The
+<!-- The Workspace (plans/archive/design-dev-aide.md 4 and 5): the IDE of the roots' files, the editor, changes and commits. The
     page is Workspace.qvue, which loads the client (screen/devstatic/DevAide.js: m-dev-workspace); these transitions answer
     it with JSON, each the service of the same work (WorkspaceServices, VcsServices, the framework's DevToolsServices),
     which checks the instance purpose and the user's tier. Reads are GETs; writes are POSTs with the session token. The
@@ -58,9 +58,15 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="search" read-only="true"><service-call name="org.moqui.devaide.WorkspaceServices.search#Files" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <transition name="replaceFiles"><service-call name="org.moqui.devaide.WorkspaceServices.replace#Files" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <transition name="files" read-only="true"><service-call name="org.moqui.devaide.WorkspaceServices.find#Files" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <transition name="editorSettings" read-only="true"><service-call name="org.moqui.devaide.WorkspaceServices.get#EditorSettings" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <transition name="check"><service-call name="org.moqui.devaide.WorkspaceServices.check#File" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="typeDeclarations" read-only="true"><service-call name="org.moqui.devaide.WorkspaceServices.get#TypeDeclarations" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="presence"><service-call name="org.moqui.devaide.WorkspaceServices.set#Presence" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
@@ -139,7 +145,13 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="startLocalRun"><service-call name="org.moqui.devaide.LocalRunServices.start#LocalRun" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <transition name="localRun" read-only="true"><service-call name="org.moqui.devaide.LocalRunServices.get#LocalRun" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="stopLocalRun"><service-call name="org.moqui.devaide.LocalRunServices.stop#LocalRun" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <!-- worktrees for agents' sessions (21.8, P13) -->
+    <transition name="hostedRoot" read-only="true"><service-call name="org.moqui.devaide.HostedRootServices.get#HostedRoot" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <transition name="worktrees" read-only="true"><service-call name="org.moqui.devaide.WorktreeServices.get#Worktrees" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="createWorktree"><service-call name="org.moqui.devaide.WorktreeServices.create#Worktree" in-map="true" web-send-json-response="true"/>
@@ -150,6 +162,8 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="tasks" read-only="true"><service-call name="org.moqui.devaide.TaskServices.get#Tasks" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="taskBranch"><service-call name="org.moqui.devaide.TaskServices.create#TaskBranch" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="createIssue"><service-call name="org.moqui.devaide.HostingServices.create#RootIssue" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <!-- git depth (P8) -->
     <transition name="setCurrentTask"><service-call name="org.moqui.devaide.VcsServices.set#CurrentTask" in-map="true" web-send-json-response="true"/>
@@ -247,6 +261,8 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="exportRecords" read-only="true"><service-call name="org.moqui.devaide.EntityServices.export#Records" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <transition name="planDataLoad" read-only="true"><service-call name="org.moqui.devaide.EntityServices.plan#DataLoad" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <transition name="loadChanged"><service-call name="org.moqui.devaide.EntityServices.load#ChangedRecords" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="viewSql" read-only="true"><service-call name="org.moqui.devaide.EntityServices.get#ViewSql" in-map="true" web-send-json-response="true"/>
@@ -277,11 +293,25 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="generatedJs"><service-call name="org.moqui.devaide.ServiceWriterServices.get#GeneratedJs" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <transition name="pushContexts" read-only="true"><service-call name="org.moqui.devaide.ServiceWriterServices.get#PushContexts" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <transition name="evalCondition"><service-call name="org.moqui.devaide.ServiceWriterServices.eval#Condition" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="ruleFixtures" read-only="true"><service-call name="org.moqui.devaide.ServiceWriterServices.list#RuleFixtures" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="ruleFixture"><service-call name="org.moqui.devaide.ServiceWriterServices.save#RuleFixture" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="tryRule"><service-call name="org.moqui.devaide.ServiceWriterServices.try#Rule" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="ruleSpec"><service-call name="org.moqui.devaide.ServiceWriterServices.save#RuleSpec" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="ecaRules" read-only="true"><service-call name="org.moqui.devaide.ServiceWriterServices.list#EcaRules" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="restart"><service-call name="org.moqui.dev.DevToolsServices.restart#Server" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="rebuild"><service-call name="org.moqui.devaide.LocalRunServices.rebuild#Server" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="rebuildStatus" read-only="true"><service-call name="org.moqui.devaide.LocalRunServices.get#Rebuild" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
 
     <widgets>

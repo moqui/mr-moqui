@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # Build the images from the Maximal package: the server's, localhost/moqui:latest, and the one pipeline jobs run in,
 # localhost/moqui-build:latest (Containerfile.build; docs/interfaces/Pipelines.md "Images").
-#   podman/build.sh                 ./moq build --release, then the server image
+#   podman/build.sh                 ./moq build --release (Maximal with the dev tools), then the server image; for a
+#                                   production image build Maximal without them first and use --nobuild
+#                                   (docs/Run-Deploy.md, Production checklist)
 #   podman/build.sh --nobuild       images only, using the existing target/release/moqui
+#   podman/build.sh --in-build-image   the binary built in localhost/moqui-build (Debian 13) into target/build-image,
+#                                   for a host whose glibc is newer than the images' (Ubuntu 26.04: 2.43, Debian 13:
+#                                   2.41), where a binary built on the host does not start in them
 #   podman/build.sh --build-image   the moqui-build image too
 #   podman/build.sh --only-build-image   the moqui-build image and not the server's
 #   podman/build.sh --chromium --java    with --build-image: Chromium (PDF, the browser tests) and a Java runtime
@@ -12,6 +17,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 nobuild=0
+in_build_image=0
 server_image=1
 build_image=0
 chromium=0
@@ -19,19 +25,45 @@ java=0
 for arg in "$@"; do
     case "$arg" in
         --nobuild) nobuild=1 ;;
+        --in-build-image) in_build_image=1 ;;
         --build-image) build_image=1 ;;
         --only-build-image) build_image=1; server_image=0 ;;
         --chromium) chromium=1 ;;
         --java) java=1 ;;
         *)
             echo "Unknown argument: $arg" >&2
-            echo "Usage: podman/build.sh [--nobuild] [--build-image | --only-build-image] [--chromium] [--java]" >&2
+            echo "Usage: podman/build.sh [--nobuild | --in-build-image] [--build-image | --only-build-image] [--chromium] [--java]" >&2
             exit 1
             ;;
     esac
 done
 
-if [ "$nobuild" -eq 0 ]; then
+if command -v podman >/dev/null 2>&1; then
+    engine=podman
+    # docker format keeps the image HEALTHCHECK. Podman's default OCI format drops it.
+    format=(--format docker)
+elif command -v docker >/dev/null 2>&1; then
+    engine=docker
+    format=()
+else
+    echo "neither podman nor docker is on PATH" >&2
+    exit 1
+fi
+binary=$root/target/release/moqui
+if [ "$in_build_image" -eq 1 ]; then
+    # ./moq build --release in the build image, on this tree, with a target directory of its own (the host's target/
+    # stays the host's), the host's cargo registry and Postgres archive cache shared; as the container's root, which
+    # rootless Podman maps to this user, so what it writes is this user's
+    "$engine" image inspect localhost/moqui-build:latest >/dev/null 2>&1 || {
+        echo "no localhost/moqui-build:latest: podman/build.sh --only-build-image first (on a host it runs on), or pull one" >&2
+        exit 1
+    }
+    mkdir -p "$root/target/build-image" "$HOME/.cargo/registry" "$HOME/.theseus"
+    "$engine" run --rm -u 0 -v "$root:/src" -v "$root/target/build-image:/src/target" \
+        -v "$HOME/.cargo/registry:/workspace/.cargo/registry" -v "$HOME/.theseus:/workspace/home/.theseus" \
+        -w /src localhost/moqui-build:latest ./moq build --release
+    binary=$root/target/build-image/release/moqui
+elif [ "$nobuild" -eq 0 ]; then
     (cd "$root" && ./moq build --release)
 fi
 # The vault's browser module, which both images carry under components/base and git does not keep: ./moq build made it;
@@ -42,20 +74,18 @@ fi
     exit 1
 }
 
-binary=$root/target/release/moqui
 if [ ! -x "$binary" ]; then
     echo "No release binary at $binary. Run ./moq build --release, or drop --nobuild." >&2
     exit 1
 fi
-if command -v podman >/dev/null 2>&1; then
-    engine=podman
-    # docker format keeps the image HEALTHCHECK. Podman's default OCI format drops it.
-    format=(--format docker)
-elif command -v docker >/dev/null 2>&1; then
-    engine=docker
-    format=()
-else
-    echo "neither podman nor docker is on PATH" >&2
+# The binary must start on the images' base: one built on a host with a newer glibc than it fails there with "version
+# `GLIBC_2.xx' not found", and the images would be made anyway. Asked of the base itself, which also finds a library it
+# lacks.
+base=$(sed -n 's/^FROM \([^ ]*\).*/\1/p' "$root/podman/Containerfile" | head -1)
+if ! started=$("$engine" run --rm -v "$binary:/moqui:ro" "$base" /moqui version 2>&1); then
+    echo "$binary does not run on the images' base $base:" >&2
+    printf '%s\n' "$started" | sed 's/^/    /' | head -5 >&2
+    echo "Build it there: podman/build.sh --in-build-image (it needs localhost/moqui-build)." >&2
     exit 1
 fi
 

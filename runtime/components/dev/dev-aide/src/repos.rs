@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `dev/Repositories` (plans/design-dev-aide.md 4.7): every root as `./moq git-status` lists it (kind, path,
+//! `dev/Repositories` (plans/archive/design-dev-aide.md 4.7): every root as `./moq git-status` lists it (kind, path,
 //! components, branch, upstream, ahead and behind, changes, last fetch), Fetch all and Pull all root by root (one that
 //! fails is reported in its row and the others go on), and Get a component through `moq component-get` (`moq.cmd` on
 //! Windows) from the names of `addons.xml` and `myaddons.xml` when this platform can run that launcher.
@@ -162,7 +162,7 @@ fn pull_all(
 }
 
 /// The runtime's moq, beside the runtime directory, when this platform can run it.
-fn moq(context: &Context) -> Option<PathBuf> {
+pub(crate) fn moq(context: &Context) -> Option<PathBuf> {
     moq_program(context.factory.runtime_dir().parent()?, cfg!(windows))
 }
 
@@ -298,7 +298,7 @@ fn get_component(
     Ok(out)
 }
 
-/// Whether the component just placed at `location` can be loaded on this server now (plans/design-dev-aide.md 4.7):
+/// Whether the component just placed at `location` can be loaded on this server now (plans/archive/design-dev-aide.md 4.7):
 /// the load's preview (`moqui_devkit::deploy::load`) has no refusal and nothing that waits for a restart. Sets
 /// `loadable` and `componentName`, or `restart` with `restartReasons`, in `out`.
 pub(crate) fn offer_load(context: &Context, location: &Path, out: &mut Parameters) {

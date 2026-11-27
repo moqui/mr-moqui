@@ -36,6 +36,8 @@ pub mod error;
 pub mod etl;
 pub mod format;
 pub mod fs_link;
+pub mod geo;
+pub mod git_read;
 pub mod histogram;
 #[cfg(feature = "http")]
 pub mod http;
@@ -44,6 +46,7 @@ pub mod markdown;
 pub mod net;
 pub mod node;
 pub mod object;
+pub mod pmtiles;
 pub mod private_fs;
 pub mod reconnect;
 pub mod remote_login;

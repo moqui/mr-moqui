@@ -40,7 +40,7 @@
         "tree", "tree-node", "tree-sub-node", "label", "link", "image", "parameter", "dialog",
         "render-dynamic-form", "dynamic-form", "form-list-user-columns", "context", "dashboard", "number-card", "nav-card",
         "chatter", "record-files", "container-split", "split-side", "split-main", "html-view", "status-bar", "markdown-view",
-        "code-view", "report-panel", "report-dashboard", "report-embed"
+        "code-view", "map-view", "report-panel", "report-dashboard", "report-embed"
     ];
     const formElements = [
         "form-single", "form-list", "row-actions", "field", "header-field", "first-row-field", "second-row-field",
@@ -77,6 +77,148 @@
         `const find = ec.entity.find("moqui.basic.StatusItem").condition("statusId", v).useCache(true); ` +
         `const item = (ec.artifactExecution.authzLocked() ? find : find.disableAuthz()).one(); ` +
         `return item && item.description ? String(item.description) : v; })(ec.resource.expandNoL10n(${jsString(attr(node, "status-id") || "")}))`;
+
+    // A map-view's attributes, checked, for every mode (plans/archive/Maps.md §3.2): `config`, what m-map takes (WGS84, longitude first:
+    // center [lon, lat], extent [west, south, east, north], points [{id, lon, lat, label, precisionEnumId, precision, source}],
+    // and only the keys given), the height, and for the text modes `places` ({label, coordinates, precision, source}, the
+    // coordinates as "latitude, longitude"), `center` and `area` (texts of the view when there is no place) and, with
+    // withAttribution, `attribution`: the profile's basemap layer's and its provider's, or the outline's (Natural Earth) when the
+    // profile, layer or provider is missing or disabled. A point that is not WGS84 degrees is left out and logged; a zero is a
+    // coordinate. The effective configuration service of the Maps screens replaces the attribution lookup.
+    const mapViewFn = String(function (ec, a, withAttribution) {
+        const blank = (v) => v === null || v === undefined || (typeof v === "string" && (v.trim() === "" || v.trim() === "null"));
+        const text = (v) => (blank(v) ? "" : String(v).trim());
+        const num = (v) => {
+            if (blank(v)) return null;
+            const n = typeof v === "number" ? v : Number(String(v).trim());
+            return Number.isFinite(n) ? n : null;
+        };
+        const nums = (v, count) => {
+            if (blank(v)) return null;
+            const parts = String(v).split(",").map(num);
+            return parts.length === count && parts.every((n) => n !== null) ? parts : null;
+        };
+        const lonOk = (lon) => lon !== null && lon >= -180 && lon <= 180;
+        const latOk = (lat) => lat !== null && lat >= -90 && lat <= 90;
+        const PRECISION = { GPP_USER_CONFIRMED: "User-confirmed point", GPP_ADDRESS_MATCH: "Address match",
+            GPP_STREET_RANGE: "Street-range interpolation", GPP_POSTAL_AREA: "Postal-area representative point", GPP_PLACE_ESTIMATE: "Place estimate" };
+        const coordinates = (lon, lat) => lat.toFixed(5) + ", " + lon.toFixed(5);
+        const field = (p, ...names) => { for (const name of names) if (!blank(p[name])) return p[name]; return null; };
+        const point = (p, index) => {
+            if (!p || typeof p !== "object") return null;
+            const lon = num(field(p, "lon", "longitude")), lat = num(field(p, "lat", "latitude"));
+            if (!lonOk(lon) || !latOk(lat)) {
+                ec.logger.warn("map-view: place #" + index + " is left out, its longitude and latitude are not WGS84 degrees");
+                return null;
+            }
+            const given = text(field(p, "precisionEnumId", "precision"));
+            const out = { id: text(p.id) || "p" + index, lon, lat };
+            if (text(p.label)) out.label = text(p.label);
+            if (PRECISION[given]) out.precisionEnumId = given;
+            if (given) out.precision = PRECISION[given] ? ec.l10n.localize(PRECISION[given]) : given;
+            const source = text(field(p, "sourceText", "source"));
+            if (source) out.source = source;
+            return out;
+        };
+        const listOf = (v) => (v === null || v === undefined || typeof v === "string" ? [] : Array.isArray(v) ? v :
+            typeof v[Symbol.iterator] === "function" ? Array.from(v) : [v]);
+        const given = [];
+        if (!blank(a.longitude) || !blank(a.latitude)) given.push({ lon: a.longitude, lat: a.latitude, label: a.label, precision: a.precision, source: a.source });
+        listOf(a.points).forEach((p) => given.push(p));
+        const points = given.map(point).filter((p) => p);
+
+        const config = {};
+        if (text(a.profile)) config.profileId = text(a.profile);
+        const layers = text(a.layers).split(",").map((id) => id.trim()).filter((id) => id);
+        if (layers.length) config.layers = layers;
+        const center = nums(a.center, 2);
+        if (center && lonOk(center[0]) && latOk(center[1])) config.center = center;
+        else if (center || !blank(a.center)) ec.logger.warn("map-view: center is not longitude,latitude in WGS84 degrees: " + text(a.center));
+        const zoom = num(a.zoom);
+        if (zoom !== null && zoom >= 0 && zoom <= 22) config.zoom = zoom;
+        const extent = nums(a.extent, 4);
+        if (extent && lonOk(extent[0]) && lonOk(extent[2]) && latOk(extent[1]) && latOk(extent[3]) && extent[1] <= extent[3]) config.extent = extent;
+        else if (!blank(a.extent)) ec.logger.warn("map-view: extent is not west,south,east,north in WGS84 degrees: " + text(a.extent));
+        const projection = text(a.projection).toUpperCase();
+        if (projection === "EPSG:4326" || projection === "EPSG:3857") config.projection = projection;
+        else if (projection) ec.logger.warn("map-view: projection " + projection + " is not EPSG:3857 or EPSG:4326; drawn in EPSG:3857");
+        if (text(a.adapter)) {
+            config.adapter = text(a.adapter);
+            if (a.recordKey && typeof a.recordKey === "object") config.recordKey = a.recordKey;
+            if (text(a.addressPurpose)) config.addressPurpose = text(a.addressPurpose);
+        }
+        config.points = points;
+        const features = a.features && typeof a.features === "object" && a.features.type === "FeatureCollection" ? listOf(a.features.features) : null;
+        if (features && features.length) config.features = { type: "FeatureCollection", features: features.slice(0, 1000) };
+        if (text(a.pick) === "true") config.pick = true;
+        if (config.pick && text(a.pickForm)) config.pickForm = text(a.pickForm);
+
+        const out = { config, height: text(a.height) || null,
+            places: points.map((p) => ({ label: p.label || "", coordinates: coordinates(p.lon, p.lat), precision: p.precision || "", source: p.source || "" })),
+            center: !points.length && config.center ? coordinates(config.center[0], config.center[1]) : "",
+            area: !points.length && config.extent ? coordinates(config.extent[0], config.extent[1]) + " – " + coordinates(config.extent[2], config.extent[3]) : "",
+            attribution: "" };
+        if (withAttribution) {
+            const outline = "Natural Earth";
+            const profileId = config.profileId || "";
+            try {
+                const one = (entity, key, value) => {
+                    if (blank(value)) return null;
+                    const find = ec.entity.find(entity).condition(key, value).useCache(true);
+                    return (ec.artifactExecution.authzLocked() ? find : find.disableAuthz()).one();
+                };
+                const permitted = (row) => row && row.disabled !== "Y" && (!row.viewPermission || ec.user.hasPermission(row.viewPermission));
+                const profile = one("moqui.maps.MapProfile", "profileId", profileId || ec.user.getPreference("maps.profile") || "OUTLINE");
+                const layer = permitted(profile) ? one("moqui.maps.MapLayer", "layerId", profile.basemapLayerId) : null;
+                const provider = layer && layer.providerId ? one("moqui.maps.MapProvider", "providerId", layer.providerId) : null;
+                // the profile the qvt map would draw: with outside requests off (maps@external-requests), one that asks another
+                // host is drawn as the outline, so its provider is not named
+                const outside = profile && (profile.externalAccess === "Y" || /^https?:/i.test(text(provider ? provider.endpointUrl : "")) ||
+                    /^https?:/i.test(text(layer ? layer.sourceUrl : "")) || /^https?:/i.test(text(layer ? layer.styleLocation : "")));
+                const offline = String(ec.factory.getConfValue("maps@external-requests")) === "false";
+                const usable = permitted(layer) && (!layer.providerId || (provider && provider.disabled !== "Y")) && !(outside && offline);
+                const parts = usable ? [provider ? provider.attribution : null, layer.attribution].map(text).join("\n").split("\n").map((part) => part.trim()).filter((part) => part) : [];
+                out.attribution = parts.length ? parts.join("; ") : outline;
+            } catch (error) {
+                ec.logger.error("map-view: the attribution of map profile " + (profileId || "(the default)") + " was not read, the outline's is shown: " + error);
+                out.attribution = outline;
+            }
+        }
+        return out;
+    });
+    const mapViewExpr = (node, withAttribution) => `(${mapViewFn})(ec,{profile:${expandNoL10nExpr(attr(node, "profile") || "")},` +
+        `layers:${expandNoL10nExpr(attr(node, "layers") || "")},center:${expandNoL10nExpr(attr(node, "center") || "")},` +
+        `zoom:${expandNoL10nExpr(attr(node, "zoom") || "")},extent:${expandNoL10nExpr(attr(node, "extent") || "")},` +
+        `projection:${expandNoL10nExpr(attr(node, "projection") || "")},adapter:${expandNoL10nExpr(attr(node, "adapter") || "")},` +
+        `recordKey:${attr(node, "record-key") ? `(${attr(node, "record-key")})` : "null"},addressPurpose:${expandNoL10nExpr(attr(node, "address-purpose") || "")},` +
+        `longitude:${expandNoL10nExpr(attr(node, "longitude") || "")},latitude:${expandNoL10nExpr(attr(node, "latitude") || "")},` +
+        `label:${expandNoL10nExpr(attr(node, "label") || "")},precision:${expandNoL10nExpr(attr(node, "precision") || "")},` +
+        `source:${expandNoL10nExpr(attr(node, "source") || "")},points:${attr(node, "points") ? `(${attr(node, "points")})` : "null"},` +
+        `features:${attr(node, "features") ? `(${attr(node, "features")})` : "null"},` +
+        `height:${expandNoL10nExpr(attr(node, "height") || "")},pick:${expandNoL10nExpr(attr(node, "pick") || "")},` +
+        `pickForm:${expandNoL10nExpr(attr(node, "pick-form") || "")}},${withAttribution ? "true" : "false"})`;
+    // A map-view as HTML for the html and print modes, as an expression of (the mapViewExpr value, an escape function, l10n, id,
+    // class): a div of the places as a list (each its label, coordinates, precision and source in spans), the center or area
+    // when there is no place, and the attribution.
+    const mapViewHtmlFn = String(function (map, e, l10n, id, style) {
+        const span = (cls, text) => (text ? ' <span class="' + cls + '">' + e(text) + "</span>" : "");
+        let out = "<div" + (id ? ' id="' + e(id) + '"' : "") + ' class="map-view' + (style ? " " + e(style) : "") + '">';
+        if (map.places.length) out += '<ul class="map-view-places">' + map.places.map((p) => "<li>" + (p.label ? '<strong class="map-view-label">' + e(p.label) + "</strong>" : "") +
+            span("map-view-coordinates", p.coordinates) + span("map-view-precision", p.precision) + span("map-view-source", p.source) + "</li>").join("") + "</ul>";
+        if (map.center) out += '<div class="map-view-center">' + e(l10n.localize("Center")) + ": " + e(map.center) + "</div>";
+        if (map.area) out += '<div class="map-view-area">' + e(l10n.localize("Area")) + ": " + e(map.area) + "</div>";
+        return out + '<div class="map-view-attribution">' + e(l10n.localize("Map data")) + ": " + e(map.attribution) + "</div></div>\n";
+    });
+    // The text lines of a map-view's places for the text modes, as an expression of the mapViewExpr value: "label: latitude,
+    // longitude (precision; source)", the center or area when there is no place, then "Map data: attribution".
+    const mapViewLinesFn = String(function (map, l10n) {
+        const lines = map.places.map((p) => (p.label ? p.label + ": " : "") + p.coordinates +
+            (p.precision || p.source ? " (" + [p.precision, p.source].filter((part) => part).join("; ") + ")" : ""));
+        if (map.center) lines.push(l10n.localize("Center") + ": " + map.center);
+        if (map.area) lines.push(l10n.localize("Area") + ": " + map.area);
+        if (map.attribution) lines.push(l10n.localize("Map data") + ": " + map.attribution);
+        return lines;
+    });
 
     const expandExpr = (text) => `ec.resource.expand(${jsString(text)})`;
     const expandNoL10nExpr = (text) => `ec.resource.expandNoL10n(${jsString(text)})`;
@@ -659,7 +801,7 @@
     const noops = (names) => T.noops(names);
 
     return {
-        beginLits, endLits, hoist, allElements, opaqueElements, unknownElementCode, expandExpr, expandNoL10nExpr, reportPropsExpr, reportRenderExpr, htmlViewTextFn, htmlViewTextExpr, markdownTextExpr, statusTextExpr, nodeLit, bareLit, conditionGuard, write, indent, widgetsSource,
+        beginLits, endLits, hoist, allElements, opaqueElements, unknownElementCode, expandExpr, expandNoL10nExpr, reportPropsExpr, reportRenderExpr, htmlViewTextFn, htmlViewTextExpr, markdownTextExpr, statusTextExpr, mapViewExpr, mapViewHtmlFn, mapViewLinesFn, nodeLit, bareLit, conditionGuard, write, indent, widgetsSource,
         setCode, widgetless, fieldChain, hideGuard, titleText, localizedTitle, fieldLit, renderTextCode, renderModeHelpers, renderModeTypeMatches, chooseRenderModeText, anyMacros,
         displayValueExpr, linkTextExpr, labelTextExpr, dateTimeFormat, listFieldHiddenWidget, bufferedListRows, cellNeedsContext, formListColumns, headerSub, heldCode, parseOrder, exprEnd, noops
     };

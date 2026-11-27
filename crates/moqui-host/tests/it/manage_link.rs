@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The manager link (plans/Vault-Instances.md §4.4, M2). The manager is a real server in the test's own process, its
+//! The manager link (plans/archive/Vault-Instances.md §4.4, M2). The manager is a real server in the test's own process, its
 //! HTTPS listener taking `moqui-manage/1`; the instance is the link's dialer driven with an explicit `ManageConfig` and a
 //! fake [`Managed`] whose seal the test opens and closes, so it needs no factory and opens no port. A key not pinned is
 //! refused, and so is a manager whose key is not the one pinned; the pairing token works once, and pins the instance's

@@ -27,7 +27,14 @@
     </transition>
     <actions><script><![CDATA[
         syncs=[];allowed=true
-        try { syncs=ec.service.sync().name('org.moqui.report.ReportServices.list#DefinitionGitSyncs').call().syncs || [] }
+        // the sync times come as epoch milliseconds: shown in the user's zone (plans/ui-review-dashboards.md DASH-UI-004)
+        const stamp = value => {
+            if (value == null || value === '') return ec.l10n.localize('Never')
+            const date = new Date(/^-?\d+$/.test(String(value)) ? Number(value) : value)
+            return Number.isNaN(date.getTime()) ? String(value) : ec.l10n.format(date, 'yyyy-MM-dd HH:mm:ss')
+        }
+        try { syncs=(ec.service.sync().name('org.moqui.report.ReportServices.list#DefinitionGitSyncs').call().syncs || [])
+            .map(sync=>Object.assign({},sync,{lastPushText:stamp(sync.lastPushDate),lastPullText:stamp(sync.lastPullDate)})) }
         catch (error) { allowed=false;ec.message.clearErrors() }
         repositories=ec.entity.find('moqui.resource.GitRepository').disableAuthz().orderBy('repositoryId').list()
     ]]></script></actions>
@@ -46,14 +53,15 @@
                     <field name="submit"><default-field><submit text="Add"/></default-field></field>
                 </form-single>
             </container-dialog>
+            <label condition="syncs.length" text="Times shown in ${ec.user.timeZone}." type="p" style="m-muted"/>
             <form-list name="GitSyncs" list="syncs" skip-form="true" paginate="false">
                 <field name="folder"><default-field><display/></default-field></field>
                 <field name="repositoryId"><default-field title="Repository"><display/></default-field></field>
                 <field name="path"><default-field title="Directory"><display/></default-field></field>
                 <field name="userId"><default-field title="User"><display/></default-field></field>
                 <field name="enabled"><default-field><display text="${enabled ? 'Yes' : 'No'}"/></default-field></field>
-                <field name="lastPushDate"><default-field title="Last push"><display/></default-field></field>
-                <field name="lastPullDate"><default-field title="Last pull"><display/></default-field></field>
+                <field name="lastPushText"><default-field title="Last push"><display/></default-field></field>
+                <field name="lastPullText"><default-field title="Last pull"><display/></default-field></field>
                 <field name="lastError"><default-field title="Last error"><display/></default-field></field>
                 <field name="push"><default-field><link url="push" text="Push now" link-type="hidden-form" parameter-map="{syncId:syncId}"/></default-field></field>
                 <field name="pull"><default-field><link url="pull" text="Pull now" link-type="hidden-form" parameter-map="{syncId:syncId}"/></default-field></field>

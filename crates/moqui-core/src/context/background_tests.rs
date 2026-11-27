@@ -16,7 +16,27 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use super::BackgroundThreads;
+use super::{framework_thread, is_framework_thread, BackgroundThreads};
+
+#[test]
+fn the_framework_mark_lasts_while_its_body_runs_and_is_put_back_after_it() {
+    // on a thread of its own, so the test thread's mark is not touched
+    std::thread::spawn(|| {
+        assert!(!is_framework_thread());
+        assert!(framework_thread(is_framework_thread)());
+        assert!(!is_framework_thread(), "a wrapped job left its thread marked");
+        // nested: the inner one keeps the outer mark when it ends
+        assert!(framework_thread(|| {
+            framework_thread(|| ())();
+            is_framework_thread()
+        })());
+        let panicked = std::panic::catch_unwind(framework_thread(|| panic!("in the body")));
+        assert!(panicked.is_err());
+        assert!(!is_framework_thread(), "a panicking job left its thread marked");
+    })
+    .join()
+    .unwrap();
+}
 
 #[test]
 fn wait_returns_after_the_threads_end() {

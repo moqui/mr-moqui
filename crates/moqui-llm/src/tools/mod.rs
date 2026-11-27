@@ -130,12 +130,12 @@ pub mod caps {
     pub const QUESTION_INLINE: &str = "question.inline";
     /// A question as a data part the client answers (A2A input-required).
     pub const QUESTION_DATA: &str = "question.data";
-    /// The development tools (plans/design-dev-aide.md 13.2): a dev instance with the dev-aide loaded, for a user with
+    /// The development tools (plans/archive/design-dev-aide.md 13.2): a dev instance with the dev-aide loaded, for a user with
     /// one of its permissions ([`moqui_core::devtools::dev_aide_user`]).
     pub const DEV: &str = "dev.aide";
-    /// The `screen-xml` canvas dialect (plans/design-dev-aide.md 13.5), on the drawer of a dev-aide user.
+    /// The `screen-xml` canvas dialect (plans/archive/design-dev-aide.md 13.5), on the drawer of a dev-aide user.
     pub const UI_SCREEN_XML: &str = "ui.write:screen-xml";
-    /// The `qvue-screen` canvas dialect (plans/design-dev-aide.md 13.5), beside `screen-xml`.
+    /// The `qvue-screen` canvas dialect (plans/archive/design-dev-aide.md 13.5), beside `screen-xml`.
     pub const UI_QVUE_SCREEN: &str = "ui.write:qvue-screen";
 }
 

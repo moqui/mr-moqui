@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The devices that remember a user's personal key (plans/Vault-Instances.md §3.5, V5). The desktop and mobile apps keep
+//! The devices that remember a user's personal key (plans/archive/Vault-Instances.md §3.5, V5). The desktop and mobile apps keep
 //! the open key for a time the user chooses, wrapped by a key made of two halves: one in the device's own key store, and
 //! a 32-byte secret of this record, which the server hands the device only while the record is live. So the record
 //! ending (taken off the user's list, past its time, the personal key replaced) or a device key the server no longer

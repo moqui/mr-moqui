@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The page's vault in the app (plans/Vault-Instances.md §3.5, §3.6, V5): `moquiDesktop.vault`, which `VaultClient.js`
+//! The page's vault in the app (plans/archive/Vault-Instances.md §3.5, §3.6, V5): `moquiDesktop.vault`, which `VaultClient.js`
 //! uses in place of its wasm worker when the page runs in the desktop or mobile app. The module runs natively
 //! (`moqui_client::vault`), one session per page (the webview's label), and the keys stay in the app's process; the
 //! page gets public keys, wraps and the one item it asked for, as from the worker. The app never takes the module from

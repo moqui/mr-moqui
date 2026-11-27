@@ -1,4 +1,4 @@
-// System › Vaults' lease dialog and take-in (ToolsSecurityData.xml SYSTEM_VAULT_DIALOGS; plans/Vault-Instances.md §3.7):
+// System › Vaults' lease dialog and take-in (ToolsSecurityData.xml SYSTEM_VAULT_DIALOGS; plans/archive/Vault-Instances.md §3.7):
 // a vault's approver who is no administrator reaches the lease dialog at /qapps/system/Vaults/Lease, where a deployment's
 // page, an incident or a lease's notification sends them, and its transitions, whose vault services check the caller;
 // an application that denies its groups System.xml (as mr-boss's Admin groups are) does not take the dialog from them;

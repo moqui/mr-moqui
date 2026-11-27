@@ -13,7 +13,7 @@
  */
 
 //! A client of the Docker Engine API, which Podman serves on its socket too (plans/Dogfood.md D19, F8;
-//! plans/Vault-Instances.md §4.2): the one container driver that CI's runs (`moqui_git::ci::driver::docker`) and
+//! plans/archive/Vault-Instances.md §4.2): the one container driver that CI's runs (`moqui_git::ci::driver::docker`) and
 //! managed instances share. A host is reached over a Unix socket, HTTPS with a client certificate, or plain HTTP to
 //! this machine only (SEC-OUT-08). This module knows no entity: the caller maps its host row to a [`HostAddress`].
 //!
@@ -394,7 +394,7 @@ impl DockerHost {
             CALL_TIMEOUT,
         )?;
         if response.status() >= 300 && response.status() != 404 {
-            return Err(Self::problem(&format!("removing container {id}"), &response));
+            self.gone_anyway(id, &response)?;
         }
         Ok(())
     }

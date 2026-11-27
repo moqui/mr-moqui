@@ -54,7 +54,8 @@ before.
 A file over `resource-facade` `dbresource-blob-threshold` bytes (64 KiB) is a content blob (`moqui.resource.ContentBlob`, by its
 SHA-256, in 1 MiB `ContentBlobChunk` rows; [Git-Hosting](../interfaces/Git-Hosting.md#content-blobs)) named by `DbResourceFile.blobId`,
 with `fileData` empty: the same bytes in two files are stored once, a response streams it (with `Range`), and a past
-version keeps its blob rather than a copy. `fileSize` gives its size without reading it. `migrate#DbResourceBlobs`
+version keeps its blob rather than a copy, so a response for `location#versionName` reads only the range it is asked
+for too. `fileSize` gives its size without reading it. `migrate#DbResourceBlobs`
 (`org.moqui.resource.ResourceServices`) moves the files written before content blobs. Java reads such a file as empty.
 
 These rows, the content blobs and the objects of `db` git repositories are the `content` entity group, in a database
@@ -224,6 +225,7 @@ still apply. A lone delete of a directory that still has files is still refused;
 | `ec.resource.getChildChanges(location)` | The same for each entry of a directory, with `name`, in name order (on `dbresource://` four queries for the whole folder) |
 | `ec.resource.getChangeLog(location, limit)` | The versions under a location, newest first: on `git://` each commit under the path with the `paths` it changed; on `dbresource://` a file's versions, or a directory's files' versions merged by date |
 | `ec.resource.getTreeSize(location)` | The bytes of every file under a location, for a quota |
+| `ec.resource.getContentAddress(location)` | What the storage names a file's content by (`location#versionName`: that version's): `{kind, id, size, tag}`, an LFS object's oid, a git object's id, a content blob's or a small `dbresource://` file's SHA-256, and the strong `tag` the content is sent with; what a reader records to pin a revision (`ec.web.sendPinnedResourceResponse`) |
 | `ec.resource.contentTypeOf(filename)` | The content type of a file name |
 
 `ResourceRef::size()` of a `dbresource://` file is its `DbResourceFile.fileSize`, written with each write; a row written
@@ -257,7 +259,7 @@ repository on disk, a folder drive as a zip), `find#OwnedDrives` and `transfer#D
 by its owner, or with `DRIVE_OWNER_CHANGE` when the owner leaves; the new owner an enabled internal account). Files: `list#Folder` (size, modified and modified by from the last change,
 version and note, shared, favorite, tags, content and file type), `get#ResourceInfo`, `find#Resources` (through the `MoquiDriveFile`
 search document when search is available, else a walk), `find#Recent`, `upload#Resource` (one change set, a version note,
-conflicts replace, keepBoth or skip, the quota), `save#Text`, `create#Folder`, `rename#Resource`, `move#Resource` and
+conflicts replace, keepBoth or skip, the quota), `save#Text` (the quota too), `create#Folder`, `rename#Resource`, `move#Resource` and
 `copy#Resource` (within a drive one change set; a move across drives is a copy and a trash), `download#Zip`,
 `get#Activity` (versions or commits under the path, shares, trash), `get#Preview` (made once per version under
 `runtime://tmp/preview`: an image thumbnail; a PDF's first page and page count, drawn by the vendored pdf.js in the PDF

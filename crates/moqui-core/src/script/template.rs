@@ -510,7 +510,7 @@ impl TemplateRegistry {
     }
 
     /// Drop every kept file text: a dev reload of a changed template or text file, whose modified time a coarse file
-    /// system may leave the same for two quick saves (plans/design-dev-aide.md 6.1, F6).
+    /// system may leave the same for two quick saves (plans/archive/design-dev-aide.md 6.1, F6).
     pub fn forget_texts(&self) {
         lock(&self.files).clear();
     }

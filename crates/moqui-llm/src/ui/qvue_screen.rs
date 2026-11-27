@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The `qvue-screen` canvas dialect (plans/design-dev-aide.md 13.5, P9), offered on dev instances only: a `.qvue` screen
+//! The `qvue-screen` canvas dialect (plans/archive/design-dev-aide.md 13.5, P9), offered on dev instances only: a `.qvue` screen
 //! as it would be saved, two files in one program. Its first line says where the XML stands and the page that shows it
 //! (`<!-- qvue-screen at="component://.../Board.xml" path="/qapps/..." -->`); then the XML screen (its parameters,
 //! transitions, actions, `render-modes="qvue"` and the `<text type="qvue">` naming the `.qvue` beside it); then the SFC

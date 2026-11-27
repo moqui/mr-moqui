@@ -2405,3 +2405,46 @@ fn a_trigger_run_is_exempt_only_as_an_agents_account_and_an_external_user_ends_a
         "a user made external"
     );
 }
+
+/// SEC-AI-91: a step that fails for an error of its own (here, a run whose user does not exist) ends the run with a fixed
+/// text and the run's id: the error's own text stays in the server log, out of the run's row and its events.
+#[test]
+fn a_steps_internal_error_text_is_not_stored_or_sent() {
+    let bed = bed("internal");
+    let _entered = bed.ctx.enter();
+    {
+        let _authz = bed.ctx.disable_authz();
+        let mut run = bed.facade.make_value(RUN).unwrap();
+        for (field, value) in [
+            ("runId", "INTERNAL_RUN"),
+            ("conversationId", "INTERNAL_CONV"),
+            ("agentId", "assist"),
+            ("userId", "NO_SUCH_USER_7QX"),
+            ("surfaceEnumId", Surface::Drawer.enum_id()),
+            ("statusId", RunState::Submitted.status_id()),
+        ] {
+            run.set(field, Value::string(value));
+        }
+        run.create(&bed.facade).unwrap();
+    }
+    step::run_step(&bed.factory, "INTERNAL_RUN");
+    let row = run_row(&bed, "INTERNAL_RUN");
+    assert_eq!(text_of(&row, "errorCode").as_deref(), Some("step_failed"));
+    let shown = [text_of(&row, "errorText"), text_of(&row, "statusReason")];
+    for text in shown.iter().flatten() {
+        assert_eq!(text, &step::step_failure_text("INTERNAL_RUN"));
+        assert!(!text.contains("NO_SUCH_USER_7QX"), "{text}");
+    }
+    let events = bed
+        .facade
+        .find("moqui.agent.AgentRunEvent")
+        .unwrap()
+        .eq("runId", Value::string("INTERNAL_RUN"))
+        .disable_authz()
+        .list()
+        .unwrap();
+    for event in events.values() {
+        let payload = text_of(event, "payloadJson").unwrap_or_default();
+        assert!(!payload.contains("NO_SUCH_USER_7QX"), "{payload}");
+    }
+}

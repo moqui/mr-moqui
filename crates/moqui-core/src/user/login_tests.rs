@@ -707,7 +707,7 @@ fn require_password_change_and_an_old_password_fail_without_rehash() {
     assert_eq!(i64_field(&load_user(&facade, "must"), "successiveFailedLogins"), 0);
     assert!(!text(&load_user(&facade, "must"), "currentPassword").starts_with("$argon2"));
 
-    let old = now_millis() - 13 * WEEK_MILLIS;
+    let old = now_millis() - 105 * WEEK_MILLIS;
     create_user(&facade, "stale", "Secret1!", |value| {
         value.set("passwordSetDate", stamp(old));
     });
@@ -1110,7 +1110,7 @@ fn a_password_login_and_a_finished_second_factor_are_recent_sign_ins_an_internal
     session::reset_session();
 }
 
-/// A strong sign-in (plans/Vault-Instances.md §9, Nov 19): the code that finishes a second factor and an SSO login
+/// A strong sign-in (plans/archive/Vault-Instances.md §9, Nov 19): the code that finishes a second factor and an SSO login
 /// are; a password alone, an internal login and a session's login key are not; a paired device's key is, with a recent
 /// sign-in on the device. Each is the user's own, recent within the age asked, and a logout drops it.
 #[test]

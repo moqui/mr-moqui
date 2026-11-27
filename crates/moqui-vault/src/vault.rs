@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Vault keys, item keys and bodies (plans/Vault-Instances.md §3.2): a single-secret vault's key under a password
+//! Vault keys, item keys and bodies (plans/archive/Vault-Instances.md §3.2): a single-secret vault's key under a password
 //! (Argon2id) or a generated key (HKDF); a shared-key vault's key wrapped to each member's personal key and signed by
 //! its maker; item keys wrapped by the vault key, or to an operational vault's deposit key; item bodies under their
 //! item key. An operational item's type, binding and clear name are in the associated data of its item-key wrap and

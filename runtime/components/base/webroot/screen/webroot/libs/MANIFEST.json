@@ -2,7 +2,7 @@
   "generatedBy": "build/libs/refresh.mjs",
   "notices": {
     "path": "NOTICES.md",
-    "sha256": "b4639204ca94db02f9f02d3714c4c2be8ee4d31b2d500fd890b513c214a5121f"
+    "sha256": "1666b5fb5ceab885a68ba16974b1391a64a985dbfe3880f49e921963d4234474"
   },
   "libraries": [
     {
@@ -633,17 +633,17 @@
       "name": "Tiptap (with ProseMirror, bundled)",
       "version": "3.31.4",
       "license": "MIT",
-      "note": "Bundles @tiptap/core, starter-kit (and the extensions it includes), extension-link, extension-image, extension-mention, extension-placeholder, extension-table, extension-table-row, extension-table-cell, extension-table-header, extension-collaboration, extension-collaboration-caret, extensions, suggestion and pm 3.31.4, the prosemirror-* packages, @tiptap/y-tiptap, yjs, y-protocols, lib0, isomorphic.js, @floating-ui/*, linkifyjs, orderedmap, rope-sequence and w3c-keyname: all MIT. Each license text is below once, with the packages it is the license of.",
+      "note": "Bundles @tiptap/core, starter-kit (and the extensions it includes), extension-link, extension-image, extension-mention, extension-placeholder, extension-table, extension-table-row, extension-table-cell, extension-table-header, extension-collaboration, extension-collaboration-caret, extensions, suggestion and pm 3.31.4, the prosemirror-* packages, @tiptap/y-tiptap, lib0, @floating-ui/*, linkifyjs, orderedmap, rope-sequence and w3c-keyname: all MIT. yjs and y-protocols are the Yjs library's (libs/yjs), which the bundle reads from the global Yjs. Each license text is below once, with the packages it is the license of.",
       "source": "https://registry.npmjs.org/@tiptap/core/-/core-3.31.4.tgz",
       "npm": "@tiptap/core@3.31.4",
       "tarballIntegrity": "sha512-cIVUQYBycighzsk6GbmCef8ZiEDVxoT5EuAe4xg2q9dNkDqCXVqI4YGr9aavCQEiAS4uHiRwqvcsPqJHipFDfg==",
-      "build": "esbuild --bundle --minify --format=iife --global-name=Tiptap --platform=browser --target=es2020 --legal-comments=none of an entry that exports Editor, Extension, Node, Mark, mergeAttributes, StarterKit, Link, Image, Mention, Placeholder, Table, TableRow, TableCell, TableHeader, PluginKey, Collaboration, CollaborationCaret, Y (the yjs namespace), Awareness, encodeAwarenessUpdate, applyAwarenessUpdate and removeAwarenessStates. Exposes the global Tiptap.",
+      "build": "esbuild --bundle --minify --format=iife --global-name=Tiptap --platform=browser --target=es2020 --legal-comments=none of an entry that exports Editor, Extension, Node, Mark, mergeAttributes, StarterKit, Link, Image, Mention, Placeholder, Table, TableRow, TableCell, TableHeader, PluginKey, Collaboration, CollaborationCaret, Y (the yjs namespace), Awareness, encodeAwarenessUpdate, applyAwarenessUpdate and removeAwarenessStates, with yjs and y-protocols aliased to shims that read the global Yjs (libs/yjs/yjs.min.js, loaded first). Exposes the global Tiptap.",
       "files": [
         {
           "path": "tiptap/tiptap.min.js",
           "from": "build",
-          "size": 601562,
-          "sha256": "6cbb699803b69b3e56aff7440420b1ce63f99f64108dbb3e9ccf60c029d98524"
+          "size": 519693,
+          "sha256": "3815d8fe76cf1860663f0867c0bceb84cb1e55071bf10a866c79df87d3f6e2ba"
         }
       ]
     },
@@ -661,8 +661,550 @@
         {
           "path": "codemirror/codemirror.min.js",
           "from": "build",
-          "size": 807538,
-          "sha256": "f64ca08c3a4b4c61de1d00dfb0b033da6289396e46638d300e1d4f3048c4e3b7"
+          "size": 821777,
+          "sha256": "d189471f7f8400658343bd204cf851af65e50f20bf553324cfc188f1e4466bac"
+        }
+      ]
+    },
+    {
+      "id": "yjs",
+      "name": "Yjs with y-protocols (bundled)",
+      "version": "13.6.33",
+      "license": "MIT",
+      "note": "Bundles yjs, y-protocols (its awareness protocol) and the lib0 modules they use: all MIT. Each license text is below once, with the packages it is the license of.",
+      "source": "https://registry.npmjs.org/yjs/-/yjs-13.6.33.tgz",
+      "npm": "yjs@13.6.33",
+      "tarballIntegrity": "sha512-q/UYvr1gOk4XII+Cu1CW2dINjYqJJFifTzogEaIARznrvX7uOlHsdTEXcnOBMuIsrCGEEKdNxi74kyMLZlKVfw==",
+      "build": "esbuild --bundle --minify --format=iife --global-name=Yjs --platform=browser --target=es2020 --legal-comments=none of an entry (YJS_ENTRY) that exports Y (the yjs namespace), Awareness, encodeAwarenessUpdate, applyAwarenessUpdate and removeAwarenessStates. Exposes the global Yjs.",
+      "files": [
+        {
+          "path": "yjs/yjs.min.js",
+          "from": "build",
+          "size": 96897,
+          "sha256": "3d8dc8477da9f61ce57ec60d4ae33a42f00023c87d1a1be1bc80328732bf6e75"
+        }
+      ]
+    },
+    {
+      "id": "y-codemirror",
+      "name": "y-codemirror.next (bundled)",
+      "version": "0.3.6",
+      "license": "MIT",
+      "note": "Bundles y-codemirror.next and the lib0 modules it uses: both MIT. @codemirror/state and view are read from the global CodeMirror, yjs from the global Yjs.",
+      "source": "https://registry.npmjs.org/y-codemirror.next/-/y-codemirror.next-0.3.6.tgz",
+      "npm": "y-codemirror.next@0.3.6",
+      "tarballIntegrity": "sha512-GnmVXhTe+UtoFbbaSdwhq6gdAQZdIY9az0Xj6HR2J4PO6Yw4w3xaaSssU+6T72WhXAI0wf9FbuY2s0Ms+WrexA==",
+      "build": "esbuild --bundle --minify --format=iife --global-name=YCodeMirror --platform=browser --target=es2020 --legal-comments=none of an entry (Y_CODEMIRROR_ENTRY) that exports yCollab, ySync, ySyncFacet, ySyncAnnotation, yRemoteSelections, yRemoteSelectionsTheme, yUndoManagerKeymap and YRange, with @codemirror/* and yjs aliased to shims that read the globals CodeMirror and Yjs. Exposes the global YCodeMirror.",
+      "files": [
+        {
+          "path": "codemirror/y-codemirror.min.js",
+          "from": "build",
+          "size": 20606,
+          "sha256": "5e23e4a0de666f259b196e5bb8d514b11e3c4b62f008af73cdbbeb939d5b41be"
+        }
+      ]
+    },
+    {
+      "id": "codemirror-vim",
+      "name": "Vim keybindings for CodeMirror 6 (bundled)",
+      "version": "6.4.0",
+      "license": "MIT",
+      "note": "Bundles @replit/codemirror-vim and @replit/codemirror-vim-core: both MIT. @codemirror/* are read from the global CodeMirror.",
+      "source": "https://registry.npmjs.org/@replit/codemirror-vim/-/codemirror-vim-6.4.0.tgz",
+      "npm": "@replit/codemirror-vim@6.4.0",
+      "tarballIntegrity": "sha512-t9UMDNhkmeAkl0uRbiJVotv97bGD6mf4GyJJoEbrjUqa/Pov0s9eL+4AaI0Xto3OGri17i9qwIpT0JbVlVXt8A==",
+      "build": "esbuild --bundle --minify --format=iife --global-name=CodeMirrorVim --platform=browser --target=es2020 --legal-comments=none of an entry (CODEMIRROR_VIM_ENTRY) that exports vim, Vim, getCM and CodeMirror, with @codemirror/* aliased to shims that read the global CodeMirror. Exposes the global CodeMirrorVim.",
+      "files": [
+        {
+          "path": "codemirror/vim.min.js",
+          "from": "build",
+          "size": 125064,
+          "sha256": "959a815bb8657f54b8cb283acbc649b81da1938a621fd59d42be25b56610d761"
+        }
+      ]
+    },
+    {
+      "id": "codemirror-legacy",
+      "name": "CodeMirror legacy modes (bundled)",
+      "version": "6.5.5",
+      "license": "MIT",
+      "note": "The shell, groovy, properties, toml, dockerfile and nginx modes of @codemirror/legacy-modes (MIT), with its simple-mode helper.",
+      "source": "https://registry.npmjs.org/@codemirror/legacy-modes/-/legacy-modes-6.5.5.tgz",
+      "npm": "@codemirror/legacy-modes@6.5.5",
+      "tarballIntegrity": "sha512-9ltT214oMb3Y1w5eAZMSigzrjzZnMI2Wa3Feq73rU/i4C56MkwrpfswfQYOr28C5pXr6dWwspNTMyeHXlzWMxg==",
+      "build": "esbuild --bundle --minify --format=iife --global-name=CodeMirrorLegacy --platform=browser --target=es2020 --legal-comments=none of an entry (LEGACY_ENTRY) that exports the modes LEGACY_MODES names. Exposes the global CodeMirrorLegacy.",
+      "files": [
+        {
+          "path": "codemirror/legacy-modes.min.js",
+          "from": "build",
+          "size": 20495,
+          "sha256": "8ed26058f0f81ba76f929bb45c8372baddb90a238f7fc7d0a66a9eb9eca93de5"
+        }
+      ]
+    },
+    {
+      "id": "typescript",
+      "name": "TypeScript",
+      "version": "6.0.3",
+      "license": "Apache-2.0",
+      "note": "lib/typescript.js minified (its license header kept), and the ES5 to ES2023 and decorators declarations of lib/ as one script. ThirdPartyNoticeText.txt is the package's notice of what its declarations derive from.",
+      "source": "https://registry.npmjs.org/typescript/-/typescript-6.0.3.tgz",
+      "npm": "typescript@6.0.3",
+      "tarballIntegrity": "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==",
+      "build": "esbuild --minify --legal-comments=inline on lib/typescript.js (a transform, no bundling), and lib-es2023.js: self.MoquiTsLibs set to the text of each lib/ file TS_LIB matches, by name.",
+      "files": [
+        {
+          "path": "typescript/typescript.min.js",
+          "from": "build",
+          "size": 3604579,
+          "sha256": "74a3c5a90b03e76676227b9452e41e9f61aaf5aabe8ef27220c7ff219aeaee57"
+        },
+        {
+          "path": "typescript/lib-es2023.js",
+          "from": "build",
+          "size": 537932,
+          "sha256": "9840ba32e1adfcd06d20e7eb302dd59c8d80815cf1be6b75489420593372a062"
+        }
+      ]
+    },
+    {
+      "id": "openlayers",
+      "name": "OpenLayers with ol-mapbox-style, PMTiles, geotiff.js and proj4 (bundled)",
+      "version": "10.11.0",
+      "license": "BSD-2-Clause AND BSD-3-Clause AND ISC AND MIT AND Apache-2.0 AND Zlib AND CC0-1.0",
+      "note": "Bundles ol, ol-mapbox-style, mapbox-to-css-font and @mapbox/unitbezier (BSD-2-Clause), ol-pmtiles, pmtiles, pbf and @maplibre/maplibre-gl-style-spec (BSD-3-Clause: the style spec's package.json says ISC, its LICENSE.txt is the BSD-3-Clause text of MapLibre and of the Mapbox code it contains), quickselect and tinyqueue (ISC), rbush and fflate (MIT); and in the lazy raster part geotiff, @petamoriken/float16, quick-lru, proj4, mgrs and wkt-parser (MIT), zstddec (MIT, with the BSD-3-Clause license of the Zstandard decoder it compiles to WebAssembly), pako (MIT, its inflate a port of zlib under the zlib license), xml-utils (CC0-1.0) and lerc (Apache-2.0, its package carrying no license file: its source's notice, with the License's text as the web-worker package carries it). web-worker itself is not bundled. ol.css is OpenLayers'. Each license text is below once, with the packages it is the license of.",
+      "source": "https://registry.npmjs.org/ol/-/ol-10.11.0.tgz",
+      "npm": "ol@10.11.0",
+      "tarballIntegrity": "sha512-OJ+lrx7kx/1O7Xx18Ff9QkVnwZIEL0OuhJQSy2sYgzzDvyZ2qHvuZEGAajbSstUyBwaS1OtQ4RWnY84tRMDdqg==",
+      "build": "geotiff's dist-module/worker/create.js replaced by patches/geotiff-3.1.0-beta.0-worker-create.js (its original's SHA-256 checked first), then esbuild --bundle --minify --splitting --format=esm --platform=browser --target=es2020 --legal-comments=none of three entries, ol-map (OPENLAYERS_ENTRY), ol-raster (RASTER_ENTRY: the GeoTIFF source, the WebGL tile layer, proj4 and its register, the projection lookup refused) and ol-tiff-decoder (TIFF_WORKER_ENTRY, a module worker), into shared chunks under openlayers/chunks/, every file named by its hash ([name]-[hash].min.js), with openlayers/ol-map.json naming the three entries and openlayers/parts.json the files of the main part (its entry and the chunks it imports, ol.css and ol-map.json), which the desktop and mobile shell bundles alone. ol-map is an entry (OPENLAYERS_ENTRY) that exports Map, View, Overlay, Geolocation, Feature, Collection, unByKey, the projection and extent helpers, the Tile, Vector, VectorTile, Image and Group layers, the XYZ, Vector, VectorTile, TileWMS, ImageWMS and WMTS sources, the WMTS tile grid from a recorded matrix set, the bbox loading strategy, the GeoJSON, GPX, KML, TopoJSON and MVT formats, Point and polygonFromExtent, the controls, the interactions (Select, Modify, Draw and Snap among them), the style classes, ol-mapbox-style's apply, applyStyle and applyBackground, PMTilesVectorSource and PMTilesRasterSource, and PMTiles, FetchSource and FileSource; m-map sets it as the global MoquiOl. The build fails when the bundle holds an unreviewed package, evaluates code, or names an unreviewed host.",
+      "patches": [
+        {
+          "path": "patches/geotiff-3.1.0-beta.0-worker-create.js",
+          "sha256": "14c301540405615fd3e5476c4b687f0661dead0536a131040ad77dbe80b3d157"
+        }
+      ],
+      "files": [
+        {
+          "path": "openlayers/ol.css",
+          "from": "ol.css",
+          "size": 6343,
+          "sha256": "abc8afd72cc10bd29cc143f443bae4a6804bd3cb3fb262e6b6a6bc6c924ea34f"
+        },
+        {
+          "path": "openlayers/chunks/chunk-6W2IA7BM.min.js",
+          "from": "build",
+          "size": 781,
+          "sha256": "692e687dce9fc072c4d373cf55c7ccac673b9bcf9b68c2e0f404b049b71d1b4f"
+        },
+        {
+          "path": "openlayers/chunks/chunk-E6DU5LVM.min.js",
+          "from": "build",
+          "size": 1328,
+          "sha256": "b90c270e0f2a88f55440d60aa20180fd4ad853ac3e89481b9c4e02ccdff7e719"
+        },
+        {
+          "path": "openlayers/chunks/chunk-EXMCKHUE.min.js",
+          "from": "build",
+          "size": 47207,
+          "sha256": "b4c73a74bcdd1b0d03055e806d5df07ac256c06c9ccfae9355766564c0c2f369"
+        },
+        {
+          "path": "openlayers/chunks/chunk-MNA67FBW.min.js",
+          "from": "build",
+          "size": 52012,
+          "sha256": "c85513873fde2e2c34008515854c14d54f6f5d8d077886612a90efff612594a4"
+        },
+        {
+          "path": "openlayers/chunks/chunk-R4VSY7W2.min.js",
+          "from": "build",
+          "size": 8039,
+          "sha256": "252fe0d2aca7d96e216acaabb2eacad3dec7e96126e32c556b0eb958406a3c3f"
+        },
+        {
+          "path": "openlayers/chunks/chunk-X6LCUXIH.min.js",
+          "from": "build",
+          "size": 135086,
+          "sha256": "f66e8ac912b1f1f8769dadb4df9c18747abe6afa9afd720ea525ee8d99c0792b"
+        },
+        {
+          "path": "openlayers/chunks/deflate-KIXF43Q4.min.js",
+          "from": "build",
+          "size": 216,
+          "sha256": "8a3ab8ab28b1f672c69aa1072c826b4363de7ddcd1093c50ddec1b38834a233a"
+        },
+        {
+          "path": "openlayers/chunks/jpeg-WE5TZX3F.min.js",
+          "from": "build",
+          "size": 11031,
+          "sha256": "ca26b5ea4f574c3489642808d76ddd9fdd8531ce9e2ef628c139faed6c50b4cf"
+        },
+        {
+          "path": "openlayers/chunks/lerc-LBDEB3DV.min.js",
+          "from": "build",
+          "size": 97175,
+          "sha256": "900e9a8b994f7f35c1d78e00cbfb6abecee7b726575cedba4f4ad701df3c5cc6"
+        },
+        {
+          "path": "openlayers/chunks/lzw-22KS4ARO.min.js",
+          "from": "build",
+          "size": 1502,
+          "sha256": "38c9916a571611e2dde996ed14d553ca104e0da7aec9343a182239c84ddd7b7a"
+        },
+        {
+          "path": "openlayers/chunks/packbits-TUD4BK6U.min.js",
+          "from": "build",
+          "size": 378,
+          "sha256": "529dbc5118969751997d75c48728d23dc196e2b6ccdfabe0d609417f3bdd9a23"
+        },
+        {
+          "path": "openlayers/chunks/raw-OII6CPTY.min.js",
+          "from": "build",
+          "size": 146,
+          "sha256": "51db28aade89d35629ce8b357fe3071efe205ec7c4f2d96b879eee45c03accea"
+        },
+        {
+          "path": "openlayers/chunks/webimage-ETNZDU2X.min.js",
+          "from": "build",
+          "size": 984,
+          "sha256": "89eb3171d3916113059f2793f8d9528568dc66bb91a532b0d1582776bbf7d478"
+        },
+        {
+          "path": "openlayers/chunks/zstd-3ARLWTU4.min.js",
+          "from": "build",
+          "size": 81084,
+          "sha256": "cc5515dd950e1a17a24a5062520a6ecb4c0d56a607ff6b6eeb020c9e7420638f"
+        },
+        {
+          "path": "openlayers/ol-map-WGG2ZZMM.min.js",
+          "from": "build",
+          "size": 574802,
+          "sha256": "d45dd70afbd5b5b9069b1c52f1546bee20d95f2615931ebfe38585b309ccc3eb"
+        },
+        {
+          "path": "openlayers/ol-map.json",
+          "from": "build",
+          "size": 115,
+          "sha256": "bec5c4c6055955c0588e8515f21677b0a8795d31335ba84d6f39504196f7a505"
+        },
+        {
+          "path": "openlayers/ol-raster-Z5PPGLWN.min.js",
+          "from": "build",
+          "size": 194305,
+          "sha256": "23c02030b7037e692b251e84682a3f87cc8306e2a2fa00fb81c2d1faf868a551"
+        },
+        {
+          "path": "openlayers/ol-tiff-decoder-BHWUW6YP.min.js",
+          "from": "build",
+          "size": 432,
+          "sha256": "46c538800133d9fc90d3062b0008d311479fa4d29023b31e2d64f348ed550f5e"
+        },
+        {
+          "path": "openlayers/parts.json",
+          "from": "build",
+          "size": 121,
+          "sha256": "9980e0b069f9e0e9cf2000336f6a5cc6a85cb4e1c02345c3e2ccc8cc18a69386"
+        }
+      ]
+    },
+    {
+      "id": "mapfonts",
+      "name": "Noto Sans (map label fonts)",
+      "version": "5.3.0",
+      "license": "OFL-1.1",
+      "note": "The faces 400, 400-italic, 500, 700, every subset, woff2 only.",
+      "source": "https://registry.npmjs.org/@fontsource/noto-sans/-/noto-sans-5.3.0.tgz",
+      "npm": "@fontsource/noto-sans@5.3.0",
+      "tarballIntegrity": "sha512-fBCog2PY7DiVVTEEqtI/Qdinx/knobHYfoGpjFXdfBX5RoJaBp1Prw2G75p0OIsdlMZg3cLo0c+YbIUYOxnQJw==",
+      "build": "For each face of 400, 400-italic, 500, 700: its Fontsource CSS with only the woff2 source of each @font-face, at mapfonts/noto-sans/<face>.css, and those woff2 files under mapfonts/noto-sans/files/.",
+      "files": [
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-cyrillic-ext-400-normal.woff2",
+          "from": "build",
+          "size": 22220,
+          "sha256": "fa8331498f2c20fe4e4288eb00ed832c9ebcd8f5e7529a45a557e870baeaed93"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-cyrillic-400-normal.woff2",
+          "from": "build",
+          "size": 7096,
+          "sha256": "05af9e705d3b63aedba67197d19fb448b97353e1386930716c7e835b08f126ba"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-devanagari-400-normal.woff2",
+          "from": "build",
+          "size": 42676,
+          "sha256": "1ccb720178c307d17a30f2f8eda43c2f9ffa831c02cb7f7d9d7b8708bcbaf43c"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-greek-ext-400-normal.woff2",
+          "from": "build",
+          "size": 4872,
+          "sha256": "cf9669423c4b33c00dca35269187661f7311d23c753190afb7af9f36d701e5ba"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-greek-400-normal.woff2",
+          "from": "build",
+          "size": 7888,
+          "sha256": "c7c42b4b60ab0553cabd0a22b12d7ac595ae1fb90f4dff814e1a42e4eb95d0d6"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-vietnamese-400-normal.woff2",
+          "from": "build",
+          "size": 5316,
+          "sha256": "0f0c8a4858f1f5b2701331cf0a471ee00824ed92d33ecb21c9248ded975e297f"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-latin-ext-400-normal.woff2",
+          "from": "build",
+          "size": 55640,
+          "sha256": "c8e6bf928ae88c948ebc49dbe1df01ea5505d12408904ea3302309b26487fbca"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-latin-400-normal.woff2",
+          "from": "build",
+          "size": 13120,
+          "sha256": "09aee8065d25508f23a4c3d92cd777ac869c52d93fd868a88f025d888a7937d6"
+        },
+        {
+          "path": "mapfonts/noto-sans/400.css",
+          "from": "build",
+          "size": 2658,
+          "sha256": "5efd1245db1622ad96a0d24a78589e16f47033ea4ad279299aef1cdda320e5d8"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-cyrillic-ext-400-italic.woff2",
+          "from": "build",
+          "size": 24408,
+          "sha256": "74c34f5ce7414f353e4d5beba0dc4ef173bc3e930d628c51d785e1b8fbda629c"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-cyrillic-400-italic.woff2",
+          "from": "build",
+          "size": 8696,
+          "sha256": "8d37eb626fdbb4188026558df33ea1d5c62c96e630f2ef367e9c370adf48a8e7"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-devanagari-400-italic.woff2",
+          "from": "build",
+          "size": 42880,
+          "sha256": "39e78b404324be6e38a725af394e51125f6750a995d9c1c3ab6e8b3c0a8daef9"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-greek-ext-400-italic.woff2",
+          "from": "build",
+          "size": 5440,
+          "sha256": "f0930caef373fad465aff18f4952941f1faad487ccfbe589555646253c848b91"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-greek-400-italic.woff2",
+          "from": "build",
+          "size": 8528,
+          "sha256": "083cf480ee5b05d7c210d5a736d72bdf6ce173b79687a34ffdca6b88f7299d8b"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-vietnamese-400-italic.woff2",
+          "from": "build",
+          "size": 5336,
+          "sha256": "36e30fbf2839f9e2bee84697e8e5cf859b6714f63da244ac7fb26fc6a1bdc0c5"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-latin-ext-400-italic.woff2",
+          "from": "build",
+          "size": 57224,
+          "sha256": "8931874d4c940ef6eed0e231e74e3048fdd36eb5333246235aeb2b0113a8b361"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-latin-400-italic.woff2",
+          "from": "build",
+          "size": 13888,
+          "sha256": "c302cbfdd98d628d60b6ef8de3c8459c70449df3a5ff2baacfa7481d95e79f4c"
+        },
+        {
+          "path": "mapfonts/noto-sans/400-italic.css",
+          "from": "build",
+          "size": 2658,
+          "sha256": "85dad00cc42268f5c9cc5cd89237259a82e188c3f75943ea39eba5e1e14339e0"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-cyrillic-ext-500-normal.woff2",
+          "from": "build",
+          "size": 22920,
+          "sha256": "bfdcde1aa5f2f28d426adfb8da44df1ea6266a3f68f90d73f6a0540f3c765d36"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-cyrillic-500-normal.woff2",
+          "from": "build",
+          "size": 7320,
+          "sha256": "ffaaff9025964574d7aff3bab4c298d3423d7d276cec8957bb1f592d7edd7e56"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-devanagari-500-normal.woff2",
+          "from": "build",
+          "size": 45648,
+          "sha256": "a7654366e412389956794d6b2bb6df921855458b56f271adb48e4035564d0100"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-greek-ext-500-normal.woff2",
+          "from": "build",
+          "size": 5056,
+          "sha256": "2c9086e3f410b6a458b8d0091a90ae3ff3ef851568527dc9a6b3e2c6ffeb0df8"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-greek-500-normal.woff2",
+          "from": "build",
+          "size": 7992,
+          "sha256": "0b8963e6c361506d191661c3588417e2e719db79ea3732ec22fb6b746b0c04bd"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-vietnamese-500-normal.woff2",
+          "from": "build",
+          "size": 5720,
+          "sha256": "091e15d43fad7642155cc12765a790b60b19ed793547279479df53ec7955fbb7"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-latin-ext-500-normal.woff2",
+          "from": "build",
+          "size": 59844,
+          "sha256": "3ab9bdf323d30aec27bb06e96a400d17dff8483585ffccc9268a727de06e5200"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-latin-500-normal.woff2",
+          "from": "build",
+          "size": 13496,
+          "sha256": "1d35aaecc5c7a375d87c12787e1e4c5d6a695315b757e1e18a479d1a2f84e973"
+        },
+        {
+          "path": "mapfonts/noto-sans/500.css",
+          "from": "build",
+          "size": 2658,
+          "sha256": "8a5246a96b8080db3fa68a2f7efd95c93981338943a6dc3cb36a24c0b7c6c748"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-cyrillic-ext-700-normal.woff2",
+          "from": "build",
+          "size": 22264,
+          "sha256": "d5af4da0950580f5fbfc64d0bffa916f813c989858b2f8558938b261a5928a0e"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-cyrillic-700-normal.woff2",
+          "from": "build",
+          "size": 7288,
+          "sha256": "0980b97224d9130cf3f651c8ad15b9e0b1eb361d31c71259363ec2bbd5f70750"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-devanagari-700-normal.woff2",
+          "from": "build",
+          "size": 45836,
+          "sha256": "d2c26ac327f1d3f4848f114ee204cfd9c8345a711f4553eef6f9c34d55e2b4f5"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-greek-ext-700-normal.woff2",
+          "from": "build",
+          "size": 4940,
+          "sha256": "028e5e1a2d40dea342508a352c4ee953457dfd2fcd00d9245d94dc4bfae70598"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-greek-700-normal.woff2",
+          "from": "build",
+          "size": 8000,
+          "sha256": "453c49c9043e04c1103ed1228a1d8d96750c858e08d6b204119d7a16b7642246"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-vietnamese-700-normal.woff2",
+          "from": "build",
+          "size": 5700,
+          "sha256": "81e42f41bb61f9d1b2004c243cf15ea4946dffb14be4888e76fb3ca3cb75cdf8"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-latin-ext-700-normal.woff2",
+          "from": "build",
+          "size": 59144,
+          "sha256": "c0cd431266a7ed82d6f0dfe281e38a883c28a03eec1fdac308cc2f7c0ea39c3b"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-latin-700-normal.woff2",
+          "from": "build",
+          "size": 13464,
+          "sha256": "e77bfe1db912f687b0319b60de158cfada67f89c8ee4f8e2bd6020f970accbfb"
+        },
+        {
+          "path": "mapfonts/noto-sans/700.css",
+          "from": "build",
+          "size": 2658,
+          "sha256": "84e37a98655d3d077298c9d934d57f38d6432c457158d8c76f47bf4c09550ff8"
+        }
+      ]
+    },
+    {
+      "id": "protomaps",
+      "name": "Protomaps basemap styles (generated) and sprites",
+      "version": "5.7.2",
+      "license": "BSD-3-Clause AND CC0-1.0 AND MIT",
+      "note": "The styles are generated by the package's code (BSD-3-Clause); their visual design is CC0, with derivatives of Mapzen icons (MIT), and the layer schema is adapted from Tilezen. The sprites are those of protomaps/basemaps-assets (derived from tangrams/icons, MIT).",
+      "source": "https://registry.npmjs.org/@protomaps/basemaps/-/basemaps-5.7.2.tgz",
+      "npm": "@protomaps/basemaps@5.7.2",
+      "tarballIntegrity": "sha512-K1Yk6bWdULulYg+R2QRVXx4NzJZan5YQhpejEG0c1/sXruJrfPIPZuakpf3jwAgVmjIRVQwAv+yRafDeN0aaUQ==",
+      "build": "For each flavor of light, dark: the package's layers(\"protomaps\", namedFlavor(flavor), {lang: \"en\"}), run by Node from dist/cjs/index.cjs, as a style (version 8, the source protomaps of type vector with the Protomaps and OpenStreetMap attribution, sprite /libs/protomaps/sprites/v4/<flavor>, no glyphs) at protomaps/<flavor>.json; and the committed sprites of basemaps-assets sprites/v4 (build/libs/assets/protomaps-sprites-v4) at protomaps/sprites/v4/. Fails when a style names a URL or a font that is not packaged.",
+      "files": [
+        {
+          "path": "protomaps/light.json",
+          "from": "build",
+          "size": 65654,
+          "sha256": "b9c83fd1e3b8918fdc940161a3eadba01188fd0f936259cbdf73eff23ab81f2b"
+        },
+        {
+          "path": "protomaps/sprites/v4/light.json",
+          "from": "build",
+          "size": 3549,
+          "sha256": "bfac76cf7ed5c2aa2992695904056a1c6b07785b7fd20e6c640cb44fd6244a2e"
+        },
+        {
+          "path": "protomaps/sprites/v4/light.png",
+          "from": "build",
+          "size": 16174,
+          "sha256": "b6a34640917bdc57d0bd080836db33376371a3312ebe7b849045268015de3481"
+        },
+        {
+          "path": "protomaps/sprites/v4/light@2x.json",
+          "from": "build",
+          "size": 3579,
+          "sha256": "1fb5b123fbe35d2e1f6ac171513ce01df89e671273a417ee89c44886a4c132f0"
+        },
+        {
+          "path": "protomaps/sprites/v4/light@2x.png",
+          "from": "build",
+          "size": 28852,
+          "sha256": "23f6e9df27c2e9a14385763980a24e3608966bfc8192a106058bc2ca959ab563"
+        },
+        {
+          "path": "protomaps/dark.json",
+          "from": "build",
+          "size": 65630,
+          "sha256": "0033b77b72ec975899e06a8d9501ec98e699aa703cb2e8ab261ec2b3df50f07e"
+        },
+        {
+          "path": "protomaps/sprites/v4/dark.json",
+          "from": "build",
+          "size": 3549,
+          "sha256": "bfac76cf7ed5c2aa2992695904056a1c6b07785b7fd20e6c640cb44fd6244a2e"
+        },
+        {
+          "path": "protomaps/sprites/v4/dark.png",
+          "from": "build",
+          "size": 16054,
+          "sha256": "8920f68e8f9f7a4188da43e62a81bbc426532579fff7b5f27aad09e130f4246e"
+        },
+        {
+          "path": "protomaps/sprites/v4/dark@2x.json",
+          "from": "build",
+          "size": 3579,
+          "sha256": "1fb5b123fbe35d2e1f6ac171513ce01df89e671273a417ee89c44886a4c132f0"
+        },
+        {
+          "path": "protomaps/sprites/v4/dark@2x.png",
+          "from": "build",
+          "size": 28407,
+          "sha256": "6e01b4e366d304f27bbd55390511a3d4e39aa1d03eb3e82f873f7ea32e74cbe4"
         }
       ]
     },

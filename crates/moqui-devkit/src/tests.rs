@@ -300,7 +300,7 @@ fn the_watcher_reloads_a_service_file_changed_on_disk() {
     assert!(defined("devtest.Watched.run#Thing").unwrap().contains("second"));
 }
 
-/// Each rule a check quotes is in its skill section word for word (plans/design-dev-aide.md 13.1), so a person and a
+/// Each rule a check quotes is in its skill section word for word (plans/archive/design-dev-aide.md 13.1), so a person and a
 /// model read the same rule.
 #[test]
 fn each_check_rule_is_in_its_skill_section() {

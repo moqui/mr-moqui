@@ -276,8 +276,8 @@ fn attempt(entity: &EntityFacade, name: &str, holder: &str, ttl: Duration) -> Re
     if update(entity, name, fields.clone(), free.clone())? > 0 {
         return Ok(true);
     }
-    // no row yet: make it, free, then take it as any other; of two members making it at the same moment one insert
-    // fails on the key and the other's row is taken by one update
+    // no row yet: make it, free, then take it as any other; of two members making it at the same moment one row is
+    // made, and taken by one update
     let there = entity
         .find(LEASE)?
         .eq("leaseName", Value::string(name))
@@ -288,14 +288,35 @@ fn attempt(entity: &EntityFacade, name: &str, holder: &str, ttl: Duration) -> Re
     if there {
         return Ok(false);
     }
-    let columns = ["leaseName", "lastUpdatedStamp"];
-    let (sql, tx) = entity.with_group(LEASE, |definition, dialect, _, tx| {
-        Ok((moqui_db::sql::insert(definition, dialect, &columns)?, tx.clone()))
-    })?;
-    if let Err(err) = tx.with_reserve(|conn| conn.execute(&sql, &[Value::string(name), stamp(now)])) {
-        tracing::debug!(lease = name, "a git lease row was made by another: {err}");
-    }
+    make_row(entity, name, now)?;
     Ok(update(entity, name, fields, free)? > 0)
+}
+
+/// Make the free row of the lease `name`, a statement of its own on a reserve connection, unless one is there: of two
+/// members making it at once, the second makes none. By an insert that does nothing on the key where the database
+/// has one (`ON CONFLICT DO NOTHING`), which holds without relying on the insert failing on the key (the in-memory test
+/// database keeps no keys); elsewhere an insert whose failure on the key is the other member's row.
+fn make_row(entity: &EntityFacade, name: &str, now: i64) -> Result<(), Error> {
+    let columns = ["leaseName", "lastUpdatedStamp"];
+    let (sql, if_missing, tx) = entity.with_group(LEASE, |definition, dialect, _, tx| {
+        Ok(if moqui_db::sql::supports_insert_if_missing(dialect) {
+            (
+                moqui_db::sql::insert_if_missing(definition, dialect, &columns)?,
+                true,
+                tx.clone(),
+            )
+        } else {
+            (moqui_db::sql::insert(definition, dialect, &columns)?, false, tx.clone())
+        })
+    })?;
+    match tx.with_reserve(|conn| conn.execute(&sql, &[Value::string(name), stamp(now)])) {
+        Ok(_) => Ok(()),
+        Err(err) if if_missing => Err(err.into()),
+        Err(err) => {
+            tracing::debug!(lease = name, "a git lease row was made by another: {err}");
+            Ok(())
+        }
+    }
 }
 
 /// Take the lease `name` now when no other holder has it; `None` when another does. Renewed every third of `ttl`

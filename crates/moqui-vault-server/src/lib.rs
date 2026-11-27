@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Vaults on the server (plans/Vault-Instances.md §3): the services of `org.moqui.security.VaultServices`, leases,
+//! Vaults on the server (plans/archive/Vault-Instances.md §3): the services of `org.moqui.security.VaultServices`, leases,
 //! deposits, machine access, recovery and events. Core reaches this crate only through the [`moqui_core::extension`]
 //! entry below, with the feature `vault`; a binary without it still loads the vault services, which report that
 //! `vault` is not built in.
@@ -64,7 +64,7 @@ moqui_core::extension::submit! {
     moqui_core::extension::Extension {
         features: &["vault"],
         register_services,
-        // an item written before rotation ages counts its age from the upgrade (plans/Vault-Instances.md §4.7)
+        // an item written before rotation ages counts its age from the upgrade (plans/archive/Vault-Instances.md §4.7)
         after_boot: items::backfill_rotated_dates,
         after_cluster_start: lease::after_cluster_start,
         before_shutdown: lease::before_shutdown,

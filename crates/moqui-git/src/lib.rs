@@ -951,6 +951,19 @@ impl GitProvider {
         }
     }
 
+    /// The blob the file at `path` had in the version `name`, at the path it had then (before a move, its old path).
+    fn version_blob(&self, repo: &Repo, path: &[String], name: &str) -> Result<Option<ObjectId>, Error> {
+        let Some(id) = self.commit_named(repo, path, name)? else {
+            return Ok(None);
+        };
+        let id = id.to_string();
+        Ok(self
+            .file_versions(repo, path)?
+            .into_iter()
+            .find(|(version, _)| version.version_name == id)
+            .map(|(_, version)| version.blob))
+    }
+
     fn history(&self, location: &str) -> Result<Vec<ResourceVersion>, Error> {
         let (repo, path) = self.located(location)?;
         Ok(self
@@ -1590,15 +1603,16 @@ impl GitProvider {
                 && (source.starts_with("https://") || source.starts_with("http://"))
                 && !mirror::private_network();
             let _deny = checked_public.then(fs::deny_internal);
-            fs::fetch(
-                &path,
-                &source,
-                &definition.branch,
-                &definition.credentials,
-                false,
-                None,
-                &|| Ok(()),
-            )?;
+            // the token stored for the repository's remoteUrl goes only to that address: a caller's other source is
+            // fetched with none, or its host would be offered the token once it asks (SEC-GIT-86)
+            let own_remote = definition.remote_url.as_deref().map(str::trim) == Some(source.as_str());
+            let no_credentials = fs::Credentials::default();
+            let credentials = if from_caller && !own_remote {
+                &no_credentials
+            } else {
+                &definition.credentials
+            };
+            fs::fetch(&path, &source, &definition.branch, credentials, false, None, &|| Ok(()))?;
             scratch = Some(path.clone());
             (Box::new(fs::FsStore::open(&path)?), definition.branch.clone())
         };
@@ -1742,8 +1756,7 @@ impl moqui_core::native::ResourceProvider for GitProvider {
         }
     }
 
-    /// The file at the branch head: its blob, which the `ETag` names, read on first use, or a content blob's
-    /// chunks a window at a time.
+    /// The file at the branch head ([`GitProvider::open_blob`]).
     fn open(self: Arc<Self>, location: &str) -> Result<moqui_core::native::OpenedFile, Error> {
         let Some(stat) = self.stat(location)?.filter(|stat| stat.is_file) else {
             return Ok(None);
@@ -1756,21 +1769,9 @@ impl moqui_core::native::ResourceProvider for GitProvider {
         else {
             return Ok(None);
         };
-        if let Some(info) = self.lfs_content(&repo, &blob)? {
-            let stat = ResourceStat {
-                size: info.size,
-                ..stat
-            };
-            return Ok(Some((stat, self.lfs_source(&info)?)));
-        }
-        if let Some(source) = repo.store.content_source(&blob)? {
-            return Ok(Some((stat, source)));
-        }
-        let source = moqui_core::resource::source::LazySource::new(stat.size, true, move || {
-            Ok(ops::object(repo.store.as_ref(), &blob, Kind::Blob)?)
-        })
-        .with_tag(format!("git-{blob}"));
-        Ok(Some((stat, Arc::new(source))))
+        // the size stat gave is the object's when the file is not in LFS, the one case open_blob uses it
+        self.open_blob(repo, blob, Some(stat.size), stat.last_modified)
+            .map(Some)
     }
 
     fn stat(&self, location: &str) -> Result<Option<ResourceStat>, Error> {
@@ -2002,19 +2003,43 @@ impl moqui_core::native::ResourceProvider for GitProvider {
 
     fn read_version(&self, location: &str, version_name: &str) -> Result<Option<Vec<u8>>, Error> {
         let (repo, path) = self.located(location)?;
-        let Some(id) = self.commit_named(&repo, &path, version_name)? else {
-            return Ok(None);
-        };
-        let id = id.to_string();
-        // the blob the file had in that version, at the path it had then (before a move, its old path)
-        match self
-            .file_versions(&repo, &path)?
-            .into_iter()
-            .find(|(version, _)| version.version_name == id)
-        {
-            Some((_, version)) => self.file_content(&repo, &version.blob).map(Some),
+        match self.version_blob(&repo, &path, version_name)? {
+            Some(blob) => self.file_content(&repo, &blob).map(Some),
             None => Ok(None),
         }
+    }
+
+    /// The version's blob by range where it can be ([`GitProvider::open_blob`]), never the whole version in memory
+    /// for an LFS object or a `db` repository's large object.
+    fn open_version(&self, location: &str, version_name: &str) -> Result<moqui_core::native::OpenedFile, Error> {
+        let (repo, path) = self.located(location)?;
+        match self.version_blob(&repo, &path, version_name)? {
+            Some(blob) => self.open_blob(repo, blob, None, None).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// The LFS object's oid and size for an LFS file whose content the repository has, else the git object's id and
+    /// size: at the branch head, or of `version_name`.
+    fn content_address(
+        &self,
+        location: &str,
+        version_name: Option<&str>,
+    ) -> Result<Option<moqui_core::context::ContentAddress>, Error> {
+        let (repo, path) = self.located(location)?;
+        let blob = match version_name {
+            Some(version_name) => self.version_blob(&repo, &path, version_name)?,
+            None => match Self::head(&repo)? {
+                Some(head) => ops::resolve(repo.store.as_ref(), &head.tree, &path)?
+                    .filter(|(mode, _)| !mode.is_tree())
+                    .map(|(_, blob)| blob),
+                None => None,
+            },
+        };
+        let Some(blob) = blob else {
+            return Ok(None);
+        };
+        self.blob_address(&repo, &blob).map(Some)
     }
 
     fn apply_changes(

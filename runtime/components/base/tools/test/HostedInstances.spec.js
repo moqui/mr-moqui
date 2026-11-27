@@ -2,7 +2,7 @@
 // start containers and make databases on the hosts their rows name, so every InstanceServices service asks the sealed
 // INSTANCE_ADMIN, which an ADMIN outside ADMIN_ADV does not have; the configuration rows that hold a command, a script or
 // a service name are not written through the generic tools, nor an instance's environment or secret bindings
-// (plans/Security-Review.md SEC-TLS-02, plans/Vault-Instances.md §4.1).
+// (plans/Security-Review.md SEC-TLS-02, plans/archive/Vault-Instances.md §4.1).
 // Run: ./moq test tools --spec HostedInstances
 const ADMIN_ONLY = "SPEC_HI_ADMIN"
 const HOLDER = "SPEC_HI_HOLDER"
@@ -224,5 +224,38 @@ feature("a service job's entity-auto run of a refused entity is refused, no gene
         seed.hasError != "Y"
         browse.includes("not available through this tool")
         serviceName == "create#moqui.server.instance.InstanceHostType"
+    },
+})
+
+// the fleet's last deploy is a time stamp, which reaches the screen as epoch milliseconds: it is shown as a date in the
+// viewer's zone, with the zone named once (rendered once, in html: the screen has no mode-specific template)
+feature("the fleet shows an instance's last deploy as a date in the viewer's zone", {
+    when() {
+        const started = 1795658905000
+        ec.artifactExecution.disableAuthz()
+        make("moqui.server.instance.AppInstance", { appInstanceId: "SPEC_HI_FLEET", instanceName: "spec-hi-fleet", desiredStateEnumId: "IdsStopped" })
+        make("moqui.server.instance.InstanceAction", { instanceActionId: "SPEC_HI_FLEET_DEPLOY", appInstanceId: "SPEC_HI_FLEET",
+            actionEnumId: "IatDeploy", statusEnumId: "IasDone", startDate: String(started) })
+        ec.artifactExecution.enableAuthz()
+        try {
+            ec.user.internalLoginUser("spec.hi.holder")
+            const res = ec.screen.makeTest().rootScreen("component://tools/screen/System.xml").renderMode("html").render("Instances/Fleet", {}, null)
+            return { errors: res.errorMessages.join(" "), output: String(res.output || ""), millis: String(started),
+                shown: ec.l10n.format(new Date(started), "yyyy-MM-dd HH:mm:ss"), zone: "Times shown in " + ec.user.timeZone + "." }
+        } finally {
+            ec.message.clearErrors()
+            ec.user.logoutUser()
+            ec.artifactExecution.disableAuthz()
+            ec.entity.find("moqui.server.instance.InstanceAction").condition("instanceActionId", "SPEC_HI_FLEET_DEPLOY").deleteAll()
+            ec.entity.find("moqui.server.instance.AppInstance").condition("appInstanceId", "SPEC_HI_FLEET").deleteAll()
+            ec.artifactExecution.enableAuthz()
+        }
+    },
+    then({ errors, output, millis, shown, zone }) {
+        errors == ""
+        output.includes("spec-hi-fleet")
+        output.includes(shown + " IasDone")
+        !output.includes(millis)
+        output.includes(zone)
     },
 })

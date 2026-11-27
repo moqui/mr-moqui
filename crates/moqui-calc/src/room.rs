@@ -1332,6 +1332,14 @@ impl Rooms {
         Some(Arc::clone(&held.room))
     }
 
+    /// Whether `user_id` has the room `id` open, without marking it used: whether a socket's view of it is still theirs.
+    #[must_use]
+    pub fn has_member(&self, user_id: &str, id: &str) -> bool {
+        lock(&self.rooms)
+            .get(id)
+            .is_some_and(|held| lock(&held.members).contains_key(user_id))
+    }
+
     /// Whether `user_id`'s scope is to be read again for the room `id` (service.rs `room_of`): when it was last found the
     /// room's over [`SCOPE_RECHECK`] ago, or before the room's rows were last read (`filled_at`). A check that is due is
     /// marked done now; the caller leaves the room when their scope is not its.

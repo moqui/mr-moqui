@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! AES-256-GCM with a random 96-bit nonce and associated data that names what a value is (plans/Vault-Instances.md
+//! AES-256-GCM with a random 96-bit nonce and associated data that names what a value is (plans/archive/Vault-Instances.md
 //! §3.2, AEAD everywhere). The associated data is a list of parts, each written with its length, so no two lists give
 //! the same bytes: a value sealed for one vault, item, version or purpose does not open as another.
 //!
@@ -28,7 +28,7 @@ use crate::Error;
 
 pub const NONCE_LEN: usize = 12;
 pub const TAG_LEN: usize = 16;
-/// The largest item body, before padding (plans/Vault-Instances.md §3.2: an item is at most 64 KiB).
+/// The largest item body, before padding (plans/archive/Vault-Instances.md §3.2: an item is at most 64 KiB).
 pub const MAX_BODY: usize = 64 * 1024;
 /// Bodies are padded to a multiple of this, so a ciphertext's length tells little about its value.
 pub const BODY_STEP: usize = 256;

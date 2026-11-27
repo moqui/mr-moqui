@@ -15,7 +15,9 @@ sent when the server can be reached. How it works on Android is [docs/ui/Mobile-
   contacts through the app (`dial.rs` and the Kotlin `DialAccount`, `PhoneBook`;
   [Mobile-Client](../../docs/ui/Mobile-Client.md#the-phones-dialer-and-contacts)), and the native screen share in a
   call, a str0m leg the page signals for (`screen.rs` and the Kotlin `ScreenShare`, `ScreenRules`;
-  [Mobile-Client](../../docs/ui/Mobile-Client.md#sharing-the-screen-in-a-call)).
+  [Mobile-Client](../../docs/ui/Mobile-Client.md#sharing-the-screen-in-a-call)), and a live location share sent from
+  the phone, also in the background, by a foreground service of type location (`location.rs` and the Kotlin
+  `LocationShare`, `LocationRules`; [Mobile-Client](../../docs/ui/Mobile-Client.md#live-location)).
   The rest is shared with the desktop
   app: [moqui-client](../moqui-client/README.md) and [moqui-client-tauri](../moqui-client-tauri/README.md).
 - **The shell** is the desktop's (`crates/moqui-desktop/shell`), staged by `./moq android` into
@@ -70,6 +72,10 @@ scripts/check-android.sh      # clippy for aarch64-linux-android and x86_64-linu
 scripts/android-smoke.sh      # on the emulator, when asked: the shell's ready line, a forged notification tap
                               # refused, the frame check, a relaunch
                               # (MOQUI_MOBILE_APK=<a release APK>: what R8 kept for JNI instead of the frame check)
+scripts/android-maps-offline.sh   # acceptance MapsOfflinePackage, when asked: a map package downloaded, browsed
+                                  # and searched offline, a place saved offline and sent when the network is back
+scripts/android-location-share.sh # acceptance LocationShareWalk's phone half, when asked: a live location share
+                                  # confirmed in the app's dialog, sent in the background, stopped by its notification
 ```
 
 The Kotlin has JVM tests (`./gradlew :app:testUniversalDebugUnitTest` in `gen/android`) and, on the emulator when

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The roots of the Workspace (plans/design-dev-aide.md 4.1): the git repositories that hold the loaded components (found
+//! The roots of the Workspace (plans/archive/design-dev-aide.md 4.1): the git repositories that hold the loaded components (found
 //! by looking up from each component directory for `.git`), each loaded component in no repository, `runtime/conf` when
 //! no repository holds it, and the roots the conf and Settings add. A root whose components the site does not own is
 //! upstream: shown, searched and read, written only by the full tier with "Allow editing upstream components" on (D17).
@@ -34,6 +34,8 @@ pub const ROOT_ENTITY: &str = "moqui.dev.DevAideRoot";
 pub enum RootKind {
     Git,
     Plain,
+    /// A repository of this server's git hosting at a branch, with no directory (4.10, `crate::hosted`).
+    Hosted,
 }
 
 /// A component in a root, at a directory relative to the root.
@@ -63,7 +65,7 @@ pub struct Root {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub publish_branch: Option<String>,
     pub publish_branch_required: bool,
-    /// The repository a connected group server hosts for this working tree's remote (plans/design-dev-aide.md 21.3):
+    /// The repository a connected group server hosts for this working tree's remote (plans/archive/design-dev-aide.md 21.3):
     /// `serverId`, `remote` and `repository` as the server answered, when it was resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hosted: Option<serde_json::Value>,
@@ -78,6 +80,9 @@ pub struct Root {
     /// it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worktree_user_id: Option<String>,
+    /// A hosted root's repository and branch (4.10): read and committed through the hosting services, not loaded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hosted_branch: Option<crate::hosted::HostedBranch>,
 }
 
 fn path_string<S: serde::Serializer>(path: &Path, serializer: S) -> Result<S::Ok, S::Error> {
@@ -163,6 +168,7 @@ pub fn roots(factory: &ExecutionContextFactory, settings: &Settings, facade: Opt
     let mut hosted: BTreeMap<PathBuf, serde_json::Value> = BTreeMap::new();
     // a worktree root's main tree and conversation (21.8)
     let mut worktrees: BTreeMap<PathBuf, (PathBuf, Option<String>, Option<String>)> = BTreeMap::new();
+    let mut hosted_roots: Vec<Root> = Vec::new();
     for (location, label) in &settings.roots {
         let path = canonical(location);
         if path.is_dir() {
@@ -185,6 +191,10 @@ pub fn roots(factory: &ExecutionContextFactory, settings: &Settings, facade: Opt
                         .map(moqui_lib::object::to_plain_string)
                         .unwrap_or_default()
                 };
+                if text("rootKind") == crate::hosted::KIND {
+                    hosted_roots.extend(crate::hosted::root_of(row));
+                    continue;
+                }
                 let path = canonical(Path::new(&text("location")));
                 if !path.is_dir() {
                     tracing::warn!("Dev AIDE root {} is not a directory; left out", path.display());
@@ -277,6 +287,7 @@ pub fn roots(factory: &ExecutionContextFactory, settings: &Settings, facade: Opt
                 worktree_of: None,
                 conversation_id: None,
                 worktree_user_id: None,
+                hosted_branch: None,
                 kind,
                 path,
             }
@@ -295,6 +306,12 @@ pub fn roots(factory: &ExecutionContextFactory, settings: &Settings, facade: Opt
             root.upstream = main.upstream;
             root.read_only = root.read_only || main.read_only;
         }
+    }
+    for mut root in hosted_roots {
+        while all.iter().any(|have| have.id == root.id) {
+            root.id.push('_');
+        }
+        all.push(root);
     }
     all
 }

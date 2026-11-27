@@ -10,7 +10,7 @@
 // along with this software (see the LICENSE.md file). If not, see
 // <http://creativecommons.org/publicdomain/zero/1.0/>.
 
-// The manager link (plans/Vault-Instances.md §4.4, crates/moqui-host/src/manage_link/): a managed instance dials its
+// The manager link (plans/archive/Vault-Instances.md §4.4, crates/moqui-host/src/manage_link/): a managed instance dials its
 // manager's HTTPS port with ALPN moqui-manage/1 and keeps one connection open, on which it is the HTTP/2 client of
 // Manager. The manager's calls of the instance go down the Serve stream. Both keys are pinned by SHA-256 of their public
 // keys. Changes are additive only; a change that cannot be is a new link version.
@@ -74,7 +74,7 @@ message InstanceStatus {
 
 message Approver {
   string user_id = 1;
-  // the Ed25519 key of the approver's personal key (plans/Vault-Instances.md §3.5)
+  // the Ed25519 key of the approver's personal key (plans/archive/Vault-Instances.md §3.5)
   bytes verify_public = 2;
 }
 

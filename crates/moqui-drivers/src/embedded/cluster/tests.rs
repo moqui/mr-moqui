@@ -688,17 +688,80 @@ fn a_postmaster_whose_owner_is_gone_is_taken_over_and_stopped() {
     assert_eq!(owner_pid(&data_dir), None, "the owner file stays after the stop");
 }
 
+/// A postmaster an earlier image of this process started, as one a restart's exec leaves when its stop did not finish,
+/// is taken over by this image and stopped on drop: the process id is the same, the image is not.
+#[test]
+fn a_postmaster_of_an_earlier_image_is_taken_over_and_stopped() {
+    let dir = temp_cluster_dir();
+    let _guard = DirGuard(dir.clone());
+    let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    let data_dir = cluster.data_dir().to_path_buf();
+    drop(driver);
+    let pid = postmaster_pid(&data_dir);
+    let _kill = KillGuard(pid);
+    std::mem::forget(cluster);
+    std::fs::write(
+        data_dir.join(OWNER_FILE),
+        format!("{} before-exec\n", std::process::id()),
+    )
+    .unwrap();
+    let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    assert_eq!(postmaster_pid(&data_dir), pid, "taken over, not restarted");
+    assert_eq!(
+        owner_of(&data_dir).and_then(|owner| owner.image),
+        Some(image_token().to_string())
+    );
+    drop(driver);
+    drop(cluster);
+    assert!(!process_live(pid), "the taken-over postmaster {pid} was not stopped");
+}
+
 #[test]
 fn only_a_gone_owner_hands_its_postmaster_over() {
-    let me = 100;
-    let live = |pid: u32| pid == me || pid == 200;
-    assert!(!takes_over(None, me, live), "no owner file: adopted as before");
-    assert!(!takes_over(Some(200), me, live), "a live owner keeps its postmaster");
+    let live = |pid: u32| pid == 100 || pid == 200;
+    let owner = |pid: u32, image: Option<&str>, namespace: Option<&str>| Owner {
+        pid,
+        image: image.map(str::to_string),
+        namespace: namespace.map(str::to_string),
+    };
+    let me = owner(100, Some("a"), Some("pid:[1]"));
+    assert!(!takes_over(None, &me, live), "no owner file: adopted as before");
     assert!(
-        !takes_over(Some(me), me, live),
-        "a second handle in the owner's process"
+        !takes_over(Some(&owner(200, Some("b"), Some("pid:[1]"))), &me, live),
+        "a live owner keeps its postmaster"
     );
-    assert!(takes_over(Some(300), me, live), "the owner is gone");
+    assert!(
+        !takes_over(Some(&owner(100, Some("a"), Some("pid:[1]"))), &me, live),
+        "a second handle in the owner's image"
+    );
+    assert!(
+        takes_over(Some(&owner(300, Some("b"), Some("pid:[1]"))), &me, live),
+        "the owner is gone"
+    );
+    // an exec keeps the process id: the image that wrote the file is gone, and this one takes the postmaster over
+    assert!(
+        takes_over(Some(&owner(100, Some("before"), Some("pid:[1]"))), &me, live),
+        "an earlier image of this process"
+    );
+    assert!(
+        takes_over(Some(&owner(100, None, None)), &me, live),
+        "this process's id from an older build's file"
+    );
+    // another PID namespace (a second container on the runtime's volume, each its pid 1): another process, whose
+    // liveness this one cannot tell, whatever its id
+    let container = owner(1, Some("a"), Some("pid:[1]"));
+    assert!(
+        !takes_over(Some(&owner(1, Some("b"), Some("pid:[2]"))), &container, |_| false),
+        "the same id in another namespace"
+    );
+    assert!(
+        !takes_over(Some(&owner(7, Some("b"), Some("pid:[2]"))), &container, |_| false),
+        "another id in another namespace"
+    );
+    assert!(
+        takes_over(Some(&owner(1, Some("b"), None)), &container, |_| false),
+        "a file with no namespace counts as this one's"
+    );
 }
 
 #[test]
@@ -707,6 +770,30 @@ fn the_owner_file_round_trips() {
     let _guard = DirGuard(dir.clone());
     std::fs::create_dir_all(&dir).unwrap();
     assert_eq!(owner_pid(&dir), None);
+    write_owner(&dir);
+    assert_eq!(owner_of(&dir), Some(Owner::this_image()));
+    #[cfg(target_os = "linux")]
+    assert!(
+        Owner::this_image()
+            .namespace
+            .is_some_and(|namespace| namespace.starts_with("pid:[")),
+        "{:?}",
+        Owner::this_image()
+    );
+    // the image token: time and a random part, never empty or the clock alone
+    let token = image_token();
+    let (time, random) = token.split_once('-').unwrap_or_else(|| panic!("{token}"));
+    assert!(!time.is_empty() && random.len() == 16, "{token}");
+    // an older build's file names the process alone
+    std::fs::write(dir.join(OWNER_FILE), "1234\n").unwrap();
+    assert_eq!(
+        owner_of(&dir),
+        Some(Owner {
+            pid: 1234,
+            image: None,
+            namespace: None
+        })
+    );
     write_owner(&dir);
     assert_eq!(owner_pid(&dir), Some(std::process::id()));
     remove_owner(&dir);
@@ -1619,4 +1706,29 @@ fn a_sealed_dump_opens_for_a_restore_only_with_its_key_and_leaves_no_plain_file(
         plain.as_path()
     );
     assert!(plain.exists(), "a plain dump is deleted after");
+}
+
+/// SEC-TLS-98: a restore takes beside the chosen dump only the `moqui_<name>` dumps one save wrote with it; another file
+/// that shares the suffix (a template's or the superuser database's name, one someone put in the folder) is not restored.
+#[test]
+fn a_restore_takes_only_moqui_sibling_dumps() {
+    let saves = std::env::temp_dir().join(format!("moqui-sibling-dumps-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&saves);
+    std::fs::create_dir_all(&saves).unwrap();
+    for name in [
+        "moqui.dump",
+        "moqui_content.dump",
+        "template1.dump",
+        "template0.dump",
+        "postgres.dump",
+        "planted.dump",
+        "moqui_.dump",
+    ] {
+        std::fs::write(saves.join(name), b"").unwrap();
+    }
+    assert_eq!(
+        sibling_dumps(&saves.join("moqui.dump")),
+        vec![("moqui_content".to_string(), saves.join("moqui_content.dump"))]
+    );
+    let _ = std::fs::remove_dir_all(&saves);
 }

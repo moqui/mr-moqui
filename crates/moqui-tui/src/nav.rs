@@ -19,6 +19,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::components::ComponentState;
 use crate::model::{Node, ScreenModel, SubscreenItem};
 
 /// The screens down to the app root (`apps` and the app) are drawn as the drawer, not as levels.
@@ -48,11 +49,31 @@ impl Location {
     }
 }
 
+/// What a screen held when a navigation left it, put back when Back returns to it (MAP-UI-001 in
+/// plans/ui-review-maps.md: a dashboard's table mode and cell): each component's state by id with the component's name
+/// (without its data, which the load after Back reads again), and the focus key. It reaches the components the screen's
+/// own levels hold as they arrive with Back's reply; a component in a dynamic container whose body loads later starts
+/// over, and a focus key in a parent level that arrives after a leaf with something to focus is not put back.
+#[derive(Clone, Debug, Default)]
+pub struct Kept {
+    pub components: BTreeMap<String, (String, ComponentState)>,
+    pub focus: String,
+}
+
+/// How many of the newest history entries keep their screen's [`Kept`]; an older entry keeps only its location.
+const KEPT_ENTRIES: usize = 8;
+
+#[derive(Clone, Debug)]
+struct Entry {
+    location: Location,
+    kept: Option<Box<Kept>>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Nav {
     parents: Vec<Level>,
     leaf: Level,
-    history: Vec<Location>,
+    history: Vec<Entry>,
     floor: usize,
 }
 
@@ -113,9 +134,9 @@ impl Nav {
             .chain(std::iter::once(&mut self.leaf.model))
     }
 
-    /// The screens asked for, newest first, for the palette's recent group.
-    pub fn history(&self) -> &[Location] {
-        &self.history
+    /// The screens left, oldest first, for the palette's recent group.
+    pub fn history(&self) -> impl DoubleEndedIterator<Item = &Location> {
+        self.history.iter().map(|entry| &entry.location)
     }
 
     pub fn paths(&self) -> Vec<&str> {
@@ -163,16 +184,25 @@ impl Nav {
         }
     }
 
-    /// Remember where the user was, before a navigation.
-    pub fn push_history(&mut self) {
+    /// Remember where the user was, and what the screen held, before a navigation.
+    pub fn push_history(&mut self, kept: Kept) {
         let here = self.location();
-        if self.history.last() != Some(&here) {
-            self.history.push(here);
+        let kept = Some(Box::new(kept));
+        match self.history.last_mut() {
+            Some(last) if last.location == here => last.kept = kept,
+            _ => self.history.push(Entry { location: here, kept }),
+        }
+        let older = self.history.len().saturating_sub(KEPT_ENTRIES);
+        for entry in &mut self.history[..older] {
+            entry.kept = None;
         }
     }
 
-    pub fn pop_history(&mut self) -> Option<Location> {
-        self.history.pop()
+    /// The screen to go back to, with what it held when it was left (none for an older entry).
+    pub fn pop_history(&mut self) -> Option<(Location, Option<Kept>)> {
+        self.history
+            .pop()
+            .map(|entry| (entry.location, entry.kept.map(|kept| *kept)))
     }
 
     pub fn has_history(&self) -> bool {

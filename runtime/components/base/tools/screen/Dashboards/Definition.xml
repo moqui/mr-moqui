@@ -39,11 +39,15 @@
             // a mount's editor copies only its types (as save)
             const mountTypes=ec.context.get('reportDefinitionTypes')
             if (Array.isArray(mountTypes) && mountTypes.length) {
-                const source=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
-                if (!mountTypes.includes(source.type)) throw new Error('This editor copies only '+mountTypes.join(', ')+' definitions')
+                // a definition the viewer may not read (another's unshared one, or none): a form error, not a failure
+                const source=ec.resource.script('component://tools/template/ReportDelivery.js').ask('get#Definition',{definitionId:String(definitionId || '')}).out?.definition
+                if (!source) ec.message.addError(ec.l10n.localize('This definition does not exist or is not shared with you'))
+                else if (!mountTypes.includes(source.type)) throw new Error('This editor copies only '+mountTypes.join(', ')+' definitions')
             }
-            savedDefinition = ec.service.sync().name('org.moqui.report.ReportServices.copy#Definition').parameters({definitionId,newDefinitionId:copyId,title:copyTitle}).call().definition
-            definitionId = savedDefinition.id
+            if (!ec.message.hasError()) {
+                savedDefinition = ec.service.sync().name('org.moqui.report.ReportServices.copy#Definition').parameters({definitionId,newDefinitionId:copyId,title:copyTitle}).call().definition
+                definitionId = savedDefinition.id
+            }
         ]]></script></actions><default-response url="."><parameter name="definitionId"/></default-response>
     </transition>
     <transition name="restore" method="post" authz-action="update">
@@ -75,7 +79,14 @@
         definitionOffers={import:!!mountLinks.import,share:!mountLinks.share,panelEditor:sri.buildUrl(mountLinks.panel || '.').path}
         // a new panel starts on Tools' log dataset where the author reads it, else on the first dataset they may read
         const firstDataset=(datasetOptions.find(dataset=>dataset.id==='otel_logs') || datasetOptions[0] || {id:'otel_logs'}).id
-        definition = definitionId ? ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition : {id:'',type:definitionType || 'dashboard',title:'',body:definitionType==='panel'?{title:ec.l10n.localize('New panel'),visualization:'table',queries:[{datasetId:firstDataset,mode:'documents'}]}:definitionType==='report'?{dashboards:[],orientation:'portrait',paper:'letter',layout:'grid',appendix:true}:{panels:{},layout:{type:'autoGrid'}},readOnly:false}
+        definitionLinks=mountLinks
+        // a definition the viewer may not read (another's unshared one, or none) reads as not available, without the engine's
+        // refusal in the page's messages and without failing the page (DefinitionUnavailable)
+        definition = definitionId ? ec.resource.script('component://tools/template/ReportDelivery.js').ask('get#Definition',{definitionId:String(definitionId || '')}).out?.definition : {id:'',type:definitionType || 'dashboard',title:'',body:definitionType==='panel'?{title:ec.l10n.localize('New panel'),visualization:'table',queries:[{datasetId:firstDataset,mode:'documents'}]}:definitionType==='report'?{dashboards:[],orientation:'portrait',paper:'letter',layout:'grid',appendix:true}:{panels:{},layout:{type:'autoGrid'}},readOnly:false}
+        definitionAvailable = !!definition
+        if (!definitionAvailable) ec.logger.info('Definition '+definitionId+' not available to '+ec.user.userId)
+    ]]></script>
+    <if condition="definitionAvailable"><script><![CDATA[
         definitionType = definition.type; definitionTitle = definition.title; definitionVersion = definition.version || 0; definitionUserGroupId = definition.userGroupId || null
         definitionJson = JSON.stringify(definition.body,null,2)
         definitionFolder=definition.body.folder || '';definitionTags=(definition.body.tags || []).join(', ')
@@ -89,99 +100,109 @@
             versionDiff=JSON.stringify(diff.changes || [],null,2)
         }
         versionList = definitionId ? ec.service.sync().name('org.moqui.report.ReportServices.versions#Definition').parameters({definitionId}).call().versions : []
-    ]]></script></actions>
+    ]]></script></if></actions>
     <widgets>
-        <section name="OpenDashboard" condition="definitionId &amp;&amp; definitionType === 'dashboard'"><widgets>
-            <link url="dashboard" text="Open dashboard" parameter-map="{definitionId:definitionId}"/>
+        <section name="DefinitionUnavailable" condition="!definitionAvailable"><widgets>
+            <label text="Definition not available" type="h5"/>
+            <label type="p" text="This definition does not exist or is not shared with you."/>
+            <link id="OpenDashboards" url="${definitionLinks.dashboards}" text="Back to dashboards" link-type="anchor"
+                    parameter-map="{definitionId:''}" condition="!!definitionLinks.dashboards"/>
         </widgets></section>
-        <section name="ReadOnly" condition="definition.readOnly"><widgets><label text="This definition is shipped by ${definition.component}. Save a copy to edit it." type="p"/></widgets></section>
-        <section name="CopyExistingDefinition" condition="definitionId"><widgets>
-            <container-box><box-header title="Make a copy"/><box-body>
-                <form-single name="CopyDefinition" transition="copy">
-                    <field name="definitionId"><default-field><hidden/></default-field></field>
-                    <field name="copyId"><default-field title="New ID"><text-line/></default-field></field>
-                    <field name="copyTitle"><default-field title="Copy title"><text-line/></default-field></field>
-                    <field name="copy"><default-field><submit text="Save as copy"/></default-field></field>
-                    <field-layout>
-                        <field-ref name="definitionId"/>
-                        <field-row><field-ref name="copyId"/><field-ref name="copyTitle"/></field-row>
-                        <field-row-big><field-ref name="copy"/></field-row-big>
-                    </field-layout>
-                </form-single>
-            </box-body></container-box>
-        </widgets></section>
-        <form-single name="EditDefinition" transition="save">
-            <field name="definitionId"><default-field title="ID"><text-line/></default-field></field>
-            <field name="definitionVersion"><default-field><hidden/></default-field></field>
-            <field name="definitionUserGroupId"><conditional-field condition="!definitionOffers.share"><hidden/></conditional-field><default-field title="Share with user group"><text-line/></default-field></field>
-            <field name="definitionTitle"><default-field title="Title"><text-line size="70"/></default-field></field>
-            <field name="definitionType"><default-field title="Type"><drop-down><list-options list="definitionTypeOptions" key="${type}" text="${type}"/></drop-down></default-field></field>
-            <field name="definitionFolder"><default-field title="Folder"><text-line/></default-field></field>
-            <field name="definitionTags"><default-field title="Tags (comma separated)"><text-line/></default-field></field>
-            <field name="definitionJson"><default-field title="Definition JSON">
-                <section name="DashboardPanelOptions" condition="definitionType === 'dashboard' || definitionType === 'panel'"><widgets>
-                    <render-mode>
-                        <text type="qvt"><![CDATA[<m-report-definition-editor name="definitionJson" panel-editor="${WebUtilities.encodeHtml(definitionOffers.panelEditor)}" :panel-only="${definitionType === 'panel' ? 'true' : 'false'}" :libraries="${WebUtilities.encodeHtml(JSON.stringify(libraryPanels))}" :datasets="${WebUtilities.encodeHtml(JSON.stringify(datasetOptions))}" :read-only="${definition.readOnly ? 'true' : 'false'}"></m-report-definition-editor>]]></text>
-                        <text type="tui"><![CDATA[${JSON.stringify({t:'component',name:'report-definition-editor',props:{value:definition.body,kind:definitionType,form:'EditDefinition',field:'definitionJson',datasets:datasetOptions,libraries:libraryPanels,panelOnly:definitionType==='panel',readOnly:definition.readOnly}})}]]></text>
-                        <text type="html,html-print,text"><![CDATA[<p>Edit the JSON below to configure panels, queries, transformations and layout. Library references use panelRef.</p>]]></text>
-                    </render-mode>
+        <section name="DefinitionAvailable" condition="definitionAvailable"><widgets>
+            <section name="OpenDashboard" condition="definitionId &amp;&amp; definitionType === 'dashboard'"><widgets>
+                <link url="dashboard" text="Open dashboard" parameter-map="{definitionId:definitionId}"/>
+            </widgets></section>
+            <section name="ReadOnly" condition="definition.readOnly"><widgets><label text="This definition is shipped by ${definition.component}. Save a copy to edit it." type="p"/></widgets></section>
+            <section name="CopyExistingDefinition" condition="definitionId"><widgets>
+                <container-box><box-header title="Make a copy"/><box-body>
+                    <form-single name="CopyDefinition" transition="copy">
+                        <field name="definitionId"><default-field><hidden/></default-field></field>
+                        <field name="copyId"><default-field title="New ID"><text-line/></default-field></field>
+                        <field name="copyTitle"><default-field title="Copy title"><text-line/></default-field></field>
+                        <field name="copy"><default-field><submit text="Save as copy"/></default-field></field>
+                        <field-layout>
+                            <field-ref name="definitionId"/>
+                            <field-row><field-ref name="copyId"/><field-ref name="copyTitle"/></field-row>
+                            <field-row-big><field-ref name="copy"/></field-row-big>
+                        </field-layout>
+                    </form-single>
+                </box-body></container-box>
+            </widgets></section>
+            <form-single name="EditDefinition" transition="save">
+                <field name="definitionId"><default-field title="ID"><text-line/></default-field></field>
+                <field name="definitionVersion"><default-field><hidden/></default-field></field>
+                <field name="definitionUserGroupId"><conditional-field condition="!definitionOffers.share"><hidden/></conditional-field><default-field title="Share with user group"><text-line/></default-field></field>
+                <field name="definitionTitle"><default-field title="Title"><text-line size="70"/></default-field></field>
+                <field name="definitionType"><default-field title="Type"><drop-down><list-options list="definitionTypeOptions" key="${type}" text="${type}"/></drop-down></default-field></field>
+                <field name="definitionFolder"><default-field title="Folder"><text-line/></default-field></field>
+                <field name="definitionTags"><default-field title="Tags (comma separated)"><text-line/></default-field></field>
+                <field name="definitionJson"><default-field title="Definition JSON">
+                    <section name="DashboardPanelOptions" condition="definitionType === 'dashboard' || definitionType === 'panel'"><widgets>
+                        <render-mode>
+                            <text type="qvt"><![CDATA[<m-report-definition-editor name="definitionJson" panel-editor="${WebUtilities.encodeHtml(definitionOffers.panelEditor)}" :panel-only="${definitionType === 'panel' ? 'true' : 'false'}" :libraries="${WebUtilities.encodeHtml(JSON.stringify(libraryPanels))}" :datasets="${WebUtilities.encodeHtml(JSON.stringify(datasetOptions))}" :read-only="${definition.readOnly ? 'true' : 'false'}"></m-report-definition-editor>]]></text>
+                            <text type="tui"><![CDATA[${JSON.stringify({t:'component',name:'report-definition-editor',props:{value:definition.body,kind:definitionType,form:'EditDefinition',field:'definitionJson',datasets:datasetOptions,libraries:libraryPanels,panelOnly:definitionType==='panel',readOnly:definition.readOnly}})}]]></text>
+                            <text type="html,html-print,text"><![CDATA[<p>Edit the JSON below to configure panels, queries, transformations and layout. Library references use panelRef.</p>]]></text>
+                        </render-mode>
+                    </widgets></section>
+                    <section name="ReportCompositionOptions" condition="definitionType === 'report'"><widgets><render-mode>
+                        <text type="qvt"><![CDATA[<m-report-composition-editor name="definitionJson" :dashboards="${WebUtilities.encodeHtml(JSON.stringify(dashboardOptions))}" :read-only="${definition.readOnly ? 'true' : 'false'}"></m-report-composition-editor>]]></text>
+                        <text type="tui"><![CDATA[${JSON.stringify({t:'component',name:'report-definition-editor',props:{value:definition.body,kind:'report',form:'EditDefinition',field:'definitionJson',datasets:datasetOptions,libraries:dashboardOptions,readOnly:definition.readOnly}})}]]></text>
+                        <text type="html,html-print,text"><![CDATA[<p>Report entries name a dashboardRef, variables and time range. The saved report uses the same authorized queries for previews and schedules.</p>]]></text>
+                    </render-mode></widgets></section>
+                    <text-area rows="22" cols="100"/>
+                </default-field></field>
+                <field name="note"><default-field title="Version note"><text-line size="70"/></default-field></field>
+                <field name="save"><conditional-field condition="definition.readOnly"><display text="Shipped definitions are read only; use Save as copy above."/></conditional-field>
+                    <default-field><submit text="Save version"/></default-field></field>
+                <field-layout>
+                    <field-ref name="definitionVersion"/>
+                    <field-row><field-ref name="definitionTitle"/><field-ref name="definitionId"/><field-ref name="definitionType"/></field-row>
+                    <field-row><field-ref name="definitionFolder"/><field-ref name="definitionTags"/><field-ref name="definitionUserGroupId"/></field-row>
+                    <field-ref name="definitionJson"/>
+                    <field-ref name="note"/>
+                    <field-row-big><field-ref name="save"/></field-row-big>
+                </field-layout>
+            </form-single>
+            <section name="ExistingDefinition" condition="definitionId"><widgets>
+                <link url="export" text="Export with references" parameter-map="{definitionId:definitionId}"/>
+                <section name="DeleteDefinitionSection" condition="!definition.readOnly &amp;&amp; definition.ownerId === ec.user.userId"><widgets>
+                    <form-single name="DeleteDefinition" transition="delete">
+                        <field name="definitionId"><default-field><hidden/></default-field></field>
+                        <field name="delete"><default-field title=""><submit text="Delete definition" confirmation="Delete this definition and all its versions? Definitions that still use it must drop it first; git syncs remove its file."/></default-field></field>
+                    </form-single>
                 </widgets></section>
-                <section name="ReportCompositionOptions" condition="definitionType === 'report'"><widgets><render-mode>
-                    <text type="qvt"><![CDATA[<m-report-composition-editor name="definitionJson" :dashboards="${WebUtilities.encodeHtml(JSON.stringify(dashboardOptions))}" :read-only="${definition.readOnly ? 'true' : 'false'}"></m-report-composition-editor>]]></text>
-                    <text type="tui"><![CDATA[${JSON.stringify({t:'component',name:'report-definition-editor',props:{value:definition.body,kind:'report',form:'EditDefinition',field:'definitionJson',datasets:datasetOptions,libraries:dashboardOptions,readOnly:definition.readOnly}})}]]></text>
-                    <text type="html,html-print,text"><![CDATA[<p>Report entries name a dashboardRef, variables and time range. The saved report uses the same authorized queries for previews and schedules.</p>]]></text>
-                </render-mode></widgets></section>
-                <text-area rows="22" cols="100"/>
-            </default-field></field>
-            <field name="note"><default-field title="Version note"><text-line size="70"/></default-field></field>
-            <field name="save"><conditional-field condition="definition.readOnly"><display text="Shipped definitions are read only; use Save as copy above."/></conditional-field>
-                <default-field><submit text="Save version"/></default-field></field>
-            <field-layout>
-                <field-ref name="definitionVersion"/>
-                <field-row><field-ref name="definitionTitle"/><field-ref name="definitionId"/><field-ref name="definitionType"/></field-row>
-                <field-row><field-ref name="definitionFolder"/><field-ref name="definitionTags"/><field-ref name="definitionUserGroupId"/></field-row>
-                <field-ref name="definitionJson"/>
-                <field-ref name="note"/>
-                <field-row-big><field-ref name="save"/></field-row-big>
-            </field-layout>
-        </form-single>
-        <section name="ExistingDefinition" condition="definitionId"><widgets>
-            <link url="export" text="Export with references" parameter-map="{definitionId:definitionId}"/>
-            <section name="DeleteDefinitionSection" condition="!definition.readOnly &amp;&amp; definition.ownerId === ec.user.userId"><widgets>
-                <form-single name="DeleteDefinition" transition="delete">
+                <!-- changedDate comes as epoch milliseconds: a date format shows it in the user's zone (plans/ui-review-dashboards.md DASH-UI-005) -->
+                <label condition="versionList.length" text="Times shown in ${ec.user.timeZone}." type="p" style="m-muted"/>
+                <form-list name="DefinitionVersions" list="versionList" skip-form="true">
+                    <field name="version"><default-field><display/></default-field></field>
+                    <field name="note"><default-field><display/></default-field></field>
+                    <field name="changedDate"><default-field><display format="yyyy-MM-dd HH:mm:ss"/></default-field></field>
+                </form-list>
+                <label text="Used in" type="h5"/>
+                <form-list name="DefinitionUsedIn" list="usedIn" skip-form="true" paginate="false">
+                    <field name="title"><default-field><link url="reference" text="${title}" link-type="anchor" parameter-map="{definitionId:id,definitionType:type}"/></default-field></field>
+                    <field name="type"><default-field><display/></default-field></field>
+                </form-list>
+                <form-single name="CompareDefinitionVersions" transition=".">
                     <field name="definitionId"><default-field><hidden/></default-field></field>
-                    <field name="delete"><default-field title=""><submit text="Delete definition" confirmation="Delete this definition and all its versions? Definitions that still use it must drop it first; git syncs remove its file."/></default-field></field>
+                    <field name="leftVersion"><default-field title="Compare version"><drop-down><list-options list="versionList" key="${version}" text="${version}"/></drop-down></default-field></field>
+                    <field name="rightVersion"><default-field title="With version"><drop-down><list-options list="versionList" key="${version}" text="${version}"/></drop-down></default-field></field>
+                    <field name="compare"><default-field><submit text="Compare versions"/></default-field></field>
+                </form-single>
+                <code-view text="${versionDiff}" language="json"/>
+                <form-single name="RestoreVersion" transition="restore">
+                    <field name="definitionId"><default-field><hidden/></default-field></field>
+                    <field name="version"><default-field><text-line/></default-field></field>
+                    <field name="restore"><default-field><submit text="Restore version"/></default-field></field>
                 </form-single>
             </widgets></section>
-            <form-list name="DefinitionVersions" list="versionList" skip-form="true">
-                <field name="version"><default-field><display/></default-field></field>
-                <field name="note"><default-field><display/></default-field></field>
-                <field name="changedDate"><default-field><display/></default-field></field>
-            </form-list>
-            <label text="Used in" type="h5"/>
-            <form-list name="DefinitionUsedIn" list="usedIn" skip-form="true" paginate="false">
-                <field name="title"><default-field><link url="reference" text="${title}" link-type="anchor" parameter-map="{definitionId:id,definitionType:type}"/></default-field></field>
-                <field name="type"><default-field><display/></default-field></field>
-            </form-list>
-            <form-single name="CompareDefinitionVersions" transition=".">
-                <field name="definitionId"><default-field><hidden/></default-field></field>
-                <field name="leftVersion"><default-field title="Compare version"><drop-down><list-options list="versionList" key="${version}" text="${version}"/></drop-down></default-field></field>
-                <field name="rightVersion"><default-field title="With version"><drop-down><list-options list="versionList" key="${version}" text="${version}"/></drop-down></default-field></field>
-                <field name="compare"><default-field><submit text="Compare versions"/></default-field></field>
-            </form-single>
-            <code-view text="${versionDiff}" language="json"/>
-            <form-single name="RestoreVersion" transition="restore">
-                <field name="definitionId"><default-field><hidden/></default-field></field>
-                <field name="version"><default-field><text-line/></default-field></field>
-                <field name="restore"><default-field><submit text="Restore version"/></default-field></field>
-            </form-single>
-        </widgets></section>
-        <section name="ImportDefinitionsSection" condition="definitionOffers.import"><widgets>
-            <form-single name="ImportDefinitions" transition="import">
-                <field name="importJson"><default-field title="Export bundle"><text-area rows="6" cols="100"/></default-field></field>
-                <field name="idPrefix"><default-field title="Imported ID prefix"><text-line/></default-field></field>
-                <field name="import"><default-field><submit text="Import definitions"/></default-field></field>
-            </form-single>
+            <section name="ImportDefinitionsSection" condition="definitionOffers.import"><widgets>
+                <form-single name="ImportDefinitions" transition="import">
+                    <field name="importJson"><default-field title="Export bundle"><text-area rows="6" cols="100"/></default-field></field>
+                    <field name="idPrefix"><default-field title="Imported ID prefix"><text-line/></default-field></field>
+                    <field name="import"><default-field><submit text="Import definitions"/></default-field></field>
+                </form-single>
+            </widgets></section>
         </widgets></section>
     </widgets>
 </screen>

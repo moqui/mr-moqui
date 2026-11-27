@@ -781,7 +781,7 @@ pub struct TailSpec {
     pub forms: Vec<TailForm>,
     /// A canvas open in the drawer: its title and version.
     pub canvas: Option<(String, u32)>,
-    /// A dev-aide page's editor (plans/design-dev-aide.md 13.4): the file open, the element at the cursor and the
+    /// A dev-aide page's editor (plans/archive/design-dev-aide.md 13.4): the file open, the element at the cursor and the
     /// selection.
     pub editor: Option<TailEditor>,
     /// Skills that strongly match the message and the frozen catalog does not list ([`crate::skills::tail_skills`]).

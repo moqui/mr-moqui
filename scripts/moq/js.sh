@@ -184,7 +184,9 @@ js_rebuild() {
     local JS_PACKS
     JS_PACKS=$(js_state selected) || return 1
     export JS_PACKS
-    info "JavaScript libraries of $JS_C_NAME" >&2
+    local projects=
+    [ -z "$JS_C_PROJECTS" ] || projects=" (build/${JS_C_PROJECTS//,/, build/})"
+    info "npm JavaScript libraries of $JS_C_NAME$projects" >&2
     JS_BUILD_DIR="$JS_C_SOURCE" JS_CACHE="$JS_C_CACHE" JS_OUTPUT="$JS_C_LIBS" node "$JS_C_SCRIPT" "$@"
 }
 

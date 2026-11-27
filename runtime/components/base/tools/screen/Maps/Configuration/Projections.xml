@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Maps › Configuration › Projections (plans/archive/Maps.md §4.1, P4c; docs/tools/Maps.md "Projections"): the map projection
+    registry (org.moqui.maps.MapServices find#Projections), each row with its definition and whether the server reads it
+    too (overlays in it converted, a COG's bounds known) or only a browser draws it, with the reason; Add or change one
+    (store#Projection: its PROJ.4 text checked as a browser takes it and as the server reads it) and Enable or Disable. The
+    services check their caller: Configuration's view to read, its update to change. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
+        default-menu-title="Projections" default-menu-index="4" menu-image="sym_o_public" menu-image-type="icon">
+
+    <transition name="storeProjection">
+        <service-call name="org.moqui.maps.MapServices.store#Projection" out-map="stored"
+                in-map="{projectionId:projectionId, label:(label || null), proj4Definition:(proj4Definition || null),
+                    axisOrder:(axisOrder || null), bounds:(bounds || null), projectedExtent:(projectedExtent || null),
+                    disabled:(disabled || null)}"/>
+        <actions>
+            <if condition="!ec.message.hasError()">
+                <script>ec.message.addMessage(stored.reason, stored.applied ? (stored.serverReadable === false ? 'warning' : 'success') : 'warning')</script>
+            </if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions>
+        <service-call name="org.moqui.maps.MapServices.find#Projections" out-map="found" transaction="force-new" ignore-error="true"/>
+        <set field="configured" from="found?.applied === true"/>
+        <script><![CDATA[
+            projectionRows = Array.from(found?.projectionList || []).map(row => Object.assign({}, row, {
+                boundsText: row.bounds ? row.bounds.join(', ') : '',
+                stateText: (row.enabled ? ec.l10n.localize('Enabled') : ec.l10n.localize('Disabled'))
+                    + (row.builtIn ? '' : row.serverReadable ? ' · ' + ec.l10n.localize('read on the server') : ' · ' + ec.l10n.localize('browser only')),
+                stateColor: !row.enabled ? 'grey-7' : row.serverReadable ? 'positive' : 'warning'}))
+        ]]></script>
+    </actions>
+    <widgets>
+        <label text="Map projections" type="h5"/>
+        <label type="p" style="text-caption m-muted"
+                text="The projections a map may be drawn in, a COG may be in and an overlay may be converted from. A map registers each definition from this list, never from an outside service. The server converts overlays from the methods it reads (geographic, Mercator, transverse Mercator and UTM, Lambert conformal conic and azimuthal equal-area, Albers, polar stereographic) with a datum of WGS84, NAD83 or a +towgs84 shift; another is drawn by maps only."/>
+        <label type="p" style="text-negative" condition="!configured" text="Maps configuration is not available to you."/>
+        <section name="ProjectionSections" condition="configured">
+            <widgets>
+                <container-box id="MapsProjectionStoreBox">
+                    <box-header title="Add or change a projection"/>
+                    <box-body>
+                        <form-single name="StoreProjection" transition="storeProjection">
+                            <field name="projectionId"><default-field title="Code" tooltip="EPSG: and its number"><text-line size="14"/></default-field></field>
+                            <field name="label"><default-field title="Label"><text-line size="40"/></default-field></field>
+                            <field name="proj4Definition">
+                                <default-field title="PROJ.4 definition" tooltip="As PROJ's projinfo -o PROJ gives it: +proj=... +name=value; no URL, no grid file">
+                                    <text-area rows="2" cols="80"/></default-field>
+                            </field>
+                            <field name="axisOrder">
+                                <default-field title="Axis order"><drop-down allow-empty="true"><option key="enu" text="Easting first (enu)"/>
+                                    <option key="neu" text="Northing first (neu)"/></drop-down></default-field>
+                            </field>
+                            <field name="bounds"><default-field title="Area of use" tooltip="west, south, east, north in degrees"><text-line size="40"/></default-field></field>
+                            <field name="projectedExtent"><default-field title="Extent" tooltip="minx, miny, maxx, maxy in its units, for a view drawn in it"><text-line size="50"/></default-field></field>
+                            <field name="submitButton"><default-field title="Save projection"><submit/></default-field></field>
+                        </form-single>
+                    </box-body>
+                </container-box>
+
+                <container-box id="MapsProjectionsBox">
+                    <box-header title="Registered projections"/>
+                    <box-body>
+                        <form-list name="ProjectionList" list="projectionRows" skip-form="true" paginate="false">
+                            <field name="projectionId"><default-field title="Code"><display/></default-field></field>
+                            <field name="label"><default-field title="Label"><display/></default-field></field>
+                            <field name="stateText">
+                                <default-field title="State">
+                                    <render-mode>
+                                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${html(stateColor)}">${html(stateText)}</q-chip>]]></text>
+                                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                                        <text type="html">${html(stateText)}</text>
+                                        <text type="text,csv">${stateText}</text>
+                                    </render-mode>
+                                </default-field>
+                            </field>
+                            <field name="serverNote"><default-field title="On the server"><display/></default-field></field>
+                            <field name="proj4Definition"><default-field title="Definition"><display/></default-field></field>
+                            <field name="boundsText"><default-field title="Area of use"><display/></default-field></field>
+                            <field name="actions">
+                                <default-field title="">
+                                    <link url="storeProjection" text="Disable" btn-type="danger" icon="sym_o_toggle_off" link-type="hidden-form-link"
+                                            condition="enabled &amp;&amp; !builtIn" parameter-map="{projectionId:projectionId, disabled:'Y'}"
+                                            confirmation="Disable ${projectionId}? A profile drawn in it is drawn in Web Mercator, and a COG or overlay in it is refused."/>
+                                    <link url="storeProjection" text="Enable" icon="sym_o_toggle_on" link-type="hidden-form-link"
+                                            condition="!enabled &amp;&amp; !builtIn" parameter-map="{projectionId:projectionId, disabled:'N'}"/>
+                                </default-field>
+                            </field>
+                            <columns type="mobile">
+                                <column><field-ref name="projectionId"/><field-ref name="label"/></column>
+                                <column><field-ref name="stateText"/><field-ref name="actions"/></column>
+                            </columns>
+                        </form-list>
+                    </box-body>
+                </container-box>
+            </widgets>
+        </section>
+    </widgets>
+</screen>

@@ -411,6 +411,9 @@ pub struct RenderState {
     /// the response could still take that status: written in place as any render error, then the render's answer, as
     /// one from `<pre-actions>` is ([`note_actions_failure`]).
     pub actions_failure: RefCell<Option<Error>>,
+    /// The status of an error a screen of the request's path raised in an html or text render, written in place as any
+    /// render error: the page's answer when the response is still held ([`note_path_failure`]).
+    pub path_failure: Cell<Option<u16>>,
     /// A text was rendered as a template (a `text` with `template` other than `false`): what was written is not one
     /// file's text as it is, so a qvue of it has no bundle ([`super::qvue_bundle`]).
     pub templated_text: Cell<bool>,
@@ -478,6 +481,7 @@ impl RenderState {
             resolved_paths: RefCell::default(),
             url_types: RefCell::default(),
             actions_failure: RefCell::new(None),
+            path_failure: Cell::new(None),
             templated_text: Cell::new(false),
         }
     }
@@ -496,6 +500,18 @@ pub(super) fn note_actions_failure(state: &RenderState, err: &Error) {
         );
     if status && !crate::web::stream::committed() && state.actions_failure.borrow().is_none() {
         *state.actions_failure.borrow_mut() = Some(Error::of_kind(err.kind(), err.message()));
+    }
+}
+
+/// Keep the status of `err`, which a screen of the request's path below the first raised and which was written in its
+/// place, as the page's status (a 500, or a 503 when the database was unavailable). In an html or text render the
+/// response is the page, and the screen the request addresses is that screen or under it, so the page has lost its own
+/// content: it is no page to answer 200 for, nor for a cache to keep. A section or an included screen that fails is
+/// written in place with the page's status as before, as Java does (the first screen's failure is the render's, a 500
+/// already); a qvt or tui client shows a subscreen's error inside the parents it keeps.
+pub(super) fn note_path_failure(state: &RenderState, err: &Error) {
+    if matches!(state.output_kind, OutputKind::Html | OutputKind::Text) && state.path_failure.get().is_none() {
+        state.path_failure.set(Some(web::status_for(err)));
     }
 }
 
@@ -795,7 +811,7 @@ impl Drop for SampleFlush<'_> {
 /// Resolve and run one job. Anything written is in the thread's web slot.
 ///
 /// A job with a `moquiPreview` token on a dev instance renders from the proposed text the token names (F14,
-/// plans/design-dev-aide.md 13.3): under the read fence, so nothing it runs writes, and framed by the page that asked.
+/// plans/archive/design-dev-aide.md 13.3): under the read fence, so nothing it runs writes, and framed by the page that asked.
 /// The `Content-Security-Policy` of a preview of proposed screen text, which replaces the conf's: framed by the app
 /// only, and nothing it loads (an image, a style's `url()`, a font, a fetch or a socket) goes to another site, so what
 /// a proposed screen shows does not leave with no click (plans/Security-Review-Low.md SEC-AI-102). Scripts and styles
@@ -972,6 +988,17 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
         // A qvue-only screen still answers tui: one placeholder, so the screen list stays a document.
         if facade.output_kind(&mode) == OutputKind::Json {
             return tui_unsupported_screen(&info);
+        }
+        // A qvue-only screen asked for in html under Standard's /apps (its menu, a link, a bookmark) opens at the same path
+        // in Material, which renders it, rather than a 404 naming the screen's file
+        // (plans/ui-review-dev-aide-workspace.md DEVW-UI-002).
+        if mode == "html" && rendered.allows_render_mode("qvue") {
+            if let Some(rest) = job.request.path.split('?').next().unwrap_or("").strip_prefix("/apps/") {
+                let query: BTreeMap<String, String> = job.request.query.iter().cloned().collect();
+                save_messages();
+                web::send_redirect(&with_query(format!("/qapps/{rest}"), &query));
+                return Ok(());
+            }
         }
         return Err(Error::of_kind(
             ErrorKind::NotFound,
@@ -1300,10 +1327,16 @@ fn render_screens(state: &RenderState, facade: &ScreenFacade) -> Result<(), Erro
     render_body(state)?;
     // a status from a path screen's <actions> answers as from its <pre-actions>, when the response is still held
     let failure = state.actions_failure.borrow_mut().take();
-    match failure {
-        Some(err) if web::discard_output() => Err(err),
-        _ => Ok(()),
+    if let Some(err) = failure {
+        if web::discard_output() {
+            return Err(err);
+        }
     }
+    // a path screen's failure, written in place, is the page's status when the response is still held
+    if let Some(status) = state.path_failure.take() {
+        web::fail_held_response(status);
+    }
+    Ok(())
 }
 
 /// Refuse a path whose screens before `count` include a subscreens item limited to a user group the user is not in

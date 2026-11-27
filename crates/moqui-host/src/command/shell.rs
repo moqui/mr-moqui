@@ -21,7 +21,7 @@
 //!
 //! Commands: `help`, `status`, `service <name> [json]`, `entity <name> [json conditions]`, `cache clear [name]`,
 //! `js <code>` (a JavaScript expression or statements, with `ec`; `js` alone reads lines until a line with `.`),
-//! `leases [vaultId]` and `lease revoke <leaseId>` (plans/Vault-Instances.md §3.7: the shell lists and revokes vault
+//! `leases [vaultId]` and `lease revoke <leaseId>` (plans/archive/Vault-Instances.md §3.7: the shell lists and revokes vault
 //! leases but never approves one, since the key passphrase would be typed on the server), and `exit`. Output is text,
 //! and JSON for values.
 

@@ -13,12 +13,13 @@
  */
 
 /*
- * Git depth in the Workspace (plans/design-dev-aide.md 4.3 to 4.6, P8): the Branches, Tags and Stashes tabs under the
+ * Git depth in the Workspace (plans/archive/design-dev-aide.md 4.3 to 4.6, P8): the Branches, Tags and Stashes tabs under the
  * Advanced toggle, the Merge requests tab of a root a group server hosts (21.4: mine, waiting for my review, open; Check
  * out, New; Review with the server's threads), a commit's checks (21.5: statuses, runs, a job's log and its failed tests
- * as links, Re-run, Run locally: a job of the working tree's ci.xml in a terminal, not in its image), the Sessions
+ * as links, Re-run, Run locally: a job of the working tree's ci.xml in a terminal, or in its image where Docker or
+ * Podman answers, its log followed here), the Sessions
  * tab (21.8: agents' sessions in worktrees, which are not loaded), the Settings tab (remotes, the hosted repository with Find on the server and Fork, the root's components,
- * its publish branch, Open on the hosting site), a
+ * its publish branch, Open on the server), a
  * compare of two refs, and the conflict view: ours, the result and theirs side by side, Accept ours, theirs or both on
  * each conflict, Mark resolved and Abort. Each component takes the Workspace (ws) for its transitions, its notes and its
  * refresh. Loaded on first use, as the visual views are; its pure parts are moqui.devAide.pure.
@@ -93,10 +94,13 @@
             steps: (combo.steps || []).map((step, index) => ({ seq: index + 1, name: step.name || "", run: step.run || "", continueOnError: !!step.continueOnError })),
             env: (combo.env || []).map((pair) => pair[0] + "=" + pair[1]),
             secrets: (job.secrets || []).slice(),
-            // the script that runs, whole, and its digest, which the run is held to
-            script: combo.script || "", digest: combo.digest || ""
+            // the script that runs, whole, and its digest, which the run is held to; and the one a run in the image runs
+            script: combo.script || "", digest: combo.digest || "",
+            imageScript: combo.imageScript || "", imageDigest: combo.imageDigest || ""
         };
     };
+    // Whether a run in the job's image (21.5) has ended, by the state get#LocalRun answers.
+    pure.localRunEnded = (state) => ["exited", "failed", "missing"].includes(state);
     pure.stateColor = (state) => (state === "failure" ? "negative" : state === "pending" ? "warning" : state === "success" ? "positive" : "grey");
 
     const branches = {
@@ -107,6 +111,12 @@
         mounted() { this.load(); },
         methods: {
             t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
+            // a branch's page on the server (21.3), by the branch of the hosted remote it is (remote/x) or tracks
+            onServer(remoteBranch) {
+                const hosted = this.ws.hosted;
+                const branch = hosted && pure.serverBranch(remoteBranch, this.ws.root && this.ws.root.hosted && this.ws.root.hosted.remote);
+                return branch ? pure.serverPage(hosted.pages, "branch", { branch }) : null;
+            },
             load() {
                 this.loading = true;
                 return this.ws.get("branches", { rootId: this.ws.rootId }).then((answer) => {
@@ -169,6 +179,8 @@
           <q-item v-if="!branch.current" clickable v-close-popup @click="merge(branch)"><q-item-section>Merge into {{ws.status && ws.status.branch}}</q-item-section></q-item>
           <q-item v-if="!branch.current" clickable v-close-popup @click="openCompare(branch)"><q-item-section>Compare with {{ws.status && ws.status.branch}}</q-item-section></q-item>
           <q-item clickable v-close-popup @click="rename(branch)"><q-item-section>Rename</q-item-section></q-item>
+          <q-item v-if="onServer(branch.upstream)" clickable v-close-popup tag="a" :href="onServer(branch.upstream)" target="_blank" rel="noopener noreferrer">
+            <q-item-section>Open on the server</q-item-section></q-item>
           <q-item v-if="!branch.current" clickable v-close-popup @click="remove(branch)"><q-item-section class="text-negative">Delete</q-item-section></q-item>
         </q-list></q-menu></q-btn></div>
       <div class="text-caption m-muted ellipsis">{{branch.upstream ? branch.upstream + (branch.gone ? ' (gone)' : ' ↑' + branch.ahead + ' ↓' + branch.behind) + ' · ' : ''}}{{date(branch.date)}} · {{branch.subject}}</div>
@@ -176,6 +188,8 @@
     <div class="text-caption text-weight-medium q-mt-md">Remote</div>
     <div v-for="branch in remote" :key="branch.name" class="row items-center no-wrap m-dev-change" :data-branch="branch.name">
       <span class="ellipsis">{{branch.name}}</span><q-space></q-space>
+      <q-btn v-if="onServer(branch.name)" dense flat no-caps size="sm" label="Open on the server" type="a" :href="onServer(branch.name)" target="_blank"
+          rel="noopener noreferrer"></q-btn>
       <q-btn dense flat no-caps size="sm" label="Compare" @click="openCompare(branch)"></q-btn>
       <q-btn dense flat no-caps size="sm" label="Merge" :disable="ws.tier !== 'full'" @click="merge(branch)"></q-btn>
     </div>
@@ -326,7 +340,7 @@
   <q-list dense><q-item v-for="remote in remotes" :key="remote.name" :data-remote="remote.name">
     <q-item-section><q-item-label>{{remote.name}}</q-item-label><q-item-label caption>{{remote.url}}</q-item-label></q-item-section>
     <q-item-section side><div class="row no-wrap">
-      <q-btn v-if="hostPage(remote.url)" dense flat no-caps size="sm" label="Open on host" :href="hostPage(remote.url)" target="_blank" type="a"></q-btn>
+      <q-btn v-if="hostPage(remote.url)" dense flat no-caps size="sm" label="Open on the server" :href="hostPage(remote.url)" target="_blank" rel="noopener noreferrer" type="a"></q-btn>
       <q-btn dense flat no-caps size="sm" label="Prune" :disable="!ws.canWrite" @click="prune(remote)"></q-btn>
       <q-btn dense flat no-caps size="sm" label="Set URL" :disable="ws.tier !== 'full'" @click="setUrl(remote)"></q-btn>
       <q-btn dense flat no-caps size="sm" label="Remove" :disable="ws.tier !== 'full'" @click="remove(remote)"></q-btn></div></q-item-section>
@@ -523,7 +537,7 @@
     <q-item-section><q-item-label>!{{item.mergeRequestNum}} {{item.title}}</q-item-label>
       <q-item-label caption>{{item.sourceRef}} → {{item.targetRef}} · {{item.author}} · {{item.state}}{{item.checkState ? ' · checks ' + item.checkState : ''}}</q-item-label></q-item-section>
     <q-item-section side><div class="row no-wrap">
-      <q-btn v-if="pageUrl(item.url)" dense flat no-caps size="sm" label="Open on server" :href="pageUrl(item.url)" target="_blank" rel="noopener noreferrer" type="a"></q-btn>
+      <q-btn v-if="pageUrl(item.url)" dense flat no-caps size="sm" label="Open on the server" :href="pageUrl(item.url)" target="_blank" rel="noopener noreferrer" type="a"></q-btn>
       <q-btn dense flat no-caps size="sm" label="Review" @click="openReview(item)" :data-review="item.mergeRequestNum"></q-btn>
       <q-btn dense flat no-caps size="sm" label="Check out" :disable="!ws.canWrite" @click="checkout(item)"></q-btn></div></q-item-section>
   </q-item></q-list>
@@ -569,10 +583,11 @@
     const checks = {
         name: "mDevGitChecks",
         props: { ws: { type: Object, required: true }, commitId: { type: String, required: true } },
-        data() { return { loading: true, state: "", statuses: [], runs: [], job: null, error: "", local: null, localJobs: null, localNote: "", localError: "" }; },
+        data() { return { loading: true, state: "", statuses: [], runs: [], job: null, error: "", local: null, localJobs: null, localNote: "", localError: "",
+            localContainer: null, imageRun: null }; },
         computed: { pure: () => pure, localLines() { return this.local ? pure.localRunLines(this.local.job, this.local.matrixKey) : null; } },
         mounted() { this.load(); },
-        beforeUnmount() { this.stopFollow(); },
+        beforeUnmount() { this.stopFollow(); if (this.imageTimer) clearTimeout(this.imageTimer); },
         methods: {
             load() {
                 this.loading = true;
@@ -602,6 +617,7 @@
             openLocal(pipeline, jobName, matrixKey) {
                 this.ws.get("localJobs", { rootId: this.ws.rootId }).then((answer) => {
                     this.localJobs = answer.jobs || []; this.localNote = answer.note || ""; this.localError = answer.error || "";
+                    this.localContainer = answer.container && answer.container.available ? answer.container : null;
                     const job = pipeline ? this.localJobs.find((item) => item.pipeline === pipeline && item.job === jobName) : null;
                     if (pipeline && !job) this.localError = "The working tree's ci.xml has no job " + pipeline + "/" + jobName;
                     this.local = job ? { job, matrixKey: matrixKey && (job.matrixKeys || []).includes(matrixKey) ? matrixKey : ((job.matrixKeys || [])[0] || "") } : null;
@@ -621,6 +637,36 @@
                     this.ws.note("Running " + local.job.job + " in a terminal, on this machine: not in the job's image");
                     this.local = null;
                 }, this.ws.fail);
+            },
+            // the same steps in a container of the job's image, its log followed here until it ends
+            startInImage() {
+                const local = this.local;
+                if (!local || !this.localContainer) return;
+                const lines = pure.localRunLines(local.job, local.matrixKey);
+                this.ws.post("startLocalRun", { rootId: this.ws.rootId, pipeline: local.job.pipeline, job: local.job.job, matrixKey: local.matrixKey,
+                    where: "image", digest: lines.imageDigest }).then((answer) => {
+                    if (!answer.runId) return;
+                    this.imageRun = { runId: answer.runId, title: local.job.pipeline + "/" + local.job.job + (local.matrixKey ? " (" + local.matrixKey + ")" : ""),
+                        image: local.job.image, state: "starting", log: "", exitCode: null, error: "" };
+                    this.local = null; this.localJobs = null;
+                    this.followImage();
+                }, this.ws.fail);
+            },
+            followImage() {
+                const run = this.imageRun;
+                if (!run) return;
+                this.ws.get("localRun", { runId: run.runId }).then((answer) => {
+                    if (this.imageRun !== run) return;
+                    Object.assign(run, { state: answer.state || "missing", log: answer.log || run.log, exitCode: answer.exitCode == null ? null : answer.exitCode,
+                        error: answer.error || (answer.timedOut ? "Stopped: it ran past its time" : "") });
+                    if (!pure.localRunEnded(run.state)) this.imageTimer = setTimeout(() => this.followImage(), 2000);
+                }, this.ws.fail);
+            },
+            removeImageRun() {
+                const run = this.imageRun;
+                if (!run) return;
+                if (this.imageTimer) clearTimeout(this.imageTimer);
+                this.ws.post("stopLocalRun", { runId: run.runId }).then(() => { this.imageRun = null; }, this.ws.fail);
             },
             rerun(run, job) {
                 // the run's number with a job too: a repository an application keeps retries a job of a run
@@ -646,7 +692,7 @@
     </div>
     <template v-else>
       <div class="row items-center q-gutter-x-sm text-caption"><span class="text-weight-medium">{{local.job.pipeline}}/{{local.job.job}}</span>
-        <span class="m-muted">image {{local.job.image}}, which this run does not use</span>
+        <span class="m-muted">image {{local.job.image}}{{localContainer ? '' : ', which this run does not use'}}</span>
         <q-select v-if="(local.job.matrixKeys || []).length > 1" dense outlined options-dense v-model="local.matrixKey" :options="local.job.matrixKeys" label="Combination" style="min-width: 10rem"></q-select></div>
       <div v-for="step in localLines.steps" :key="step.seq" class="text-caption"><span class="m-muted">{{step.seq}}. {{step.name}}</span>
         <code class="m-dev-mono q-ml-xs">{{step.run}}</code><span v-if="step.continueOnError" class="m-muted"> (continues on error)</span></div>
@@ -654,15 +700,32 @@
       <div v-if="localLines.secrets.length" class="text-caption">Not set (secrets are never passed): {{localLines.secrets.join(', ')}}</div>
       <q-expansion-item dense dense-toggle label="The script that runs" header-class="text-caption q-px-none" id="DevLocalScript">
         <pre class="m-dev-mono q-ma-none scroll text-caption" style="max-height: 30vh; white-space: pre-wrap">{{localLines.script}}</pre></q-expansion-item>
+      <template v-if="localContainer">
+        <div class="text-caption">{{localContainer.note}}</div>
+        <div v-if="localContainer.refusal" class="text-caption text-negative" id="DevImageRefusal">{{localContainer.refusal}}</div>
+        <q-expansion-item dense dense-toggle label="The script in the job's image" header-class="text-caption q-px-none" id="DevLocalImageScript">
+          <pre class="m-dev-mono q-ma-none scroll text-caption" style="max-height: 30vh; white-space: pre-wrap">{{localLines.imageScript}}</pre></q-expansion-item>
+      </template>
       <div class="row q-gutter-x-sm q-mt-xs">
         <q-btn dense unelevated no-caps color="primary" size="sm" label="Run in a terminal" @click="startLocal" id="DevRunLocallyStart"></q-btn>
+        <q-btn v-if="localContainer" dense outline no-caps color="primary" size="sm" :disable="!!localContainer.refusal"
+            :label="'Run in the job\\'s image (' + localContainer.engine + ')'"
+            @click="startInImage" id="DevRunInImage"></q-btn>
         <q-btn dense flat no-caps size="sm" label="Cancel" @click="local = null; localJobs = null"></q-btn></div>
     </template>
+  </div>
+  <div v-if="imageRun" class="q-pa-sm q-mb-sm bg-grey-2 text-black" id="DevImageRun" :data-state="imageRun.state">
+    <div class="row items-center no-wrap text-caption"><span class="text-weight-medium">{{imageRun.title}} in {{imageRun.image}}</span>
+      <q-badge class="q-ml-xs" :color="imageRun.state === 'exited' ? (imageRun.exitCode === 0 ? 'positive' : 'negative') : imageRun.state === 'failed' ? 'negative' : 'warning'"
+          :label="imageRun.state === 'exited' ? 'exited ' + imageRun.exitCode : imageRun.state"></q-badge><q-space></q-space>
+      <q-btn dense flat no-caps size="sm" :label="pure.localRunEnded(imageRun.state) ? 'Remove' : 'Stop'" @click="removeImageRun" id="DevImageRunRemove"></q-btn></div>
+    <div v-if="imageRun.error" class="text-negative text-caption">{{imageRun.error}}</div>
+    <pre class="m-dev-mono q-ma-none scroll" style="max-height: 40vh; white-space: pre-wrap">{{imageRun.log}}</pre>
   </div>
   <div v-for="status in statuses" :key="status.context" class="row items-center no-wrap text-caption">
     <q-badge :color="pure.stateColor(status.state)" :label="status.state" class="q-mr-xs"></q-badge>{{status.context}}
     <span class="m-muted q-ml-xs ellipsis">{{status.description}}</span>
-    <q-btn v-if="pageUrl(status.url)" dense flat no-caps size="sm" label="Open" :href="pageUrl(status.url)" target="_blank" rel="noopener noreferrer" type="a"></q-btn></div>
+    <q-btn v-if="pageUrl(status.url)" dense flat no-caps size="sm" label="Open on the server" :href="pageUrl(status.url)" target="_blank" rel="noopener noreferrer" type="a"></q-btn></div>
   <div v-for="run in runs" :key="run.runNum" class="q-mt-sm">
     <div class="row items-center no-wrap text-caption text-weight-medium">#{{run.runNum}} {{run.pipelineName}}
       <q-badge :color="pure.stateColor(run.state)" :label="run.statusId" class="q-ml-xs"></q-badge><q-space></q-space>

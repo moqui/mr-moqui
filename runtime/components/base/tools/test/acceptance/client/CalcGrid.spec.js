@@ -1,7 +1,8 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 // The Calc mode walks of plans/IronCalc-DB.md, in the browser on the qvt shell (./moq accept tools --spec CalcGrid):
 // an entity's rows in the grid, then as the data sheet of a workbook drawn from the server's cells; the document saved,
-// listed, exported as XLSX and deleted; and Records again as it was.
+// listed, exported as XLSX and deleted; and Records again as it was. And a share taken away while the other person has
+// the document open and a range of it on a dashboard (CalcShareFixtures).
 spec({ timeout: 120 })
 
 function gridPage() {
@@ -246,5 +247,101 @@ feature("two pages on one document see each other, an edit in one shows in the o
         !deleted.errors
         second.close()
         first.close()
+    },
+})
+
+// A share taken away (DASH-UI-008): john.doe's document is shared with CALC_SHARE_WALK, and calc.share.walk has it open in
+// Dashboards › CalcGrid and a range of it on a dashboard of theirs. When john.doe saves it shared with no group, the open
+// editor stops: its next edit or read is sent to open the document again, which is refused, and the page says the
+// document is no longer available instead of showing its cells. The open dashboard's range panel follows the document
+// with no reload: it shows john.doe's edit, and when the share is taken away its values go and it says the range is not
+// available. john.doe's cell is as john.doe left it.
+feature("a share taken away stops the other person's open editor and range panel, and the owner's cell stays", {
+    expect() {
+        const owner = gridPage()
+        owner.goto("/qapps/tools/Data/Grid?entityName=moqui.basic.Enumeration&enumTypeId=ComparisonOperator").status == 200
+        const grid = "/apps/tools/Data/Grid/"
+        const definitionId = "walk-calc-share"
+        const setup = owner.evaluate(async ([grid, definitionId]) => {
+            const post = (name, params) => moqui.request(grid + name, { method: "POST", params }).then((result) => result.json || {})
+            await post("calcDelete", { definitionId })
+            const opened = await post("calcOpen", { sourceJson: JSON.stringify({ type: "entity", entityName: "moqui.basic.Enumeration", conditions: { enumTypeId: "ComparisonOperator" } }),
+                columnsJson: JSON.stringify(["enumId"]) })
+            await post("calcEdit", { roomId: opened.roomId, opsJson: JSON.stringify([{ op: "addSheet" }, { op: "renameSheet", sheet: 1, name: "Notes" },
+                { op: "input", sheet: 1, row: 1, column: 1, value: "Shared range" }, { op: "input", sheet: 1, row: 2, column: 1, value: "saved value" }]) })
+            const saved = await post("calcSave", { roomId: opened.roomId, title: "Walk share", definitionId, userGroupId: "CALC_SHARE_WALK" })
+            return { roomId: saved.roomId, errors: saved.errors || null }
+        }, [grid, definitionId])
+        !setup.errors
+        !!setup.roomId
+
+        // the other person: the document open on its Notes sheet, and a range of it on their dashboard
+        const editor = browser.newPage({ user: "calc.share.walk", password: "CalcShareWalk1!!" })
+        editor.allowProblems(/userPhoto\?userId=/)
+        editor.goto("/qapps/dashboards/CalcGrid?definitionId=" + definitionId).status == 200
+        editor.waitFor(() => document.querySelectorAll(".m-calc-sheet .q-tab").length == 2)
+        editor.evaluate(() => {
+            window.walkTexts = () => Array.from(document.querySelectorAll(".m-calc-grid .tabulator-row")).map((row) => Array.from(row.querySelectorAll(".tabulator-cell")).map((cell) => cell.textContent))
+            document.querySelectorAll(".m-calc-sheet .q-tab")[1].click()
+            return true
+        })
+        editor.waitFor(() => window.walkTexts().some((row) => row.includes("saved value")))
+        const added = editor.evaluate((definitionId) => moqui.request("/apps/dashboards/CalcGrid/calcAddPanel", { method: "POST",
+            params: { definitionId, dashboardId: "walk-calc-share-board", range: "Notes!A1:A2", panelTitle: "Walk range", visualization: "table" } }).then((result) => result.json || {}), definitionId)
+        !added.errors
+        const board = browser.newPage({ user: "calc.share.walk", password: "CalcShareWalk1!!" })
+        board.allowProblems(/userPhoto\?userId=/)
+        board.goto("/qapps/dashboards/Dashboard?definitionId=walk-calc-share-board").status == 200
+        board.waitFor(() => !!document.querySelector(".m-report-panel") && document.querySelector(".m-report-dashboard").textContent.includes("saved value"))
+        // the open dashboard follows the document: the owner's edit shows in its panel, with no reload
+        board.evaluate(() => { window.walkMounted = document.querySelector(".m-report-dashboard"); return true })
+        const edited = owner.evaluate(([grid, roomId]) => moqui.request(grid + "calcEdit", { method: "POST",
+            params: { roomId, opsJson: JSON.stringify([{ op: "input", sheet: 1, row: 2, column: 1, value: "live value" }]) } }).then((result) => (result.json || {}).errors || null), [grid, setup.roomId])
+        edited == null
+        board.waitFor(() => window.walkMounted === document.querySelector(".m-report-dashboard") && window.walkMounted.textContent.includes("live value"))
+
+        // the owner takes the share away
+        const unshared = owner.evaluate(([grid, roomId]) => moqui.request(grid + "calcSave", { method: "POST", params: { roomId, title: "Walk share", userGroupId: "" } })
+            .then((result) => (result.json || {}).errors || null), [grid, setup.roomId])
+        unshared == null
+        // the open editor's next edit (or the read the change set off) is refused: its cells are gone, and it says why
+        editor.evaluate(() => {
+            const rows = document.querySelectorAll(".m-calc-grid .tabulator-row")
+            const bar = document.querySelector(".m-calc-formula")
+            if (!rows.length || !bar) return false
+            const cell = rows[1].querySelectorAll(".tabulator-cell")[1]
+            for (const type of ["mousedown", "mouseup", "click"]) cell.dispatchEvent(new MouseEvent(type, { bubbles: true, button: 0 }))
+            bar.focus(); bar.value = "stale write"; bar.dispatchEvent(new Event("input", { bubbles: true }))
+            bar.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))
+            return true
+        })
+        editor.waitFor(() => !!document.querySelector(".m-calc-unavailable") && !document.querySelector(".m-calc-grid"), { timeout: 20 })
+        editor.text().includes("no longer available to you")
+        // the open dashboard's range panel, with no reload, no longer shows the range and says it is not available
+        board.waitFor(() => window.walkMounted === document.querySelector(".m-report-dashboard") && !window.walkMounted.textContent.includes("live value")
+            && !window.walkMounted.textContent.includes("Shared range") && window.walkMounted.textContent.includes("may not read"))
+        !/Error rendering|Exception in render|Internal Server Error/.test(board.text())
+        // and opened again, it is the same
+        board.goto("/qapps/dashboards/Dashboard?definitionId=walk-calc-share-board").status == 200
+        board.waitFor(() => !!document.querySelector(".m-report-panel"))
+        !board.text().includes("live value")
+
+        // the owner's cell is as it was saved
+        const mine = owner.evaluate(([grid, roomId]) => moqui.request(grid + "calcCells", { params: { roomId, sheet: 1, row: 1, column: 1, width: 1, height: 2 } })
+            .then((result) => result.json || {}), [grid, setup.roomId])
+        !mine.errors
+        const cellTexts = JSON.stringify(Array.from(mine.texts || []).map((cell) => [cell.row, cell.column, cell.text]))
+        cellTexts == JSON.stringify([[1, 1, "Shared range"], [2, 1, "live value"]])
+        !JSON.stringify(mine).includes("stale write")
+        // the panel taken off the board, the document is deleted
+        const removed = board.evaluate((panelId) => moqui.request("/apps/dashboards/Dashboard/removePanel", { method: "POST",
+            params: { definitionId: "walk-calc-share-board", panelId } }).then((result) => result.json || {}), added.panelId)
+        removed.removed == added.panelId
+        const deleted = owner.evaluate(([grid, definitionId]) => moqui.request(grid + "calcDelete", { method: "POST", params: { definitionId } })
+            .then((result) => (result.json || {}).errors || null), [grid, definitionId])
+        deleted == null
+        board.close()
+        editor.close()
+        owner.close()
     },
 })

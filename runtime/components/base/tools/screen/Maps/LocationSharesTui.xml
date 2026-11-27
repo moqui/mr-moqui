@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The terminal's live location (plans/archive/Location-Sharing.md §3.3; docs/tools/Maps.md, Live location), under Browse's map in
+    Browse.tui.json: the user's own active shares (who sees them, until when) and those shared with them, each with the age of
+    its latest position and its latitude and longitude, and Stop on the user's own. Read through MapConfig.js liveShares, as
+    Browse's locationShares: LocationServices' reads, which check the user against each share's current audience. A share is
+    started in the browser or the app, not here. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
+        default-menu-title="Live location" default-menu-include="false">
+
+    <transition name="stopShare">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.maps.LocationServices.stop#Share').parameter('shareId', String(shareId ?? '')).requireNewTransaction(true).call()
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Sharing stopped'), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        let shares = []
+        ec.message.pushErrors()
+        try {
+            shares = Array.from(ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('liveShares', {}).locationShares || [])
+        } catch (err) {
+            ec.logger.warn('Maps terminal: the location shares were not read: ' + (err?.message ?? err))
+        } finally { ec.message.clearErrors(); ec.message.popErrors() }
+        // an age as words, as the map's list gives it; an approximate share's position is its cell of about 1 km
+        const ageText = (seconds) => seconds == null ? L('No position yet') : seconds < 60 ? L('just now') : seconds < 3600
+            ? Math.floor(seconds / 60) + ' ' + L('min ago') : seconds < 86400 ? Math.floor(seconds / 3600) + ' ' + L('h ago') : Math.floor(seconds / 86400) + ' ' + L('d ago')
+        const whom = (share) => {
+            const names = Array.from(share.audience || []).map((entry) => entry.name).filter(Boolean)
+            return names.length <= 2 ? names.join(', ') : names.slice(0, 2).join(', ') + ' ' + L('and') + ' ' + (names.length - 2) + ' ' + L('others')
+        }
+        const row = (share) => ({shareId: share.shareId, isOwn: share.role === 'owner',
+            whoText: share.role === 'owner' ? L('You, with') + ' ' + whom(share) : share.label || share.ownerName || '',
+            ageText: ageText(share.latest ? share.latest.ageSeconds : null) + (share.latest && share.latest.ageSeconds > 300 ? ' (' + L('stale') + ')' : ''),
+            whereText: share.latest ? Number(share.latest.latitude).toFixed(5) + ', ' + Number(share.latest.longitude).toFixed(5)
+                + (share.approximate ? ' (' + L('approximate, about 1 km') + ')' : '') : '',
+            untilText: share.thruDate ? ec.l10n.format(new Date(Number(share.thruDate)), 'EEE HH:mm') : ''})
+        myShareList = shares.filter((share) => share.role === 'owner').map(row)
+        sharedShareList = shares.filter((share) => share.role !== 'owner').map(row)
+    ]]></script></actions>
+
+    <widgets>
+        <label type="h6" text="Live location"/>
+        <section name="NoShares" condition="!myShareList.length &amp;&amp; !sharedShareList.length"><widgets>
+            <label type="p" text="Nobody shares their location with you, and you share yours with nobody. Share yours from Maps › Browse in the browser or the app." style="m-muted"/></widgets></section>
+        <section name="MyShares" condition="myShareList.length"><widgets>
+            <label type="p" text="Who sees my location"/>
+            <form-list name="MyShareList" list="myShareList" skip-form="true">
+                <field name="whoText"><default-field title="Shared"><display/></default-field></field>
+                <field name="untilText"><default-field title="Until"><display/></default-field></field>
+                <field name="ageText"><default-field title="Last position"><display/></default-field></field>
+                <field name="whereText"><default-field title="Where"><display/></default-field></field>
+                <field name="actions"><default-field title="">
+                    <link url="stopShare" text="Stop" icon="sym_o_location_off" confirmation="Stop sharing your location now?">
+                        <parameter name="shareId"/></link>
+                </default-field></field>
+            </form-list>
+        </widgets></section>
+        <section name="SharedShares" condition="sharedShareList.length"><widgets>
+            <label type="p" text="Shared with me"/>
+            <form-list name="SharedShareList" list="sharedShareList" skip-form="true">
+                <field name="whoText"><default-field title="Who"><display/></default-field></field>
+                <field name="untilText"><default-field title="Until"><display/></default-field></field>
+                <field name="ageText"><default-field title="Last position"><display/></default-field></field>
+                <field name="whereText"><default-field title="Where"><display/></default-field></field>
+            </form-list>
+        </widgets></section>
+    </widgets>
+</screen>

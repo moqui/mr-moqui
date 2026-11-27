@@ -281,13 +281,37 @@ pub fn now_effective_value() -> Value {
     stamp_value(now_effective_millis())
 }
 
-/// `moqui_lib::object::basic_convert`, with timestamp text in the user's time zone.
+/// `moqui_lib::object::basic_convert`, with timestamp text in the user's time zone and number text in the user's
+/// locale. Java's `FieldInfo.convertFromString` reads number text with `ec.l10n.parseNumber`, so a form's `60,000`
+/// (the grouped value a numeric text-line shows, posted back unchanged) is 60000, not text the database refuses
+/// (plans/ui-review-system-ai-integrations.md AI-UI-006). Text that is not a number is left as it is.
 pub fn basic_convert(value: &Value, java_type: &str) -> Converted {
     if is_timestamp_text(value, java_type) {
-        moqui_lib::object::basic_convert_in(value, java_type, &(get().time_zone)())
-    } else {
-        moqui_lib::object::basic_convert(value, java_type)
+        return moqui_lib::object::basic_convert_in(value, java_type, &(get().time_zone)());
     }
+    let converted = moqui_lib::object::basic_convert(value, java_type);
+    match value {
+        Value::String(text) if !converted.changed && is_number_type(java_type) => {
+            locale_number(text, java_type).unwrap_or(converted)
+        }
+        _ => converted,
+    }
+}
+
+/// Number text as the user's locale writes it, as `java_type`, as Java takes the type's value of the BigDecimal
+/// `parseNumber` gives (`1,800.0` is 1800 for a Long).
+fn locale_number(text: &str, java_type: &str) -> Option<Converted> {
+    let decimal = moqui_lib::format::parse_decimal(text, &(get().locale)())?;
+    let value = moqui_lib::object::convert_checked(&Value::Decimal(decimal), java_type)?;
+    Some(Converted { value, changed: true })
+}
+
+/// Whether `java_type` is one of the number types.
+pub fn is_number_type(java_type: &str) -> bool {
+    matches!(
+        java_type.rsplit('.').next().unwrap_or(java_type),
+        "BigDecimal" | "BigInteger" | "Long" | "Integer" | "Double" | "Float" | "long" | "int" | "double" | "float"
+    )
 }
 
 /// `moqui_lib::object::convert_checked`, with timestamp text in the user's time zone, as [`basic_convert`].

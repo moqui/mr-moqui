@@ -17,7 +17,7 @@
 //! runner would end it, the approval, and the deploy step's call over loopback to a target that verifies the
 //! attestation with the same code the target's `deploy#AttestedComponent` uses (`ci::attest::verify`; the target's own
 //! gate is tested in moqui-devkit, `deploy/git_tests.rs`). The token the target issued is an item of an operational
-//! vault (plans/Vault-Instances.md §4.6), signing under the environment's machine access, or under the deployment's
+//! vault (plans/archive/Vault-Instances.md §4.6), signing under the environment's machine access, or under the deployment's
 //! lease, which its approval opens.
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -694,7 +694,7 @@ fn an_environment_refuses_a_clone_url_with_credentials_an_unknown_group_and_a_sh
     }
     let errors = stored(&[("approverGroupId", s("NO_SUCH_GROUP"))]);
     assert!(errors.contains("no user group NO_SUCH_GROUP"), "{errors}");
-    // a token is an item of the environment's vault, never a parameter or a row's (plans/Vault-Instances.md §4.6)
+    // a token is an item of the environment's vault, never a parameter or a row's (plans/archive/Vault-Instances.md §4.6)
     let errors = stored(&[("token", s(TOKEN))]);
     assert!(errors.contains("never a parameter"), "{errors}");
     assert!(!errors.contains(TOKEN), "{errors}");
@@ -1108,7 +1108,7 @@ fn widening_an_environment_clears_its_secrets_and_a_new_target_its_token() {
     assert_eq!(machine(), "N");
 }
 
-/// Signing needs the deployment's lease when the environment has no machine access (plans/Vault-Instances.md §4.6):
+/// Signing needs the deployment's lease when the environment has no machine access (plans/archive/Vault-Instances.md §4.6):
 /// once the pipeline passed, the lease of the target's token is asked and the deployment waits for approval whatever
 /// approvalRequired says; approving it is opening the lease (one decision, with the approver's client's approval of
 /// it), the step signs under it, and the lease ends with the step.
@@ -1323,7 +1323,7 @@ fn token_vault_leased(fixture: &Fixture, environment_id: &str) -> OperationalVau
 }
 
 /// A deployment to managed instances is decided only by a member of their environment's approver group, checked as
-/// the decider (plans/Vault-Instances.md §4.6): a maintainer who may decide the repository's deployments is refused
+/// the decider (plans/archive/Vault-Instances.md §4.6): a maintainer who may decide the repository's deployments is refused
 /// without it, and decides with it.
 #[test]
 fn a_deployment_to_managed_instances_is_decided_by_their_environments_approver_group() {

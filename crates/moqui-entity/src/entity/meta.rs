@@ -24,7 +24,7 @@ use std::sync::{Mutex, RwLock};
 
 use moqui_db::dialect::Dialect;
 use moqui_db::sql::{
-    add_column, create_fk_index, create_foreign_key, create_index, create_table, drop_fts_index,
+    add_column, create_fk_index, create_foreign_key, create_index, create_table, drop_fts_index, field_sql_type,
     foreign_key_index_name, foreign_key_name, fts_index_name, fts_index_sql, fts_old_index_name, is_mysql, is_sqlite,
     legacy_name, physical_column_name, physical_name, quote_ident,
 };
@@ -115,7 +115,7 @@ impl EntityFacade {
 
     /// Check the tables of `names` whatever their groups' `startup-add-missing` and `runtime-add-missing` say, and
     /// answer the DDL statements that ran and the steps that failed: the check after an entity file changed or a
-    /// component was added to a running server (plans/design-dev-aide.md 8.2, plans/archive/Component-Deploy.md). Additive
+    /// component was added to a running server (plans/archive/design-dev-aide.md 8.2, plans/archive/Component-Deploy.md). Additive
     /// only, as every check is: a missing table is created, missing columns, indexes and foreign keys added. On
     /// Postgres a statement waits at most [`DDL_LOCK_TIMEOUT`] for its table's lock, so a long transaction on the
     /// table fails the step rather than queueing every query on the table behind it.
@@ -132,7 +132,7 @@ impl EntityFacade {
         })
     }
 
-    /// The SQL of a change the table check never makes (plans/design-dev-aide.md 8.2), for a developer to run on a
+    /// The SQL of a change the table check never makes (plans/archive/design-dev-aide.md 8.2), for a developer to run on a
     /// dev database after reading it: `drop-column` (a `column` no field names), `change-type` (the column of `field`
     /// to the field's type now), `copy-column` (the data of `column` into the column of `field`, then `column`
     /// dropped: a renamed field keeping its data) and `recreate-table` (dropped and created again, its rows lost).
@@ -165,9 +165,8 @@ impl EntityFacade {
                 "drop-column" => Ok(vec![format!("ALTER TABLE {table} DROP COLUMN {}", raw_column(column)?)]),
                 "change-type" => {
                     let field = field_of(field)?;
-                    let sql_type = dialect.sql_type(&field.field_type).ok_or_else(|| {
-                        Error::new(format!("no SQL type for {} on {}", field.field_type, dialect.name))
-                    })?;
+                    // The type create table and add column give it: the database's override, else the dictionary's.
+                    let sql_type = field_sql_type(model, dialect, field)?;
                     let name = column_ident(&field.column_name);
                     if is_sqlite(dialect) {
                         return Err(Error::new(

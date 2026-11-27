@@ -28,7 +28,7 @@ use std::time::Duration;
 
 use serde_json::json;
 
-pub use moqui_lib::docker::DockerHost;
+pub use moqui_lib::docker::{ContainerInfo, DockerHost, Engine};
 use moqui_lib::docker::{Created, HostAddress, CALL_TIMEOUT, NETWORK_KEYWORDS};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::http::Method;
@@ -53,7 +53,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
 }
 
 /// The values of an `InstanceHost` row that say where its host is and how it is reached. The client key of an https
-/// host with a client certificate is a vault item (`InstanceHost:<id>:tlsClientKey`, plans/Vault-Instances.md §4.1). A
+/// host with a client certificate is a vault item (`InstanceHost:<id>:tlsClientKey`, plans/archive/Vault-Instances.md §4.1). A
 /// CI run is unattended, so it is read under the machine access of the environment the host names
 /// (`InstanceHost.environmentId`): a lease approved by "machine" for this one call, ended when the client is made
 /// (`moqui_core::vault_hooks::machine_run`). A host with a client key and no environment, or an environment with no
@@ -76,10 +76,11 @@ fn host_address(host: &EntityValue) -> Result<HostAddress, Error> {
         };
         let address = field(host, "hostAddress").unwrap_or_default();
         let operation = format!("CI run on InstanceHost {host_id} at {address}");
-        let key = moqui_core::vault_hooks::machine_run(&environment, std::slice::from_ref(&binding), &operation, || {
-            moqui_core::vault_hooks::leased(&binding, Some("privateKey"))
-        })
-        .map_err(|err| Error::new(format!("the host's client key {binding}: {}", err.message())))?;
+        let key =
+            moqui_core::vault_hooks::machine_run(&environment, std::slice::from_ref(&binding), &operation, || {
+                moqui_core::vault_hooks::leased(&binding, Some("privateKey"))
+            })
+            .map_err(|err| Error::new(format!("the host's client key {binding}: {}", err.message())))?;
         Some(to_plain_string(&key))
     } else {
         None
@@ -184,12 +185,36 @@ fn create(
         }
     };
     cover_volumes(&mut body, &volumes, hardening).map_err(|why| Error::new(format!("container {name}: {why}")))?;
+    if host.engine()? == Engine::Podman {
+        podman_tmpfs(&mut body);
+    }
     if pull {
         return Ok(host.create(name, &body, true)?);
     }
     match host.create_container(name, &body)? {
         Created::Id(id) => Ok(id),
         Created::NoSuchImage => Err(not_on_host(&image)),
+    }
+}
+
+/// A body's tmpfs options as Podman takes them. Podman refuses `uid=` and `gid=` on a tmpfs ("unknown mount option"),
+/// which Docker passes to the kernel; its `U` makes the mount the container user's, the same uid and gid as the body's
+/// `User` ([`Hardening::tmpfs`] names them only for a numeric user). A mount with neither is left as it is.
+fn podman_tmpfs(body: &mut serde_json::Value) {
+    let Some(mounts) = body["HostConfig"]["Tmpfs"].as_object_mut() else {
+        return;
+    };
+    for options in mounts.values_mut() {
+        let Some(text) = options.as_str() else {
+            continue;
+        };
+        let kept: Vec<&str> = text
+            .split(',')
+            .filter(|option| !option.starts_with("uid=") && !option.starts_with("gid="))
+            .collect();
+        if kept.len() != text.split(',').count() {
+            *options = json!(format!("{},U", kept.join(",")));
+        }
     }
 }
 
@@ -572,6 +597,97 @@ pub fn service_body(
         body["User"] = json!(user);
     }
     body
+}
+
+/// A developer's own run of a job in its image, on their machine (the Dev AIDE's Run locally, plans/archive/design-dev-aide.md
+/// 21.5, question 20). Its container is a job's ([`create_body`]: no privilege, no capabilities, no new privileges, an
+/// init, a read-only root with a sized tmpfs at `/tmp`, a user that is not root, an image `VOLUME` on a tmpfs), with one
+/// thing no pool's run has: a tree of the host mounted at the working directory, read and written as `user` (the Dev
+/// AIDE's copy of the developer's working tree, which nothing on the host reads). Never made for a pool.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LocalRun {
+    pub name: String,
+    pub image: String,
+    pub command: Vec<String>,
+    pub labels: Vec<(String, String)>,
+    /// The tree on the host mounted at the working directory: the Dev AIDE's copy of a working tree, never the tree.
+    pub tree: std::path::PathBuf,
+    /// The container's user, `uid:gid` (the tree's owner); the conf's when `None` or root.
+    pub user: Option<String>,
+    pub memory_mb: i64,
+    pub pids_limit: i64,
+    /// `bridge`, or `none` ([`egress_mode`] holds it to a mode a pool may have).
+    pub network_mode: String,
+}
+
+/// The body of `POST /containers/create` for a [`LocalRun`] on `engine`: a job's container's ([`create_body`]) with the
+/// tree bound over the working directory in place of its tmpfs, `HOME` at `/tmp`, on its network (bridge, or none), and
+/// on Podman the host's user kept as the container's (`keep-id`), so a rootless Podman writes the tree as its owner.
+pub fn local_body(run: &LocalRun, hardening: &Hardening, engine: Engine) -> serde_json::Value {
+    let mut hardening = hardening.clone();
+    if let Some(user) = run.user.as_deref().filter(|user| !is_root_user(user)) {
+        hardening.user = Some(user.to_string());
+    }
+    if hardening.user.is_none() {
+        // the image's user may be root: a local run is held to a uid as a pool's with a conf user is
+        hardening.user = Hardening::default().user;
+    }
+    let labels: moqui_lib::object::ValueMap = run
+        .labels
+        .iter()
+        .map(|(name, value)| (name.clone(), Value::string(value)))
+        .collect();
+    let parameters: Parameters = [
+        ("image".to_string(), Value::string(&run.image)),
+        (
+            "command".to_string(),
+            Value::List(run.command.iter().map(Value::string).collect()),
+        ),
+        ("labels".to_string(), Value::Map(labels)),
+        // HOME on the root, which is read only, would fail a tool's cache; in the tree it would leave the cache there
+        (
+            "envMap".to_string(),
+            Value::Map([("HOME".to_string(), Value::string("/tmp"))].into_iter().collect()),
+        ),
+        ("memoryMb".to_string(), Value::I64(run.memory_mb)),
+        ("pidsLimit".to_string(), Value::I64(run.pids_limit)),
+        ("networkMode".to_string(), Value::string(&run.network_mode)),
+    ]
+    .into_iter()
+    .collect();
+    let mut body = create_body(&parameters, &hardening, None);
+    if let Some(tmpfs) = body["HostConfig"]["Tmpfs"].as_object_mut() {
+        tmpfs.remove(&hardening.workdir);
+    }
+    body["HostConfig"]["Mounts"] = json!([{
+        "Type": "bind",
+        "Source": run.tree.display().to_string(),
+        "Target": hardening.workdir,
+        "ReadOnly": false,
+    }]);
+    if engine == Engine::Podman {
+        body["HostConfig"]["UsernsMode"] = json!("keep-id");
+    }
+    body
+}
+
+/// Make and start a [`LocalRun`]'s container on `host`, pulling its image when the host does not have it: its id. A
+/// container made that does not start is removed.
+///
+/// # Errors
+///
+/// When the host refuses a call, the image cannot be pulled, or its `VOLUME` cannot be covered.
+pub fn start_local(host: &DockerHost, run: &LocalRun, hardening: &Hardening) -> Result<String, Error> {
+    let body = local_body(run, hardening, host.engine()?);
+    let id = create(host, &run.name, body, true, hardening)?;
+    let started = check_made(host, &id, &run.name, false).and_then(|()| Ok(host.start(&id)?));
+    if let Err(err) = started {
+        if let Err(removed) = host.remove(&id) {
+            tracing::warn!("a local run's container that did not start was not removed: {removed}");
+        }
+        return Err(err);
+    }
+    Ok(id)
 }
 
 fn add_error(message: impl Into<String>) {

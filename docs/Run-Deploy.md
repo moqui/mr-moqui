@@ -183,7 +183,7 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 | Run a load script against a server | `./moq test-load mr-marble --script OrderToCash` | |
 | Archive the runtime with the binary | `./moq archive --release` | `./gradlew addRuntime` |
 | Remove obsolete cargo artifacts | `./moq clean` | |
-| Reset the local instance and keep builds | `./moq clean-dev` | |
+| Reset the local instance, keep the current build and remove obsolete cargo artifacts | `./moq clean-dev` | |
 | Reset the local instance and remove build output | `./moq clean-all` | `./gradlew cleanAll` |
 | Show the binary's package and features | `target/release/moqui version` (`target\release\moqui.exe version` on Windows) | |
 
@@ -219,7 +219,9 @@ what is not built ([Edge-Node2 §3](../plans/Edge-Node2.md#3-topologies)).
   build of Maximal, carry the dev tools (the file watcher, Dev AIDE): they open only on a dev instance, and the server
   warns at start when it finds them on a production one. A production image leaves them out: `./moq build --enterprise`,
   or Maximal without them (`cargo build --profile release --no-default-features -F maximal -p moqui`)
-  ([Packaging](Build-Test.md#packages), SEC-OUT-14).
+  ([Packaging](Build-Test.md#packages), SEC-OUT-14). `podman/build.sh` builds the default `--release`, with the dev
+  tools: for a production image build Maximal without them first, as above, and then run `podman/build.sh --nobuild`,
+  which packs `target/release/moqui` as it is (SEC-OUT-90).
 - **Purpose**: `instance@purpose` is `production` everywhere except in the dev conf. An archive's `MoquiConf.xml` is
   the production conf.
 - **Seal**: the server starts sealed and opens its listeners only once unsealed: `moqui operator init` with `tpm` (or
@@ -310,7 +312,11 @@ time it is needed, and runs as its own process; unlike the runtime files they ar
 this is packaging and delivery only. `moqui embedded unpack [postgres|opensearch|chromium|all]` unpacks them ahead of
 the first start (a container image). OpenSearch starts when the search backend is `opensearch`, the cluster is local
 and not running, and `runtime/opensearch` has no install of its own; its config (seeded from the install on the first
-start), data and logs stay in `runtime/opensearch`. Chromium is used for PDF and the browser tests after
+start), data and logs stay in `runtime/opensearch`. That OpenSearch is the `opensearch-min` distribution, without the
+security plugin: it listens on loopback with no sign-in, so any local user or process of the host reads, rewrites and
+deletes every search index on port 9200, past the server's own authorization. On a host shared with other users keep
+the default Postgres search backend, or run an OpenSearch with the security plugin of your own and give the server its
+credentials (`search-facade/cluster@user` and `@password`, from `.env`). Chromium is used for PDF and the browser tests after
 `screen-facade/pdf@chromium-path` and `runtime/chromium`, before an installed one.
 
 **Checksums.** `moqui embedded checksum` prints the SHA-256 of each part built in, in `sha256sum` format: `runtime`
@@ -442,6 +448,8 @@ The settings most deployments set or should know. Their defaults are in `MoquiDe
 | `terminal@remote` | `false` | `true` lets those be reached from other machines, over HTTPS with a recent sign-in; `moqui_conf__terminal__remote=true` in `runtime/.env` is the lightest way ([Terminal](ui/Terminal.md#who-may-open-what-and-from-where)) |
 | `screen-facade/pdf@chromium-path` | empty | The Chromium for PDF and the browser tests; empty looks in `runtime/chromium`, then for an installed Chromium, Google Chrome or Microsoft Edge (the PATH and the OS's install locations) |
 | `load-runner@targets`, `load-runner@max-runs`, `load-runner@max-users` | empty, `1`, `1000` | Load runs from Tools: the URL prefixes a run may reach besides this server and loopback (any URL on a dev instance; plain http to another machine only when listed), the loads at once, and the users a run |
+| `maps@external-requests`, `maps@import-max-bytes`, `maps@max-features` | `true`, `536870912` (512 MiB), `5000` | Maps ([plan](../plans/archive/Maps.md#42-metadata-and-effective-settings)): `false` stops the server's outside map requests (a geocoder, a Geo data download) and its handing a browser a profile with outside URLs; the largest Geo data download or file and what it may unzip to; the most features one overlay or viewport query returns (`0`: record layers off) |
+| `location@max-share-hours`, `location@trail-max-days`, `location@min-interval-seconds`, `location@approximate-interval-seconds`, `location@max-active-shares`, `location@max-audience`, `location@link-max-views-per-minute`, `location@link-max-failed-tries` | `24`, `30`, `5`, `60`, `20`, `50`, `30`, `10` | Shared live location ([Maps, Live location](tools/Maps.md#live-location)): the longest a share runs from its start or last extension; the longest a kept trail stays after its share ends; the shortest time between two positions a share takes (a sooner one is answered 429), and an approximate share's; the most shares a person has on at once; the most people, contacts and links a share has; the most reads a minute of a guest link's page; the wrong secrets after which a guest link is refused |
 | `ssh-server@port`, `ssh-server@host` | empty, `127.0.0.1` | The SSH server (SFTP, git, the apps in a terminal); off while `ssh-server@port` is empty (`2222` in the dev conf) |
 | `media-server@port`, `media-server@host`, `media-server@public-address` | empty, `127.0.0.1`, empty | Call media ([WebRTC](interfaces/WebRTC.md)); off while `media-server@port` is empty; the public address is what browsers are told, for a server behind 1:1 NAT |
 | `calls@ring-seconds` | `45` | How long a call rings before it is missed |
@@ -706,6 +714,13 @@ moqui_conf__entity_facade__datasource__TRANSACTIONAL__password=...
 | `schema-name` | | Empty for the default schema |
 | `user`, `password` | `moqui`, ... | |
 | `sslmode` | | Empty is verified TLS. `verify-full` checks the authority and the name, `verify-ca` the authority only and needs `sslrootcert` (it trusts that file alone, as libpq does; without it the connection is refused), `require` encrypts without checking, and `disable` turns TLS off (for a local dev server only) |
+
+On MySQL (`mysql`, `mysql8`) the same `sslmode` and `sslrootcert` apply (SEC-DAT-97). An upgrade from a build before
+this changes two things: `sslmode=require` now encrypts without checking the certificate, where before the mode was
+ignored and the certificate checked in full (set `verify-full` to keep that); and a conf connection with no mode
+(`database-conf` `jdbc-uri` style, no `sslmode`) is `verify-full` to a server off loopback and plain to `127.0.0.1`,
+`localhost` or `::1`. A MySQL server with no TLS needs `sslmode=disable`, a database extract from it too
+(`jdbc_extract`).
 | `sslrootcert` | `/etc/moqui/db-ca.pem` | A PEM file of the authorities to trust instead of the public ones |
 
 `entity-facade@crypt-pass`, made into `seal.json` by `moqui operator init`, is the key of encrypted fields; it moves
@@ -787,8 +802,8 @@ cluster when the entity database is not Postgres. OpenSearch is optional:
 
 `./moq save-db [name]` writes the embedded database to `runtime/save/<name>/moqui.dump`, and the content database beside
 it to `moqui_content.dump`. It also writes the OpenSearch data when there is any. `./moq reload-save [name]` empties the
-database and restores that save. `./moq load-save -n <name> [types]` runs `clean-dev`, loads, and saves. Stop the server
-before a restore. These work on the embedded database only; an external database has its own tools.
+database and restores that save. `./moq load-save -n <name> [types]` resets the instance data as `clean-dev` does,
+leaving the cargo artifacts alone, then loads and saves. Stop the server before a restore. These work on the embedded database only; an external database has its own tools.
 
 ### Backups
 
@@ -955,8 +970,13 @@ A subdomain falls back one label up only: first to `_wildcard.<parent>` (mkcert)
 After that, `default` serves any other name. A domain with no certificate gets a refused handshake. The files are read
 again within seconds of a change, so a renewal needs no restart.
 
-In dev (`moqui_conf__instance__purpose=dev`), an empty certificate directory gets a localhost leaf for DNS, IPv4 and IPv6 loopback.
-The server sends it with its constrained signing intermediate. The public root is `cert/dev-ca/ca.crt`.
+In dev (`moqui_conf__instance__purpose=dev`), an empty certificate directory gets two leaves with one key. `localhost`
+names only `localhost` and is served when the client asks for that name. `default` also names 127.0.0.1 and ::1 and is
+served when the client sends no name, as for `https://127.0.0.1:8443`. gRPC clients built on BoringSSL (grpcio, so
+the Python, Ruby, PHP and C++ OTLP exporters) refuse an address under the intermediate's IP constraints, so point them
+at `https://localhost:8443`. The server sends a leaf with its constrained signing intermediate. The public root is
+`cert/dev-ca/ca.crt`. An issuer made before 2026-11-25 lacks the authority key identifier that Python's strict
+verification wants: `moqui dev-cert --rotate`, then `./moq trust-dev-cert`.
 Run `./moq trust-dev-cert` once per user to establish the shared issuer and trust the root in the
 macOS login keychain or Linux browser NSS stores (`~/.pki/nssdb` for Chromium and Chrome, their snap and Flatpak
 stores, and Firefox's profiles). A system-store client on Linux can use
@@ -1257,7 +1277,10 @@ for the new host's TPM. The old host's TPM is not needed.
 ### Podman and Quadlet
 
 `podman/build.sh` builds the Maximal package and the image `localhost/moqui:latest`, with whatever components are in
-`runtime/components/addon`. One volume at `/var/lib/moqui` holds the database, logs, certificates and generated secrets.
+`runtime/components/addon`. The image is Debian 13, so the binary must not need a newer glibc than its 2.41: one built
+on a newer host (Ubuntu 26.04) does not start there, and `build.sh` refuses it; `podman/build.sh --in-build-image`
+builds it in the build image instead. One volume at `/var/lib/moqui` holds the database, logs, certificates and
+generated secrets.
 There are compose stacks for embedded Postgres, an external Postgres, Postgres with OpenSearch, and MySQL with
 OpenSearch, and `podman/quadlet/` runs the single container as a systemd service. Everything is in
 [podman/README.md](../podman/README.md).
@@ -2117,13 +2140,13 @@ A server can provision and run other instances, MR Moqui, Postgres, MySQL and Op
 with every credential in an operational vault ([Vaults](security/Vaults.md#operational-vaults)). This is System ›
 Instances, the services of `org.moqui.dev.InstanceServices` (Rust, `crates/moqui-instance`, in the Enterprise and
 Maximal builds) and the container driver CI's runs use too (`moqui_lib::docker`). Every service needs the sealed
-`INSTANCE_ADMIN` (`ADMIN_ADV`). The plan is [Vault-Instances](../plans/Vault-Instances.md) §4; built so far are M1,
+`INSTANCE_ADMIN` (`ADMIN_ADV`). The plan is [Vault-Instances](../plans/archive/Vault-Instances.md) §4; built so far are M1,
 the manager link (M2, [below](#the-manager-link)), Monitor for managed instances (M4: the fleet screen, each
 instance's identity and ingest key, scrape targets, alert rules and the `instance` recovery adapter,
 [Monitoring](tools/Monitoring.md#managed-instances)) and deploys (M3: an instance's or an environment's Deploy and Roll
 back, and a pipeline's deployment to an environment,
-[Component-Deploy](tools/Component-Deploy.md#a-deploy-over-the-link)) and rotation (M5, [below](#rotation)): a managed
-sealed start comes later.
+[Component-Deploy](tools/Component-Deploy.md#a-deploy-over-the-link)), rotation (M5, [below](#rotation)) and a managed
+instance's sealed start (M6, [below](#managed-sealed-start)).
 
 **The rows.** System › Instances has a tab for each:
 
@@ -2147,6 +2170,16 @@ and the dependencies the kind takes: a database (another instance of the environ
 names filled in (`${instanceName}`, `${databaseHost}` and the others of `kinds::PLACEHOLDERS`; nothing else is
 expanded), and its secret bindings (`AppInstance:<id>:admin`, `:dbPassword`, `:ingestKey`). It makes nothing on a
 host. A database instance is on the same host as the instances that use it: they reach it on its network.
+
+**Databases over TLS.** A managed MR Moqui instance is a production one, whose datasource takes only verified TLS, so a
+Postgres or MySQL instance serves TLS too. Its provision makes a key pair: an ECDSA P-256 key, deposited as the item
+`AppInstance:<id>:tls` and given as the file `tls.key`, and a certificate it signs itself for the instance's name on the
+network. The certificate is public, so it is on the instance's row (`tlsCertificate`), not in the vault, and is given as
+`tls.crt`; the kind's command (its `Cmd` host config) turns TLS on with the two. An instance whose database is a
+managed instance gets that certificate as `db-ca.crt`, named by its datasource's `sslrootcert`: it trusts it alone and
+checks the server's name against it (`verify-full`), and a deploy needs no lease for it. A database host (not managed
+here) is reached as before, by verified TLS against the public authorities or its own `sslrootcert`. To rotate the key,
+follow its binding's by-hand steps on the instance page.
 
 **Provisioning** (`provision#AppInstance`, the instance page's Provision):
 
@@ -2234,11 +2267,11 @@ every package; the manager's end needs `instances` too). The instance opens no p
 - **The manager's address.** `manage@link-url` on the manager is what its instances dial: its HTTPS listener. An edge
   node's own HTTPS listener takes no manager links. A provision sets `moqui_conf__manage__url` and
   `moqui_conf__manage__pin` (the manager's fingerprint) in a new MR Moqui instance's settings; neither is a secret.
-- **A manager behind a firewall** (§4.4: reached through its own edge node by a passthrough host name) is not built
-  yet. The edge node already passes a passthrough host's connection on before any TLS, whatever ALPN it offers, but the
-  local node's end of the tunnel ends the TLS with its web settings (`acme::accept` in `edge_link/down.rs`), not the
-  HTTPS listener's hand-off, so `moqui-manage/1` is not taken there. Until it is, such a manager's instances reach its
-  HTTPS port directly (a VPN, or a port opened to the instances' addresses only).
+- **A manager behind a firewall** (§4.4) is reached through its own edge node, by a passthrough host name of the
+  manager's node, so the manager opens no inbound port. Set `manage@link-url` to `https://<that name>`: the edge node
+  passes the connection on before any TLS, whatever ALPN it offers, and on the manager's end of the tunnel a ClientHello
+  that offers `moqui-manage/1` goes to the manager link (`edge_link/down.rs`), with the instance's address from the
+  tunnel's PROXY header, so a new address is still told apart; anything else is the node's web, as before.
 - **Pairing.** A provision gives the new container its one-time token as the file `/run/secrets/moqui-pairing-token`
   (`manage@token-file`), never in its environment, labels or command. It works once, within 15 minutes, for that
   instance only: the manager finds the row by the token's SHA-256, checks it in constant time, clears it, and pins the
@@ -2318,7 +2351,7 @@ instance's dialer in one process) and `cargo test -p moqui-instance link`.
 
 ### Managed sealed start
 
-A managed instance's seal (plans/Vault-Instances.md §4.5, M6; [Sealed start](#sealed-start) is the seal itself).
+A managed instance's seal (plans/archive/Vault-Instances.md §4.5, M6; [Sealed start](#sealed-start) is the seal itself).
 
 - **The method.** A provision sets `moqui_conf__seal__method` on a new MR Moqui container from its environment's
   `unsealMethod`: `transit` (the manager's, the default for a container) or `tpm`, each automatic, so the first start
@@ -2389,7 +2422,7 @@ A managed instance's seal (plans/Vault-Instances.md §4.5, M6; [Sealed start](#s
   `sealBundleDate` on the row): the first time, and after a rekey or rotate-root; `store#InstanceSealBundle` does the
   same on demand. The manager does not read it back without a lease, though it could unwrap the root key
   in it with the transit key (§4.9).
-- **The limits** (plans/Vault-Instances.md §4.4, §4.9). The link key works while sealed, so without a TPM it is a usable
+- **The limits** (plans/archive/Vault-Instances.md §4.4, §4.9). The link key works while sealed, so without a TPM it is a usable
   key on disk; under the automatic policy a stolen disk with the link key and `seal.json` gets the root key from the
   manager until someone revokes the instance (`revoke#InstanceLink`, after which transit refuses it): production uses
   the approval policy or a TPM-bound link key (`manage@key-store`). A compromised manager sees each instance's root key
@@ -2407,7 +2440,7 @@ it).
 ### Rotation
 
 The manager changes a managed credential at its source, then on each instance that uses it, then in the vault
-([Vault-Instances](../plans/Vault-Instances.md) §4.7; `crates/moqui-instance/src/rotate/`). Rotating opens the item and
+([Vault-Instances](../plans/archive/Vault-Instances.md) §4.7; `crates/moqui-instance/src/rotate/`). Rotating opens the item and
 what changes it (a database's admin login, a host's client key, an instance's SSH key), so it runs under a lease an
 approver opens or the environment's machine access, as a provision does.
 
@@ -2538,7 +2571,10 @@ The get tasks take `-t git|current|release|binary` and `-r <repository>`. `--dev
 `runtime/components/dev`. A component with a `Cargo.toml` is linked into the binary on the next build
 ([Native-Components](dev/Native-Components.md)). A new component loads at the next start. System › Components can also
 load it on a running server, with its data, when it has no Rust code
-([Component-Deploy](tools/Component-Deploy.md#loading-a-component)).
+([Component-Deploy](tools/Component-Deploy.md#loading-a-component)). A component deployed that way is updated, moved aside and removed
+only in its own directory under a directory named `components` (`runtime/components/addon/<name>` by default): a conf
+whose `component-dir` is not named `components` (Moqui Java's `runtime/component`) has its deploys and removals refused
+(plans/Security-Review-Low.md SEC-TLS-104).
 
 ## Moving from Moqui Java
 

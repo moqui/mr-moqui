@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The vault in the desktop and mobile apps (plans/Vault-Instances.md §3.5, §3.6, §3.12, V5): the vault crate's
+//! The vault in the desktop and mobile apps (plans/archive/Vault-Instances.md §3.5, §3.6, §3.12, V5): the vault crate's
 //! `ops::Session` run natively in place of the browser's wasm worker, one session per page (an account's webview, by
 //! its label), as a browser has one worker per tab. The app carries its own copy of the module and never takes it from
 //! the server; the vault screens call the same ops through the page bridge (`VaultClient.js` finds

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The screen builder (plans/design-dev-aide.md 11): the screen tree as the screen facade mounts it, a screen's view
+<!-- The screen builder (plans/archive/design-dev-aide.md 11): the screen tree as the screen facade mounts it, a screen's view
     (where it renders, where its edits go: the base file in place, or the site's screen-extend of an upstream screen,
     D17), the Design frame's canvas buffers (its buffer:<id> preview token, F14), the stamps of a stamped render
     resolved to their files (F10), and a new subscreen from a gallery archetype. -->
@@ -43,7 +43,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="files" type="Integer"/></out-parameters>
     </service>
-    <service verb="resolve" noun="Stamps" type="rust" location="dev_aide::screens::resolve_stamps" allow-remote="false" read-only="true">
+    <service verb="resolve" noun="Stamps" authz-action="view" type="rust" location="dev_aide::screens::resolve_stamps" allow-remote="false" read-only="true">
         <description>The source stamps of a stamped render (file:line:column) as the Workspace opens them.</description>
         <in-parameters><parameter name="stamps" type="Object"/></in-parameters>
         <out-parameters><parameter name="stamps" type="Map"/></out-parameters>

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The environments (plans/Vault-Instances.md §4.1): production, staging, demo; each with its operational vault, approvers,
+<!-- The environments (plans/archive/Vault-Instances.md §4.1): production, staging, demo; each with its operational vault, approvers,
     required pipeline, machine access, unseal policy, transport and lease limit (store#InstanceEnvironment). Machine access
     here lets the environment's operations use the items the vault gave it (System › Vaults) with no approver: those
     items are then as strong as this server's own keys. Deploy (§4.6, M3) posts request#InstanceDeploy for the

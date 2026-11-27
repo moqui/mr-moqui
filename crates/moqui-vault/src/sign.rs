@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Ed25519 signatures over canonical statements (plans/Vault-Instances.md §3.2, Signatures). A statement is its kind
+//! Ed25519 signatures over canonical statements (plans/archive/Vault-Instances.md §3.2, Signatures). A statement is its kind
 //! and its parts, each written with its length, so no statement of one kind or with other parts has the same bytes.
 //! Verification is strict (RFC 8032 with the small-order and malleability checks).
 

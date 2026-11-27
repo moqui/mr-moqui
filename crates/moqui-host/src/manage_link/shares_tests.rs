@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The instance's rules of its recovery shares (plans/Vault-Instances.md §6, M6): a holder's key with no pinned
+//! The instance's rules of its recovery shares (plans/archive/Vault-Instances.md §6, M6): a holder's key with no pinned
 //! approver's check is refused, each share is sealed to one holder only, and a confirmation counts only when the holder
 //! signed it for the share the instance sent.
 

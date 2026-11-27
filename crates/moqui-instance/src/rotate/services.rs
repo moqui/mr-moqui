@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The rotation services of `org.moqui.dev.InstanceServices` (plans/Vault-Instances.md §4.7): the kinds'
+//! The rotation services of `org.moqui.dev.InstanceServices` (plans/archive/Vault-Instances.md §4.7): the kinds'
 //! `rotate#Credential`, `request#InstanceRotation` (an instance's Rotate, an environment's incident rotation, a member
 //! removal's offer), the rotation list and the job at the policy age. Each checks its caller under the caller's own
 //! authorization (INSTANCE_ADMIN, and the environment's approver group when it names one) before it turns authorization

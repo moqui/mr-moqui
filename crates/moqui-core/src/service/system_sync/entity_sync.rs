@@ -28,8 +28,8 @@ use moqui_lib::json::to_json;
 use moqui_lib::object::{basic_convert, Value};
 
 use super::{
-    add_error, call_service, has_error, integer_of, map_text, millis_of, now_millis, pairs, param_text, stamp,
-    take_errors, text_of, GET_DATA, INCLUDE_LIST, INTERNAL_RUN, PUT_DATA, RUN_SYNC,
+    add_error, add_message, call_service, has_error, integer_of, map_text, millis_of, now_millis, pairs, param_text,
+    stamp, take_errors, text_of, GET_DATA, INCLUDE_LIST, INTERNAL_RUN, PUT_DATA, RUN_SYNC,
 };
 use crate::entity::load_feed::{load_entity_xml_text, LoadOptions};
 use crate::entity::{Condition, EntityFacade};
@@ -71,14 +71,30 @@ pub(super) fn run_sync(
         return Ok(BTreeMap::new());
     };
     // If already running quit, unless lastStartDate was more than 24 hours ago.
-    if text_of(sync.get("statusId")) == "EsRunning"
-        && millis_of(sync.get("lastStartDate")).is_some_and(|started| started > now_millis() - DAY_MILLIS)
+    if let Some(started) = millis_of(sync.get("lastStartDate"))
+        .filter(|started| text_of(sync.get("statusId")) == "EsRunning" && *started > now_millis() - DAY_MILLIS)
     {
+        let text = format!(
+            "EntitySync {sync_id} not run: a run started at {} is still running",
+            shown(started)
+        );
+        tracing::info!("{text}");
+        add_message(text);
         return Ok(BTreeMap::new());
     }
-    // Make sure delayBufferMillis have passed since lastSuccessfulSyncTime.
+    // Make sure a whole split is older than delayBufferMillis since lastSuccessfulSyncTime: a run before then would
+    // read nothing and only write a History row, so it is skipped with a message saying when the next split is ready.
     let delay = delay_millis(sync.get("delayBufferMillis"));
-    if millis_of(sync.get("lastSuccessfulSyncTime")).is_some_and(|last| last > now_millis() - delay) {
+    let split = split_millis(sync.get("syncSplitMillis"));
+    let previous = millis_of(sync.get("lastSuccessfulSyncTime"));
+    if let Some(last) = previous.filter(|last| !split_due(*last, split, delay, now_millis())) {
+        let text = format!(
+            "EntitySync {sync_id} not run: the next split, after {}, passes the delay buffer at {}",
+            shown(last),
+            shown(last.saturating_add(split).saturating_add(delay))
+        );
+        tracing::info!("{text}");
+        add_message(text);
         return Ok(BTreeMap::new());
     }
 
@@ -139,8 +155,12 @@ pub(super) fn run_sync(
         text_of(results.get("recordsStored"))
     );
 
-    // If not yet up to delayBufferMillis trigger another async run.
-    if last_success.is_some_and(|last| last < now_millis() - delay) {
+    // If another whole split is older than delayBufferMillis trigger another async run. Only after a success that
+    // moved lastSuccessfulSyncTime: a failed run leaves it where it was, so following it again would repeat the failure
+    // at once, without end, with a History row each time (plans/ui-review-system-ai-integrations.md AI-UI-002); the next
+    // scheduled run tries again. Nor while the next split is still inside the buffer: that run would read nothing
+    // (AI-UI-004).
+    if error_message.is_empty() && follow_up(previous, last_success, split, delay, now_millis()) {
         let again = pairs([("entitySyncId", Value::string(&sync_id))]);
         if let Err(err) = crate::service::async_call(RUN_SYNC, &again) {
             add_error(err.message());
@@ -172,7 +192,11 @@ pub(super) fn internal_run(
         ("lastSuccessfulSyncTime", field(&sync, "lastSuccessfulSyncTime")),
         ("syncSplitMillis", field(&sync, "syncSplitMillis")),
         ("recordThreshold", field(&sync, "recordThreshold")),
-        ("delayBufferMillis", field(&sync, "delayBufferMillis")),
+        // the delay run#EntitySync waited for, so the read and the wait agree (a stored 0 is the default, as there)
+        (
+            "delayBufferMillis",
+            Value::I64(delay_millis(sync.get("delayBufferMillis"))),
+        ),
     ]);
 
     let mut results = BTreeMap::new();
@@ -259,11 +283,11 @@ pub(super) fn get_data(
         _ => Vec::new(),
     };
     let last_success = millis_of(parameters.get("lastSuccessfulSyncTime"));
-    // A split of zero would not move forward.
-    let split = integer_of(parameters.get("syncSplitMillis")).unwrap_or(1000).max(1);
+    let split = split_millis(parameters.get("syncSplitMillis"));
+    // A threshold under one would read no split and not move forward.
     let threshold = integer_of(parameters.get("recordThreshold"))
         .unwrap_or(1000)
-        .min(MAX_RECORD_THRESHOLD);
+        .clamp(1, MAX_RECORD_THRESHOLD);
     let delay = integer_of(parameters.get("delayBufferMillis")).unwrap_or(DEFAULT_DELAY_MILLIS);
 
     // Without a lastSuccessfulSyncTime this gets everything up to now less delayBufferMillis in one split, as the Java.
@@ -306,11 +330,14 @@ pub(super) fn get_data(
     }
     xml.push_str("</entity-facade-xml>");
 
+    // The end of the last split read, or the start when none was: the Java returned the split after it (`splitThru`),
+    // which the run stored as lastSuccessfulSyncTime, so the records of that next split were never read
+    // (plans/ui-review-system-ai-integrations.md AI-UI-004).
     Ok(BTreeMap::from([
         ("entityData".to_string(), Value::string(xml)),
         ("recordCount".to_string(), Value::I64(record_count)),
         ("exclusiveFromTime".to_string(), stamp(starting)),
-        ("inclusiveThruTime".to_string(), stamp(split_thru)),
+        ("inclusiveThruTime".to_string(), stamp(split_from)),
     ]))
 }
 
@@ -521,6 +548,25 @@ fn call_remote(
         deny_internal: crate::outbound::deny_private_network(&map_text(sync, "allowPrivateNetwork")),
     })?;
     let status = response.status;
+    if (300..400).contains(&status) {
+        // The shared client follows a redirect only to the same origin; another one (most often http to https) is the
+        // partner's address to correct, so say where it points.
+        let location = response
+            .headers
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("location"))
+            .map(|(_, value)| {
+                if value.contains("://") {
+                    crate::outbound::redacted(value)
+                } else {
+                    value.clone()
+                }
+            })
+            .unwrap_or_default();
+        return Err(LibError::new(format!(
+            "Remote EntitySync {operation} at {shown} was redirected ({status}) to {location}: set the target server URL to the address the partner serves"
+        )));
+    }
     let reply = crate::service::parse_json(&response.body).ok();
     if !(200..300).contains(&status) {
         let errors = match &reply {
@@ -540,6 +586,29 @@ fn call_remote(
 /// A field of the EntitySync map, null when it is missing, so the remote service applies its default.
 fn field(sync: &moqui_lib::object::ValueMap, name: &str) -> Value {
     sync.get(name).cloned().unwrap_or(Value::Null)
+}
+
+/// `syncSplitMillis ?: 1000`; a split under one millisecond would not move forward.
+fn split_millis(value: Option<&Value>) -> i64 {
+    integer_of(value).unwrap_or(1000).max(1)
+}
+
+/// Whether the split after `last` is whole and older than `delay` at `now`, so a run would read it: what
+/// `get#EntitySyncData` reads, and so what a run and its follow-up wait for.
+pub(super) fn split_due(last: i64, split: i64, delay: i64, now: i64) -> bool {
+    last.saturating_add(split) <= now.saturating_sub(delay)
+}
+
+/// Whether a run queues another: only after it moved lastSuccessfulSyncTime from `previous` to `last`, and while the
+/// split after `last` is due. A run that did not move it (a failure, or a pull from a remote that answered the same end)
+/// would only repeat itself.
+pub(super) fn follow_up(previous: Option<i64>, last: Option<i64>, split: i64, delay: i64, now: i64) -> bool {
+    last.is_some_and(|last| previous.is_none_or(|before| last > before) && split_due(last, split, delay, now))
+}
+
+/// A time in a message: RFC 3339 in UTC.
+fn shown(millis: i64) -> String {
+    jiff::Timestamp::from_millisecond(millis).map_or_else(|_| millis.to_string(), |at| at.to_string())
 }
 
 /// `delayBufferMillis ?: 300000`: null or zero is the default.

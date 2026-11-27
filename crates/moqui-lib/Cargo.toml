@@ -35,6 +35,8 @@ pulldown-cmark = { workspace = true }
 ammonia = { workspace = true }
 # The ETL CsvExtractor (src/etl.rs), streamed.
 csv = { workspace = true }
+# The Geo data reader (src/geo/text.rs): one member of a zip read as it inflates, within limits.
+zip = { workspace = true }
 tracing = { workspace = true }
 # The container driver's secret files (src/docker): a tar put into a container, and values zeroized when dropped.
 tar = { workspace = true, optional = true }

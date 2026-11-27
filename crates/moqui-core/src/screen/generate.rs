@@ -167,6 +167,14 @@ impl std::fmt::Debug for Generated {
     }
 }
 
+/// Whether what a render makes is kept with its definition, and what was kept is used: not while a service overlay
+/// holds the thread (a Dev AIDE Try in the sim, `service::overlay`), since a form, unit or template made then may be
+/// made from the overlay's service definitions (an `auto-fields-service`, a field's checks), which no other render
+/// may see, and one kept before would hide them from the Try.
+fn keeps() -> bool {
+    !crate::service::overlay::held()
+}
+
 impl Generated {
     pub(super) fn dependencies(&self) -> Vec<super::definition::Source> {
         lock(&self.dependencies).clone()
@@ -185,7 +193,7 @@ impl Generated {
     /// Run `work`, which makes something kept here, and keep the service names it looked up.
     pub(super) fn recorded<R>(&self, work: impl FnOnce() -> R) -> R {
         let (result, names) = crate::service::define::recording_lookups(work);
-        if !names.is_empty() {
+        if !names.is_empty() && keeps() {
             lock(&self.services).extend(names);
         }
         result
@@ -200,27 +208,34 @@ impl Generated {
     }
 
     pub(super) fn form(&self, name: &str) -> Option<Arc<FormInstance>> {
-        lock(&self.forms).get(name).cloned()
+        keeps().then(|| lock(&self.forms).get(name).cloned()).flatten()
     }
 
     pub(super) fn put_form(&self, name: &str, form: Arc<FormInstance>) {
-        lock(&self.forms).insert(name.to_string(), form);
+        if keeps() {
+            lock(&self.forms).insert(name.to_string(), form);
+        }
     }
 
     pub(super) fn static_template(&self, key: &str) -> Option<Arc<StaticTemplate>> {
-        lock(&self.statics).get(key)
+        keeps().then(|| lock(&self.statics).get(key)).flatten()
     }
 
     pub(super) fn put_static_template(&self, key: String, template: Arc<StaticTemplate>) {
         // One for each path the screen was requested by: many odd paths for one screen do not grow without end.
-        lock(&self.statics).insert(key, template);
+        if keeps() {
+            lock(&self.statics).insert(key, template);
+        }
     }
 
     pub(super) fn static_failure(&self, key: &str) -> Option<String> {
-        lock(&self.static_failures).get(key).cloned()
+        keeps().then(|| lock(&self.static_failures).get(key).cloned()).flatten()
     }
 
     pub(super) fn put_static_failure(&self, key: String, reason: String) {
+        if !keeps() {
+            return;
+        }
         let mut failures = lock(&self.static_failures);
         if failures.len() < MAX_STATIC_TEMPLATES {
             failures.insert(key, reason);
@@ -236,14 +251,19 @@ impl Generated {
     }
 
     pub(super) fn eligibility(&self, key: &str) -> Option<Arc<Eligibility>> {
-        lock(&self.eligibility).get(key).cloned()
+        keeps().then(|| lock(&self.eligibility).get(key).cloned()).flatten()
     }
 
     pub(super) fn put_eligibility(&self, key: String, value: Arc<Eligibility>) {
-        lock(&self.eligibility).insert(key, value);
+        if keeps() {
+            lock(&self.eligibility).insert(key, value);
+        }
     }
 
     fn unit(&self, key: &UnitKey<'_>) -> Option<Option<Arc<Unit>>> {
+        if !keeps() {
+            return None;
+        }
         moqui_lib::sync::read(&self.units)
             .get(key.mode)?
             .get(key.macro_location)?
@@ -252,6 +272,9 @@ impl Generated {
     }
 
     fn put_unit(&self, key: &UnitKey<'_>, unit: Option<Arc<Unit>>) {
+        if !keeps() {
+            return;
+        }
         moqui_lib::sync::write(&self.units)
             .entry(key.mode.to_string())
             .or_default()
@@ -262,11 +285,13 @@ impl Generated {
     }
 
     fn dynamic_unit(&self, key: &str) -> Option<Arc<Unit>> {
-        lock(&self.dynamic_units).get(key)
+        keeps().then(|| lock(&self.dynamic_units).get(key)).flatten()
     }
 
     fn put_dynamic_unit(&self, key: String, unit: Arc<Unit>) {
-        lock(&self.dynamic_units).insert(key, unit);
+        if keeps() {
+            lock(&self.dynamic_units).insert(key, unit);
+        }
     }
 
     /// The number of units generated, for tests.

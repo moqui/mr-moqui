@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Podman's own API for what its Docker-compatible API does not do (plans/Vault-Instances.md §4.2): a container's
+//! Podman's own API for what its Docker-compatible API does not do (plans/archive/Vault-Instances.md §4.2): a container's
 //! secret files are Podman secrets (`POST /libpod/secrets/create`), mounted by the container's SpecGenerator
 //! (`POST /libpod/containers/create`, `secrets: [{source, target, uid, gid, mode}]`) and deleted when the container
 //! is removed. A host is Podman when `GET /version` names the component "Podman Engine".

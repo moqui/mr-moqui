@@ -176,7 +176,47 @@ fn set_field(view: &mut AppView<HostLink>, id: &str, value: &str) {
     view.session_mut().set_buffer(id, value.to_string());
 }
 
+/// MON-B03: Releases shows its release times in the viewer's zone, named once, not the raw UTC text its service
+/// answers; one terminal render. Log context has no terminal template, so its times are checked on its html render
+/// (monitor_readers).
 #[test]
+fn releases_show_times_in_the_viewer_s_zone() {
+    if !crate::common::own_process() {
+        return;
+    }
+    moqui_host::logging::install();
+    let gate = common::start_with_data(
+        "monitor-tui-times",
+        r#"<entity-facade-xml type="seed">
+            <moqui.security.UserAccount userId="EX_JOHN_DOE" timeZone="America/Chicago"/>
+        </entity-facade-xml>"#,
+    );
+    let factory = gate.server.factory();
+    let chicago = jiff::tz::TimeZone::get("America/Chicago").unwrap();
+    // the release's time as epoch millis, as the annotation index holds it
+    let released = jiff::Timestamp::from_millisecond(jiff::Timestamp::now().as_millisecond() - 3_600_000).unwrap();
+    let facade = search::installed(factory).unwrap();
+    facade.index_entries("monitor_annotations",vec![document(json!({"_id":"release-tui-times","time":released.as_millisecond(),"source":"release","scope":"service","service.name":"monitor-tui-times","service.version":"3.0","service.instance.id":"tui-times-instance","text":"monitor-tui-times 3.0","tags":["release"]}))]).unwrap();
+    let link = HostLink::as_user(factory, "john.doe");
+
+    let mut releases = open(&link, "/apps/system/Monitor/Releases?serviceName=monitor-tui-times");
+    let rows = column_texts(&releases, "ReleaseList", &["Version", "Released"]);
+    let release = rows
+        .iter()
+        .find(|row| row[0] == "3.0")
+        .unwrap_or_else(|| panic!("{rows:?}"));
+    assert_eq!(
+        release[1],
+        released.to_zoned(chicago).strftime("%Y-%m-%d %H:%M:%S").to_string()
+    );
+    let text = releases.screen_text(180, 80);
+    assert!(text.contains("Times shown in America/Chicago."), "{text}");
+}
+
+/// A sweep of every monitoring and report screen in the terminal, about 20 seconds: an acceptance test (AGENTS.md,
+/// Rendering in tests), run by `cargo test-slow` and `./moq accept-all`.
+#[test]
+#[ignore = "acceptance: every monitoring and report screen renders in the terminal and its native interactions work"]
 fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     if !crate::common::own_process() {
         return;
@@ -1032,6 +1072,32 @@ fn has_date(text: &str) -> bool {
             _ => byte.is_ascii_digit(),
         })
     })
+}
+/// The text of each row's cells under the columns titled `titles`, a row a vector.
+fn column_texts(view: &AppView<HostLink>, list: &str, titles: &[&str]) -> Vec<Vec<String>> {
+    let form = view.session().list(list).unwrap_or_else(|| panic!("no list {list}"));
+    let at: Vec<usize> = titles
+        .iter()
+        .map(|title| {
+            form.columns
+                .iter()
+                .position(|column| column.title == *title)
+                .unwrap_or_else(|| panic!("no column {title} in {list}"))
+        })
+        .collect();
+    form.rows
+        .iter()
+        .map(|row| {
+            at.iter()
+                .map(|at| {
+                    row.cells
+                        .get(*at)
+                        .map(|cell| cell.text().to_string())
+                        .unwrap_or_default()
+                })
+                .collect()
+        })
+        .collect()
 }
 /// The url of the link of the current screen whose url holds `fragment`.
 fn link_url(view: &AppView<HostLink>, fragment: &str) -> String {

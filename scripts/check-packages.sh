@@ -7,7 +7,7 @@
 # joins) and with only XMPP (xmpp, without the call media), the vault crate natively and as its wasm module (whose
 # tree must hold no getrandom), and the framework with none (what the browser build links); the entity crate alone (without the test-support the workspace's tests turn on); the report crate without
 # xlsx (as the browser links it); the dev kit without its file watcher (as Lite links it); the Tools crate alone (on
-# moqui-core with only the features it asks for); the drivers with no
+# moqui-core with only the features it asks for); the Overture crate alone (its tests, which no host feature set builds); the drivers with no
 # database client, with their tests; the mail crate without imap (the send half alone, as Lite links it); the
 # terminal client on its own feature sets (the model alone is what moqui-core's tests link); the lib crate with only its
 # container driver and its fake engine (docker-fake), with its tests and opt-in test; then the scripted TUI
@@ -50,6 +50,7 @@ run -p moqui-entity --all-targets "$@"
 run -p moqui-report --no-default-features --all-targets "$@"
 run -p moqui-devkit --all-targets "$@"
 run -p moqui-tools --all-targets "$@"
+run -p moqui-maps --all-targets "$@"
 run -p moqui-drivers --all-targets "$@"
 run -p moqui-mail --no-default-features --all-targets "$@"
 run -p moqui-tui --no-default-features --features model --all-targets "$@"

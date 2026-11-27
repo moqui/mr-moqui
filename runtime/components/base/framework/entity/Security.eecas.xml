@@ -156,6 +156,33 @@ along with this software (see the LICENSE.md file). If not, see
                 UserSecurityChecks.assertStoredExpression(applyCond, "ArtifactAuthzFilter.applyCond")
         </script></actions>
     </eeca>
+    <!-- a field that names a location selects text that is run where its record is used: a screen definition (actions),
+        a document rendered by the renderer of its extension, a decorator screen. Any location but a component's needs
+        DATABASE_ADMIN, as a stored expression does (plans/Security-Review-Low.md SEC-SCR-92) -->
+    <eeca id="ScreenDocumentLocation" entity="moqui.screen.ScreenDocument"
+            on-create="true" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>
+            if ((eecaOperation != "update" || docLocation != originalValue?.docLocation) &amp;&amp; docLocation
+                    &amp;&amp; !String(docLocation).startsWith("component://"))
+                UserSecurityChecks.assertStoredExpression(docLocation, "ScreenDocument.docLocation")
+        </script></actions>
+    </eeca>
+    <eeca id="SubscreensItemLocation" entity="moqui.screen.SubscreensItem"
+            on-create="true" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>
+            if ((eecaOperation != "update" || subscreenLocation != originalValue?.subscreenLocation) &amp;&amp; subscreenLocation
+                    &amp;&amp; !String(subscreenLocation).startsWith("component://"))
+                UserSecurityChecks.assertStoredExpression(subscreenLocation, "SubscreensItem.subscreenLocation")
+        </script></actions>
+    </eeca>
+    <eeca id="WikiSpaceDecorator" entity="moqui.resource.wiki.WikiSpace"
+            on-create="true" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>
+            if ((eecaOperation != "update" || decoratorScreenLocation != originalValue?.decoratorScreenLocation)
+                    &amp;&amp; decoratorScreenLocation &amp;&amp; !String(decoratorScreenLocation).startsWith("component://"))
+                UserSecurityChecks.assertStoredExpression(decoratorScreenLocation, "WikiSpace.decoratorScreenLocation")
+        </script></actions>
+    </eeca>
     <eeca id="SubscreensItemMenuTitle" entity="moqui.screen.SubscreensItem"
             on-create="true" on-update="true" run-before="true" get-original-value="true">
         <actions><script>
@@ -250,9 +277,9 @@ along with this software (see the LICENSE.md file). If not, see
     </eeca>
     <!-- The new-device sign-in notice (mr-boss plan/impl-admin.md P10, design-admin §4 Sessions): a successful sign-in's
         history row is written by a worker after the sign-in itself (crates/moqui-core/src/user/login.rs save_history, at
-        most one row a minute for a user), with its visit; the notice is decided and sent then, in a transaction of its own
-        (a notification whose email cannot be sent marks its transaction rollback-only). It never fails the row: a failure
-        is logged. -->
+        most one row a minute for a user), with its visit; the notice is decided and stored then, in a transaction of its
+        own, and goes out (socket, email, push) once that commits, an email that cannot be sent being logged. It never fails
+        the row: a failure is logged. -->
     <eeca id="UserLoginHistoryNewDevice" entity="moqui.security.UserLoginHistory" on-create="true">
         <condition><expression>successfulLogin == 'Y' &amp;&amp; !!visitId</expression></condition>
         <actions><script><![CDATA[

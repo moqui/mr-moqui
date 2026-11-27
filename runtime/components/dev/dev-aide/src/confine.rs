@@ -12,11 +12,12 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Path confinement (plans/design-dev-aide.md 4.1): a path the client names is relative to a root, and resolves inside
+//! Path confinement (plans/archive/design-dev-aide.md 4.1): a path the client names is relative to a root, and resolves inside
 //! the root's canonical directory or not at all: no absolute path (`/x`, `C:\x`, `\\server\share`, `\\?\`), no `..`, no
 //! symlink that leads out, nothing under `.git`, and nothing on the deny list (the runtime's database and its saved
 //! copies, logs, transaction log, temporary files, `.env` and its copies, certificates, SFTP root and installed
-//! programs, and a root's `target`). The runtime's conf files are for the full tier only.
+//! programs, and a root's `target`, though not the loaded runtime or components when they sit there). The runtime's conf
+//! files are for the full tier only.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -48,7 +49,7 @@ pub const ENV_PREFIX: &str = ".env";
 /// only at the full tier ([`hidden_below_full`]).
 pub const CONF: &str = "conf";
 
-/// The runtime directory of the agents' worktrees (plans/design-dev-aide.md 21.8): reached only as their own roots.
+/// The runtime directory of the agents' worktrees (plans/archive/design-dev-aide.md 21.8): reached only as their own roots.
 pub const WORKTREES: &str = "worktrees";
 
 /// A path the client may use, inside `root`.
@@ -63,12 +64,13 @@ pub struct Resolved {
     pub real: String,
 }
 
-/// Resolve `relative` (with `/` or `\` separators) in `root`, a canonical directory.
+/// Resolve `relative` (with `/` or `\` separators) in `root`, a canonical directory. `components` are the loaded
+/// components' directories, which are not build output though a root's `target` holds them ([`build_output`]).
 ///
 /// # Errors
 ///
 /// Returns an error naming the rule a path breaks.
-pub fn resolve(root: &Path, runtime: &Path, relative: &str) -> Result<Resolved, Error> {
+pub fn resolve(root: &Path, runtime: &Path, components: &[&Path], relative: &str) -> Result<Resolved, Error> {
     let parts = parts(relative)?;
     let mut path = root.to_path_buf();
     for part in &parts {
@@ -98,6 +100,7 @@ pub fn resolve(root: &Path, runtime: &Path, relative: &str) -> Result<Resolved, 
     if !inside(&canonical, root) {
         return Err(Error::new(format!("{relative} leads outside its root")));
     }
+    let runtime = runtime.canonicalize().ok();
     if let Ok(after_root) = canonical.strip_prefix(root) {
         if after_root
             .components()
@@ -107,15 +110,11 @@ pub fn resolve(root: &Path, runtime: &Path, relative: &str) -> Result<Resolved, 
                 "{relative} is under .git, which the dev-aide does not open"
             )));
         }
-        if after_root
-            .components()
-            .next()
-            .is_some_and(|first| first.as_os_str() == "target")
-        {
-            return Err(Error::new(format!("{relative} is a build output (target)")));
-        }
     }
-    if let Ok(runtime) = runtime.canonicalize() {
+    if build_output(&canonical, root, runtime.as_deref(), components) {
+        return Err(Error::new(format!("{relative} is a build output (target)")));
+    }
+    if let Some(runtime) = runtime {
         for denied in DENIED_RUNTIME {
             if inside(&canonical, &runtime.join(denied)) {
                 return Err(Error::new(format!(
@@ -151,6 +150,60 @@ pub fn resolve(root: &Path, runtime: &Path, relative: &str) -> Result<Resolved, 
         relative: parts.join("/"),
         real,
     })
+}
+
+/// Whether `path` (canonical, in `root`) is build output: under the root's `target`. The loaded runtime and components
+/// are not, though they sit there: a disposable runtime under the repository's `target` (the testing skill's), or the
+/// components a test run links into its scratch runtime from one, which the repository holds as their root
+/// (crate::roots). A path in one of them is measured from the deepest that holds it, so only that one's own `target`
+/// is refused. `runtime` and `path` are canonical (`path` up to its deepest existing part) and the components are made
+/// so, so a symlink in one of them that leads to the root's other build output is measured from the root and refused.
+///
+/// A loaded component's whole real directory is exempt: only the server's own setup (its conf and `components.xml`)
+/// can point a component into build output, never a client. Where a base is not a plain prefix of `path` (a case the
+/// file system folds and [`inside`] does on Windows) the path is build output: it fails closed.
+fn build_output(path: &Path, root: &Path, runtime: Option<&Path>, components: &[&Path]) -> bool {
+    let under_target = |base: &Path| match path.strip_prefix(base) {
+        Ok(after) => after
+            .components()
+            .next()
+            .is_some_and(|first| is_target(first.as_os_str())),
+        Err(_) => true,
+    };
+    if !under_target(root) {
+        return false;
+    }
+    let target = root.join("target");
+    let loaded = components.iter().filter_map(|dir| dir.canonicalize().ok());
+    let base = runtime
+        .map(Path::to_path_buf)
+        .into_iter()
+        .chain(loaded)
+        .filter(|dir| inside(dir, &target) && !inside(&target, dir) && inside(path, dir))
+        .max_by_key(|dir| dir.components().count());
+    base.is_none_or(|base| under_target(&base))
+}
+
+/// Whether a path part is `target`, ignoring case on Windows as its file system does.
+fn is_target(name: &std::ffi::OsStr) -> bool {
+    #[cfg(windows)]
+    {
+        name.to_string_lossy().eq_ignore_ascii_case("target")
+    }
+    #[cfg(not(windows))]
+    {
+        name == "target"
+    }
+}
+
+/// Whether `location` (canonical) is build output of one of `roots` (canonical) that holds it ([`build_output`]): a
+/// root made there would open what [`resolve`] refuses in the root that holds it.
+#[must_use]
+pub fn in_build_output(location: &Path, runtime: &Path, components: &[&Path], roots: &[&Path]) -> bool {
+    let runtime = runtime.canonicalize().ok();
+    roots
+        .iter()
+        .any(|root| inside(location, root) && build_output(location, root, runtime.as_deref(), components))
 }
 
 /// Whether `path` (canonical) is a name at the top of `runtime` (canonical) that starts with [`ENV_PREFIX`], or under one.
@@ -227,153 +280,5 @@ pub fn is_binary(bytes: &[u8]) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct Scratch(PathBuf);
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-
-    fn scratch(label: &str) -> (Scratch, PathBuf, PathBuf) {
-        let base = std::env::temp_dir().join(format!("dev-aide-confine-{label}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
-        let runtime = base.join("runtime");
-        let root = runtime.join("components/addon/site");
-        std::fs::create_dir_all(root.join("service")).unwrap();
-        std::fs::create_dir_all(root.join(".git")).unwrap();
-        std::fs::create_dir_all(runtime.join("db")).unwrap();
-        std::fs::write(root.join("service/A.xml"), "<services/>").unwrap();
-        let root = root.canonicalize().unwrap();
-        (Scratch(base), root, runtime)
-    }
-
-    #[test]
-    fn a_relative_path_resolves_inside_its_root() {
-        let (_scratch, root, runtime) = scratch("ok");
-        let found = resolve(&root, &runtime, "service/A.xml").unwrap();
-        assert_eq!(found.path, root.join("service/A.xml"));
-        assert_eq!(found.relative, "service/A.xml");
-        // a file that does not exist yet, under a directory that does not either
-        let new = resolve(&root, &runtime, "screen\\New/Page.xml").unwrap();
-        assert_eq!(new.relative, "screen/New/Page.xml");
-        assert!(new.path.starts_with(&root));
-        assert_eq!(resolve(&root, &runtime, "").unwrap().path, root);
-    }
-
-    #[test]
-    fn what_leads_out_or_is_denied_is_refused() {
-        let (_scratch, root, runtime) = scratch("refused");
-        for (path, why) in [
-            ("../other/x.xml", ".."),
-            ("service/../../x", ".."),
-            ("/etc/passwd", "absolute"),
-            ("\\\\server\\share\\x", "absolute"),
-            ("\\\\?\\C:\\x", "absolute"),
-            ("C:\\Windows\\x", "absolute"),
-            ("c:/x", "absolute"),
-            (".git/config", ".git"),
-            ("service/.git/x", ".git"),
-            ("target/debug/x", "target"),
-            ("a\0b", "NUL"),
-        ] {
-            let err = resolve(&root, &runtime, path).unwrap_err().to_string();
-            assert!(err.contains(why), "{path}: {err}");
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_symlink_that_leads_out_is_refused() {
-        let (scratch, root, runtime) = scratch("symlink");
-        let outside = scratch.0.join("outside");
-        std::fs::create_dir_all(&outside).unwrap();
-        std::fs::write(outside.join("secret.txt"), "x").unwrap();
-        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
-        let err = resolve(&root, &runtime, "link/secret.txt").unwrap_err().to_string();
-        assert!(err.contains("outside its root"), "{err}");
-        // into the runtime's database, through a symlink inside the root
-        std::os::unix::fs::symlink(runtime.join("db"), root.join("db-link")).unwrap();
-        assert!(resolve(&root, &runtime, "db-link/x").is_err());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_symlink_inside_the_root_resolves_to_where_it_leads() {
-        let (_scratch, root, runtime) = scratch("symlink-inside");
-        std::fs::create_dir_all(root.join("components/addon/upstream/entity")).unwrap();
-        std::fs::create_dir_all(root.join("components/addon/my-site")).unwrap();
-        std::os::unix::fs::symlink(
-            root.join("components/addon/upstream"),
-            root.join("components/addon/my-site/up"),
-        )
-        .unwrap();
-        let found = resolve(&root, &runtime, "components/addon/my-site/up/entity/X.xml").unwrap();
-        assert_eq!(found.relative, "components/addon/my-site/up/entity/X.xml");
-        assert_eq!(found.real, "components/addon/upstream/entity/X.xml");
-        assert_eq!(resolve(&root, &runtime, "service/A.xml").unwrap().real, "service/A.xml");
-    }
-
-    #[test]
-    fn a_runtime_root_does_not_reach_the_denied_directories() {
-        let (_scratch, _root, runtime) = scratch("runtime");
-        let runtime_root = runtime.canonicalize().unwrap();
-        // SEC-DEV-04: the saved databases, the SFTP root, the installed programs and copies of .env too
-        for path in [
-            "db/x",
-            "log/moqui.log",
-            ".env",
-            "cert/key.pem",
-            "txlog/x",
-            "tmp/x",
-            "save/copy/db",
-            "sftp/x",
-            "install/x",
-            "opensearch/config/x",
-            ".env.bak",
-            ".env.local",
-        ] {
-            let err = resolve(&runtime_root, &runtime, path).unwrap_err().to_string();
-            assert!(err.contains("does not open"), "{path}: {err}");
-        }
-        assert!(resolve(&runtime_root, &runtime, "conf/MoquiDevConf.xml").is_ok());
-        assert!(resolve(&runtime_root, &runtime, "environment.md").is_ok());
-    }
-
-    /// SEC-DEV-04: the conf files are the full tier's; a root a non-admin adds is in the runtime or a root there is.
-    #[test]
-    fn conf_files_are_the_full_tier_s_and_a_non_admin_s_root_stays_near() {
-        let (scratch, root, runtime) = scratch("conf");
-        let runtime_root = runtime.canonicalize().unwrap();
-        let conf = resolve(&runtime_root, &runtime, "conf/MoquiDevConf.xml").unwrap();
-        assert!(hidden_below_full(&conf.path, &runtime));
-        let service = resolve(&root, &runtime, "service/A.xml").unwrap();
-        assert!(!hidden_below_full(&service.path, &runtime));
-        let elsewhere = scratch.0.join("elsewhere");
-        std::fs::create_dir_all(&elsewhere).unwrap();
-        let elsewhere = elsewhere.canonicalize().unwrap();
-        assert!(root_location_open(&root.join("service"), &runtime, &[]));
-        assert!(!root_location_open(&elsewhere, &runtime, &[]));
-        assert!(!root_location_open(Path::new("/"), &runtime, &[&root]));
-        assert!(root_location_open(&elsewhere, &runtime, &[&elsewhere]));
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn windows_case_is_folded() {
-        assert!(inside(Path::new("C:\\Work\\Site\\x.xml"), Path::new("c:\\work\\site")));
-        assert!(!inside(
-            Path::new("C:\\Work\\Sitex\\x.xml"),
-            Path::new("c:\\work\\site")
-        ));
-    }
-
-    #[test]
-    fn binary_is_a_nul_byte_early() {
-        assert!(is_binary(b"PNG\0\x01"));
-        assert!(!is_binary("<a>ü</a>".as_bytes()));
-    }
-}
+#[path = "confine_tests.rs"]
+mod tests;

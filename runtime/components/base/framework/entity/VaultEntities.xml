@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Vaults (plans/Vault-Instances.md §3.3; docs/security/Vaults.md): secrets under keys the server does not hold. The
+<!-- Vaults (plans/archive/Vault-Instances.md §3.3; docs/security/Vaults.md): secrets under keys the server does not hold. The
     rows hold public keys, signatures and ciphertext made by the vault crate (crates/moqui-vault) in a client: the server
     never decrypts a personal item, a vault key or a personal private key. Bytes are hex; a record whose signature covers
     its fields (a key version, a member's wrap, a key check, a delivery) is stored field by field as it was signed, so a
@@ -135,7 +135,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="bindingKey" type="text-medium"><description>Operational only: AppInstance:&lt;id&gt;:dbPassword</description></field>
         <field name="itemName" type="text-medium"><description>Operational only</description></field>
         <field name="rotationDays" type="number-integer"><description>Operational only: this binding's rotation age in
-            days, over its type's (VaultItemType.rotationDays); past it the item is due (plans/Vault-Instances.md
+            days, over its type's (VaultItemType.rotationDays); past it the item is due (plans/archive/Vault-Instances.md
             §4.7)</description></field>
         <field name="rotatedDate" type="date-time"><description>When the value last changed at its source: set when the item
             is made or deposited, by a rotation's new revision, and by update#VaultItem when it says rotated; an item's
@@ -172,7 +172,7 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <entity entity-name="VaultItemPending" package="moqui.security.vault" use="transactional" cache="never">
-        <description>A rotation's new value of an operational item (plans/Vault-Instances.md §4.7), deposited before the
+        <description>A rotation's new value of an operational item (plans/archive/Vault-Instances.md §4.7), deposited before the
             source is changed: its own item key wrapped to the deposit key (VwDeposit) and the item's body with the new
             value, sealed, so the server cannot read it back. The rotation makes it the item's next revision when the
             instances took the value, and drops it when the old value was put back. When it could not put the old value
@@ -439,7 +439,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="description" type="text-medium"/>
         <field name="sequenceNum" type="number-integer"/>
         <field name="rotationDays" type="number-integer"><description>The rotation age in days of an operational item of
-            the type, unless its binding sets its own (VaultItem.rotationDays); empty: none (plans/Vault-Instances.md
+            the type, unless its binding sets its own (VaultItem.rotationDays); empty: none (plans/archive/Vault-Instances.md
             §4.7)</description></field>
         <relationship type="many" related="moqui.security.vault.VaultItemTypeField" short-alias="fields">
             <key-map field-name="vaultItemTypeId"/></relationship>

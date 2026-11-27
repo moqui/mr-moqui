@@ -50,8 +50,34 @@ pub fn locale() -> String {
         .unwrap_or_else(|| DEFAULT_LOCALE.to_string())
 }
 
-/// The session time zone, else the server's ([`server_time_zone`]): Java's `ec.user.getTimeZone()`.
+thread_local! {
+    /// The zone [`with_time_zone`] holds for its body, over the session's.
+    static HELD_ZONE: std::cell::RefCell<Option<TimeZone>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Run `body` with [`time_zone`] answering `zone` (an IANA name) on this thread, so the text it reads as timestamps
+/// (a data file's records) is read as another user read it: Dev AIDE's Load the changed records reads a file's base
+/// and its text in the zone of the load that made the base. An unknown zone leaves the session's. Not Java's.
+pub fn with_time_zone<T>(zone: &str, body: impl FnOnce() -> T) -> T {
+    struct Restore(Option<TimeZone>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            HELD_ZONE.with(|held| *held.borrow_mut() = self.0.take());
+        }
+    }
+    let Ok(zone) = TimeZone::get(zone.trim()) else {
+        return body();
+    };
+    let _restore = Restore(HELD_ZONE.with(|held| held.borrow_mut().replace(zone)));
+    body()
+}
+
+/// The session time zone, else the server's ([`server_time_zone`]): Java's `ec.user.getTimeZone()`. Within
+/// [`with_time_zone`], the zone it holds.
 pub fn time_zone() -> TimeZone {
+    if let Some(held) = HELD_ZONE.with(|held| held.borrow().clone()) {
+        return held;
+    }
     crate::user::time_zone()
         .ok()
         .flatten()

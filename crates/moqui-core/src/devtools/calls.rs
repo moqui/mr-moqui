@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The calls observed on the artifact stack of a dev instance (plans/design-dev-aide.md 7.1): each pair of a frame and
+//! The calls observed on the artifact stack of a dev instance (plans/archive/design-dev-aide.md 7.1): each pair of a frame and
 //! the frame pushed on it (a screen, transition, service, entity or REST path), counted per thread, merged each second,
 //! and written to `DevArtifactCall` rows each minute, so they survive a restart and join the reference lists. Between
 //! writes at most [`MAX_PAIRS`] pairs are held, the longest unseen dropped first. Off, a push costs one atomic load.

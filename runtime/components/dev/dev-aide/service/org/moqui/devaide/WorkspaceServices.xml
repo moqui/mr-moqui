@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The Workspace's roots, directories and files (plans/design-dev-aide.md 4 and 5.7), implemented in the dev-aide crate
+<!-- The Workspace's roots, directories and files (plans/archive/design-dev-aide.md 4 and 5.7), implemented in the dev-aide crate
     (src/workspace.rs). Each checks the instance purpose (dev) and the user's tier first: DEV_AIDE_VIEW reads,
     DEV_AIDE_EXTEND writes in site components, DEV_AIDE does everything; paths are confined to their root. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
@@ -37,7 +37,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="gitAvailable" type="Boolean"/><parameter name="tier"/>
         </out-parameters>
     </service>
-    <service verb="list" noun="Directory" type="rust" location="dev_aide::workspace::list_directory" allow-remote="false" read-only="true">
+    <service verb="list" noun="Directory" authz-action="view" type="rust" location="dev_aide::workspace::list_directory" allow-remote="false" read-only="true">
         <description>The entries of a directory, folders first, with their git status (a folder's rolled up) and whether git ignores them.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
@@ -71,18 +71,24 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="save" noun="File" type="rust" location="dev_aide::workspace::save_file" allow-remote="false">
-        <description>Write a file read at baseHash (its line endings, byte order mark and mode kept); conflict with the disk's text when it changed since. Answers the reload report, the problems and the git status.</description>
+        <description>Write a file read at baseHash (its line endings, byte order mark and mode kept); conflict with the disk's text when it changed since. Answers the reload report, the problems and the git status.
+            On a hosted root (plans/archive/design-dev-aide.md 4.10) the write is a commit to the root's branch by the user through
+            commit#GitFiles, with message (Edit [path] when empty) and the root's task trailer; baseHash is the blob the
+            file had when opened, and the conflict's diskText is the branch's when the branch moved past it. Nothing is
+            reloaded.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
             <parameter name="path" required="true"/>
             <parameter name="text" allow-html="any"/>
             <parameter name="baseHash"/>
+            <parameter name="message" allow-html="any"><description>A hosted root's commit message</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="conflict" type="Boolean"/>
             <parameter name="diskText"/>
             <parameter name="diskHash"/>
             <parameter name="hash"/>
+            <parameter name="commitId"><description>A hosted root's commit</description></parameter>
             <parameter name="status"/>
             <parameter name="restart" type="Boolean"/>
             <parameter name="rebuild" type="Boolean"/>
@@ -140,10 +146,11 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="search" noun="Files" type="rust" location="dev_aide::workspace::search_files" allow-remote="false" read-only="true">
-        <description>Lines matching a text or a regular expression (git grep in a repository, a walk of a plain root), at most 500.</description>
+        <description>Lines matching a text (git grep in a repository) or a regular expression (Rust's over the whole text of
+            each file, as replace#Files reads it, answered by line), at most 500; a plain root is walked.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
-            <parameter name="query" required="true"/>
+            <parameter name="query" required="true" allow-html="any"><description>Text, not shown as HTML: a search for a tag is a search</description></parameter>
             <parameter name="regex" type="Boolean"/>
             <parameter name="caseSensitive" type="Boolean"/>
             <parameter name="pathFilter"/>
@@ -151,6 +158,73 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="results" type="List"/>
             <parameter name="truncated" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="replace" noun="Files" type="rust" location="dev_aide::replace::replace_files" allow-remote="false">
+        <description>Replace across a root's files (4.3). With no files, the preview: each file a search finds (git grep
+            in a repository, a walk of a plain root), its matches with their lines before and after, its hash, and why
+            the user may not write it (refused: an upstream file while the lock is on, a read-only root), at most 200
+            files and 2000 matches. With files, the matches chosen in each replaced through the save pipeline (audited,
+            reloaded), each file on its own: one changed since its preview (its hash) or that may not be written is
+            refused and named, and the others are written.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="query" required="true" allow-html="any"/>
+            <parameter name="replacement" allow-html="any"><description>For a regular expression, $1 and ${name} are its groups.</description></parameter>
+            <parameter name="regex" type="Boolean"/>
+            <parameter name="caseSensitive" type="Boolean"/>
+            <parameter name="pathFilter"/>
+            <parameter name="files" type="Object"><description>[{path, hash, matches}]: each file's hash as the preview
+                read it and the indexes of the matches to replace; empty for the preview.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="files" type="List"><description>The preview: {path, hash, matches [{index, line, column,
+                text, after}], more, refused}.</description></parameter>
+            <parameter name="matchCount" type="Integer"/>
+            <parameter name="truncated" type="Boolean"/>
+            <parameter name="replaced" type="List"><description>{path, count, hash, problems}</description></parameter>
+            <parameter name="refused" type="List"><description>{path, reason}</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="EditorSettings" type="rust" location="dev_aide::editor::get_editor_settings" allow-remote="false" read-only="true">
+        <description>The user's editor settings (the DEV_AIDE_EDITOR preference, 5.1): font size, tab size, wrap, white
+            space shown, the keymap, the TypeScript check (typeCheck), and each command's keys with its default.</description>
+        <out-parameters>
+            <parameter name="settings" type="Map"/>
+            <parameter name="commands" type="List"><description>{command, label, scope (workspace or editor), defaultKeys, keys}</description></parameter>
+            <parameter name="keymaps" type="List"/>
+        </out-parameters>
+    </service>
+    <!-- a user's own preference: the view tier sets it too, so the action is view -->
+    <service verb="store" noun="EditorSettings" authz-action="view" type="rust" location="dev_aide::editor::store_editor_settings" allow-remote="false">
+        <description>The user's font size (8 to 32), tab size (1 to 8), wrap, white space shown, keymap (default,
+            vscode or vim) and the TypeScript check of a script file; the keys are kept. Refused out of range or for an unknown keymap.</description>
+        <in-parameters>
+            <parameter name="fontSize"/>
+            <parameter name="tabSize"/>
+            <parameter name="wrap"/>
+            <parameter name="whitespace"/>
+            <parameter name="keymap"/>
+            <parameter name="typeCheck"><description>The TypeScript check of a script file (5.4)</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="settings" type="Map"/>
+            <parameter name="commands" type="List"/>
+            <parameter name="keymaps" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="store" noun="EditorKey" authz-action="view" type="rust" location="dev_aide::editor::store_editor_key" allow-remote="false">
+        <description>A command's keys in CodeMirror's form (Mod-Shift-f), over the default keymap; empty for its
+            default. Refused for an unknown command, keys not in that form, or keys another command runs on.</description>
+        <in-parameters>
+            <parameter name="command" required="true"/>
+            <parameter name="keys"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="command"/>
+            <parameter name="settings" type="Map"/>
+            <parameter name="commands" type="List"/>
+            <parameter name="keymaps" type="List"/>
         </out-parameters>
     </service>
     <service verb="find" noun="Files" type="rust" location="dev_aide::workspace::find_files" allow-remote="false" read-only="true">
@@ -162,7 +236,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="files" type="List"/>
         </out-parameters>
     </service>
-    <service verb="check" noun="File" type="rust" location="dev_aide::workspace::check_file" allow-remote="false" read-only="true">
+    <service verb="check" noun="File" authz-action="view" type="rust" location="dev_aide::workspace::check_file" allow-remote="false" read-only="true">
         <description>The problems of a file's text (the editor's buffer), as a save would find them.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
@@ -187,23 +261,29 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="componentName" required="true"/>
             <parameter name="dependsOn"/>
+            <parameter name="gitRemote"><description>The remote URL the repository starts with as origin (https with no user part, ssh, git, or user@host:path)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="location"/>
             <parameter name="restart" type="Boolean"/>
+            <parameter name="remoteAdded" type="Boolean"/>
         </out-parameters>
     </service>
     <service verb="create" noun="Component" type="rust" location="dev_aide::workspace::create_component" allow-remote="false">
-        <description>A component from the component template (runtime/components/dev/template), in runtime/components/addon, runtime/components/dev with dev, or runtime/components/test with test, with a git repository; its screens and REST API, or one of them. ./moq component-create makes the same. It loads after a restart.</description>
+        <description>A component from the component template (runtime/components/dev/template), in runtime/components/addon, runtime/components/dev with dev (a dev tool always), or runtime/components/test with test, with a git repository and an optional origin; an App with its screens and REST API, or one of them, or another kind. ./moq component-create makes the same. It loads after a restart, a native one after a rebuild too.</description>
         <in-parameters>
             <parameter name="componentName" required="true"/>
-            <parameter name="part" default-value="all"><description>all, screens (no REST API) or rest (no screens)</description></parameter>
+            <parameter name="kind"><description>app (the default, with part), data, native, theme, skills or dev-tool; or all, screens or rest for an App of that part</description></parameter>
+            <parameter name="part"><description>An App's: all (the default), screens (no REST API) or rest (no screens)</description></parameter>
+            <parameter name="gitRemote"><description>The remote URL the repository starts with as origin (https with no user part, ssh, git, or user@host:path)</description></parameter>
             <parameter name="dev" type="Boolean"><description>In runtime/components/dev, loaded only on a dev instance</description></parameter>
             <parameter name="test" type="Boolean"><description>In runtime/components/test, loaded on a dev or test instance only</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="location"/>
             <parameter name="restart" type="Boolean"/>
+            <parameter name="rebuild" type="Boolean"><description>A native component: ./moq build before the restart</description></parameter>
+            <parameter name="remoteAdded" type="Boolean"/>
         </out-parameters>
     </service>
     <service verb="set" noun="Presence" type="rust" location="dev_aide::workspace::set_presence" allow-remote="false">
@@ -213,6 +293,37 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="paths" type="List"/>
         </in-parameters>
         <out-parameters><parameter name="editors" type="List"/></out-parameters>
+    </service>
+    <service verb="get" noun="CoeditAccess" type="rust" location="dev_aide::coedit::get_coedit_access" allow-remote="false" read-only="true">
+        <description>Whether a user may co-edit a file (F15), asked by the file's room (moqui-collab text rooms) as the
+            user: shared mode only, a user who may write the file as Save would, the path confined and as the Workspace
+            names it; with the bounds, and the file's text (LF line endings) when asked. Refused for another user than
+            the current one.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="userId" required="true"/>
+            <parameter name="withText" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="canEdit" type="Boolean"/>
+            <parameter name="reason"><description>Why not, when the user may not</description></parameter>
+            <parameter name="text"/>
+            <parameter name="hash"><description>The hash of the file's bytes, with the text</description></parameter>
+            <parameter name="maxBytes" type="Long"/>
+            <parameter name="maxRooms" type="Long"/>
+            <parameter name="maxTotalBytes" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="TypeDeclarations" type="rust" location="dev_aide::types::get_type_declarations" allow-remote="false" read-only="true">
+        <description>The moqui types declarations a server script is checked against by the Workspace's TypeScript
+            checker (5.4): moqui-host.d.ts, moqui-globals.d.ts, entities.d.ts, services.d.ts and tools.d.ts of the loaded
+            definitions, made at most once a minute.</description>
+        <in-parameters><parameter name="knownHash"><description>The hash the page has: the same answers no files</description></parameter></in-parameters>
+        <out-parameters>
+            <parameter name="hash"/>
+            <parameter name="files" type="List"><description>{name, text}</description></parameter>
+        </out-parameters>
     </service>
     <service verb="get" noun="Credentials" type="rust" location="dev_aide::workspace::get_credentials" allow-remote="false" read-only="true">
         <description>The shared server's stored git tokens, without the tokens. An admin's.</description>
@@ -251,7 +362,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="location" required="true"/></in-parameters>
     </service>
 
-    <!-- The edit buffers of the terminal's guided editors (plans/design-dev-aide.md D14): edits staged per user and
+    <!-- The edit buffers of the terminal's guided editors (plans/archive/design-dev-aide.md D14): edits staged per user and
         artifact, nothing written until Save. -->
     <service verb="get" noun="EditBuffer" type="rust" location="dev_aide::buffers::get_edit_buffer" allow-remote="false" read-only="true">
         <description>A guided editor's buffer: what it holds and when it expires, whether it expired with edits in it,

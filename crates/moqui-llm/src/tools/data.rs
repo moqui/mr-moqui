@@ -21,7 +21,9 @@
 //!   not page is cut here).
 //! - An entity of the conf's `data-entity` patterns (`entity`; by default the `moqui.basic` package: enumerations,
 //!   status items, units, geos), read directly with authorization off as Java's `find_basic`, encrypted and
-//!   `ai-opt-out` fields never.
+//!   `ai-opt-out` fields never, and never an entity the generic tools keep from a request, or a view over one
+//!   (`sensitive::is_restricted_entity_or_view`: group membership, secrets, the audit, shared live locations), whatever
+//!   the patterns say.
 //! - A spilled result of the conversation (`artifact`): its lines from `offset`, or the lines that hold `grep`; a text
 //!   file the user attached to the conversation (`F12`) the same way.
 //!
@@ -491,6 +493,7 @@ fn read_entity(ctx: &TurnContext<'_>, entity: &str, read: &Read<'_>) -> Result<S
         .filter(|name| {
             let (package, short) = name.rsplit_once('.').unwrap_or(("", name));
             conf.conf().data_entity_readable(package, short)
+                && !moqui_core::entity::sensitive::is_restricted_entity_or_view(&facade, name)
         })
         .collect();
     let short_names: Vec<&str> = readable.iter().map(String::as_str).collect();
@@ -510,6 +513,7 @@ fn read_entity(ctx: &TurnContext<'_>, entity: &str, read: &Read<'_>) -> Result<S
     if !conf
         .conf()
         .data_entity_readable(&text_of("packageName"), &text_of("entityName"))
+        || moqui_core::entity::sensitive::is_restricted_entity_or_view(&facade, &full)
     {
         return Err(ToolError::new(
             "entity_not_readable",
@@ -648,6 +652,31 @@ fn read_entity(ctx: &TurnContext<'_>, entity: &str, read: &Read<'_>) -> Result<S
 
 // ---- screen lists ----
 
+/// The field a find parameter is for: its name without a find suffix (`note_op`, `note_not`, `note_ic`, `when_from`,
+/// `when_thru`, `when_poffset` and the others of a form's find options).
+fn find_field_of(key: &str) -> &str {
+    const SUFFIXES: [&str; 8] = ["_op", "_not", "_ic", "_from", "_thru", "_period", "_poffset", "_pdate"];
+    SUFFIXES
+        .iter()
+        .find_map(|suffix| key.strip_suffix(suffix))
+        .filter(|field| !field.is_empty())
+        .unwrap_or(key)
+}
+
+/// The fields of an `orderByField` value: comma separated, each without its direction marks.
+fn order_fields(order: &str) -> Vec<String> {
+    order
+        .split(',')
+        .filter_map(|part| {
+            part.trim()
+                .trim_start_matches(['-', '+', '^'])
+                .split_whitespace()
+                .next()
+                .map(str::to_string)
+        })
+        .collect()
+}
+
 fn read_list(ctx: &TurnContext<'_>, path: &str, list: Option<&str>, read: &Read<'_>) -> Result<String, ToolError> {
     let path = apps::app_path(path);
     let (screen, query) = path.split_once('?').unwrap_or((path.as_str(), ""));
@@ -684,6 +713,19 @@ fn read_list(ctx: &TurnContext<'_>, path: &str, list: Option<&str>, read: &Read<
     if let Some(order) = &read.order {
         parameters.insert("orderByField".to_string(), Value::string(order));
     }
+    // every field the render finds or sorts by, the path's own query included, for the ai-opt-out test below
+    // (SEC-AI-94): a key with its find suffix taken off, and each field of orderByField
+    let found_by: Vec<String> = parameters
+        .keys()
+        .map(|key| find_field_of(key).to_string())
+        .chain(
+            parameters
+                .get("orderByField")
+                .map(moqui_lib::object::to_plain_string)
+                .into_iter()
+                .flat_map(|order| order_fields(&order)),
+        )
+        .collect();
     let output = match apps::render(ctx, screen, parameters, Some("tui")) {
         Ok(output) => output,
         Err(error) => return Err(render_error(ctx, screen, &error)),
@@ -739,14 +781,13 @@ fn read_list(ctx: &TurnContext<'_>, path: &str, list: Option<&str>, read: &Read<
             }
         }
     };
-    // a find or sort by an ai-opt-out field would tell its text by the rows it keeps: none is answered (design-people PE-21)
-    let ordered = read.order.iter().flat_map(|order| order.split(',')).filter_map(|part| {
-        part.trim()
-            .trim_start_matches(['-', '+', '^'])
-            .split_whitespace()
-            .next()
-    });
-    let named: Vec<&str> = tests.iter().map(|(field, _)| field.as_str()).chain(ordered).collect();
+    // a find or sort by an ai-opt-out field would tell its text by the rows it keeps: none is answered (design-people
+    // PE-21), whether the find came as data's own arguments or in the path's query (SEC-AI-94)
+    let named: Vec<&str> = tests
+        .iter()
+        .map(|(field, _)| field.as_str())
+        .chain(found_by.iter().map(String::as_str))
+        .collect();
     if let Some(off) = named
         .iter()
         .find(|field| chosen.ai_off.iter().any(|name| name == *field))

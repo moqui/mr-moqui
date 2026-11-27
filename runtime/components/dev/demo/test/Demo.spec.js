@@ -38,6 +38,7 @@ const viewOnlyAuthz = [
     "TOOLS_APP_ADMIN", "SYSTEM_APP_ADMIN", "MOQUI_API_ADMIN", "EntitySyncServicesADMIN", "SystemMessageServicesADMIN",
     "ResourceCommandServicesADMIN",
     "GitRepositoriesADMIN", "REPORT_GIT_SYNC_ADMIN", "REPORT_CONTACT_ADMIN", "TOOLS_DATABASE_LOAD_ADMIN", "AIDE_PROJECTS_ADMIN",
+    "MAPS_ADMIN_ADMIN",
 ]
 // ended for ADMIN (data/DemoSecurityData.xml)
 const endedPermissions = [
@@ -57,6 +58,8 @@ const allowedAuthz = [
     "REPORT_ALERT_EVALUATION_ADMIN", "REPORT_BUSINESS_ADMIN", "REPORT_DATASETS_ADMIN", "REPORT_DELIVERY_ADMIN", "REPORT_SHARE_ADMIN",
     // adding fields to the business reports' documents, as REPORT_BUSINESS_ADMIN edits them (SEC-TLS-92)
     "REPORT_WIDEN_ADMIN",
+    // the Maps app and its own saved views and preferences; its Configuration is view-only above
+    "MAPS_APP_ADMIN", "MAPS_APP_SVC_ADMIN",
 ]
 const allowedPermissions = [
     "ADMIN_ACCESS_VIEW", "ADMIN_AUDIT_VIEW", "ADMIN_BACKUP_VIEW", "ADMIN_CONNECTION_VIEW", "ADMIN_IDENTITY_VIEW",
@@ -216,6 +219,9 @@ const refusedCalls = [
         ["update#UserAccount", { userId: JOHN, username: "john.doe.2" }],
         ["update#UserAccount", { userId: JOHN, disabled: "Y" }],
         ["update#UserAccount", { userId: JOHN, requirePasswordChange: "Y" }],
+        // SEC-DEV-83: any field but the name, email, locale, time zone and currency, such as an end date or an address rule
+        ["update#UserAccount", { userId: JOHN, terminateDate: "2020-01-01 00:00:00" }],
+        ["update#UserAccount", { userId: JOHN, ipAllowed: "203.0.113.9" }],
         ["disable#UserAccount", { userId: JOHN }],
         ["create#UserAuthcFactorEmail", { userId: JOHN, factorOption: "visitor@example.com" }],
         ["create#UserAuthcFactorSms", { userId: JOHN, factorOption: "+15555550100" }],
