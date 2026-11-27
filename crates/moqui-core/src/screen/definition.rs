@@ -899,13 +899,11 @@ fn menu_include_of(value: Option<&str>, at: &str) -> (bool, Option<String>) {
     (true, Some(text.to_string()))
 }
 
-/// Whether `location` names another server (`http`, `https`, `ftp`): no screen definition is read from one.
+/// Whether `location` names another server (`http`, `https`, `ftp`, `ftps`): no screen definition is read from one. The
+/// scheme is read as the resource facade reads it (before the first `:`, so `http:host/x.xml` is one), in any case.
 pub(crate) fn remote_location(location: &str) -> bool {
-    let scheme = location
-        .trim_start()
-        .split_once("://")
-        .map(|(scheme, _)| scheme.to_ascii_lowercase());
-    matches!(scheme.as_deref(), Some("http" | "https" | "ftp" | "ftps"))
+    let scheme = crate::context::scheme_of(location.trim_start()).to_ascii_lowercase();
+    matches!(scheme.as_str(), "http" | "https" | "ftp" | "ftps")
 }
 
 #[derive(Clone, Debug, Default)]

@@ -745,6 +745,8 @@ fn a_screen_is_never_read_from_another_server() {
         "http://evil.example/Root.xml",
         "HTTPS://evil.example/Root.xml",
         " ftp://evil.example/x.xml",
+        "http:attacker.example/x.xml",
+        "Https:attacker.example/x.xml",
     ] {
         assert!(super::remote_location(remote), "{remote}");
     }
