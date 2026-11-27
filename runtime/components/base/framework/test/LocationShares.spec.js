@@ -1294,3 +1294,71 @@ feature("a person added sees no position reported before they were added: no lat
         out.cAfter.trailList.map(point => point.latitude).join() == "42.3"
     }
 })
+
+feature("the time the audience reached a viewer is the server's receive time: an approximate share's first position is read, a fast clock before an add is not, and a member out and back by a new row sees nothing from while out", {
+    when() {
+        const out = {}
+        // an approximate share: its stored time is the minute, before the share began, yet its audience reads it
+        later(6000)
+        const rough = as(A, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR), precisionEnumId: "LspApproximate"}).shareId
+        report(rough, "43.1", "-111.9")
+        out.roughSeen = (sharedWith(B).find(row => row.shareId === rough) || {}).latest || null
+        as(A, "stop#Share", {shareId: rough})
+        // a device clock 50 s fast, a report, then C added a second later: its observed time is after the add, its
+        // receive time before it, and C does not see it
+        later(6000)
+        const fast = as(A, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR), keepTrail: true}).shareId
+        as(A, "report#Position", {shareId: fast, latitude: "43.2", longitude: "-111.9", observedDate: new Date(shared.now + 50000)})
+        later(1000)
+        as(A, "update#Share", {shareId: fast, addAudienceList: [toUser(C)]})
+        const cFast = as(C, "get#Share", {shareId: fast})
+        out.fastLatest = cFast.latest || null
+        out.fastTrail = Array.from(cFast.trailList || []).length
+        out.bFast = (as(B, "get#Share", {shareId: fast}).latest || {}).latitude
+        as(A, "stop#Share", {shareId: fast})
+        // B in the group, out by its row's end, back by a new row, and the group added again: nothing reported while out
+        later(6000)
+        const group = as(A, "create#Share", {audienceList: [toGroup(GROUP)], thruDate: new Date(shared.now + HOUR), keepTrail: true}).shareId
+        report(group, "43.3", "-111.9")
+        out.bBefore = (as(B, "get#Share", {shareId: group}).latest || {}).latitude
+        later(6000)
+        sys(() =>
+            ec.entity.find("moqui.security.UserGroupMember").condition({userGroupId: GROUP, userId: B}).condition("thruDate", null)
+                .updateAll({thruDate: new Date(shared.now)})
+        )
+        later(6000)
+        report(group, "43.4", "-111.9")
+        out.bOut = as(B, "get#Share", {shareId: group}).reasonCode
+        later(6000)
+        make("moqui.security.UserGroupMember", {userGroupId: GROUP, userId: B, fromDate: new Date(shared.now)})
+        later(1000)
+        out.readd = as(A, "update#Share", {shareId: group, addAudienceList: [toGroup(GROUP)]})
+        const bBack = as(B, "get#Share", {shareId: group})
+        out.bBackLatest = bBack.latest || null
+        out.bBackTrail = Array.from(bBack.trailList || []).length
+        out.bListed = (sharedWith(B).find(row => row.shareId === group) || {}).latest || null
+        // D, in the group the whole time, still sees both points
+        out.dTrail = Array.from(as(D, "get#Share", {shareId: group}).trailList || []).length
+        later(6000)
+        report(group, "43.5", "-111.9")
+        out.bNext = as(B, "get#Share", {shareId: group})
+        as(A, "stop#Share", {shareId: group})
+        return out
+    },
+    then(out) {
+        out.roughSeen != null
+        out.fastLatest == null
+        out.fastTrail == 0
+        out.bFast == 43.2
+        out.bBefore == 43.3
+        out.bOut == "SHARE_NOT_FOUND"
+        out.readd.errors == ""
+        out.bBackLatest == null
+        out.bBackTrail == 0
+        out.bListed == null
+        out.dTrail == 2
+        out.bNext.latest.latitude == 43.5
+        out.bNext.trailList.map(point => point.latitude).join() == "43.5"
+        out.bNext.latest.receivedDate === undefined
+    }
+})

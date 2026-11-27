@@ -242,10 +242,12 @@ object LocationShare {
             return "declined"
         }
         // sent from now on, no longer paused (a share whose audience changed, confirmed again from the page)
-        synchronized(this) {
+        val nonePaused = synchronized(this) {
             shares[share.key] = share
             paused.remove(share.key)
+            paused.isEmpty()
         }
+        if (nonePaused) app.getSystemService(NotificationManager::class.java)?.cancel(PAUSED_ID)
         return try {
             ContextCompat.startForegroundService(app, Intent(app, LocationShareService::class.java))
             "started"

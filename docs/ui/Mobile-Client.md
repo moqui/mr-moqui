@@ -588,13 +588,13 @@ emulator yet (LL7's walk).
   change of its audience that can reach someone new raises (an entry added, a group added again, whose snapshot is
   written again; a revoke does not); the phone sends the version the person confirmed with each report, and the server
   refuses a report of another version, or of none from a share sent from a device, with 409 `AUDIENCE_CHANGED` before
-  it writes or pushes anything; and a person added sees only what is reported after they were added (the latest
-position and a kept trail observed from when their entry, or their group's snapshot, first reached them). So no
-position the phone sends reaches an audience the person did not confirm, and no position reported before a person was
-added reaches them: the phone pauses that
-  share and a notification asks the person to open the app (at once when it is in front), where the same dialog asks
-  again with the server's words (Send sends it to that version; Not now stops the share on the server; a share not
-  read for want of a network stays paused for the next time). It does not guard what the server does with the reports
+  it writes or pushes anything. On that 409 the phone pauses the share, and a notification asks the person to open the
+  app (at once when it is in front), where the same dialog asks again with the server's words (Send sends it to that
+  version; Not now stops the share on the server; a share not read for want of a network stays paused for the next
+  time). So no position the phone sends reaches an audience the person did not confirm. And a person added sees only
+  what the server received after the audience reached them (the latest position and a kept trail, by the server's
+  receive time, from when their entry, or their group's snapshot by the same membership row, first held them), so no
+  position reported before a person was added, or while they were out of the group, reaches them. It does not guard what the server does with the reports
   it gets, nor the shares a browser or another device sends. Nor does it guard a page in front: with the location
   permission given, a server page the app shows gets the WebView's geolocation with no prompt (`RustWebChromeClient`
   answers for the app's own origins), as any browser page with the permission does, so a page in front can read the

@@ -171,12 +171,14 @@ function snapshotGroup(share, row) {
         if (ec.message.hasError()) return false
         refused = new Set(Array.from((out && out.refusedUserIdList) || []).map(String))
     }
-    // when each member was first reached by this entry, kept for one already in its snapshot: a position reported before
-    // a person was reached never reaches them (plans/Location-Sharing.md §3.4)
+    // when each member was first reached by this entry, kept for one already in its snapshot by the same membership row:
+    // a person who left and came back by a new row is reached again from now, so a position reported before a person
+    // was reached (or while they were out) never reaches them (plans/Location-Sharing.md §3.4)
     const reached = {}
     for (const held of find(AUDIENCE_MEMBER).condition("shareId", share.shareId).condition("audienceSeqId", row.audienceSeqId)
-        .selectField("userId,reachedDate").list())
-        if (held.reachedDate != null) reached[held.userId] = held.reachedDate
+        .selectField("userId,memberFromDate,reachedDate").list())
+        if (held.reachedDate != null && since[held.userId] != null && millis(held.memberFromDate) === millis(since[held.userId]))
+            reached[held.userId] = held.reachedDate
     const now = new Date(nowMillis())
     find(AUDIENCE_MEMBER).condition("shareId", share.shareId).condition("audienceSeqId", row.audienceSeqId).deleteAll()
     for (const userId of members.filter(id => !refused.has(id)))
@@ -213,27 +215,25 @@ function reachedAt(share, userId) {
         if (at != null && (earliest == null || at < earliest)) earliest = at
     }
     for (const row of activeAudience(share.shareId)) {
-        if (row.audienceTypeEnumId === "LsaUser" && row.userId === userId) sooner(millis(row.fromDate))
+        if (row.audienceTypeEnumId === "LsaUser" && row.userId === userId) sooner(millis(row.fromDate) ?? nowMillis())
         if (row.audienceTypeEnumId === "LsaUserGroup" && row.userGroupId && groupEntryUserIds(row, userId).length) {
             const held = find(AUDIENCE_MEMBER).condition({shareId: share.shareId, audienceSeqId: row.audienceSeqId, userId}).one()
-            sooner(held && held.reachedDate != null ? millis(held.reachedDate) : millis(row.fromDate))
+            sooner(held && held.reachedDate != null ? millis(held.reachedDate) : millis(row.fromDate) ?? nowMillis())
         }
     }
     return earliest
 }
 
-/** A latest position as a viewer reached at `reached` may see it: only one observed from then on. */
-const latestSince = (latest, reached) =>
-    latest && reached != null && latest.observedDate != null && latest.observedDate >= reached ? latest : null
-
-/** Whether the share's current audience holds the user, checked at each read. */
-function inAudience(share, userId) {
-    if (!userId || userId === share.ownerUserId) return false
-    const rows = activeAudience(share.shareId)
-    if (rows.some(row => row.audienceTypeEnumId === "LsaUser" && row.userId === userId)) return true
-    return rows.some(
-        row => row.audienceTypeEnumId === "LsaUserGroup" && row.userGroupId && groupEntryUserIds(row, userId).length > 0
-    )
+/**
+ * A latest position as a viewer reached at `reached` may see it: only one the server received from then on (its
+ * receive time, never the device's observedDate: an approximate share's minute and a device's fast clock would both
+ * shift that), shown with its observedDate as ever.
+ */
+function latestSince(latest, reached) {
+    if (!latest || reached == null || latest.receivedDate == null || latest.receivedDate < reached) return null
+    const shown = Object.assign({}, latest)
+    delete shown.receivedDate
+    return shown
 }
 
 /** A push on the share's topic to these users only: sent when the transaction commits, never saved or sent to a phone. */
@@ -807,7 +807,7 @@ function report(p) {
     if (share.keepTrail === "Y")
         ec.entity
             .makeValue(TRAIL)
-            .setAll(Object.assign({shareId: share.shareId, observedDate: new Date(position.observed)}, values))
+            .setAll(Object.assign({shareId: share.shareId, observedDate: new Date(position.observed), receivedDate: new Date(now)}, values))
             .createOrUpdate()
     const reached = currentUserIds(share)
     push(share, reached, Object.assign({event: "position", observedDate: position.observed, approximate: approximated}, values))
@@ -826,6 +826,13 @@ function positionOf(row, now) {
         observedDate: observed,
         ageSeconds: observed == null ? null : Math.max(0, Math.round((now - observed) / 1000))
     }
+}
+
+/** A latest row's position with when the server received it, for a viewer's check ([latestSince]), which drops it. */
+function receivedPositionOf(row, now) {
+    const position = positionOf(row, now)
+    if (position) position.receivedDate = millis(row.receivedDate)
+    return position
 }
 
 function latestByShare(shareIds, now) {
@@ -920,13 +927,20 @@ function findShared() {
     const me = ec.user.userId
     const now = nowMillis()
     const ids = new Set()
+    // when each share's audience first reached the caller: a person's entry by its fromDate, a group's by its snapshot
+    const reach = {}
+    const sooner = (shareId, at) => {
+        if (at != null && (reach[shareId] == null || at < reach[shareId])) reach[shareId] = at
+    }
     for (const row of find(AUDIENCE)
         .condition("audienceTypeEnumId", "LsaUser")
         .condition("userId", me)
         .condition("revokedDate", null)
-        .selectField("shareId")
-        .list())
+        .selectField("shareId,fromDate")
+        .list()) {
         ids.add(row.shareId)
+        sooner(row.shareId, millis(row.fromDate) ?? now)
+    }
     // a group entry whose snapshot holds the caller by a membership row of the group that is still current
     const memberships = Array.from(
         find(GROUP_MEMBER)
@@ -937,18 +951,23 @@ function findShared() {
     )
     const current = new Set(memberships.map(member => member.userGroupId + "|" + millis(member.fromDate)))
     const snapshots = Array.from(
-        find(AUDIENCE_MEMBER).condition("userId", me).selectField("shareId,audienceSeqId,memberFromDate").list()
+        find(AUDIENCE_MEMBER).condition("userId", me).selectField("shareId,audienceSeqId,memberFromDate,reachedDate").list()
     )
     if (memberships.length && snapshots.length) {
         const held = {}
-        for (const row of snapshots) held[row.shareId + "|" + row.audienceSeqId] = millis(row.memberFromDate)
+        for (const row of snapshots) held[row.shareId + "|" + row.audienceSeqId] = row
         const rows = find(AUDIENCE)
             .condition("shareId", "in", Array.from(new Set(snapshots.map(row => row.shareId))))
             .condition("audienceTypeEnumId", "LsaUserGroup")
             .condition("revokedDate", null)
-            .selectField("shareId,audienceSeqId,userGroupId")
-        for (const row of rows.list())
-            if (current.has(row.userGroupId + "|" + held[row.shareId + "|" + row.audienceSeqId])) ids.add(row.shareId)
+            .selectField("shareId,audienceSeqId,userGroupId,fromDate")
+        for (const row of rows.list()) {
+            const snapshot = held[row.shareId + "|" + row.audienceSeqId]
+            if (snapshot && current.has(row.userGroupId + "|" + millis(snapshot.memberFromDate))) {
+                ids.add(row.shareId)
+                sooner(row.shareId, snapshot.reachedDate != null ? millis(snapshot.reachedDate) : millis(row.fromDate) ?? now)
+            }
+        }
     }
     if (!ids.size) return {shareList: []}
     const shares = Array.from(
@@ -962,15 +981,14 @@ function findShared() {
             .limit(LIST_MAX)
             .list()
     )
-    const latest = latestByShare(
-        shares.map(share => share.shareId),
-        now
-    )
+    const latest = {}
+    for (const row of find(LATEST).condition("shareId", "in", shares.map(share => share.shareId)).list())
+        latest[row.shareId] = receivedPositionOf(row, now)
     const owners = namesOf(Array.from(new Set(shares.map(share => share.ownerUserId))))
     const shareList = shares.map(share =>
         Object.assign(viewerView(share, now), {
             ownerName: (owners[share.ownerUserId] || {}).name || share.ownerUserId,
-            latest: latestSince(latest[share.shareId] || null, reachedAt(share, me))
+            latest: latestSince(latest[share.shareId] || null, reach[share.shareId])
         })
     )
     return {shareList}
@@ -981,20 +999,21 @@ function get(p) {
     const now = nowMillis()
     const share = shareOf(p.shareId)
     const owner = share != null && share.ownerUserId === ec.user.userId
-    if (!share || (!owner && !(isActive(share, now) && inAudience(share, ec.user.userId)))) return notFound()
+    // a viewer is one the share's current audience reaches (reachedAt is that check too), and sees what the server
+    // received from when it first reached them on; the owner sees everything
+    const reached = !share || owner || !isActive(share, now) ? null : reachedAt(share, ec.user.userId)
+    if (!share || (!owner && reached == null)) return notFound()
     const view = owner ? ownerView(share, now) : viewerView(share, now)
     if (!owner) view.ownerName = (namesOf([share.ownerUserId])[share.ownerUserId] || {}).name || share.ownerUserId
-    // a viewer sees what was observed from when the audience reached them on; the owner sees everything
-    const reached = owner ? null : reachedAt(share, ec.user.userId)
-    const anyLatest = isActive(share, now) ? latestByShare([share.shareId], now)[share.shareId] || null : null
-    const latest = owner ? anyLatest : latestSince(anyLatest, reached)
+    const latestRow = isActive(share, now) ? find(LATEST).condition("shareId", share.shareId).one() : null
+    const latest = owner ? positionOf(latestRow, now) : latestSince(receivedPositionOf(latestRow, now), reached)
     const pageSize = Math.max(1, Math.min(TRAIL_PAGE_MAX, Number(p.trailPageSize) || 500))
     const pageIndex = Math.max(0, Number(p.trailPageIndex) || 0)
     let trailList = []
     let trailCount = 0
     if (share.keepTrail === "Y") {
         let trail = find(TRAIL).condition("shareId", share.shareId)
-        if (!owner) trail = trail.condition("observedDate", "greater-equals", new Date(reached == null ? now : reached))
+        if (!owner) trail = trail.condition("receivedDate", "greater-equals", new Date(reached))
         trailCount = trail.count()
         trailList = Array.from(
             trail

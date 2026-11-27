@@ -180,9 +180,16 @@ object LocationRules {
      * none (the dialog then says "the people you chose").
      */
     fun confirmWhom(audience: String): String? {
-        val line = audience.filter { Character.getType(it) != Character.FORMAT.toInt() }
-            .map { if (it.isISOControl() || it.isWhitespace()) ' ' else it }.joinToString("")
-            .replace(Regex(" +"), " ").trim()
+        // by code point, so the format characters outside the BMP (the tags, U+E0001 and U+E0020 to U+E007F) go too
+        val kept = StringBuilder()
+        audience.codePoints().forEach { point ->
+            when {
+                Character.getType(point) == Character.FORMAT.toInt() -> {}
+                Character.isISOControl(point) || Character.isWhitespace(point) || Character.isSpaceChar(point) -> kept.append(' ')
+                else -> kept.appendCodePoint(point)
+            }
+        }
+        val line = kept.toString().replace(Regex(" +"), " ").trim()
         if (line.isEmpty()) return null
         return if (line.length <= WHOM_MAX) line else line.take(WHOM_MAX - 1).trimEnd() + "…"
     }

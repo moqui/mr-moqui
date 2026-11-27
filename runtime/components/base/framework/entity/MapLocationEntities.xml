@@ -157,6 +157,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="accuracy" type="number-float" ai-opt-out="true"/>
         <field name="heading" type="number-float" ai-opt-out="true"/>
         <field name="speed" type="number-float" ai-opt-out="true"/>
+        <field name="receivedDate" type="date-time"><description>When the server received it: a viewer reads the trail
+            from when the audience first reached them on, by this time, never the device's (plans/Location-Sharing.md
+            §3.4)</description></field>
         <relationship type="one" related="moqui.maps.LocationShare"/>
+        <index name="LOC_TRAIL_RECEIVED"><index-field name="shareId"/><index-field name="receivedDate"/></index>
     </entity>
 </entities>

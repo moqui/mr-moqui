@@ -154,6 +154,8 @@ class LocationRulesTest {
         // format characters go: a right-to-left override, an isolate, a zero-width space and joiner
         assertEquals("Sam (sam) and evil (eve)", LocationRules.confirmWhom("Sam (sam) and \u202Eevil\u202C (\u2066eve\u2069\u200B\u200D)"))
         assertNull(LocationRules.confirmWhom("\u200B\u202E"))
+        // the tags outside the BMP too (a tag sequence spelling "hi", then its cancel tag)
+        assertEquals("Sam (sam)", LocationRules.confirmWhom("Sam (sam)\uDB40\uDC01\uDB40\uDC68\uDB40\uDC69\uDB40\uDC7F"))
         val long = LocationRules.confirmWhom("Sam ".repeat(200))!!
         assertEquals(LocationRules.WHOM_MAX, long.length)
         assertTrue(long.endsWith("…"))
