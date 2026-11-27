@@ -1674,10 +1674,11 @@
     };
     components["m-dashboard"] = {
         props: { dashboard: { type: Object, default: () => ({ panels: {} }) }, frames: { type: Object, default: () => ({}) } },
-        data() { return { syncGroup:"report-dashboard-"+Math.random().toString(36).slice(2), keyPrefix:"", keyAt:0, panelRefs:{}, selectedPanel:"", activeTabs: {}, kiosk: !!(this.dashboard && this.dashboard.kiosk), refreshSeconds: 0, timer: null, shareStatus: "", shareLink: "" }; },
+        data() { return { syncGroup:"report-dashboard-"+Math.random().toString(36).slice(2), keyPrefix:"", keyAt:0, panelRefs:{}, selectedPanel:"", activeTabs: {}, kiosk: !!(this.dashboard && this.dashboard.kiosk), refreshSeconds: 0, timer: null, shareStatus: "", shareLink: "", livePanels: {} }; },
         mounted() {
             this.refreshSeconds = Number(this.dashboard.refreshSeconds) || 0;
             this.setRefresh();
+            this.follow();
             // An embed is one part of another screen: it takes no page keys and leaves the page's URL alone.
             if (this.dashboard.embedded) return;
             this.onKey = (event) => {
@@ -1701,8 +1702,61 @@
             this.onRange=(event)=>{if(event.detail.group!==this.syncGroup)return;const url=new root.URL(root.location.href);url.searchParams.set('from',event.detail.from);url.searchParams.set('thru',event.detail.thru);url.searchParams.delete('cursor');url.searchParams.delete('pageIndex');root.location.assign(url.href);};
             root.document.addEventListener('moqui-report-range',this.onRange);
         },
-        beforeUnmount() { root.clearInterval(this.timer); root.document.removeEventListener("keydown", this.onKey);root.document.removeEventListener("moqui-report-range",this.onRange); },
+        beforeUnmount() { root.clearInterval(this.timer); root.clearTimeout(this.liveTimer); for (const room of Object.keys(this.watches || {})) this.unwatch(room); root.document.removeEventListener("keydown", this.onKey);root.document.removeEventListener("moqui-report-range",this.onRange); },
         methods: {
+            // A panel whose source says when it changed (a CalcGrid range: the room its frame was read from, whose topic
+            // this view joins as a watcher) is read again then, in place: an edit shows, and a share taken away reads as
+            // the panel's refusal, its values gone, without a reload (DASH-UI-008).
+            follow() {
+                const client = this.$root && this.$root.notificationClient;
+                if (!client || !client.registerListener) return;
+                this.watches = this.watches || {};
+                const panels = Object.assign({}, this.dashboard.panels || {}, this.livePanels), wanted = {};
+                for (const [id, panel] of Object.entries(panels)) for (const live of (panel && Array.isArray(panel.live) ? panel.live : []))
+                    if (live && live.kind === "calc" && live.room) (wanted[live.room] = wanted[live.room] || []).push(id);
+                for (const room of Object.keys(this.watches)) if (!wanted[room]) this.unwatch(room);
+                for (const [room, ids] of Object.entries(wanted)) {
+                    if (this.watches[room]) { this.watches[room].ids = ids; continue; }
+                    const clientId = "dashboard-" + Math.random().toString(36).slice(2), join = () => client.send({ calc: "join", room, client: clientId, watch: true });
+                    const watch = { ids, clientId, client };
+                    watch.off = client.registerListener("calc:" + room, (frame) => { if (frame && (frame.type === "changed" || frame.reopen)) this.panelsChanged(watch.ids); });
+                    watch.offState = client.onState ? client.onState((state) => { if (state === "open") join(); }) : () => {};
+                    this.watches[room] = watch;
+                    join();
+                }
+            },
+            unwatch(room) {
+                const watch = this.watches && this.watches[room];
+                if (!watch) return;
+                delete this.watches[room];
+                try { watch.client.send({ calc: "leave", room, client: watch.clientId }); } catch (_) { /* the socket is gone */ }
+                watch.off(); watch.offState();
+            },
+            // a burst of edits is read once
+            panelsChanged(ids) {
+                this.changedPanels = this.changedPanels || new Set();
+                for (const id of ids) this.changedPanels.add(id);
+                root.clearTimeout(this.liveTimer);
+                this.liveTimer = root.setTimeout(() => {
+                    const changed = Array.from(this.changedPanels); this.changedPanels.clear();
+                    Promise.all(changed.map((id) => this.readPanel(id))).then(() => this.follow());
+                }, 250);
+            },
+            // the panel as the server renders it now, through the dashboard screen's inspectPanel transition
+            async readPanel(id) {
+                const time = this.dashboard.absoluteTime || {};
+                const parameters = new root.URLSearchParams({ definitionId: this.dashboard.definitionId || "", panelId: id, from: time.from || "now-7d", thru: time.thru || "now",
+                    variables: JSON.stringify(this.dashboard.variableValues || {}), filtersJson: JSON.stringify(this.dashboard.filters || []) });
+                try {
+                    const response = await root.fetch((this.dashboard.screenUrl || "/apps/dashboards/Dashboard") + "/inspectPanel?" + parameters.toString(), { credentials: "same-origin", headers: { Accept: "application/json" } });
+                    const result = response.ok ? await response.json() : null;
+                    const panel = result && result.dashboard && result.dashboard.panels && result.dashboard.panels[id];
+                    // the dashboard itself no longer read (not shared, or gone): the panel says so, with no values
+                    const read = panel || { title: (this.livePanels[id] || (this.dashboard.panels || {})[id] || {}).title || id, frames: [], live: [],
+                        notices: [{ level: "error", complete: false, message: (result && (result.errors || result.error)) || "This panel is not available to you now" }] };
+                    this.livePanels = Object.assign({}, this.livePanels, { [id]: read });
+                } catch (_) { /* read again at the next change */ }
+            },
             allPanels(){root.location.assign(report.allPanelsUrl());},
             applyFilters(pills){const url=new root.URL(root.location.href);url.searchParams.set('filtersJson',JSON.stringify(pills));url.searchParams.delete('cursor');url.searchParams.delete('pageIndex');root.location.assign(url.href);},
             addFilter(pill){
@@ -1739,9 +1793,10 @@
         },
         render() {
             const h = reportElement, panels = this.dashboard.panels || {};
-            const entries = Array.isArray(panels) ? panels.map((panel, at) => [panel.id || String(at), panel]) : Object.entries(panels);
+            // a panel read again since the page was drawn (follow) is shown as read
+            const entries = (Array.isArray(panels) ? panels.map((panel, at) => [panel.id || String(at), panel]) : Object.entries(panels)).map(([id, item]) => [id, this.livePanels[id] || item]);
             const byId = Object.fromEntries(entries);
-            const panel = (id, position) => byId[id] ? h("div", { key: id, style: Object.assign({minWidth:"0"},position),onFocusin:()=>{this.selectedPanel=id;},onMouseenter:()=>{this.selectedPanel=id;} }, [h(components["m-report-panel"], { ref:instance=>{this.panelRefs[id]=instance;},panel: byId[id], frames: this.frames[id] || byId[id].frames,
+            const panel = (id, position) => byId[id] ? h("div", { key: id, style: Object.assign({minWidth:"0"},position),onFocusin:()=>{this.selectedPanel=id;},onMouseenter:()=>{this.selectedPanel=id;} }, [h(components["m-report-panel"], { ref:instance=>{this.panelRefs[id]=instance;},panel: byId[id], frames: this.livePanels[id] ? this.livePanels[id].frames || [] : this.frames[id] || byId[id].frames,
                 frame: byId[id].frame || { fields: [] }, dashboardId: this.dashboard.definitionId, panelId: id, screenUrl: this.dashboard.screenUrl, appLinks: this.dashboard.appLinks, range: this.dashboard.absoluteTime, variables: this.dashboard.variableValues, syncGroup:this.syncGroup,filters:this.dashboard.filters || [],onFilter:this.addFilter,
                 editable: !!this.dashboard.editable && !this.dashboard.embedded, embedded: !!this.dashboard.embedded, single: !!this.dashboard.panelId, display: !!this.dashboard.display })]) : h("p", { role: "alert" }, "Panel " + id + " is unavailable");
             const auto = (items) => h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,640px),1fr))", gap: "12px" } }, items);

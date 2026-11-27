@@ -1421,6 +1421,9 @@ fn get_calc_frame(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -
         Ok(frame) => {
             let mut out = BTreeMap::new();
             out.insert("frame".to_string(), from_json(&frame));
+            // the room the frame was read from: a dashboard watches its topic and reads the frame again when the
+            // document changes, or when a share taken away leaves the viewer out of it (DASH-UI-008)
+            out.insert("live".to_string(), from_json(&json!({"kind": "calc", "room": room.id})));
             Ok(out)
         }
         Err(err) => refused(err.message()),
