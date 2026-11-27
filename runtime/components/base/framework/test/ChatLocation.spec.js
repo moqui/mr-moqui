@@ -1,12 +1,16 @@
 // Location messages (plans/Comms-Messaging.md §18.3 phase 20; ChatLocation.js, ChatLocationServices): a place with its
 // coordinates or an address, its words and an OpenStreetMap link (what bridges and texts get), refused when it is not a
-// place or in an encrypted room. The inbound RCS location (Sms.js) is the providers' tests (moqui-channels).
+// place or in an encrypted room. The inbound RCS location (Sms.js) is the providers' tests (moqui-channels). A live
+// location (plans/Location-Sharing.md §3.5) is a share with the room's members and a message carrying its id only.
 // Run: ./moq test framework --spec ChatLocation
 const A = "CHAT_LOC_A"
 const B = "CHAT_LOC_B"
-const USERS = [A, B]
+// C: added to a room after its live location started
+const C = "CHAT_LOC_C"
+const USERS = [A, B, C]
 const CHAT = "org.moqui.chat.ChatServices."
 const LOC = "org.moqui.chat.ChatLocationServices."
+const MAPS = "org.moqui.maps.LocationServices."
 const GROUP = "CHAT_LOC_SPEC"
 
 function sys(run) {
@@ -57,6 +61,9 @@ spec({
         shared.team = room(A, {roomName: "Loc team", memberUserIdList: [B]})
     },
     cleanupSpec() {
+        // a live share a failed run left on is stopped, so the spec runs again on --db existing
+        for (const share of sys(() => Array.from(ec.entity.find("moqui.maps.LocationShare").condition("ownerUserId", A).condition("endedDate", null).list())))
+            as(A, MAPS + "stop#Share", {shareId: share.shareId})
         ec.user.logoutUser()
     }
 })
@@ -99,5 +106,107 @@ feature("a place with its coordinates or an address: its words and map link, its
         timeline.location.accuracy == 12
         timeline.location.source == "here"
         words.text == "Location: The shop\nhttps://www.openstreetmap.org/?mlat=45.500000&mlon=-122.600000#map=17/45.500000/-122.600000"
+    }
+})
+
+// Live location in a room (plans/Location-Sharing.md §3.5, LL4): a share with the room's members when it starts, as users,
+// and a message that carries the share's id, never a position; its members see it through get#Share (which checks the
+// audience) and nobody else does; one who joins the room later is not added and sees nothing of it, one who leaves stays
+// in the share (the owner's act takes them out); an encrypted room is refused; a bridge gets the words only.
+feature("live location in a room: its members see it and others do not, the message carries the share's id, a member added later sees nothing, the bridge gets the words", {
+    when() {
+        const live = room(A, {roomName: "Loc live", memberUserIdList: [B]})
+        const hour = new Date(Date.now() + 3600000)
+        const sent = as(A, LOC + "send#LiveLocation", {chatRoomId: live, thruDate: hour, clientRef: "loc-live-1"})
+        // a send again by its clientRef answers the first message and starts no second share
+        const again = as(A, LOC + "send#LiveLocation", {chatRoomId: live, thruDate: hour, clientRef: "loc-live-1"})
+        const sharesAfterAgain = sys(() => ec.entity.find("moqui.maps.LocationShare").condition("ownerUserId", A).condition("endedDate", null).count())
+        const message = row("moqui.chat.ChatEvent", {chatRoomId: live, eventSeq: sent.eventSeq})
+        const content = JSON.parse(message.contentJson || "{}")
+        const before = as(B, LOC + "get#LiveLocation", {chatRoomId: live, eventSeq: sent.eventSeq})
+        const reported = as(A, MAPS + "report#Position", {shareId: sent.shareId, latitude: "40.7452", longitude: "-111.875", accuracy: "8",
+            observedDate: new Date()})
+        const member = as(B, LOC + "get#LiveLocation", {chatRoomId: live, eventSeq: sent.eventSeq})
+        const owner = as(A, LOC + "get#LiveLocation", {chatRoomId: live, eventSeq: sent.eventSeq})
+        // C is no member: the room is not theirs, and the share is not either
+        const outsider = as(C, LOC + "get#LiveLocation", {chatRoomId: live, eventSeq: sent.eventSeq})
+        const outsiderShare = as(C, MAPS + "get#Share", {shareId: sent.shareId})
+        // C added to the room later: not added to the share
+        as(A, CHAT + "add#Member", {chatRoomId: live, userId: C})
+        const joined = as(C, LOC + "get#LiveLocation", {chatRoomId: live, eventSeq: sent.eventSeq})
+        const joinedShare = as(C, MAPS + "get#Share", {shareId: sent.shareId})
+        // B leaves the room: still in the share's audience until the owner takes them out (Who sees my location)
+        as(B, CHAT + "remove#Member", {chatRoomId: live})
+        const leftShare = as(B, MAPS + "get#Share", {shareId: sent.shareId})
+        const sealed = as(A, LOC + "send#LiveLocation", {chatRoomId: room(A, {roomName: "Loc live sealed", memberUserIdList: [B], encrypted: true}),
+            thruDate: hour}).reasonCode
+        const alone = as(A, LOC + "send#LiveLocation", {chatRoomId: room(A, {roomName: "Loc live alone"}), thruDate: hour}).reasonCode
+        // a refusal of the share (too long) keeps no message
+        const tooLong = as(A, LOC + "send#LiveLocation", {chatRoomId: live, thruDate: new Date(Date.now() + 30 * 3600000), clientRef: "loc-live-long"})
+        const longKept = sys(() => ec.entity.find("moqui.chat.ChatEvent").condition({chatRoomId: live, clientRef: "loc-live-long"}).count())
+        // a bridged room: its delivery is the message's words, with no place in its content
+        const bridged = room(A, {roomName: "Loc live bridged", memberUserIdList: [B]})
+        make("moqui.chat.ChatBridge", {chatBridgeId: "CHAT_LOC_BRIDGE", name: "Spec bridge", adapterName: "none"})
+        make("moqui.chat.ChatRoomBridge", {chatRoomBridgeId: "CHAT_LOC_MAP", chatRoomId: bridged, chatBridgeId: "CHAT_LOC_BRIDGE",
+            externalRoomId: "+15550100", directionEnumId: "CrbOut", fromDate: new Date(Date.now() - 60000)})
+        const viaBridge = as(A, LOC + "send#LiveLocation", {chatRoomId: bridged, thruDate: hour, precisionEnumId: "LspApproximate"})
+        const delivered = sys(() => ec.entity.find("moqui.chat.ChatBridgeDelivery").condition({chatRoomId: bridged, eventSeq: viaBridge.eventSeq}).count())
+        const bridgedEvent = row("moqui.chat.ChatEvent", {chatRoomId: bridged, eventSeq: viaBridge.eventSeq})
+        // stopped: the room's member who joined later, and the owner, read it as ended
+        as(A, MAPS + "stop#Share", {shareId: sent.shareId})
+        as(A, MAPS + "stop#Share", {shareId: viaBridge.shareId})
+        const ended = as(C, LOC + "get#LiveLocation", {chatRoomId: live, eventSeq: sent.eventSeq})
+        const ownerEnded = as(A, LOC + "get#LiveLocation", {chatRoomId: live, eventSeq: sent.eventSeq})
+        sys(() => {
+            ec.entity.find("moqui.chat.ChatBridgeDelivery").condition("chatRoomId", bridged).deleteAll()
+            ec.entity.find("moqui.chat.ChatRoomBridge").condition("chatRoomBridgeId", "CHAT_LOC_MAP").deleteAll()
+        })
+        return {sent, again, sharesAfterAgain, message, content, before, reported, member, owner, outsider, outsiderShare, joined, joinedShare, leftShare,
+            sealed, alone, tooLong, longKept, viaBridge, delivered, bridgedText: bridgedEvent.bodyText,
+            bridgedPlace: JSON.parse(bridgedEvent.contentJson || "{}").location, ended, ownerEnded}
+    },
+    then({sent, again, sharesAfterAgain, message, content, before, reported, member, owner, outsider, outsiderShare, joined, joinedShare, leftShare,
+            sealed, alone, tooLong, longKept, viaBridge, delivered, bridgedText, bridgedPlace, ended, ownerEnded}) {
+        sent.errors == ""
+        sent.shareId != null
+        sent.intervalSeconds == 5
+        again.duplicate == true
+        again.eventSeq == sent.eventSeq
+        sharesAfterAgain == 1
+        // the message carries the share's id, never a position
+        content.location.liveShareId == sent.shareId
+        content.location.source == "live"
+        content.location.latitude == null
+        message.bodyText.startsWith("Live location: Loc A, until ")
+        message.bodyText.includes("Live updates are in the app")
+        !message.bodyText.includes("openstreetmap")
+        before.state == "live"
+        before.latest == null
+        reported.statusCode == 200
+        member.state == "live"
+        member.owner == false
+        member.latest.latitude == 40.7452
+        owner.owner == true
+        owner.share.audienceCount == 1
+        outsider.state == null
+        outsider.latest == null
+        outsiderShare.reasonCode == "SHARE_NOT_FOUND"
+        joined.state == "notShared"
+        joined.latest == null
+        joinedShare.reasonCode == "SHARE_NOT_FOUND"
+        leftShare.errors == ""
+        leftShare.latest.latitude == 40.7452
+        sealed == "encryptedRoom"
+        alone == "noAudience"
+        tooLong.reasonCode == "TOO_LONG"
+        longKept == 0
+        delivered == 1
+        bridgedText.startsWith("Live location: Loc A, until ")
+        bridgedPlace.liveShareId == viaBridge.shareId
+        bridgedPlace.approximate == true
+        bridgedPlace.latitude == null
+        ended.state == "ended"
+        ownerEnded.state == "ended"
+        ownerEnded.owner == true
     }
 })

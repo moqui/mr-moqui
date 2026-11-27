@@ -1748,6 +1748,74 @@ test("an event's times: a wall clock in its zone, the box's start and end, the v
     }
 });
 
+test("live location (plans/Location-Sharing.md §3.5): a push moves a card's view, ends it or takes a viewer out; the page's sender sends at most one fix an interval, waits on 429, stops on 410 and once no chat view holds it", async () => {
+    const live = chat.live;
+    const view = live.view({ state: "live", owner: false, share: { shareId: "S1", thruDate: 5000 }, latest: { latitude: 1, longitude: 2, ageSeconds: 30 } }, 100000);
+    assert.equal(view.seenAt, 70000);
+    assert.equal(live.ageText(live.ageSeconds(view, 100000)), "just now");
+    assert.equal(live.ageText(live.ageSeconds(view, 250000)), "3 min ago");
+    assert.equal(live.view({ state: "bogus" }).state, "failed");
+    assert.equal(live.apply(view, { shareId: "S2", event: "ended" }, 1), null, "another share's push changes nothing");
+    const moved = live.apply(view, { shareId: "S1", event: "position", latitude: 3, longitude: 4, accuracy: 7.4 }, 200000);
+    assert.deepEqual(moved.latest, { latitude: 3, longitude: 4, accuracy: 7, observedDate: null });
+    assert.equal(moved.seenAt, 200000);
+    assert.equal(live.stale(moved, 200000 + 301000), true);
+    assert.equal(live.stale(moved, 200000 + 299000), false);
+    assert.equal(live.apply(view, { shareId: "S1", event: "position", latitude: 95, longitude: 4 }, 1), null, "a position out of range");
+    assert.equal(live.apply(view, { shareId: "S1", event: "changed", thruDate: 9000 }).share.thruDate, 9000);
+    assert.equal(live.apply(view, { shareId: "S1", event: "ended" }).state, "ended");
+    assert.equal(live.apply(view, { shareId: "S1", event: "revoked" }).state, "notShared", "a viewer taken out");
+    assert.equal(live.apply(Object.assign({}, view, { owner: true }), { shareId: "S1", event: "revoked" }), null, "the owner is told of an entry revoked, not the share");
+    assert.equal(live.message({ message: JSON.stringify({ shareId: "S1", event: "ended" }) }).event, "ended");
+    assert.equal(live.message({ message: { event: "ended" } }), null);
+
+    // the sender, with a stand-in browser location, clock and server
+    let clock = 1000;
+    const posts = [];
+    const replies = [];
+    const watch = { fn: null, cleared: 0 };
+    const timers = { pump: null, release: null };
+    const sender = live.makeSender({
+        geolocation: { watchPosition: (fn) => { watch.fn = fn; return 7; }, clearWatch: () => { watch.cleared += 1; }, getCurrentPosition: () => {} },
+        now: () => clock,
+        post: (url, params) => { posts.push({ url, params }); return Promise.resolve(replies.shift() || { statusCode: 200 }); },
+        setInterval: (fn) => { timers.pump = fn; return 1; }, clearInterval: () => { timers.pump = null; },
+        setTimeout: (fn) => { timers.release = fn; return 2; }, clearTimeout: () => { timers.release = null; }
+    });
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const fix = async (at, latitude) => { clock = at; watch.fn({ coords: { latitude, longitude: 2, accuracy: 10 }, timestamp: at }); await settle(); };
+    assert.equal(sender.start("S1", { url: "/r", intervalSeconds: 5 }), false, "nothing is sent while no chat view holds the sender");
+    const release = sender.hold();
+    const told = [];
+    sender.on((change) => told.push(change.kind));
+    assert.equal(sender.start("S1", { url: "/r", intervalSeconds: 5, thruDate: 999999, fresh: true }), true);
+    await fix(1500, 10);
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].url, "/r");
+    assert.equal(posts[0].params.latitude, "10");
+    assert.equal(posts[0].params.observedDate, "1500");
+    await fix(3000, 11);
+    assert.equal(posts.length, 1, "at most one a share's interval");
+    replies.push({ statusCode: 429, retryAfterSeconds: 9 });
+    await fix(7000, 12);
+    assert.equal(posts.length, 2);
+    await fix(8000, 13);
+    assert.equal(posts.length, 2, "429 waits retryAfterSeconds");
+    replies.push({ statusCode: 410, reasonCode: "SHARE_ENDED" });
+    await fix(16500, 14);
+    assert.equal(posts.length, 3);
+    assert.equal(sender.sending("S1"), false, "410 stops it");
+    assert.equal(watch.cleared, 1, "the watch let go");
+    assert.ok(told.includes("reported") && told.includes("stopped"));
+    // the last chat view let go: after a moment (not a room changed for another) the page sends nothing more
+    sender.start("S2", { url: "/r", intervalSeconds: 5, thruDate: 999999 });
+    release();
+    assert.equal(sender.sending("S2"), true);
+    timers.release();
+    assert.equal(sender.sending("S2"), false);
+    assert.deepEqual(sender.list(), []);
+});
+
 test("a place typed or pasted: coordinates, degrees, a geo: URI, three maps links, an address; its words as the server's, its links, out of range refused", () => {
     const place = chat.place;
     assert.deepEqual(place.parse("40.7452, -111.875"), { latitude: 40.7452, longitude: -111.875 });

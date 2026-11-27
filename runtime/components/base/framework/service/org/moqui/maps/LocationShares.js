@@ -1301,7 +1301,18 @@ function deviceShares(p) {
     return {stoppedCount}
 }
 
-const operations = {create, update, stop, revoke, report, findMine, findShared, get, deleteTrail, clean, indicator, appShare, deviceShares}
+/**
+ * get#ShareStatus (internal): whether a share of this owner is active, and nothing else of it; for Chat's live location
+ * card (plans/Location-Sharing.md §3.5), which says "Live location ended" rather than "not shared with you" to a member of
+ * the room the share's message is in, once get#Share has refused them. A share of another owner answers as none.
+ */
+function status(p) {
+    const ownerUserId = text(p.ownerUserId)
+    const share = ownerUserId ? shareOf(p.shareId, false, ownerUserId) : null
+    return {found: !!share, active: isActive(share, nowMillis())}
+}
+
+const operations = {create, update, stop, revoke, report, findMine, findShared, get, deleteTrail, clean, indicator, appShare, deviceShares, status}
 
 function execute(op, parameters) {
     if (!operations[op]) throw new Error("Unknown location share operation " + op)

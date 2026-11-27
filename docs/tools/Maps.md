@@ -996,8 +996,8 @@ A person shares where they are, until a time they choose, with people they choos
 entities `LocationShare`, `LocationShareAudience`, `LocationShareAudienceMember`, `LocationShareOwner` (the lock of an
 owner's share count), `LocationLatest` and `LocationTrailPoint` (`moqui.maps`,
 `framework/entity/MapLocationEntities.xml`) and the hourly clean, Maps shows them (below, "In Maps"), and the Android
-app sends a share from the phone, also in the background (below, "From the Android app"). Chat's live location, XMPP
-and the guest page for a link are still to come.
+app sends a share from the phone, also in the background (below, "From the Android app"), and a chat room's members
+get one from Chat's Share live location (below, "In chat"). XMPP and the guest page for a link are still to come.
 
 **In Maps** (Browse; LL2):
 
@@ -1098,6 +1098,17 @@ and the guest page for a link are still to come.
   the owner sees every active share wherever they are.
 - **The terminal.** Browse's twin lists, under its map, the user's own shares (with whom, until, the last position's age
   and coordinates, Stop) and those shared with them (`Maps/LocationSharesTui.xml`).
+- **In chat** (LL4; [Comms, Live location](Comms.md#live-location)). Chat's Share a location has Share live location:
+  `ChatLocationServices.send#LiveLocation` makes an ordinary share through `create#Share` (no trail, purpose "In chat:
+  the room's name") whose audience is the room's members of that moment as `LsaUser` entries, after the same directory
+  and block rules, and posts a message carrying only the share's id (`content.location.liveShareId`). Its card reads the
+  share through `get#Share` (`get#LiveLocation`, which first reads the message through `get#Timeline`, so only a reader
+  of the room asks) and follows its topic; `get#ShareStatus` (internal) tells a room member the share does not reach
+  whether it has ended, and nothing else. Who joins the room later is not added and who leaves stays in until the owner
+  takes them out here; the share is in Shared with me, Who sees my location and the app bar's chip like any other. The
+  Android app's dialog and service, and a browser's sending while its page is open (`moqui.chat.live.sender`, Chat's
+  `reportLiveLocation`), are as for a share started in Maps. Not in an encrypted room, where the server would see each
+  position (the decision and its later step are in Comms).
 
 - **The owner's acts.** `create#Share` (the audience, the end, exact or approximate, a trail or not), `update#Share`
   (extend or shorten, add to the audience, change the label or purpose), `stop#Share`, `revoke#Audience` (one person,
