@@ -186,6 +186,44 @@ pub fn read_optional(ec: &ExecutionContext, id: &str) -> Result<Option<Json>, Er
     visible(ec, definition).map(Some)
 }
 
+/// Whether the viewer may read definition `id` now, by [`read_optional`]'s rule, reading only the row's owner, group and
+/// read-only flag (never its body): for a holder of something opened from the definition, such as a CalcGrid editing
+/// room, to ask again on each call, so that a share removed while it is open takes effect at once (DASH-UI-008). A
+/// shipped definition is readable; an id with no definition is not, and its reason says so.
+pub fn may_read(ec: &ExecutionContext, id: &str) -> Result<(bool, Option<String>), Error> {
+    if is_shipped(ec, id) {
+        return Ok((true, None));
+    }
+    let row = internal(ec, || {
+        entity(ec)?
+            .find(ENTITY)?
+            .eq("definitionId", Value::string(id))
+            .select_field("ownerId")
+            .select_field("userGroupId")
+            .select_field("readOnly")
+            .one()
+    })?;
+    let Some(row) = row else {
+        return Ok((false, Some(format!("report definition {id} does not exist"))));
+    };
+    let grant = json!({"ownerId":row.get("ownerId").map(moqui_lib::object::to_plain_string),"userGroupId":row.get("userGroupId").and_then(Value::as_str).filter(|s|!s.is_empty()),"readOnly":row.get("readOnly").and_then(Value::as_str)==Some("Y")});
+    Ok(if readable(&grant)? {
+        (true, None)
+    } else {
+        (false, Some(format!("viewer may not read definition {id}")))
+    })
+}
+
+pub fn check_definition_read(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    params: &Parameters,
+) -> Result<Parameters, Error> {
+    let params = input(params);
+    let (readable, reason) = may_read(ec, text(&params, "definitionId", ""))?;
+    Ok(output(json!({"readable":readable,"reason":reason})))
+}
+
 /// A definition whoever asks, for the engine's own questions about a schedule (delivery.rs: whether it reads a business
 /// dataset, its version). Never returned to a caller.
 pub(super) fn read_unchecked(ec: &ExecutionContext, id: &str) -> Result<Option<Json>, Error> {

@@ -416,6 +416,17 @@ impl Presence {
         }
     }
 
+    /// Every view of `user_id` left `document`: they may no longer read it.
+    pub fn leave_user(&self, document: &str, user_id: &str) {
+        let mut all = lock(&self.by_document);
+        if let Some(peers) = all.get_mut(document) {
+            peers.retain(|_, peer| peer.user_id != user_id);
+            if peers.is_empty() {
+                all.remove(document);
+            }
+        }
+    }
+
     /// The viewers of `document` seen within [`PRESENCE_TTL`] but `client`: `client`, `userId`, `name`, `sheet`,
     /// `area`.
     #[must_use]
