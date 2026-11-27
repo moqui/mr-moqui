@@ -186,62 +186,61 @@ function beginRegistration(p) {
         ec.user.hashPassword(unusablePassword())
         return neutral
     }
-    let userId = old?.userId
-    if (!old) {
-        const placeholder = unusablePassword()
-        // its own transaction and error frame: a refusal (a name taken since the check) is logged and answered as every
-        // other request is, never as a failure that tells the address apart
-        ec.message.pushErrors()
-        try {
-            userId = ec.service
-                .sync()
-                .name('org.moqui.impl.UserServices.create#UserAccount')
-                .parameters({
-                    username: email,
-                    emailAddress: email,
-                    newPassword: placeholder,
-                    newPasswordVerify: placeholder,
-                    disabled: 'Y',
-                    deferIdentityLink: true,
-                })
-                .requireNewTransaction(true)
-                .call()?.userId
-            if (ec.message.hasError()) userId = null
-        } catch (error) {
-            userId = null
-        } finally {
-            ec.message.clearErrors()
-            ec.message.popErrors()
-        }
-        if (!userId) {
-            ec.logger.error('Registration could not make an account for a requested address')
-            return neutral
-        }
-    } else ec.user.hashPassword(unusablePassword())
-    for (const earlier of find('RegistrationChallenge', { userId })
-        .forUpdate(true)
-        .list())
-        if (!earlier.consumedAt) {
-            earlier.set('consumedAt', ec.user.nowTimestamp)
-            earlier.update()
-        }
-    // the challenge's code is made by the worker that mails it (sendVerification): nothing of it is in this request's
-    // parameters, so a call queued to the database when the service queue is full holds no code; until then the digest
-    // is of a value nobody knows
-    const challengeId = ec.user.randomString(32)
-    create('RegistrationChallenge', {
-        challengeId,
-        userId,
-        emailAddress: email,
-        tokenHash: digest(ec.user.randomString(64)),
-        expiresAt: now() + 3600000,
-        newAccount: own ? 'N' : 'Y',
-    })
-    ec.service
-        .special()
-        .name('org.moqui.public.AccountServices.send#RegistrationVerification')
-        .parameters({ challengeId })
-        .registerOnCommit()
+    if (old) ec.user.hashPassword(unusablePassword())
+    // a new account and its challenge are written in one transaction of their own, so an account is never left without
+    // its challenge (which would keep its address from registering again); a refusal (a name taken since the check) is
+    // logged and answered as every other request is, never as a failure that tells the address apart
+    ec.message.pushErrors()
+    try {
+        ec.transaction.runRequireNew(null, 'Registration not begun', () => {
+            let userId = old?.userId
+            if (!old) {
+                const placeholder = unusablePassword()
+                userId = ec.service
+                    .sync()
+                    .name('org.moqui.impl.UserServices.create#UserAccount')
+                    .parameters({
+                        username: email,
+                        emailAddress: email,
+                        newPassword: placeholder,
+                        newPasswordVerify: placeholder,
+                        disabled: 'Y',
+                        deferIdentityLink: true,
+                    })
+                    .call()?.userId
+                if (ec.message.hasError() || !userId) throw new Error('the account was not made')
+            }
+            for (const earlier of find('RegistrationChallenge', { userId })
+                .forUpdate(true)
+                .list())
+                if (!earlier.consumedAt) {
+                    earlier.set('consumedAt', ec.user.nowTimestamp)
+                    earlier.update()
+                }
+            // the challenge's code is made by the worker that mails it (sendVerification): nothing of it is in this
+            // request's parameters, so a call queued to the database when the service queue is full holds no code; until
+            // then the digest is of a value nobody knows. The address is the account's own as stored (its case kept).
+            const challengeId = ec.user.randomString(32)
+            create('RegistrationChallenge', {
+                challengeId,
+                userId,
+                emailAddress: old?.emailAddress || email,
+                tokenHash: digest(ec.user.randomString(64)),
+                expiresAt: now() + 3600000,
+                newAccount: own ? 'N' : 'Y',
+            })
+            ec.service
+                .special()
+                .name('org.moqui.public.AccountServices.send#RegistrationVerification')
+                .parameters({ challengeId })
+                .registerOnCommit()
+        })
+    } catch (error) {
+        ec.logger.error('Registration could not begin for a requested address: ' + String(error?.message || error).split('\n')[0])
+    } finally {
+        ec.message.clearErrors()
+        ec.message.popErrors()
+    }
     return neutral
 }
 /* send#RegistrationVerification, after the registration's commit: a new code for the challenge (its digest kept, the code
@@ -289,7 +288,8 @@ function verifyRegistration(p) {
         .condition('userId', c.userId)
         .forUpdate(true)
         .one()
-    if (!ua || ua.emailAddress !== c.emailAddress)
+    // the address compared ignoring case: an account stored with a capital is still its own (SEC-PSA-06)
+    if (!ua || String(ua.emailAddress || '').toLowerCase() !== String(c.emailAddress || '').toLowerCase())
         fail('NotFound', ec.l10n.localize('Verification link expired or not found'))
     if (
         !find('VerifiedAddress', {
