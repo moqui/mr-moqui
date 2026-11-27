@@ -1630,6 +1630,35 @@ mod configured {
         telemetry.shutdown();
     }
 
+    /// The spans waiting under a root open on its thread are at most tail-trace-spans, the most the export's tail
+    /// buffer keeps of a trace: a long call (an import's hundreds of thousands of entity frames) held a record of every
+    /// one until it ended (plans/Maps.md §6.3). A full tail makes room for a failed span; a kept trace counts the rest
+    /// as dropped.
+    #[test]
+    fn spans_waiting_under_an_open_root_are_bounded() {
+        let (telemetry, memory) = telemetry(r#"<telemetry tail-trace-spans="4"/>"#);
+        let root = telemetry.start_span("long", SpanKind::Server, None);
+        let trace = root.context().unwrap().trace_id.0;
+        for _ in 0..1000 {
+            telemetry
+                .start_span("frame", SpanKind::Internal, root.context())
+                .finish();
+        }
+        assert_eq!(super::sdk::waiting_spans(&trace), 4);
+        let mut failed = telemetry.start_span("failed", SpanKind::Internal, root.context());
+        failed.set_error("failure 9");
+        failed.finish();
+        assert_eq!(super::sdk::waiting_spans(&trace), 4);
+        root.finish();
+        telemetry.flush();
+        let names = span_names(&memory);
+        assert_eq!(names.iter().filter(|name| *name == "frame").count(), 3, "{names:?}");
+        assert!(names.contains(&"failed".to_string()), "{names:?}");
+        assert!(names.contains(&"long".to_string()), "{names:?}");
+        assert_eq!(telemetry.counters().dropped, 997);
+        telemetry.shutdown();
+    }
+
     #[test]
     fn prometheus_text_has_cumulative_instruments_with_per_instrument_attributes() {
         let (telemetry, _memory) = telemetry(
