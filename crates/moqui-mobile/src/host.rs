@@ -837,8 +837,11 @@ impl ShellHost for MobileHost {
     ) -> Result<(), String> {
         #[cfg(target_os = "android")]
         {
-            let _ = (core, host);
-            crate::android::package_worker_start(account, package_id, revision, wifi_only)
+            let _ = host;
+            // the work enqueued for this job is its runner: it alone may give the job up (a replaced one may not)
+            let runner = crate::android::package_worker_start(account, package_id, revision, wifi_only)?;
+            core.packages().expect_runner(account, package_id, revision, &runner);
+            Ok(())
         }
         #[cfg(not(target_os = "android"))]
         {

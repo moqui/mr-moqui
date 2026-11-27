@@ -127,19 +127,23 @@ class PackageDownloadWorker(context: Context, params: WorkerParameters) : Listen
         .addTag(PackageDownloadRules.accountTag(account))
         .build()
 
-    /** Download `revision` of a package (the shell's `packages_download`): replaces a run of the package not done. */
+    /**
+     * Download `revision` of a package (the shell's `packages_download`): replaces a run of the package not done. The
+     * id of the work enqueued, which Rust keeps as the job's runner (only it may give the job up), or null.
+     */
     @JvmStatic
-    fun start(context: Context, account: String, packageId: String, revision: Long, wifiOnly: Boolean): Boolean =
+    fun start(context: Context, account: String, packageId: String, revision: Long, wifiOnly: Boolean): String? =
       try {
+        val work = request(account, packageId, revision, wifiOnly)
         WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
           PackageDownloadRules.uniqueName(account, packageId),
           ExistingWorkPolicy.REPLACE,
-          request(account, packageId, revision, wifiOnly),
+          work,
         )
-        true
+        work.id.toString()
       } catch (err: Throwable) {
         Log.e(TAG, "The offline map's download was not scheduled", err)
-        false
+        null
       }
 
     /** A package's download cancelled or the package deleted. */
