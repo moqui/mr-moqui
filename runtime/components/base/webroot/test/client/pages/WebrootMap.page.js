@@ -163,6 +163,14 @@ test("a notice links only to this site or an http address; a view's extent is wi
     assert.deepEqual(map.wrapExtent([-10, 40, 10, 50]), [-10, 40, 10, 50]);
 });
 
+test("Browse's extent parameter takes west greater than east across the antimeridian and refuses what is not an extent", () => {
+    assert.deepEqual(map.extentParameter("-4.5918,42.3433,8.0983,51.148"), [-4.5918, 42.3433, 8.0983, 51.148]);
+    assert.deepEqual(map.extentParameter("27.2865, 41.1518, -169.8983, 77.6975"), [27.2865, 41.1518, -169.8983, 77.6975], "Russia, across the antimeridian");
+    for (const bad of ["", null, "1,2,3", "1,2,3,4,5", "a,2,3,4", "1,,3,4", "-181,0,10,10", "0,0,181,10", "0,-91,10,10", "0,0,10,91", "0,20,10,10"]) {
+        assert.equal(map.extentParameter(bad), null, String(bad));
+    }
+});
+
 test("labels and attributions are text: escaped, and a link only to an http address", () => {
     assert.equal(map.escapeHtml('<img src=x onerror="alert(1)"> & \'q\''), "&lt;img src=x onerror=&quot;alert(1)&quot;&gt; &amp; &#39;q&#39;");
     assert.equal(map.attributionHtml("OpenFreeMap\n© <b>OpenMapTiles</b>\nData", ["https://openfreemap.org", "javascript:alert(1)"]),

@@ -359,7 +359,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- the terminal's map (Browse.tui.json): the places of a postal search (postal), the user's saved places and those shared
         with them (read-only), the places of their saved views (each a center, or an extent's middle) and of the record
         layers shown; the user's overlays, own and shared; the notices (the profile's, a layer not shown, features cut) and
-        the attribution -->
+        the attribution; and the view it was opened on (longitude and latitude, or extent), as Browse.qvue takes it -->
     <transition name="terminalMap" method="get" read-only="true">
         <actions><script><![CDATA[
             try {
@@ -380,10 +380,15 @@ along with this software (see the LICENSE.md file). If not, see
                     points.push({id: String(feature.id), lon: feature.geometry.coordinates[0], lat: feature.geometry.coordinates[1],
                         label: feature.properties?.label || '', precision: precision(feature.properties?.precisionEnumId)})
                 }
+                // an extent's middle, across the antimeridian when west is greater than east (Russia), within -180 to 180
+                const middle = (box) => {
+                    const [west, south, east, north] = box.map(Number), across = east < west ? east + 360 : east
+                    const lon = (west + across) / 2
+                    return [lon > 180 ? lon - 360 : lon, (south + north) / 2]
+                }
                 for (const row of Array.from(views?.savedViewList || []).slice(0, 100)) {
                     const view = row.view || {}
-                    const center = Array.isArray(view.center) ? view.center : Array.isArray(view.extent)
-                        ? [(view.extent[0] + view.extent[2]) / 2, (view.extent[1] + view.extent[3]) / 2] : null
+                    const center = Array.isArray(view.center) ? view.center : Array.isArray(view.extent) ? middle(view.extent) : null
                     if (center) points.push({id: 'view:' + row.savedViewId, lon: center[0], lat: center[1], label: row.description,
                         source: row.isOwn ? ec.l10n.localize('Your saved view') : ec.l10n.localize('Shared by') + ' ' + (row.ownerName || '')})
                 }
@@ -432,7 +437,29 @@ along with this software (see the LICENSE.md file). If not, see
                 const basemaps = Array.from(config.profile?.basemaps || [])
                 const basemap = basemaps.find(entry => entry.id === config.profile?.basemap) || basemaps[0] || {}
                 const attribution = String(basemap.attribution || '').split(/\n/).map(part => part.trim()).filter(part => part).join('; ')
-                ec.web.sendJsonResponse({points, overlays, postalSearch, center: config.center || null, extent: config.extent || null, notes,
+                // the view Browse was opened on, as Browse.qvue takes it: a point (longitude, latitude, label: a dashboard
+                // geomap's place, LocalMap's Open in Maps) marked first and centered on, else an area (extent: west,south,
+                // east,north, west greater than east across the antimeridian: a geomap's country), its middle the center and
+                // only the places within it listed (a postal search's places stay)
+                let shown = points, center = config.center || null, area = config.extent || null
+                const lonOk = lon => Number.isFinite(lon) && lon >= -180 && lon <= 180, latOk = lat => Number.isFinite(lat) && lat >= -90 && lat <= 90
+                const givenLon = Number(longitude), givenLat = Number(latitude)
+                const box = String(extent || '').split(',').map(value => value.trim() === '' ? NaN : Number(value))
+                if (String(longitude ?? '').trim() && String(latitude ?? '').trim() && lonOk(givenLon) && latOk(givenLat)) {
+                    shown = [{id: 'given', lon: givenLon, lat: givenLat, label: String(label || '')}].concat(points)
+                    center = [givenLon, givenLat]
+                    area = null
+                } else if (box.length === 4 && lonOk(box[0]) && lonOk(box[2]) && latOk(box[1]) && latOk(box[3]) && box[1] <= box[3]) {
+                    const [west, south, east, north] = box
+                    const within = point => {
+                        const lon = Number(point.lon), lat = Number(point.lat)
+                        return lat >= south && lat <= north && (west <= east ? lon >= west && lon <= east : lon >= west || lon <= east)
+                    }
+                    shown = points.filter(point => String(point.id).startsWith('postal:') || within(point))
+                    center = middle(box)
+                    area = box
+                }
+                ec.web.sendJsonResponse({points: shown, overlays, postalSearch, center, extent: area, notes,
                     attribution: attribution || 'Natural Earth'})
             } catch (err) {
                 ec.message.clearErrors()

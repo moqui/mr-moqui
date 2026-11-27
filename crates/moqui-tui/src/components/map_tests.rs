@@ -90,6 +90,20 @@ fn the_places_are_a_list_over_the_land_with_the_attribution() {
             "Area: 51.30000, -0.50000 – 51.70000, 0.30000"
         ]
     );
+    // with places, the view comes before them (Browse opened on an area across the antimeridian lists those within it)
+    let within = shown(
+        &json!({"points": [{"id": "v", "lon": 135.07, "lat": 48.48, "label": "Khabarovsk"}],
+            "center": [108.7, 59.4], "extent": [27.2865, 41.1518, -169.8983, 77.6975]}),
+        &state,
+    );
+    let at = within.iter().position(|line| line == "Places").unwrap();
+    assert_eq!(
+        within[at - 2..at],
+        [
+            "Center: 59.40000, 108.70000",
+            "Area: 41.15180, 27.28650 – 77.69750, -169.89830"
+        ]
+    );
 }
 
 #[test]

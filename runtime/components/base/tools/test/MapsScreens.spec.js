@@ -135,10 +135,16 @@ feature("Browse renders its qvue and its terminal twin for a Maps user, and the 
                 {adapterKey: ADAPTER, recordKey: located, postal: "US 00000"},
                 "get"
             ),
+            // the view a dashboard geomap opens: a point, marked first; an area around the record's place (Chicago); and
+            // Russia's, across the antimeridian, which leaves it out
+            point: as(WRITER, "apps/maps/Browse/terminalMap", {longitude: "2.35", latitude: "48.85", label: "Paris"}, "get"),
+            around: as(WRITER, "apps/maps/Browse/terminalMap", {adapterKey: ADAPTER, recordKey: located, extent: "-90,40,-85,43"}, "get"),
+            russia: as(WRITER, "apps/maps/Browse/terminalMap",
+                {adapterKey: ADAPTER, recordKey: located, extent: "27.2865,41.1518,-169.8983,77.6975"}, "get"),
             plainConfig: as(PLAIN, "apps/maps/Browse/getConfig", {}, "get")
         }
     },
-    then({qvue, tui, terminal, plainConfig}) {
+    then({qvue, tui, terminal, point, around, russia, plainConfig}) {
         // Browse.qvue: the component file the shell compiles
         qvue.status == 200
         qvue.output.includes("name: 'MapsBrowse'")
@@ -158,6 +164,16 @@ feature("Browse renders its qvue and its terminal twin for a Maps user, and the 
         json(terminal).postalSearch.query == "US 00000"
         json(terminal).postalSearch.count == 0
         json(terminal).postalSearch.reason != null
+        // the view it is opened on: a point marked first and centered on; an area's places within it, its middle the
+        // center, across the antimeridian too (Russia's middle is in Siberia, not the Atlantic)
+        json(point).points[0].id == "given"
+        json(point).points[0].label == "Paris"
+        json(point).center[0] == 2.35
+        json(around).points.some(place => place.label === "Spec place")
+        json(around).extent[0] == -90
+        !json(russia).points.some(place => place.label === "Spec place")
+        json(russia).extent[2] == -169.8983
+        json(russia).center[0] > 100 && json(russia).center[0] < 120
         // the app is MAPS_APP's
         refused(plainConfig)
         !plainConfig.output.includes("profileId")
