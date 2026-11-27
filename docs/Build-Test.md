@@ -545,9 +545,9 @@ Prerequisites, beyond those of the server build:
 - **Network on the first build and for each AppImage:** the first build downloads the CEF binary distribution, about
   1 GB, into the `tauri-cef` cache (`~/.cache/tauri-cef` on Linux, `~/Library/Caches/tauri-cef` on macOS,
   `%LOCALAPPDATA%\tauri-cef` on Windows; `CEF_PATH` for another). The AppImage step downloads quick-sharun.sh, sharun
-  and appimagetool each time. The desktop crate's build script moves the runtime files cef-dll-sys 154 copies into
-  `target/<profile>/build/` (Cargo 1.100's layout) up beside the executable: `libcef.dll` on Windows, `libcef.so` on
-  Linux, and `locales/`.
+  and appimagetool each time. Under Cargo 1.100's build directory layout cef-dll-sys 154 copies the CEF runtime files
+  into `target/<profile>/build/`; the desktop crate's build script copies them from the distribution beside the
+  executable instead (`libcef.dll` on Windows, `libcef.so` on Linux, and `locales/`).
 
 ```sh
 # Ubuntu 26.04

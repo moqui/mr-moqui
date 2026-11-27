@@ -104,8 +104,9 @@ chmod +x "$R/moq"
 mkdir -p "$R/scripts/moq"
 cp "$SRC"/scripts/moq/*.sh "$R/scripts/moq/"
 cp "$SRC/scripts/js-state.pl" "$R/scripts/"
-# need_cargo downloads NASM on Windows (scripts/nasm.sh). The fixture is this tree, so the script has to be here.
-cp "$SRC/scripts/nasm.sh" "$R/scripts/"
+# need_cargo downloads NASM on Windows (scripts/nasm.sh, with scripts/win-tool.sh). The fixture is this tree, so the
+# scripts have to be here.
+cp "$SRC/scripts/nasm.sh" "$SRC/scripts/win-tool.sh" "$R/scripts/"
 # Minimal verified webroot; CLI command tests run offline with the stub binary.
 webroot="$R/runtime/components/base/webroot"
 mkdir -p "$webroot/build" "$webroot/screen/webroot/libs"
