@@ -9,7 +9,10 @@
 // (and 304, and 204 for no tile) and refuses a non-holder and a stale revision. The archive is a tiny valid PMTiles
 // version 3 file made here. A Cloud Optimized GeoTIFF (P4c) is registered by its header (its CRS and bands recorded, one in
 // strips refused), read by range by a holder of its share and not by another user, and handed to the holder's map with its
-// projection's definition.
+// projection's definition. Readiness's room to replace archives (archiveSpace) is checked on given filesystem rows: room,
+// too little on the runtime's or the database's filesystem or for the next backup alone, an external database not measured,
+// no filesystems reported and a status map not read. A raster provider whose URL is a COG passes its test by one range of
+// it, and one whose URL is no COG, or answers the whole file, fails naming why.
 // Run: ./moq test framework --spec MapsSource
 const S = "org.moqui.maps.MapSourceServices."
 const HOLDER = "MAPS_SRC_HOLDER"
@@ -41,6 +44,16 @@ const COG_URL_LAYERS = {
     notProviders: "https://elsewhere.spec.example/data/a.tif",
     untested: COG_HOST + "/data/untested.tif",
     proxied: COG_HOST + "/data/proxied.tif"
+}
+// raster providers whose URL is a COG (a bucket of them): tested by one range of that COG
+const COG_BUCKETS = {
+    cog: "MAPS_SRC_COGB",
+    notCog: "MAPS_SRC_COGB_NOT",
+    whole: "MAPS_SRC_COGB_WHOLE",
+    noCors: "MAPS_SRC_COGB_NOCORS",
+    plain: "MAPS_SRC_COGB_HTTP",
+    proxied: "MAPS_SRC_COGB_PROXY",
+    keyed: "MAPS_SRC_COGB_KEY"
 }
 const cogUrlLayer = name => "MAPS_SRC_COGU_" + name.toUpperCase()
 const layers = {
@@ -234,6 +247,9 @@ spec({
         del("moqui.maps.MapLayer", "layerId", Object.keys(COG_URL_LAYERS).map(cogUrlLayer))
         del("moqui.server.ConnectionCheck", "connectionKey", Object.values(COG_PROVIDERS))
         del("moqui.maps.MapProvider", "providerId", Object.values(COG_PROVIDERS))
+        del("moqui.server.ConnectionCheck", "connectionKey", Object.values(COG_BUCKETS))
+        del("moqui.maps.MapLayer", "layerId", ["MAPS_SRC_COGB_XYZ"])
+        del("moqui.maps.MapProvider", "providerId", Object.values(COG_BUCKETS))
         for (const location of [DRIVE_LOCATION, BAD_LOCATION, FILE_LOCATION, OUTSIDE_LOCATION, COG_LOCATION, COG_STRIPS])
             try {
                 ec.resource.getLocationReference(location).delete()
@@ -283,6 +299,7 @@ feature("registering records the revision of a drive's archive and a file's, and
         }
     },
     then({drive, file, fileUri, outside, driveRow, fileRow, broken, mismatch, git, together, mixed, refused, readiness}) {
+        const checks = Array.from(readiness.checks || [])
         drive.applied && file.applied && fileUri.applied
         layerRow(layers.fileUri).sourceRevision == fileRow.sourceRevision && layerRow(layers.fileUri).sourceAddressKind == "file"
         // outside every drive: registering says every user who may see the layer reads it
@@ -302,7 +319,9 @@ feature("registering records the revision of a drive's archive and a file's, and
         !mixed.applied && mixed.reasonCode == "FORMAT_MISMATCH"
         layerRow(layers.raster).disabled == "Y" && !layerRow(layers.git).sourceRevision
         refused.applied !== true && (refused.reasonCode == "PERMISSION_DENIED" || /authoriz/i.test(refused.error))
-        Array.from(readiness.checks || []).find(check => check.checkKey == "maps.archive." + layers.drive)?.state == "ready"
+        checks.find(check => check.checkKey == "maps.archive." + layers.drive)?.state == "ready"
+        // this server's own filesystems: measured on Unix
+        checks.some(check => check.checkKey == "maps.archive.space" && check.state != "failed")
     }
 })
 
@@ -536,5 +555,217 @@ feature("a provider's COG is read by one range from its URL: a 206 this site may
         out.notProviders.applied === false && out.notProviders.reasonCode == "URL_NOT_PROVIDERS"
         out.untested.applied === false && out.untested.reasonCode == "PROVIDER_UNTESTED"
         out.proxied.applied === false && out.proxied.reasonCode == "PROVIDER_PROXIED"
+    }
+})
+
+feature("a raster provider whose URL is a COG is tested by one range of that COG, and a URL that is no COG fails by name", {
+    when() {
+        const urls = {
+            cog: COG_HOST + "/bucket/scene.tif",
+            notCog: COG_HOST + "/bucket/picture.tif",
+            whole: COG_HOST + "/bucket/whole.tiff",
+            noCors: COG_HOST + "/bucket/nocors.tif",
+            plain: COG_HOST.replace("https:", "http:") + "/bucket/scene.tif",
+            proxied: COG_HOST + "/bucket/scene.tif",
+            keyed: COG_HOST + "/bucket/scene.tif"
+        }
+        http.clear()
+        const cors = {"Access-Control-Allow-Origin": "*"}
+        http.add({method: "GET", url: urls.cog, contentType: "image/tiff", body: lib.cog(), ranges: true, headers: cors})
+        http.add({
+            method: "GET",
+            url: urls.notCog,
+            contentType: "image/tiff",
+            body: Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13]),
+            ranges: true,
+            headers: cors
+        })
+        http.add({method: "GET", url: urls.whole, contentType: "image/tiff", body: lib.cog(), headers: cors})
+        http.add({method: "GET", url: urls.noCors, contentType: "image/tiff", body: lib.cog(), ranges: true})
+        const out = {}
+        for (const [key, providerId] of Object.entries(COG_BUCKETS)) {
+            make("moqui.maps.MapProvider", {
+                providerId,
+                providerName: "Spec COG bucket " + key,
+                providerKindEnumId: "MPK_RASTER_TILES",
+                endpointUrl: urls[key],
+                proxyRequests: key === "proxied" ? "Y" : "N",
+                apiKey: key === "keyed" ? "spec-key" : null,
+                disabled: "N"
+            })
+            const tested = as(null, () =>
+                invoke("org.moqui.admin.ConfigurationServices.test#Connection", {
+                    adapterKey: "mapProvider",
+                    connectionKey: providerId
+                })
+            )
+            out[key] = {
+                passed: tested.passed,
+                texts: Array.from(tested.checkList || [])
+                    .map(row => String(row.text))
+                    .join(" | ")
+            }
+        }
+        out.asked = http.requests().filter(request => request.url == urls.cog)
+        out.plainAsked = http.requests().filter(request => request.url == urls.plain).length
+        // a tile layer of the COG provider with no URL of its own is not handed the GeoTIFF as its template
+        make("moqui.maps.MapLayer", {
+            layerId: "MAPS_SRC_COGB_XYZ",
+            layerName: "Spec COG bucket tiles",
+            formatEnumId: "MLF_RASTER_XYZ",
+            providerId: COG_BUCKETS.cog,
+            disabled: "N"
+        })
+        const tiles = as(null, () => invoke("org.moqui.maps.MapServices.get#EffectiveConfig", {layerIds: "MAPS_SRC_COGB_XYZ"}))
+        out.tileErrors = Array.from(tiles.config?.layerErrors || []).map(error => error.reasonCode)
+        out.tileLayers = Array.from(tiles.config?.layers || []).length
+        // an error the caller already has is not the header reader's
+        const sources = ec.resource.script("component://framework/service/org/moqui/maps/MapSources.js")
+        ec.message.addError("an earlier error")
+        out.withError = sources.readCogHead(urls.cog, false)
+        out.errorKept = ec.message.getErrorsString().includes("an earlier error")
+        ec.message.clearErrors()
+        out.withCredentials = sources.readCogHead("https://user:pass@cog.spec.example/bucket/scene.tif", false)
+        // what a COG endpoint is: a .tif or .tiff path, any case, with no placeholder
+        const isCog = ec.resource.script("component://framework/service/org/moqui/maps/MapConfig.js").cogEndpoint
+        out.detected = [
+            "https://h/x.png?.tif",
+            "https://h/x.tif?{z}",
+            "https://h/X.TIFF",
+            "https://h/a.tif?v=2",
+            "https://h/{z}.tif"
+        ]
+            .map(url => isCog(url))
+            .join()
+        return out
+    },
+    then({
+        cog,
+        notCog,
+        whole,
+        noCors,
+        plain,
+        proxied,
+        keyed,
+        asked,
+        plainAsked,
+        withError,
+        errorKept,
+        withCredentials,
+        detected,
+        tileErrors,
+        tileLayers
+    }) {
+        cog.passed === true && cog.texts.includes("Cloud Optimized GeoTIFF") && cog.texts.includes("EPSG:32633")
+        asked.length == 1 && asked[0].headers.Range == "bytes=0-65535" && !asked[0].headers.Cookie
+        notCog.passed === false && notCog.texts.includes("(COG_INVALID)")
+        whole.passed === false && whole.texts.includes("(NO_RANGES)")
+        noCors.passed === false && noCors.texts.includes("(NO_CORS)")
+        // registering refuses an http URL, so its test does too, asking nothing
+        plain.passed === false && plain.texts.includes("(LOCATION_INVALID)") && plainAsked == 0
+        proxied.passed === false && proxied.texts.includes("not reached through this server")
+        keyed.passed === false && keyed.texts.includes("has no key")
+        withError.ok === true && errorKept === true
+        withCredentials.ok === false && withCredentials.reasonCode == "LOCATION_INVALID"
+        detected == "false,false,true,true,false"
+        tileLayers == 0 && tileErrors.join() == "SOURCE_NOT_TILES"
+    }
+})
+
+feature("readiness says whether the filesystem an archive is on has room to replace it, from given rows", {
+    when() {
+        const sources = ec.resource.script("component://framework/service/org/moqui/maps/MapSources.js")
+        const space = sources.archiveSpace
+        const MIB = 1048576
+        const archive = (layerId, resourceLocation, mib) => ({
+            layerId,
+            resourceLocation,
+            sourceRevision: "r" + layerId,
+            sourceSize: mib * MIB
+        })
+        // a disk archive of 100 MiB, a drive's of 50 MiB drawn by two layers (counted once), and one never registered
+        const rows = [
+            archive("DISK", "runtime://maps/region.pmtiles", 100),
+            archive("LIGHT", "dbresource://drive/region.pmtiles", 50),
+            archive("DARK", "dbresource://drive/region.pmtiles", 50),
+            {layerId: "NEW", resourceLocation: "runtime://maps/new.pmtiles", sourceSize: 900 * MIB}
+        ]
+        const runtimeRow = availableBytes => ({mountPoint: "/", holds: ["runtime", "system temp"], availableBytes})
+        const backup = {embedded: true, holds: "database"}
+        return {
+            // one filesystem: the largest (100 MiB) once more and the drive's 50 MiB for the next local backup
+            fits: space(rows, [runtimeRow(10240 * MIB)], backup),
+            tight: space(rows, [runtimeRow(149 * MIB)], backup),
+            // runtime/db on a filesystem of its own: the drive's archive and its backup are measured there
+            dbShort: space(
+                rows,
+                [runtimeRow(10240 * MIB), {mountPoint: "/srv/db", holds: ["database"], availableBytes: 60 * MIB}],
+                backup
+            ),
+            external: space([rows[1]], [runtimeRow(10240 * MIB)], {embedded: false, holds: null}),
+            // the backups written under the runtime, apart from runtime/db: that filesystem holds only the next backup
+            backupOnly: space(
+                [rows[1]],
+                [runtimeRow(30 * MIB), {mountPoint: "/srv/db", holds: ["database"], availableBytes: 10240 * MIB}],
+                {embedded: true, holds: "runtime"}
+            ),
+            unread: space(rows, [], backup),
+            statusUnread: space(rows, null, backup),
+            none: space([rows[3]], [runtimeRow(MIB)], backup),
+            // a read of the server that throws is the row's, and with no registered archive there is none
+            thrown: sources.spaceCheck(rows, () => {
+                throw new Error("spec: the status map is gone")
+            }),
+            thrownNone: sources.spaceCheck([rows[3]], () => {
+                throw new Error("spec: the status map is gone")
+            }),
+            // where the content blobs are: transactional and content only
+            embedded: [
+                [{group: "transactional", embedded: true}],
+                [
+                    {group: "transactional", embedded: true},
+                    {group: "content", embedded: true}
+                ],
+                [
+                    {group: "transactional", embedded: true},
+                    {group: "content", embedded: false}
+                ],
+                [
+                    {group: "transactional", embedded: false},
+                    {group: "content", embedded: true}
+                ],
+                [
+                    {group: "transactional", embedded: true},
+                    {group: "transactional#clone1", embedded: false}
+                ],
+                [
+                    {group: "transactional", embedded: true},
+                    {group: "logging", embedded: null}
+                ],
+                []
+            ]
+                .map(sources.embeddedOf)
+                .join()
+        }
+    },
+    then({fits, tight, dbShort, external, backupOnly, unread, statusUnread, none, thrown, thrownNone, embedded}) {
+        fits.checkKey == "maps.archive.space" && fits.state == "ready" && fits.fixRoute == "mapsConfiguration"
+        fits.reasonCode === null
+        fits.message == "/ has 10 GiB free, room for 150 MiB"
+        tight.state == "warning" && tight.reasonCode == "ARCHIVE_SPACE_LOW"
+        tight.message.startsWith("/ has 149 MiB free and needs 150 MiB")
+        dbShort.state == "warning" && dbShort.message.startsWith("/srv/db has 60 MiB free and needs 100 MiB")
+        !dbShort.message.includes("/ has")
+        external.state == "unavailable" && external.reasonCode == "ARCHIVE_SPACE_EXTERNAL_DB"
+        external.message.includes("external database")
+        backupOnly.state == "warning" && backupOnly.reasonCode == "ARCHIVE_SPACE_LOW"
+        backupOnly.message.startsWith("/ has 30 MiB free and needs 50 MiB: the database's archives once more in the next local")
+        !backupOnly.message.includes("largest")
+        unread.state == "unavailable" && unread.reasonCode == "ARCHIVE_SPACE_UNREAD" && unread.message.includes("only on Unix")
+        statusUnread.reasonCode == "ARCHIVE_SPACE_UNREAD" && !statusUnread.message.includes("Unix")
+        none === null
+        thrown.state == "unavailable" && thrown.reasonCode == "ARCHIVE_SPACE_UNREAD"
+        thrownNone === null
+        embedded == "true,true,false,false,true,true,false"
     }
 })

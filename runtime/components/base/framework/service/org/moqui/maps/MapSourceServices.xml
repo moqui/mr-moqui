@@ -424,8 +424,12 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The maps.archives readiness provider (data/AdminConfigurationData.xml), changing nothing, for a caller with
             ADMIN_OVERVIEW_VIEW (PERMISSION_DENIED otherwise): each PMTiles layer with a location, enabled or registered,
             as find#ArchiveLayers states it (NOT_REGISTERED and NEWER_REVISION warnings; NOT_LFS, a git archive that is not
-            a Git LFS object, refused by name, SOURCE_CHANGED, SOURCE_GONE and STORAGE_NOT_RANGED failed); NO_ARCHIVES when
-            there is none.</description>
+            a Git LFS object, refused by name, SOURCE_CHANGED, SOURCE_GONE and STORAGE_NOT_RANGED failed); the page policy's
+            room for COG decoding (maps.raster.csp); maps.archive.space, the room on the filesystems the registered archives
+            are on to replace the largest of each and, while the scheduled backup runs, for the database's archives in the
+            next local backup (ARCHIVE_SPACE_LOW warning; ARCHIVE_SPACE_EXTERNAL_DB for an external content database and
+            ARCHIVE_SPACE_UNREAD for filesystems not reported or not read, each unavailable); NO_ARCHIVES when there is
+            none.</description>
         <in-parameters><parameter name="providerKey" required="true"/></in-parameters>
         <out-parameters><parameter name="checks" type="List"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapSources.js').execute('readiness', context))</script></actions>

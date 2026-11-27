@@ -166,6 +166,39 @@ feature("zero decimal fails", { expect() { toDecimal("0.00") } })
 }
 
 #[test]
+fn logical_operators_give_the_operand_groovy_truth_chooses() {
+    let result = run(r#"
+let calls = 0
+const count = () => { calls++; return calls }
+feature("a list or [] as an argument", { expect({ x }) { Array.from(x.checks || []).length == 2 }, where: [{ x: { checks: ["a", "b"] } }] })
+feature("a missing list as an argument", { expect({ x }) { Array.from(x.checks || []).length == 0 }, where: [{ x: {} }] })
+feature("a comparison side", { expect({ row }) { (row.name || "") == "" }, where: [{ row: { name: null } }] })
+feature("an empty list is not chosen", { expect() { ([] || "x") == "x" } })
+feature("&& keeps the false operand", { expect() { (0 && "x") === 0 } })
+feature("&& gives the right side", { expect() { ("a" && "b") == "b" } })
+feature("&& keeps an empty list, where JavaScript gives the right side", { expect() { Array.isArray([] && "x") && ([] && "x").length === 0 } })
+feature("each side once, the right only when chosen", { expect() { (count() || count()) == 1 && calls == 1 } })
+feature("a false && fails", { expect() { "a" && [] } })
+feature("a false || fails", { expect() { null || 0 } })
+"#);
+    assert_eq!(
+        outcomes(&result),
+        vec![
+            ("a list or [] as an argument".to_string(), "passed"),
+            ("a missing list as an argument".to_string(), "passed"),
+            ("a comparison side".to_string(), "passed"),
+            ("an empty list is not chosen".to_string(), "passed"),
+            ("&& keeps the false operand".to_string(), "passed"),
+            ("&& gives the right side".to_string(), "passed"),
+            ("&& keeps an empty list, where JavaScript gives the right side".to_string(), "passed"),
+            ("each side once, the right only when chosen".to_string(), "passed"),
+            ("a false && fails".to_string(), "failed"),
+            ("a false || fails".to_string(), "failed"),
+        ]
+    );
+}
+
+#[test]
 fn assert_checks_a_condition_in_a_loop() {
     let result =
         run("feature('loop', {\n  expect() {\n    for (const n of [1, 2, 3]) assert(n < 3, `n is ${n}`)\n  },\n})\n");
