@@ -128,7 +128,7 @@ with an `artifact` override and the receiver limits written out:
 - **Capacity:** `queue-records` (8192), `queue-bytes` (33554432), `tail-traces` (1024) and `tail-trace-spans` (512)
   on `<telemetry>`. A sixteenth of the queue is kept for request and job roots. `tail-trace-spans` is the spans one
   trace holds while its root decides, on the thread under an open root and in the export's buffer; past it a span is
-  dropped and counted, and a failed or slow frame takes the place of an ordinary one. A bad value warns and keeps the
+  dropped and counted; on the thread a failed or slow frame takes the place of an ordinary one. A bad value warns and keeps the
   default.
 - **Retention** is per index and per metric granularity, in days; the `clean_TelemetryData_daily` job applies it and
   `rollup_TelemetryMetrics_hourly` rolls minutes into hours and days.
