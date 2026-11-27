@@ -22,7 +22,7 @@ use super::g711::{alaw_decode, alaw_encode, mulaw_decode, mulaw_encode};
 use super::g722::{G722Decoder, G722Encoder};
 use super::jitter::{JitterConfig, LegDecoder, Pulled};
 use super::mixer::Mixer;
-use super::opus::{OpusDecoder, OpusEncoder, VOICE_BITRATE};
+use super::opus::{packet_valid, OpusDecoder, OpusEncoder, VOICE_BITRATE};
 use super::resample::Resampler;
 use super::room::AudioRoom;
 use super::{level_dbov, FRAME, SILENT_DBOV};
@@ -158,6 +158,38 @@ fn a_panic_in_the_opus_decoder_drops_one_packet() {
     let packet = encoder.encode(&pcm[..FRAME]).expect("encoded").to_vec();
     let mut back = Vec::new();
     assert_eq!(decoder.decode(&packet, &mut back).expect("decoded"), FRAME);
+}
+
+/// SEC-COM-87: a packet is checked against RFC 6716 §3.4 before the library reads it; real ones pass, and a frame
+/// count, a length or a padding past the packet is refused (and so is a leg past its failures).
+#[test]
+fn an_opus_packet_is_checked_before_it_is_decoded() {
+    let pcm = tone(440.0, 8_000.0, 48_000, 48_000);
+    let mut encoder = OpusEncoder::new(VOICE_BITRATE).expect("an encoder");
+    let packet = encoder.encode(&pcm[..FRAME]).expect("encoded").to_vec();
+    assert!(packet_valid(&packet));
+    assert!(!packet_valid(&[]));
+    // code 0: one frame of at most 1275 bytes
+    assert!(packet_valid(&[0x78, 1, 2, 3]));
+    assert!(!packet_valid(&[vec![0x78], vec![0; 1276]].concat()));
+    // code 1: two equal frames
+    assert!(!packet_valid(&[0x79, 1, 2, 3]));
+    // code 2: a first frame's length past the packet
+    assert!(!packet_valid(&[0x7a, 200, 1, 2]));
+    assert!(packet_valid(&[0x7a, 2, 1, 2, 3]));
+    // code 3: no frames, too long in all, padding past the end, a VBR length past the end
+    assert!(!packet_valid(&[0x7b, 0x00]));
+    assert!(!packet_valid(&[0x7b, 0x3f, 0]));
+    assert!(!packet_valid(&[0x7b, 0x42, 200, 1]));
+    assert!(!packet_valid(&[0x7b, 0x82, 250, 1, 2]));
+    assert!(packet_valid(&[0x7b, 0x02, 1, 2]));
+    let mut decoder = OpusDecoder::new().expect("a decoder");
+    let mut back = Vec::new();
+    for _ in 0..100 {
+        assert!(decoder.decode(&[0x7a, 200, 1, 2], &mut back).is_err());
+    }
+    assert!(decoder.stopped(), "a leg past its failures is no longer decoded");
+    assert!(decoder.decode(&packet, &mut back).is_err());
 }
 
 #[test]
