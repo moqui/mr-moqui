@@ -5,13 +5,24 @@ The plan to make an app open as fast as a native phone app: on Android, from the
 
 ## Targets
 
-Each target is from the tap on the launcher icon, measured on a mid-range Android phone on Wi-Fi.
+The goal is an instant start: 30 ms, two frames at 60 Hz. Each target is from the tap on the launcher icon, measured
+on a mid-range Android phone on Wi-Fi.
 
-| Measure | Cold start | Warm start |
+| Measure | Cold start (no process) | Warm start (process alive) |
 |---|---|---|
-| First frame in the app's own theme (the OS splash counts) | 300 ms | 100 ms |
-| Last-known content shown and usable | 1 s | 300 ms |
-| Fresh content shown | 1.5 s | 1 s |
+| First frame in the app's own colors | 30 ms | 30 ms |
+| Last-known content shown and usable | 150 ms with S7, 300 ms without | 30 ms |
+| Fresh content shown | 1 s | 1 s |
+
+The floors:
+
+- **First frame, 30 ms in both cases.** Android draws the starting window from the app's theme before the app's
+  process runs. So the first frame needs only the right colors and icon (S1, S6).
+- **Warm content, 30 ms.** The page is still in memory. A resume shows it with no reload and no request first. Fresh
+  data comes after it.
+- **Cold content.** A cold start must start a process and a WebView. On a mid-range phone that is about 200 to 400 ms
+  before a page can paint. S0 measures the real floor. Under it, only content drawn without the WebView is faster
+  (S7).
 
 Also:
 
@@ -121,7 +132,19 @@ document is the same for two users.
 - Make the WebView early, in `Application.onCreate`, in parallel with the Rust start.
 - Show the last-known store before the first server request (S3).
 
+- On a resume, show the page as it was. Ask for fresh data after the first frame, never before it.
+
 **Check:** `am start -W` and the S0 span meet the targets on the `moqui-36` AVD and on one phone.
+
+### S7. Cold content without the WebView (mobile app)
+
+- When the app goes to the background, keep a snapshot of its screen: the image, or the last-known content as a small
+  list the Kotlin side can draw.
+- On a cold start, draw that snapshot natively in the first frames, while the process and the WebView start behind it.
+- Change to the WebView page with no visible change when it has painted the same content.
+- The snapshot is private data on the device: D1 applies. Screen security (`FLAG_SECURE`) turns snapshots off.
+
+**Check:** on a cold start, the content shows in 150 ms, and the change to the WebView shows no flash.
 
 ## Tests
 
