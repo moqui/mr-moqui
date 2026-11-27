@@ -173,7 +173,7 @@ struct UnderTarget {
     _scratch: Scratch,
     root: PathBuf,
     runtime: PathBuf,
-    /// The scratch runtime of a test run (read only by the unix tests, which link its components).
+    /// The scratch runtime of a test run (read only by the unix tests).
     #[cfg_attr(not(unix), allow(dead_code))]
     run: PathBuf,
     /// The component as the test run loads it, through its link.
@@ -203,8 +203,8 @@ fn runtime_under_target(label: &str) -> UnderTarget {
     std::fs::write(root.join("target/debug/moqui"), "x").unwrap();
     let run = base.join("mt-run");
     std::fs::create_dir_all(run.join("components")).unwrap();
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(runtime.join("components/dev"), run.join("components/dev")).unwrap();
+    // a symbolic link on Unix, a junction on Windows
+    moqui_lib::fs_link::link(&runtime.join("components/dev"), &run.join("components/dev")).unwrap();
     let component = run.join("components/dev/dev-aide");
     UnderTarget {
         _scratch: Scratch(base),
