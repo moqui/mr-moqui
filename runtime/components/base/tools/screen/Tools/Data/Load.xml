@@ -58,11 +58,24 @@ along with this software (see the LICENSE.md file). If not, see
             // ServiceJob, moqui.tools.DatabaseLoadServices.run#LoadWrap)
             if (!checkOnly && String(context.wrapForeignKeys) == 'true') {
                 if (!ec.user.hasPermission('DATABASE_ADMIN')) { ec.message.addError(ec.l10n.localize('A load with the foreign keys dropped needs the DATABASE_ADMIN permission')); return }
-                // the entities of the data, read and not written; a load by types or components may touch any table
+                // the entities of the data, read and not written; a load by types or components may touch any table. Data
+                // that does not read (a value its field's type does not take, a location not there) is a form error, with
+                // the input kept and no job started, not a failed request (TOOL-UI-007)
+                const notStarted = (reason) => ec.message.addError(ec.resource.expand('Nothing was loaded and no job was started: ${reason}', '', {reason}))
                 let entityNames = []
                 if (!(types || components)) {
                     const names = new Set()
-                    for (const value of edl.list()) {
+                    const listMessages = []
+                    let values
+                    try {
+                        values = edl.list(listMessages)
+                    } catch (e) {
+                        notStarted(String(e && e.message || e))
+                        return
+                    }
+                    const failed = listMessages.map(String).filter(message => message.startsWith('Error loading '))
+                    if (failed.length) { notStarted(failed.join('; ')); return }
+                    for (const value of values) {
                         const name = value && (typeof value.getEntityName === 'function' ? value.getEntityName() : value.entityName)
                         if (name) names.add(String(name))
                     }

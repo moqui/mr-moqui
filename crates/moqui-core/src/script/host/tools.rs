@@ -371,8 +371,12 @@ macro_rules! tools_js {
             return result.diffInfo;
         };
         // Java's list(): the values of the records the data has, nested records after the record they are in, with
-        // nothing written and no service called.
-        l.list = () => host.loadData(Object.assign({}, options, { list: true })).values;
+        // nothing written and no service called. The messages, with an array given, name a location that failed.
+        l.list = (messages) => {
+            const result = host.loadData(Object.assign({}, options, { list: true }));
+            if (Array.isArray(messages)) messages.push(...result.messages);
+            return result.values;
+        };
         return l;
     };
 
@@ -1910,9 +1914,10 @@ fn load_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let mut values = Vec::new();
     let loaded = if listing {
         let source = || load_source(&facade, &factory, &text, &locations, &load_options);
-        crate::entity::load_feed::list_with(source).map(|((records, _), result)| {
+        // the messages name a location that failed, so a caller can tell missing data from data with no records
+        crate::entity::load_feed::list_with(source).map(|((records, messages), result)| {
             values = result.values;
-            (records, Vec::new())
+            (records, messages)
         })
     } else if check {
         // `check()`: the messages are what did not match, not what was loaded. `checkInfo()`: what did not match
@@ -1987,9 +1992,14 @@ fn load_source(
         wait_each_write: true,
         ..options.clone()
     };
-    // the message a script catches is the whole of it: the error's display has its sources
+    // the message a script catches is the whole of it, as the error's display has its sources; a source as well would
+    // repeat the reason in the display (TOOL-UI-007), so only the Rust call site is kept from it
     let text_failed = |name: &str, err: moqui_lib::error::Error| {
-        moqui_lib::error::Error::new(format!("Error loading {name}: {err}")).with_source(err)
+        let failed = moqui_lib::error::Error::new(format!("Error loading {name}: {err}"));
+        match err.origin() {
+            Some(origin) => failed.with_origin(origin),
+            None => failed,
+        }
     };
     let xml = text("xmlText");
     if !xml.is_empty() {
