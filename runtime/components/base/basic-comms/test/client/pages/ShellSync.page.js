@@ -2013,7 +2013,13 @@ test("a live location's card (plans/Location-Sharing.md §3.5): its position and
     const asking = await until(() => document.querySelector(".q-dialog .m-chat-live-delete, .q-dialog"), "the delete dialog");
     await until(() => asking.textContent.includes("does not stop sharing your live location"), "the note that the share goes on");
     assert.ok(asking.textContent.includes("Also stop sharing my live location"), asking.textContent);
-    await answerDialog("Cancel");
+    // Delete with it chosen (the default): the share is stopped too
+    answers["/apps/BasicComms/Chat/stopLiveLocation"] = () => ({ applied: true });
+    await answerDialog("Delete");
+    const stops = await until(() => asked("/apps/BasicComms/Chat/stopLiveLocation", "POST").length && asked("/apps/BasicComms/Chat/stopLiveLocation", "POST"),
+        "the share stopped with its message");
+    assert.equal(stops[0].params.shareId, "LS2");
+    delete answers["/apps/BasicComms/Chat/stopLiveLocation"];
     // its end: Live location ended, nothing to open, the topic let go
     share({ shareId: "LS1", event: "ended" });
     await until(() => card.getAttribute("data-live-state") === "ended", "the ended card");

@@ -10463,8 +10463,8 @@
                 if (!native || typeof native.status !== "function") return;
                 const text = locText("sending from this phone");
                 Promise.resolve(native.status()).then((list) => {
-                    if (Array.isArray(list) && list.length) moqui.shellIndicators.note("locationSharing", text);
-                    else if (moqui.shellIndicators.state.notes.locationSharing === text) moqui.shellIndicators.note("locationSharing", null);
+                    // its own words by source, beside Maps' and Chat's (noteFrom), so none clears another's
+                    moqui.shellIndicators.noteFrom("locationSharing", "host", Array.isArray(list) && list.length ? text : null);
                 }, () => {});
             },
             indicatorClick(indicator) {

@@ -755,11 +755,17 @@ function revokeChatAudience(p) {
     const userId = text(p.userId)
     let revokedCount = 0
     if (!userId) return {revokedCount}
-    for (const shareId of Array.from(new Set(Array.from(p.shareIdList || []).map(text).filter(Boolean)))) {
+    const seen = new Set()
+    for (const given of Array.from(p.shareList || [])) {
+        const shareId = text(given && given.shareId)
+        const ownerUserId = text(given && given.ownerUserId)
+        if (!shareId || !ownerUserId || seen.has(shareId)) continue
+        seen.add(shareId)
         try {
             const count = ec.transaction.runRequireNew(30, "Could not take a person out of location share " + shareId, () => {
                 const now = nowMillis()
-                const share = shareOf(shareId, true)
+                // the share of the owner the chat row names, only: a row that names another owner takes nobody out
+                const share = shareOf(shareId, true, ownerUserId)
                 if (!isActive(share, now) || share.ownerUserId === userId) return 0
                 const rows = activeAudience(share.shareId).filter(row => row.audienceTypeEnumId === "LsaUser" && row.userId === userId)
                 if (rows.length) revokeRows(share, rows, now)
@@ -1401,6 +1407,20 @@ function eachShare(makeFind, orderField, counts, countName, work) {
     for (const shareId of failed) run(shareId, true)
 }
 
+/**
+ * A removed share's chat links (moqui.chat.ChatLiveShare, plans/Location-Sharing.md §3.5: a live location message's room),
+ * in a transaction of their own: chat housekeeping never fails the clean, a failure is logged and the clean goes on. An
+ * ended share keeps its links until it is removed here; Chat's revoke skips a share that is not on.
+ */
+function dropChatLinks(shareId) {
+    try {
+        ec.transaction.runRequireNew(30, "Could not delete the chat links of location share " + shareId, () =>
+            find("moqui.chat.ChatLiveShare").condition("shareId", shareId).deleteAll())
+    } catch (err) {
+        ec.logger.error(`The chat links of location share ${shareId} were not deleted: ${err && err.message ? err.message : err}`)
+    }
+}
+
 /** clean#LocationShares, hourly: the shares past their end ended, the trails past their days deleted, old shares removed. */
 function clean() {
     const now = nowMillis()
@@ -1442,6 +1462,7 @@ function clean() {
         "removedCount",
         shareId => {
             if (find(TRAIL).condition("shareId", shareId).count() > 0) return 0
+            dropChatLinks(shareId)
             find(LATEST).condition("shareId", shareId).deleteAll()
             find(XMPP_LATEST).condition("shareId", shareId).deleteAll()
             find(AUDIENCE_MEMBER).condition("shareId", shareId).deleteAll()
