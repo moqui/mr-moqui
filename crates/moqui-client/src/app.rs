@@ -34,6 +34,7 @@ use crate::account::{Account, Accounts};
 use crate::bridge::Sockets;
 use crate::conf::{ClientConf, DeviceMode};
 use crate::keys::Keys;
+use crate::packages::Packages;
 use crate::proxy::Proxy;
 use crate::store::Store;
 use crate::stores::Stores;
@@ -69,6 +70,8 @@ pub struct Client {
     pub(crate) keys: Keys,
     /// The accounts' stores, in `data/` of the client's directory.
     pub(crate) stores: Stores,
+    /// The accounts' offline map packages, beside their stores (plans/Maps-Offline.md §2.4).
+    packages: Packages,
     /// The client's settings once read, and how the host reads them.
     conf: OnceLock<ClientConf>,
     read_conf: Box<dyn Fn() -> ClientConf + Send + Sync>,
@@ -100,6 +103,7 @@ impl Client {
             accounts: Mutex::new(Accounts::load(dir)),
             keys,
             stores: Stores::new(dir),
+            packages: Packages::new(dir),
             conf: OnceLock::new(),
             read_conf,
             comms: Mutex::new(HashMap::new()),
@@ -127,6 +131,48 @@ impl Client {
     /// The accounts' stores.
     pub fn stores(&self) -> &Stores {
         &self.stores
+    }
+
+    /// The accounts' offline map packages.
+    pub fn packages(&self) -> &Packages {
+        &self.packages
+    }
+
+    /// Download `revision` of an account's map package and install it (plans/Maps-Offline.md §2.4), on this thread,
+    /// within the conf's `packages-max-mb`; a 401 has `host` check the key. The state it ended in.
+    pub fn download_package(
+        &self,
+        host: Option<&dyn ClientHost>,
+        account: &str,
+        package_id: &str,
+        revision: i64,
+    ) -> crate::packages::Status {
+        let Some(server) = crate::packages::ProxyServer::of(self, account, host) else {
+            return crate::packages::Status::failed(revision, "NOT_FOUND", "The account is not on this device", false);
+        };
+        crate::packages::download(
+            &self.packages,
+            &server,
+            account,
+            package_id,
+            revision,
+            self.conf().packages_max_bytes(),
+        )
+    }
+
+    /// The account's map packages as its server lists them now.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the list was not read.
+    pub fn list_packages(
+        &self,
+        host: Option<&dyn ClientHost>,
+        account: &str,
+    ) -> Result<Vec<crate::packages::PackageEntry>, String> {
+        let server =
+            crate::packages::ProxyServer::of(self, account, host).ok_or("The account is not on this device")?;
+        crate::packages::list(&server).map_err(|(_, reason)| reason)
     }
 
     /// The mirror runs.

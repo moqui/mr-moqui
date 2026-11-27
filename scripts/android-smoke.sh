@@ -64,6 +64,9 @@ JNI_NAMES=(
     org/moqui/mobile/CallManager#busyNow org/moqui/mobile/Native#instanceOf org/moqui/mobile/Native#accountOf
     org/moqui/mobile/DeviceLock#isSecure org/moqui/mobile/PageStorage#clear org/moqui/mobile/RustWebChromeClient#pageServer
     org/moqui/mobile/ChatNotifications#forgetAccount org/moqui/mobile/Push#stopFcm
+    org/moqui/mobile/PackageDownloadWorker#start org/moqui/mobile/PackageDownloadWorker#cancel
+    org/moqui/mobile/PackageDownloadWorker#cancelAccount org/moqui/mobile/Native#packageDownload
+    org/moqui/mobile/Native#packagePause
     org/moqui/mobile/Ipc#attach org/moqui/mobile/RustWebView#loadUrlMainThread org/moqui/mobile/RustWebView#evalScript
     org/moqui/mobile/WryActivity#getAppClass org/moqui/mobile/WryActivity#getVersion
     org/moqui/mobile/WryActivity#setWebView org/rustls/platformverifier/CertificateVerifier#verifyCertificateChain

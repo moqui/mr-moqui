@@ -3108,6 +3108,10 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="store-max-mb" type="xs:string" default="512"><xs:annotation><xs:documentation>The
                 size cap of an account's store on the device, in MB; past it the least recently read cached data goes
                 (never unsent items or drafts). At least 1.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="packages-max-mb" type="xs:string" default="4096"><xs:annotation><xs:documentation>The
+                size cap of an account's offline map packages on the device, in MB, outside store-max-mb
+                (plans/Maps-Offline.md §2.4): a download that would pass it is refused. At least 1.</xs:documentation>
+                </xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

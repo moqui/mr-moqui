@@ -43,8 +43,8 @@ Each installed client is a device with its own login key. The host keeps the key
   a store of an earlier one is made again when it opens, its outbox, drafts and chunked uploads copied across (logged;
   the old file is kept as `.old` if a copy failed), the rest read again from the server.
 - `conf`: `ClientConf`, the client's settings from the `<client-conf>` element of the Moqui XML conf, which the host
-  hands over: `device-mode` (choose, personal, shared), `mirror-days`, `prefetch-rooms`, `prefetch-mail` and
-  `store-max-mb`; a bad value is logged and its default used.
+  hands over: `device-mode` (choose, personal, shared), `mirror-days`, `prefetch-rooms`, `prefetch-mail`,
+  `store-max-mb` and `packages-max-mb`; a bad value is logged and its default used.
 - `sso`: sign-in through the server's identity providers in the system browser (RFC 8252): a PKCE verifier and state,
   the server's `/sso/appLogin`, the hand-back's state checked, and the code taken with the verifier for a device key.
 
@@ -73,6 +73,13 @@ The client's core, what the desktop app's client mode and the mobile app run
   memory, the open personal key wrapped for a time under a key of two halves, the device's in the host's key store
   (`vault::memory::MemoryKeys`) and the server record's, given only while the record is live
   ([Vaults](../../docs/security/Vaults.md#the-desktop-and-mobile-apps)).
+- `packages`: the offline map packages ([plans/Maps-Offline.md](../../plans/Maps-Offline.md) §2.4), in
+  `data/<account>.packages/<packageId>/<revision>/` (owner-only, outside the store's cap, within `packages-max-mb`):
+  the server's list (`/apps/maps/Offline/packageList`), a download by ranges of 4 MiB with `If-Range` the package's
+  tag into a part file resumed from its length, the whole file's SHA-256, the members unpacked with bounds (a stored
+  zip read by its central directory: only what the manifest lists, each of its size and SHA-256, no path outside, no
+  symlink, none past 2 GiB), the revision swapped in by rename; and the shell's `/__moqui-app/maps/<packageId>/<path>`
+  answered from the files, one range as a 206 slice. `forget` goes with the store's.
 - `modes` (what each device mode keeps), `renewal` (each key renewed on a thread before it runs out) and `assets` (the
   shell's own files and their CSP: on disk for the desktop, or embedded in the mobile app, `Assets::embedded`).
 

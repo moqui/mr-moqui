@@ -573,6 +573,9 @@ fn remove_account(state: &ClientState, id: &str) -> Result<(), String> {
     }
     state.core.vault().removed(id);
     state.core.stores().forget(id);
+    // its offline map packages go with its store (plans/Maps-Offline.md §2.4), their downloads cancelled
+    state.shell.cancel_package_downloads(id);
+    state.core.packages().forget(id);
     if let Err(err) = state.core.keys().forget_chat_store_keys(id) {
         tracing::error!("The chat store keys of {id} were not removed from the key store: {err}");
     }

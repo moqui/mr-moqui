@@ -689,12 +689,14 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="schedule" noun="PackageBuilds" allow-remote="false">
         <description>Start the waiting offline map builds the installation has room for (maps@package-concurrent-builds):
-            one scheduler at a time (the MapPackageBuild ServiceJob row locked as its mutex), the busy packages read locked,
-            a run that ended without saying so (its ServiceJobRun gone or ended, no word for an hour once started, by the
-            package's progressDate, or never started six hours after its ServiceJobRun was made) ended failed and its owner
-            told, so a lost run holds its turn up to an hour or two, a queued one up to about seven, then the oldest waiting packages handed to the job. Registered
-            on commit by create#, update#, cancel# and delete#Package, so their own row writes are committed and their locks
-            let go first; a build's end and the hourly clean run it in a transaction of their own. No group's.</description>
+            one scheduler at a time (the MapPackageBuild ServiceJob row locked as its mutex), the busy packages read
+            locked, a run that ended without saying so ended failed and its owner told, then the oldest waiting packages
+            handed to the job. A run has ended when its ServiceJobRun is gone or ended, when it started and has given no
+            word for an hour (the package's progressDate, else the run's start), or when it never started six hours after
+            its ServiceJobRun was made: the build's own clocks, never the package row's stamp. A lost run so holds its turn
+            up to an hour or two, a queued one up to about seven. Registered on commit by create#, update#, cancel# and
+            delete#Package, so their own row writes are committed and their locks let go first; a build's end and the
+            hourly clean run it in a transaction of their own. No group's.</description>
         <actions><script>ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('schedulePackageBuilds', context)</script></actions>
     </service>
 

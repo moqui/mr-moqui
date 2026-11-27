@@ -822,6 +822,48 @@ pub(crate) fn flush_background(dir: &Path, budget_ms: i64) -> i64 {
     next.map_or(-1, |due| due.saturating_sub(now).max(0))
 }
 
+/// What `PackageDownloadWorker.kt` is told of a download's run: done, or to be tried again (`PackageDownloadRules`).
+pub(crate) const PACKAGE_DONE: i32 = 0;
+pub(crate) const PACKAGE_RETRY: i32 = 1;
+
+/// Download `revision` of an account's offline map package on the worker's thread (plans/Maps-Offline.md §2.4), with
+/// the app's client (the process's, made from the store when WorkManager started it): [`PACKAGE_DONE`] when it ended
+/// (installed, refused, cancelled, stale: the shell reads which), [`PACKAGE_RETRY`] for a cut, a server error, a pause,
+/// or a run of it already under way.
+pub(crate) fn package_download(dir: &Path, account: &str, package_id: &str, revision: i64) -> i32 {
+    if ENDING.load(std::sync::atomic::Ordering::SeqCst) || !network_ready() {
+        return PACKAGE_RETRY;
+    }
+    let core = match core_in(dir) {
+        Ok(core) => core,
+        Err(err) => {
+            log::warn!("Map packages: no client for the download: {err}");
+            return PACKAGE_RETRY;
+        }
+    };
+    let host = moqui_lib::sync::lock(&APP_HOST)
+        .clone()
+        .unwrap_or_else(|| Arc::new(NoPages));
+    package_outcome(&core.download_package(Some(host.as_ref()), account, package_id, revision))
+}
+
+/// The worker's word for a download's state.
+pub(crate) fn package_outcome(status: &moqui_client::packages::Status) -> i32 {
+    match status {
+        moqui_client::packages::Status::Failed { retry: true, .. } => PACKAGE_RETRY,
+        ended if ended.ended() => PACKAGE_DONE,
+        // another run holds it (a worker stopped and started again): later
+        _ => PACKAGE_RETRY,
+    }
+}
+
+/// The worker was stopped by WorkManager: the download ends at its next range with its part kept.
+pub(crate) fn package_pause(account: &str, package_id: &str) {
+    if let Some(core) = moqui_lib::sync::lock(&CORE).as_ref() {
+        core.packages().pause(account, package_id);
+    }
+}
+
 /// Whether an account here has a key: the native code asks for the notification permission only then.
 pub(crate) fn has_account(dir: &Path) -> bool {
     match core_in(dir) {
@@ -839,7 +881,7 @@ mod entries {
 
     use jni::errors::LogErrorAndDefault;
     use jni::objects::{JByteArray, JClass, JObject, JString};
-    use jni::sys::{jboolean, jlong};
+    use jni::sys::{jboolean, jint, jlong};
     use jni::EnvUnowned;
 
     /// `Native.init(context)`: the app's context for Rust's JNI calls and the TLS verifier; whether requests may be made.
@@ -1027,6 +1069,47 @@ mod entries {
             )
         })
         .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.packageDownload(dataDir, account, packageId, revision)`: an offline map's download on the worker's thread;
+    /// 0 done, 1 to try again (on an error or a panic too).
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_packageDownload<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+        account: JString<'caller>,
+        package_id: JString<'caller>,
+        revision: jlong,
+    ) -> jint {
+        env.with_env(|env| -> Result<i32, jni::errors::Error> {
+            let dir = client_dir(&data_dir.try_to_string(env)?);
+            let account = account.try_to_string(env)?;
+            let package_id = package_id.try_to_string(env)?;
+            Ok(
+                std::panic::catch_unwind(|| super::package_download(&dir, &account, &package_id, revision))
+                    .unwrap_or_else(|_| {
+                        log::error!("Map packages: the download panicked");
+                        super::PACKAGE_RETRY
+                    }),
+            )
+        })
+        .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.packagePause(account, packageId)`: WorkManager stopped the worker.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_packagePause<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        account: JString<'caller>,
+        package_id: JString<'caller>,
+    ) {
+        env.with_env(|env| -> Result<(), jni::errors::Error> {
+            super::package_pause(&account.try_to_string(env)?, &package_id.try_to_string(env)?);
+            Ok(())
+        })
+        .resolve::<LogErrorAndDefault>();
     }
 
     /// `Native.unifiedEndpoint(dataDir, account, endpoint)`: an account's UnifiedPush endpoint (empty: unregistered).

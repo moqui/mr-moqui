@@ -14,6 +14,12 @@ their own.
   your password), sealed by the system's key store. A store of each account's mail, chat, drafts and outbox, for use
   with no network, in the app's own files. Signing out of a shared account removes its store; a personal account keeps
   its store until you remove the account, or sign out and choose to delete it.
+- **Offline maps.** A map region you download (an offline map package, built on your server from what your account
+  could see then: the basemap tiles, your places, the overlays you could read, and the region's postal codes and
+  Overture places) is kept in the app's own files, readable only by the app, until you delete it in the app; a newer
+  build of it replaces it. It stays on the device after the server revokes your access to what is in it. Your server
+  records which device downloaded which build of it. A shared account's packages go when it signs out; a personal
+  account's stay until you delete them or remove the account.
 - **The device's name.** The app names this device in your device list and as your chat encryption device, which the
   people who share a room or a call with you see: on the phone its model, on the desktop "MR Moqui desktop on" its
   operating system. You can rename it.
@@ -67,6 +73,6 @@ their own.
 ## Removing your data
 
 Signing out revokes the device key on your server, or as soon as the server can be reached. Removing an account from
-the app, or signing out with "Also delete the mail, chat and drafts kept for it", deletes its store and keys on this
-device. Uninstalling the app removes the rest of its data on this device,
+the app, or signing out with "Also delete the mail, chat and drafts kept for it", deletes its store, its offline map
+packages and its keys on this device. Uninstalling the app removes the rest of its data on this device,
 but not the desktop node's backups in a folder of yours. What your server keeps, ask its operator.

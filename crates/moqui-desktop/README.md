@@ -142,7 +142,8 @@ without booting a node (`client/conf.rs`), so each build sets its own in its run
 The defaults, in `MoquiDefaultConf.xml`:
 
 ```xml
-<client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"/>
+<client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"
+    packages-max-mb="4096"/>
 ```
 
 The attributes are in `mr-moqui-conf.xsd` and

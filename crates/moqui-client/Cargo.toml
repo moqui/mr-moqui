@@ -31,6 +31,10 @@ tungstenite = { workspace = true }
 url = { workspace = true }
 zeroize = { workspace = true }
 
+# The free space before an offline map's download starts (src/packages, statvfs); Android is Unix too.
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["fs"] }
+
 [dev-dependencies]
 # The test servers' certificates of the TLS proofs (src/tls_tests.rs), as the host's tests make theirs.
 rcgen = { workspace = true }

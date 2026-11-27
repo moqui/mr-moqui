@@ -50,6 +50,9 @@
     public static void startFcm(android.content.Context);
     public static void stopFcm(android.content.Context);
 }
+# ... and the offline map downloads' worker (src/android.rs package_worker_start, package_worker_cancel; plans/Maps-Offline.md
+# §2.4)
+-keep class org.moqui.mobile.PackageDownloadWorker { *; }
 # ... and whether the phone has a secure lock screen (src/android.rs device_secure; SEC-CLI-113)
 -keep class org.moqui.mobile.DeviceLock { *; }
 # The server pages' storage, cleared at a switch of account (PageStorage.kt, SEC-CLI-81), called only through JNI.
