@@ -61,6 +61,8 @@
     <string name="channel_location_about">Shown while the app sends your location for a share you started</string>
     <string name="location_sharing_title">Sharing your location</string>
     <string name="location_stop">Stop</string>
+    <string name="location_stopping_title">Stopping location sharing</string>
+    <string name="location_stopping_text">Your location is no longer sent. The server is told the share stopped as soon as it can be reached.</string>
 
     <!-- The phone's dialer through the app (DialAccount.kt) -->
     <string name="dial_account_label">MR Moqui</string>

@@ -82,4 +82,56 @@ class LocationRulesTest {
         assertEquals("Sharing your location with the people you chose until 9:05",
             LocationRules.notificationText(listOf(""), "9:05"))
     }
+
+    @Test
+    fun anApproximateShareAsksForApproximateAloneAndAnExactOneForPreciseOnce() {
+        assertEquals(listOf("coarse"), LocationRules.permissionsToAsk(false, false, false, false))
+        assertEquals(emptyList<String>(), LocationRules.permissionsToAsk(false, false, true, false))
+        assertEquals(listOf("fine", "coarse"), LocationRules.permissionsToAsk(true, false, false, false))
+        // approximate given already: precise asked once, then not again (the person chose)
+        assertEquals(listOf("fine", "coarse"), LocationRules.permissionsToAsk(true, false, true, false))
+        assertEquals(emptyList<String>(), LocationRules.permissionsToAsk(true, false, true, true))
+        assertEquals(listOf("coarse"), LocationRules.permissionsToAsk(true, false, false, true))
+        assertEquals(emptyList<String>(), LocationRules.permissionsToAsk(true, true, true, false))
+        assertEquals("high", LocationRules.quality(true))
+        assertEquals("balanced", LocationRules.quality(false))
+    }
+
+    @Test
+    fun theNotificationIsPostedAgainOrTheSharesStopWithNotificationsOff() {
+        assertEquals("repost", LocationRules.notificationCheck(true))
+        assertEquals("stop", LocationRules.notificationCheck(false))
+    }
+
+    @Test
+    fun oneFixAShareWaitsWhileItsReportIsUnderWay() {
+        val queued = HashMap<String, String>()
+        LocationRules.queueFix(queued, "a/1", "fix1")
+        LocationRules.queueFix(queued, "a/1", "fix2")
+        assertEquals(mapOf("a/1" to "fix2"), queued)
+        // a flush (no fix) never takes a real fix's place, and waits itself when none does
+        LocationRules.queueFix(queued, "a/1", "")
+        assertEquals("fix2", queued["a/1"])
+        LocationRules.queueFix(queued, "a/2", "")
+        assertEquals("", queued["a/2"])
+        assertEquals(2, queued.size)
+    }
+
+    @Test
+    fun aStopIsKeptUntilItsServerSettlesIt() {
+        val key = LocationRules.stopKey("chat.example.com-0123", "100")
+        assertEquals("chat.example.com-0123" to "100", LocationRules.parseStopKey(key))
+        assertNull(LocationRules.parseStopKey("no-share/"))
+        assertNull(LocationRules.parseStopKey("/100"))
+        val pending = setOf(key, "b/200")
+        // no answer, or one that did not stop it: kept
+        assertEquals(pending, LocationRules.stopsAfter(pending, key, "retry"))
+        assertEquals(pending, LocationRules.stopsAfter(pending, key, ""))
+        // stopped, no such share there, or signed out: settled
+        for (state in listOf("stopped", "gone", "signedOut")) {
+            assertTrue(LocationRules.stopSettled(state))
+            assertEquals(setOf("b/200"), LocationRules.stopsAfter(pending, key, state))
+        }
+        assertFalse(LocationRules.stopSettled("retry"))
+    }
 }

@@ -781,7 +781,18 @@ impl ShellHost for MobileHost {
     }
 
     fn account_signing_out(&self, account: &Account, key: &str) {
-        // its live location shares are no longer sent from this phone (a removal has only this)
+        // its live location shares are stopped on its server while the key is held, so none stays on with nothing
+        // sending it, and are no longer sent from this phone (a removal has only this; plans/Location-Sharing.md §3.4)
+        if let (Some(core), true) = (self.core(), self.network_ready()) {
+            let stopped = crate::location::stop_account_on_server(
+                &account.id,
+                (account, key),
+                &crate::native::LocationPoster(&core),
+            );
+            if stopped > 0 {
+                log::info!("Location: {stopped} shares of {} stopped for its sign-out", account.id);
+            }
+        }
         forget_location(&account.id);
         if let Some(core) = self.core() {
             crate::native::unregister_push(&core, &self.dir, account, key);

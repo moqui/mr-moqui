@@ -65,7 +65,8 @@ JNI_NAMES=(
     org/moqui/mobile/DeviceLock#isSecure org/moqui/mobile/PageStorage#clear org/moqui/mobile/RustWebChromeClient#pageServer
     org/moqui/mobile/ChatNotifications#forgetAccount org/moqui/mobile/Push#stopFcm
     org/moqui/mobile/LocationShare#allow org/moqui/mobile/LocationShare#start org/moqui/mobile/LocationShare#stop
-    org/moqui/mobile/LocationShare#forgetAccount org/moqui/mobile/Native#reportLocation org/moqui/mobile/Native#stopLocation
+    org/moqui/mobile/LocationShare#forgetAccount org/moqui/mobile/LocationShare#sending org/moqui/mobile/Native#reportLocation
+    org/moqui/mobile/Native#stopLocation org/moqui/mobile/Native#forgetLocation
     org/moqui/mobile/Ipc#attach org/moqui/mobile/RustWebView#loadUrlMainThread org/moqui/mobile/RustWebView#evalScript
     org/moqui/mobile/WryActivity#getAppClass org/moqui/mobile/WryActivity#getVersion
     org/moqui/mobile/WryActivity#setWebView org/rustls/platformverifier/CertificateVerifier#verifyCertificateChain

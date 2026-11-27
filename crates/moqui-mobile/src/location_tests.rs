@@ -82,6 +82,11 @@ fn fix(latitude: f64, time: i64) -> String {
     json!({ "latitude": latitude, "longitude": -111.9, "accuracy": 9.0, "time": time }).to_string()
 }
 
+/// The account's key, unchanged since the post.
+fn same_key() -> Option<String> {
+    Some("device-key".to_string())
+}
+
 fn state(outcome: &str) -> Value {
     serde_json::from_str(outcome).unwrap()
 }
@@ -138,20 +143,52 @@ fn a_report_sends_the_newest_point_with_the_device_key_and_a_410_stops_it() {
     begin(&ann.id, "200", 5_000);
     assert_eq!(sending(&ann.id), vec!["200".to_string()]);
     let signed_in = Some((&ann, "device-key"));
-    let sent = report_location(&ann.id, "200", Some(&fix(40.1, 1_000)), signed_in, &posts, 1_000);
+    let sent = report_location(
+        &ann.id,
+        "200",
+        Some(&fix(40.1, 1_000)),
+        signed_in,
+        &posts,
+        &same_key,
+        1_000,
+    );
     assert_eq!(state(&sent)["state"], "sent");
     assert_eq!(posts.made.borrow()[0].0, moqui_client::location::REPORT_PATH);
     // two fixes inside the interval: only the newer goes, at the interval's end
-    let waiting = report_location(&ann.id, "200", Some(&fix(40.2, 2_000)), signed_in, &posts, 2_000);
+    let waiting = report_location(
+        &ann.id,
+        "200",
+        Some(&fix(40.2, 2_000)),
+        signed_in,
+        &posts,
+        &same_key,
+        2_000,
+    );
     assert_eq!(state(&waiting)["state"], "waiting");
-    report_location(&ann.id, "200", Some(&fix(40.3, 3_000)), signed_in, &posts, 3_000);
+    report_location(
+        &ann.id,
+        "200",
+        Some(&fix(40.3, 3_000)),
+        signed_in,
+        &posts,
+        &same_key,
+        3_000,
+    );
     assert_eq!(posts.made.borrow().len(), 1);
-    let ended = report_location(&ann.id, "200", None, signed_in, &posts, 6_000);
+    let ended = report_location(&ann.id, "200", None, signed_in, &posts, &same_key, 6_000);
     assert_eq!(posts.field(1, "latitude").as_deref(), Some("40.3"));
     assert_eq!(state(&ended), json!({ "state": "stopped", "reason": "ended" }));
     // gone: nothing more is sent
     assert!(sending(&ann.id).is_empty());
-    let after = report_location(&ann.id, "200", Some(&fix(40.4, 9_000)), signed_in, &posts, 9_000);
+    let after = report_location(
+        &ann.id,
+        "200",
+        Some(&fix(40.4, 9_000)),
+        signed_in,
+        &posts,
+        &same_key,
+        9_000,
+    );
     assert_eq!(state(&after)["state"], "stopped");
     assert_eq!(posts.made.borrow().len(), 2);
 }
@@ -161,7 +198,7 @@ fn an_account_not_signed_in_or_signed_out_stops_its_shares() {
     let ann = account("location-test-signed-out");
     let posts = Posts::answering(Vec::new());
     begin(&ann.id, "300", 5_000);
-    let stopped = report_location(&ann.id, "300", Some(&fix(40.1, 1_000)), None, &posts, 1_000);
+    let stopped = report_location(&ann.id, "300", Some(&fix(40.1, 1_000)), None, &posts, &same_key, 1_000);
     assert_eq!(state(&stopped), json!({ "state": "stopped", "reason": "signedOut" }));
     assert!(posts.made.borrow().is_empty());
     begin(&ann.id, "301", 5_000);
@@ -175,6 +212,7 @@ fn an_account_not_signed_in_or_signed_out_stops_its_shares() {
         Some(&fix(40.1, 2_000)),
         Some((&ann, "device-key")),
         &posts,
+        &same_key,
         2_000,
     );
     assert_eq!(state(&after)["state"], "stopped");
@@ -182,17 +220,86 @@ fn an_account_not_signed_in_or_signed_out_stops_its_shares() {
 }
 
 #[test]
-fn the_notifications_stop_stops_the_share_on_the_server() {
+fn the_notifications_stop_stops_the_share_on_the_server_and_says_when_to_try_again() {
     let ann = account("location-test-stop");
-    let posts = Posts::answering(vec![(200, json!({ "stopped": true }))]);
+    let posts = Posts::answering(vec![
+        (200, json!({ "stopped": true })),
+        (200, json!({ "stopped": false, "reasonCode": "SHARE_NOT_FOUND" })),
+        (502, Value::Null),
+        (401, Value::Null),
+    ]);
+    let signed_in = Some((&ann, "device-key"));
     begin(&ann.id, "400", 5_000);
-    assert!(stop_share(&ann.id, "400", true, Some((&ann, "device-key")), &posts));
+    assert_eq!(stop_share(&ann.id, "400", true, signed_in, &posts), StopState::Stopped);
     assert_eq!(posts.made.borrow()[0].0, moqui_client::location::STOP_PATH);
     assert_eq!(posts.field(0, "shareId").as_deref(), Some("400"));
     assert!(sending(&ann.id).is_empty());
-    // the page's own stop tells the server nothing; signed out, nothing can be told
-    begin(&ann.id, "401", 5_000);
-    assert!(stop_share(&ann.id, "401", false, Some((&ann, "device-key")), &posts));
-    assert!(!stop_share(&ann.id, "402", true, None, &posts));
-    assert_eq!(posts.made.borrow().len(), 1);
+    // a share the server no longer has, a server that does not answer (tried again), a key it no longer takes
+    assert_eq!(stop_share(&ann.id, "401", true, signed_in, &posts), StopState::Gone);
+    assert_eq!(stop_share(&ann.id, "402", true, signed_in, &posts), StopState::Retry);
+    assert_eq!(
+        stop_share(&ann.id, "403", true, signed_in, &posts),
+        StopState::SignedOut
+    );
+    // the page's own stop tells the server nothing; not signed in here, nothing can be told
+    begin(&ann.id, "404", 5_000);
+    assert_eq!(stop_share(&ann.id, "404", false, signed_in, &posts), StopState::Stopped);
+    assert_eq!(stop_share(&ann.id, "405", true, None, &posts), StopState::SignedOut);
+    assert_eq!(posts.made.borrow().len(), 4);
+}
+
+#[test]
+fn a_sign_out_stops_the_accounts_shares_on_the_server_while_its_key_is_held() {
+    let ann = account("location-test-sign-out-stop");
+    let posts = Posts::answering(vec![
+        (200, json!({ "stopped": true })),
+        (200, json!({ "stopped": true })),
+    ]);
+    begin(&ann.id, "500", 5_000);
+    begin(&ann.id, "501", 5_000);
+    assert_eq!(stop_account_on_server(&ann.id, (&ann, "device-key"), &posts), 2);
+    let mut stopped: Vec<String> = (0..2).filter_map(|index| posts.field(index, "shareId")).collect();
+    stopped.sort();
+    assert_eq!(stopped, vec!["500".to_string(), "501".to_string()]);
+    assert!(sending(&ann.id).is_empty());
+}
+
+#[test]
+fn a_report_refused_across_a_key_renewal_goes_again_with_the_new_key() {
+    let ann = account("location-test-renewal");
+    let posts = Posts::answering(vec![
+        (200, json!({ "statusCode": 409, "reasonCode": "OTHER_DEVICE" })),
+        (200, json!({ "statusCode": 200 })),
+    ]);
+    begin(&ann.id, "600", 5_000);
+    let renewed = || Some("device-key-2".to_string());
+    let first = report_location(
+        &ann.id,
+        "600",
+        Some(&fix(40.1, 1_000)),
+        Some((&ann, "device-key")),
+        &posts,
+        &renewed,
+        1_000,
+    );
+    assert_eq!(state(&first), json!({ "state": "waiting", "waitMs": 0 }));
+    let again = report_location(
+        &ann.id,
+        "600",
+        None,
+        Some((&ann, "device-key")),
+        &posts,
+        &same_key,
+        1_000,
+    );
+    assert_eq!(state(&again)["state"], "sent");
+    assert_eq!(posts.field(1, "latitude").as_deref(), Some("40.1"));
+}
+
+#[test]
+fn a_gesture_lets_one_share_start_for_its_account() {
+    arm("location-test-armed");
+    assert!(!take_armed("location-test-other"));
+    assert!(take_armed("location-test-armed"));
+    assert!(!take_armed("location-test-armed"), "once");
 }

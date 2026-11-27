@@ -15,6 +15,7 @@ import android.content.pm.ServiceInfo
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.location.LocationRequest
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -27,9 +28,11 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Date
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
@@ -39,9 +42,11 @@ import java.util.concurrent.TimeUnit
  * long as it runs. It is started only from the page's Share while the app is in front ([start], the host command
  * `location_share_start`), so the app has no background location permission. The page asks [allow] first, which gives
  * the reason before Android's question. Each fix goes to Rust (`Native.reportLocation`, the host command
- * `report_location`), which keeps the newest point and sends it with the account's device key; a share stops at its
- * end, on a 410 or 404, when another device sends it, at a sign-out or removal of its account ([forgetAccount]), on Stop
- * and when the location permission is taken away. No position is logged.
+ * `report_location`) on this object's own thread ([work]), never the native code's shared one, which pushes and a
+ * call's hang-up use; Rust keeps the newest point and sends it with the account's device key within 15 seconds. A share
+ * stops at its end, on a 410 or 404, when another device sends it, at a sign-out or removal of its account
+ * ([forgetAccount]), on Stop, when notifications are turned off and when the location permission is taken away; Stop
+ * and notifications off stop it on the server too, durably ([LocationStops]). No position is logged.
  */
 object LocationShare {
     internal const val TAG = "moqui-location"
@@ -49,10 +54,15 @@ object LocationShare {
     /** Not a call's (7301) nor the screen share's (7302): each shows while it runs. */
     internal const val NOTIFICATION_ID = 7303
     internal const val ACTION_STOP = "org.moqui.mobile.LOCATION_STOP"
+    /** The notification was dismissed (Android 14+ lets the person): it is shown again while the shares are sent. */
+    internal const val ACTION_REPOST = "org.moqui.mobile.LOCATION_REPOST"
     const val ASK_LOCATION = 4
     private const val PREFS = "moqui-location"
     /** The longest [allow] waits for the person's answer. */
     private const val ASK_WAIT_S = 60L
+
+    /** The reports and stops of the shares, on a thread of their own: a slow server holds up nothing else. */
+    private val worker = Executors.newSingleThreadExecutor { task -> Thread(task, "moqui-location") }
 
     /** A share sent from here. */
     data class Sent(
@@ -63,7 +73,7 @@ object LocationShare {
         val intervalMs: Long,
         val audience: String,
     ) {
-        val key: String get() = "$account/$shareId"
+        val key: String get() = LocationRules.stopKey(account, shareId)
     }
 
     private val shares = LinkedHashMap<String, Sent>()
@@ -76,34 +86,67 @@ object LocationShare {
     @Synchronized
     fun sent(): List<Sent> = shares.values.toList()
 
-    @Synchronized
-    internal fun remove(key: String): Boolean = shares.remove(key) != null
-
-    /** Whether the app may read the location: precise for `exact`, at least approximate otherwise. */
-    fun permitted(context: Context, exact: Boolean = false): Boolean {
-        val fine = context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        val coarse = context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        return if (exact) fine else fine || coarse
+    /**
+     * A share no longer sent from here: Rust's reporter goes with it (`Native.forgetLocation`), so the page's status
+     * and Rust agree. Whether it was sent.
+     */
+    internal fun remove(key: String): Boolean {
+        val gone = synchronized(this) { shares.remove(key) } ?: return false
+        try {
+            Native.forgetLocation(gone.account, gone.shareId)
+        } catch (err: Throwable) {
+            Log.w(TAG, "Rust was not told share ${gone.shareId} is no longer sent: ${err.message}")
+        }
+        return true
     }
 
-    private fun notificationsShown(context: Context): Boolean {
+    /** The shares of `account` sent from here now, a JSON list of ids (`location_share_status`). */
+    @JvmStatic
+    fun sending(account: String): String = JSONArray(sent().filter { it.account == account }.map { it.shareId }).toString()
+
+    /** `task` on the location thread; a failure is logged. */
+    internal fun work(task: () -> Unit) {
+        worker.execute {
+            try {
+                task()
+            } catch (err: Throwable) {
+                Log.e(TAG, "Location work failed", err)
+            }
+        }
+    }
+
+    fun fine(context: Context): Boolean =
+        context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+    fun coarse(context: Context): Boolean =
+        context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+    /** Whether the app may read the location: precise for `exact`, at least approximate otherwise. */
+    fun permitted(context: Context, exact: Boolean = false): Boolean =
+        if (exact) fine(context) else fine(context) || coarse(context)
+
+    internal fun notificationsShown(context: Context): Boolean {
         if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return false
         val channel = context.getSystemService(NotificationManager::class.java)?.getNotificationChannel(CHANNEL)
         return channel == null || channel.importance != NotificationManager.IMPORTANCE_NONE
     }
 
     /**
-     * Before the first share from this phone: the location permission, asked after the app's dialog that says why
-     * (precise and approximate both asked: Android lets the person choose either; an exact share with only approximate
-     * given sends approximate fixes). Whether the app may read the location now. Waits for the answer, so never on the
-     * main thread.
+     * Before a share from this phone: the location permission, asked after the app's dialog that says why. An exact
+     * share asks for precise and approximate (the person may give either; given approximate only, it sends the phone's
+     * approximate fixes), once; an approximate share asks for approximate alone, so the phone itself gives fixes of about
+     * 2 km where precise was never given. Whether the app may read the location now. Waits for the answer, so never on
+     * the main thread.
      */
     @JvmStatic
     fun allow(context: Context, exact: Boolean): Boolean {
         val app = context.applicationContext
-        if (permitted(app, false)) return true
-        val activity = CallManager.appActivity() ?: return false
-        app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("asked", true).apply()
+        val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val wanted = LocationRules.permissionsToAsk(exact, fine(app), coarse(app), prefs.getBoolean("askedFine", false))
+        if (wanted.isEmpty()) return permitted(app)
+        val activity = CallManager.appActivity() ?: return permitted(app)
+        prefs.edit().putBoolean("asked", true).apply { if ("fine" in wanted) putBoolean("askedFine", true) }.apply()
+        val names = wanted.map { if (it == "fine") Manifest.permission.ACCESS_FINE_LOCATION else Manifest.permission.ACCESS_COARSE_LOCATION }
         val waiting = CountDownLatch(1)
         answer = waiting
         Handler(Looper.getMainLooper()).post {
@@ -118,10 +161,7 @@ object LocationShare {
                     .setMessage(if (exact) R.string.ask_location_reason else R.string.ask_location_reason_approximate)
                     .setPositiveButton(R.string.ask_continue) { _, _ ->
                         asked = true
-                        activity.requestPermissions(
-                            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
-                            ASK_LOCATION
-                        )
+                        activity.requestPermissions(names.toTypedArray(), ASK_LOCATION)
                     }
                     .setNegativeButton(R.string.ask_not_now, null)
                     .setOnDismissListener { if (!asked) waiting.countDown() }
@@ -129,7 +169,7 @@ object LocationShare {
         }
         waiting.await(ASK_WAIT_S, TimeUnit.SECONDS)
         answer = null
-        return permitted(app, false)
+        return permitted(app)
     }
 
     /** Android's question was answered ([MainActivity.onRequestPermissionsResult]). */
@@ -174,18 +214,28 @@ object LocationShare {
     /** The page stopped a share, or it is sent elsewhere now (`location_share_stop`): no longer sent from here. */
     @JvmStatic
     fun stop(context: Context, account: String, shareId: String) {
-        if (remove("$account/$shareId")) changed(context.applicationContext)
+        if (remove(LocationRules.stopKey(account, shareId))) changed(context.applicationContext)
     }
 
     /** `account` is signed out or removed: none of its shares is sent from here. */
     @JvmStatic
     fun forgetAccount(context: Context, account: String) {
-        val gone = synchronized(this) {
-            val keys = shares.keys.filter { it.startsWith("$account/") }
-            keys.forEach { shares.remove(it) }
-            keys.isNotEmpty()
+        val keys = sent().filter { it.account == account }.map { it.key }
+        keys.forEach { remove(it) }
+        if (keys.isNotEmpty()) changed(context.applicationContext)
+    }
+
+    /**
+     * The person's Stop, or notifications turned off: every share sent from here is no longer sent, and is stopped on
+     * its server, durably ([LocationStops]: tried until the server confirms, with a "Stopping" notification until then).
+     */
+    internal fun stopAll(context: Context) {
+        val sent = sent()
+        for (share in sent) {
+            remove(share.key)
+            LocationStops.add(context, share.account, share.shareId)
         }
-        if (gone) changed(context.applicationContext)
+        if (sent.isNotEmpty()) Log.i(TAG, "Stop: ${sent.size} shares are no longer sent, and are stopped on their servers")
     }
 
     /** The shares changed: the service updates its notification and what it asks of Android, or ends with none. */
@@ -200,11 +250,11 @@ object LocationShare {
 
     /** The notification check's items: the permission (`fine`, `coarse` or `none`) and how many shares are sent now. */
     fun state(context: Context): JSONObject {
-        val fine = permitted(context, true)
         return JSONObject()
-            .put("permission", if (fine) "fine" else if (permitted(context)) "coarse" else "none")
+            .put("permission", if (fine(context)) "fine" else if (coarse(context)) "coarse" else "none")
             .put("asked", context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("asked", false))
             .put("sharing", sent().size)
+            .put("stopping", LocationStops.pending(context).size)
     }
 
     /** The check's fix: the app's settings, where the person allows the location. */
@@ -230,13 +280,17 @@ object LocationShare {
         }
     }
 
-    /** The permanent notification while shares are sent: whom with and until when, with Stop. */
+    private fun serviceIntent(context: Context, action: String, code: Int): PendingIntent = PendingIntent.getService(
+        context, code, Intent(context, LocationShareService::class.java).setAction(action),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+    )
+
+    /**
+     * The permanent notification while shares are sent: whom with and until when, with Stop. Dismissing it (Android
+     * 14+ lets the person) posts it again (its delete intent), so it shows as long as the service sends.
+     */
     internal fun notification(context: Context, sent: List<Sent>): Notification {
         ensureChannel(context)
-        val stop = PendingIntent.getService(
-            context, 0, Intent(context, LocationShareService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
         val open = context.packageManager.getLaunchIntentForPackage(context.packageName)?.let {
             PendingIntent.getActivity(context, 0, it, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         }
@@ -253,18 +307,21 @@ object LocationShare {
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .apply { if (open != null) setContentIntent(open) }
-            .addAction(0, context.getString(R.string.location_stop), stop)
+            .setDeleteIntent(serviceIntent(context, ACTION_REPOST, 1))
+            .addAction(0, context.getString(R.string.location_stop), serviceIntent(context, ACTION_STOP, 0))
             .build()
     }
 }
 
 /**
  * The foreground service of type location that sends the shares of [LocationShare] (plans/Location-Sharing.md §3.4):
- * Android's LocationManager (no Google Play services), at the interval [LocationRules] chooses from the shares (a few
- * seconds moving, longer still, an approximate share's own), each fix handed to Rust on the native code's thread and
- * what it came to read back: a stopped share goes, a point that waits is sent again when its wait is over. A check each
- * half minute ends a share at its end and every share when the permission is gone. Started only by [LocationShare.start];
- * not sticky, so a process Android ended does not start it again in the background.
+ * Android's LocationManager (no Google Play services), at the interval and accuracy [LocationRules] choose from the
+ * shares (a few seconds moving, longer still, an approximate share's own interval at a low-power, approximate
+ * accuracy), each fix handed to Rust on the location thread, at most one report a share queued or under way, and what
+ * it came to read back: a stopped share goes, a point that waits is sent again when its wait is over. A check each half
+ * minute ends a share at its end, every share when the permission is gone, and every share (stopped on its server) when
+ * notifications are off, else posts the notification again. Started only by [LocationShare.start]; not sticky, so a
+ * process Android ended does not start it again in the background.
  */
 class LocationShareService : Service(), LocationListener {
     companion object {
@@ -274,10 +331,14 @@ class LocationShareService : Service(), LocationListener {
 
     private val main = Handler(Looper.getMainLooper())
     private var manager: LocationManager? = null
-    private var asked: Pair<String, Long>? = null
+    private var asked: Triple<String, Long, String>? = null
     private var moving = true
     private var last: Location? = null
+    private var inForeground = false
     private val waiting = HashSet<String>()
+    /** The shares with a report under way, and the newest fix that came meanwhile for each (one queued at most). */
+    private val inFlight = HashSet<String>()
+    private val queued = HashMap<String, String>()
     private val check = object : Runnable {
         override fun run() {
             checkShares()
@@ -288,45 +349,48 @@ class LocationShareService : Service(), LocationListener {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val sent = LocationShare.sent()
-        // in the foreground at once, as Android asks of a service started for the foreground, even to end
-        val notification = LocationShare.notification(this, sent)
-        try {
-            if (Build.VERSION.SDK_INT >= 29) {
-                startForeground(LocationShare.NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
-            } else {
-                startForeground(LocationShare.NOTIFICATION_ID, notification)
-            }
-        } catch (err: Exception) {
-            // Android refused (not started from the app in front, or no permission): nothing is sent
-            Log.w(LocationShare.TAG, "The location service could not run: ${err.message}")
-            sent.forEach { LocationShare.remove(it.key) }
+        // the person's Stop first, before anything that could fail: each share stopped on its server, durably
+        if (intent?.action == LocationShare.ACTION_STOP) {
+            LocationShare.stopAll(this)
             end()
             return START_NOT_STICKY
         }
-        if (intent?.action == LocationShare.ACTION_STOP) {
-            // the person's Stop: each share stopped on its server too, so its audience is told at once
-            val dir = Native.dataDir(this)
-            for (share in sent) {
-                LocationShare.remove(share.key)
-                Native.work { Native.stopLocation(dir, share.account, share.shareId) }
+        val sent = LocationShare.sent()
+        if (!inForeground) {
+            // in the foreground at once, as Android asks of a service started for the foreground, even to end
+            try {
+                val notification = LocationShare.notification(this, sent)
+                if (Build.VERSION.SDK_INT >= 29) {
+                    startForeground(LocationShare.NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+                } else {
+                    startForeground(LocationShare.NOTIFICATION_ID, notification)
+                }
+                inForeground = true
+            } catch (err: Exception) {
+                // Android refused (not started from the app in front, or no permission): nothing is sent from here
+                Log.w(LocationShare.TAG, "The location service could not run: ${err.message}")
+                sent.forEach { LocationShare.remove(it.key) }
+                end()
+                return START_NOT_STICKY
             }
-            Log.i(LocationShare.TAG, "Stop: ${sent.size} shares are no longer sent")
-            end()
-            return START_NOT_STICKY
         }
         if (sent.isEmpty()) {
             end()
             return START_NOT_STICKY
         }
-        getSystemService(NotificationManager::class.java)?.notify(LocationShare.NOTIFICATION_ID, notification)
+        // a change, a dismissed notification (ACTION_REPOST) or a new share: the notification again, and the fixes
+        post(sent)
         listen()
         main.removeCallbacks(check)
         main.postDelayed(check, CHECK_MS)
         return START_NOT_STICKY
     }
 
-    /** LocationManager asked for fixes at the shares' interval, from the provider the rules choose. */
+    private fun post(sent: List<LocationShare.Sent>) {
+        getSystemService(NotificationManager::class.java)?.notify(LocationShare.NOTIFICATION_ID, LocationShare.notification(this, sent))
+    }
+
+    /** LocationManager asked for fixes at the shares' interval and accuracy, from the provider the rules choose. */
     private fun listen() {
         val lm = manager ?: getSystemService(LocationManager::class.java).also { manager = it } ?: return
         val sent = LocationShare.sent()
@@ -341,14 +405,22 @@ class LocationShareService : Service(), LocationListener {
             return
         }
         val interval = LocationRules.serviceIntervalMs(sent.map { it.approximate to it.intervalMs }, moving)
-        if (asked == provider to interval) return
+        val quality = LocationRules.quality(exact)
+        if (asked == Triple(provider, interval, quality)) return
         try {
             lm.removeUpdates(this)
-            lm.requestLocationUpdates(provider, interval, 0f, this, Looper.getMainLooper())
-            asked = provider to interval
+            if (Build.VERSION.SDK_INT >= 31) {
+                val request = LocationRequest.Builder(interval)
+                    .setQuality(if (quality == "high") LocationRequest.QUALITY_HIGH_ACCURACY else LocationRequest.QUALITY_BALANCED_POWER_ACCURACY)
+                    .build()
+                lm.requestLocationUpdates(provider, request, ContextCompat.getMainExecutor(this), this)
+            } else {
+                lm.requestLocationUpdates(provider, interval, 0f, this, Looper.getMainLooper())
+            }
+            asked = Triple(provider, interval, quality)
         } catch (err: SecurityException) {
-            Log.i(LocationShare.TAG, "The location permission is gone: the shares stop")
-            stopAll()
+            Log.i(LocationShare.TAG, "The location permission is gone: the shares are no longer sent")
+            dropAll()
         }
     }
 
@@ -386,18 +458,32 @@ class LocationShareService : Service(), LocationListener {
         listen()
     }
 
-    /** A fix (empty: a point that waited) of `share` to Rust, on the native code's thread; what it came to, read here. */
+    /**
+     * A fix (empty: a point that waited) of `share` to Rust on the location thread, what it came to read here. While a
+     * report of the share is under way the newest fix waits ([LocationRules.queueFix]), so reports never pile up.
+     */
     private fun report(share: LocationShare.Sent, fix: String) {
+        if (share.key in inFlight) {
+            LocationRules.queueFix(queued, share.key, fix)
+            return
+        }
+        inFlight.add(share.key)
         val dir = Native.dataDir(this)
         val app = applicationContext
-        Native.work {
+        LocationShare.work {
             Native.ensure(app)
             val outcome = try {
                 JSONObject(Native.reportLocation(dir, share.account, share.shareId, fix) ?: "{}")
             } catch (err: Exception) {
                 JSONObject()
             }
-            main.post { took(share, outcome) }
+            main.post {
+                inFlight.remove(share.key)
+                took(share, outcome)
+                queued.remove(share.key)?.let { next ->
+                    if (LocationShare.sent().any { it.key == share.key }) report(share, next)
+                }
+            }
         }
     }
 
@@ -418,7 +504,11 @@ class LocationShareService : Service(), LocationListener {
         }
     }
 
-    /** Each share at its end, and all of them once the permission is gone. */
+    /**
+     * Each share at its end; every share once the permission is gone; and the notification: with notifications off
+     * (Android 13+ lets the person turn them off during a share) every share is stopped on its server, since none is
+     * sent without it showing; else it is posted again, so a dismissed one comes back.
+     */
     private fun checkShares() {
         val now = System.currentTimeMillis()
         val permitted = LocationShare.permitted(this)
@@ -428,10 +518,17 @@ class LocationShareService : Service(), LocationListener {
             Log.i(LocationShare.TAG, "Share ${share.shareId} is no longer sent from here: $reason")
             gone = LocationShare.remove(share.key) || gone
         }
-        if (gone) changedHere()
+        if (LocationRules.notificationCheck(LocationShare.notificationsShown(this)) == "stop") {
+            Log.i(LocationShare.TAG, "Notifications are off: the shares stop")
+            LocationShare.stopAll(this)
+            end()
+            return
+        }
+        if (gone) changedHere() else post(LocationShare.sent())
     }
 
-    private fun stopAll() {
+    /** Every share no longer sent from here, with nothing told to their servers (the permission gone). */
+    private fun dropAll() {
         LocationShare.sent().forEach { LocationShare.remove(it.key) }
         end()
     }
@@ -443,7 +540,7 @@ class LocationShareService : Service(), LocationListener {
             end()
             return
         }
-        getSystemService(NotificationManager::class.java)?.notify(LocationShare.NOTIFICATION_ID, LocationShare.notification(this, sent))
+        post(sent)
         asked = null
         listen()
     }
@@ -455,7 +552,11 @@ class LocationShareService : Service(), LocationListener {
         } catch (_: Exception) {
         }
         asked = null
+        inFlight.clear()
+        queued.clear()
+        waiting.clear()
         stopForeground(STOP_FOREGROUND_REMOVE)
+        inForeground = false
         stopSelf()
         getSystemService(NotificationManager::class.java)?.cancel(LocationShare.NOTIFICATION_ID)
     }

@@ -1461,9 +1461,12 @@ module.exports = {
             this.noteSending();
         },
         // the app bar's "Sharing location" chip (the shell's indicator of the framework's live-location shell-indicator provider) says "sending here"
-        // while this page sends a share
+        // while this page sends a share, and "sending from this phone" while the Android app's location service does, which
+        // goes on after this page closes (plans/Location-Sharing.md §3.4), so that note stays when it does
         noteSending(off) {
-            if (moqui.shellIndicators) moqui.shellIndicators.note(INDICATOR_KEY, !off && !this.closed && (this.sending.length || this.nativeSending.length) ? t('sending here') : null);
+            if (!moqui.shellIndicators) return;
+            const here = !off && !this.closed && this.sending.length > 0;
+            moqui.shellIndicators.note(INDICATOR_KEY, this.nativeSending.length ? t('sending from this phone') : here ? t('sending here') : null);
         },
         note(shareId, text) { this.sendNotes = Object.assign({}, this.sendNotes, { [shareId]: text }); },
         // a share's report interval in milliseconds: its own, else the listed share's, else location@min-interval-seconds' default

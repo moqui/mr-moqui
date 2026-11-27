@@ -316,9 +316,11 @@
         // exact for an exact share); a share sent by the app's foreground service, also in the background, with its
         // notification (start: whether it started; Maps' Share and Send from this device), no longer sent from here (stop),
         // and the shares sent now (status). The host takes them for this page's account only.
+        // allow and start only from the person's act (its user activation, as vault.memory), which the host checks;
+        // a start just after an allow with one (its request and Android's question outlast the activation) needs none
         const location = Object.freeze({
-            allow: (exact) => ask("location_allow", { exact: exact !== false }).then((ok) => ok === true, () => false),
-            start: (share) => ask("location_share_start", { share: {
+            allow: (exact) => ask("location_allow", { exact: exact !== false, gesture: userGesture() }).then((ok) => ok === true, () => false),
+            start: (share) => ask("location_share_start", { gesture: userGesture(), share: {
                 shareId: String((share && share.shareId) || ""), thruDate: Number(share && share.thruDate) || 0,
                 approximate: !!(share && share.approximate), intervalSeconds: Number(share && share.intervalSeconds) || 0,
                 audience: String((share && share.audience) || "") } }).then((started) => started === true, () => false),

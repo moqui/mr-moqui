@@ -1017,8 +1017,8 @@ and the guest page for a link are still to come.
   device's key moves its shares to the new key (`renew_device_key`). The owner's reads say where each share is sent from
   (`sentFromDevice`, the device's `deviceName`, `fromThisDevice`), never the key's id.
 - **From the Android app** (LL3; [Mobile-Client, Live location](../ui/Mobile-Client.md#live-location)). Browse in the app
-  has `moquiDesktop.location`: Share asks for the phone's location permission first, after the app's dialog that says
-  why, and once the share is made the app's foreground service of type `location` (`LocationShareService.kt`) sends it
+  has `moquiDesktop.location`: Share asks for the phone's location permission first (approximate alone for an
+  approximate share), after the app's dialog that says why, from the person's act only, and once the share is made the app's foreground service of type `location` (`LocationShareService.kt`) sends it
   from the phone, also with the app in the background, under its notification ("Sharing your location with Sam until
   15:30", with Stop) for as long as it does; a share the service could not start (notifications off, the app not in
   front) is sent by the page while it is open, as a browser does. The service reads Android's `LocationManager` (the
@@ -1029,10 +1029,12 @@ and the guest page for a link are still to come.
   signed-in user reaches (Browse's own are `MAPS_APP`'s, while every signed-in user may own a share), POST only, which
   calls `report#Position` and answers its outcome as `statusCode`, as `reportPosition` does. It handles the answers as
   the page does (429 waits `retryAfterSeconds`, `STALE` and another 400 are passed over, `CLOCK_AHEAD` and
-  `BEFORE_SHARE` send with the server's time) and stops a share at its end, on a 410 or 404, on `OTHER_DEVICE`, at the
-  account's sign-out or removal, on the notification's Stop (which stops the share on the server too,
-  `/qapps/stopClientLocation`) or the page's, and when the location permission is taken away. The notification check
-  lists the location permission and the shares the phone sends.
+  `BEFORE_SHARE` send with the server's time), each post within 15 seconds, and stops a share at its end, on a 410 or
+  404, on `OTHER_DEVICE` (tried again once across a renewal of the device key), at the account's sign-out or removal
+  (stopped on the server first, while the key is held), on the notification's Stop or with notifications turned off
+  (both stop the share on the server too, `/qapps/stopClientLocation`, kept and tried until the server confirms) or the
+  page's Stop, and when the location permission is taken away (Android ends the process: the share goes stale until
+  its end or a Stop). The notification check lists the location permission and the shares the phone sends.
 - **The desktop app** shares as a browser does: Browse sends while its window is open (`watchPosition`). A server's page
   in a client window gets `Permissions-Policy: geolocation=(self)` (`moqui_client_tauri::scheme::PAGE_PERMISSIONS_POLICY`),
   which lets Browse, the window's own page, ask and keeps a frame of another origin from it; the permission itself is

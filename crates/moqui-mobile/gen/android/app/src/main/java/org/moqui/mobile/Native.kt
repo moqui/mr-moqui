@@ -53,8 +53,13 @@ object Native {
      * came to, as JSON (`{state: sent | waiting | dropped | idle | stopped, waitMs, reason}`). Not on the main thread.
      */
     @JvmStatic external fun reportLocation(dataDir: String, account: String, shareId: String, fix: String): String?
-    /** The notification's Stop: the share stopped on the account's server too; whether the server took it. */
-    @JvmStatic external fun stopLocation(dataDir: String, account: String, shareId: String): Boolean
+    /**
+     * A share stopped on the account's server (the notification's Stop, notifications off; [LocationStops]): `stopped`,
+     * `gone`, `signedOut`, or `retry` (no answer yet). Not on the main thread.
+     */
+    @JvmStatic external fun stopLocation(dataDir: String, account: String, shareId: String): String?
+    /** A share no longer sent by the location service: Rust's reporter of it goes too. */
+    @JvmStatic external fun forgetLocation(account: String, shareId: String)
     @JvmStatic external fun vaultLock()
 
     /**

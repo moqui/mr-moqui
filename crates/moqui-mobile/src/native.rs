@@ -844,30 +844,47 @@ pub(crate) fn report_location(dir: &Path, account: &str, share_id: &str, fix: &s
         share_id,
         fix,
         signed_in.as_ref().map(|asked| (&asked.account, asked.key.as_str())),
-        &ProxyPoster(&core),
+        &LocationPoster(&core),
+        &|| core.keys().get(account),
         now_ms(),
     )
 }
 
 /// `Native.stopLocation(dataDir, account, shareId)`: the notification's Stop, the share stopped on the account's
-/// server too ([`crate::location::stop_share`]); whether the server took it.
-pub(crate) fn stop_location(dir: &Path, account: &str, share_id: &str) -> bool {
-    let core = network_ready().then(|| core_in(dir).ok()).flatten();
-    let signed_in = core
-        .as_ref()
-        .and_then(|core| asked(core).into_iter().find(|asked| asked.account.id == account));
-    match core.as_ref() {
-        Some(core) => crate::location::stop_share(
-            account,
-            share_id,
-            true,
-            signed_in.as_ref().map(|asked| (&asked.account, asked.key.as_str())),
-            &ProxyPoster(core),
-        ),
-        None => {
-            crate::location::forget_share(account, share_id);
-            false
-        }
+/// server too ([`crate::location::stop_share`]): what it came to (`stopped`, `gone`, `signedOut`, or `retry`, which
+/// `LocationStopWorker.kt` tries again with a network until the server answers). With no client or no TLS verifier
+/// yet, `retry`.
+pub(crate) fn stop_location(dir: &Path, account: &str, share_id: &str) -> &'static str {
+    crate::location::forget_share(account, share_id);
+    let Some(core) = network_ready().then(|| core_in(dir).ok()).flatten() else {
+        return crate::location::StopState::Retry.as_str();
+    };
+    let signed_in = asked(&core).into_iter().find(|asked| asked.account.id == account);
+    crate::location::stop_share(
+        account,
+        share_id,
+        true,
+        signed_in.as_ref().map(|asked| (&asked.account, asked.key.as_str())),
+        &LocationPoster(&core),
+    )
+    .as_str()
+}
+
+/// Posts a live location share's report or stop through the client's proxy with the account's device key, within
+/// [`moqui_client::location::POST_TIMEOUT`] (15 s): a half-open connection gives up then, not at the proxy's ten
+/// minutes (plans/Location-Sharing.md §3.4).
+pub(crate) struct LocationPoster<'a>(pub(crate) &'a Client);
+
+impl Poster for LocationPoster<'_> {
+    fn post(&self, account: &Account, key: &str, path: &str, form: &[(&str, &str)]) -> Result<(u16, Value), String> {
+        moqui_client::location::post_form(
+            self.0.proxy(),
+            &account.server,
+            key,
+            path,
+            form,
+            moqui_client::location::POST_TIMEOUT,
+        )
     }
 }
 
@@ -1349,7 +1366,7 @@ mod entries {
         .resolve::<LogErrorAndDefault>()
     }
 
-    /// `Native.stopLocation(dataDir, account, shareId)`: the notification's Stop; whether the server took it.
+    /// `Native.stopLocation(dataDir, account, shareId)`: the notification's Stop; what it came to.
     #[no_mangle]
     pub extern "system" fn Java_org_moqui_mobile_Native_stopLocation<'caller>(
         mut env: EnvUnowned<'caller>,
@@ -1357,13 +1374,30 @@ mod entries {
         data_dir: JString<'caller>,
         account: JString<'caller>,
         share_id: JString<'caller>,
-    ) -> jboolean {
-        env.with_env(|env| -> Result<bool, jni::errors::Error> {
+    ) -> JString<'caller> {
+        env.with_env(|env| -> Result<JString<'caller>, jni::errors::Error> {
             let dir = client_dir(&data_dir.try_to_string(env)?);
             let (account, share_id) = (account.try_to_string(env)?, share_id.try_to_string(env)?);
-            Ok(super::stop_location(&dir, &account, &share_id))
+            env.new_string(super::stop_location(&dir, &account, &share_id))
         })
         .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.forgetLocation(account, shareId)`: the location service no longer sends a share (its end, the
+    /// permission, notifications off, a refused start): Rust's reporter goes with it.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_forgetLocation<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        account: JString<'caller>,
+        share_id: JString<'caller>,
+    ) {
+        env.with_env(|env| -> Result<(), jni::errors::Error> {
+            let (account, share_id) = (account.try_to_string(env)?, share_id.try_to_string(env)?);
+            crate::location::forget_share(&account, &share_id);
+            Ok(())
+        })
+        .resolve::<LogErrorAndDefault>();
     }
 
     /// `Native.screenFrame(data, ptsUs)`: an encoded VP8 frame of the screen share, for its leg (`crate::screen`).

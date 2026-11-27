@@ -100,4 +100,54 @@ object LocationRules {
         }
         return "Sharing your location with $whom until $until"
     }
+
+    /**
+     * The permissions an [LocationShare.allow] asks for (`fine`, `coarse`), none when it asks nothing: an approximate
+     * share asks for approximate alone, so where precise was never given the phone's own fixes are approximate; an exact
+     * share asks for precise (and approximate, which the person may give instead) unless precise is given or was asked
+     * for once already (the person chose approximate: asked again only from Android's settings).
+     */
+    fun permissionsToAsk(exact: Boolean, fine: Boolean, coarse: Boolean, askedFine: Boolean): List<String> = when {
+        fine -> emptyList()
+        exact && !askedFine -> listOf("fine", "coarse")
+        coarse -> emptyList()
+        else -> listOf("coarse")
+    }
+
+    /** The accuracy asked of Android (API 31+ `LocationRequest`): high for an exact share, balanced for approximate. */
+    fun quality(exact: Boolean): String = if (exact) "high" else "balanced"
+
+    /**
+     * The periodic check of the notification: with notifications off nothing is sent (`stop`, and the shares are
+     * stopped on their servers), else it is posted again (`repost`: one the person dismissed comes back).
+     */
+    fun notificationCheck(notificationsShown: Boolean): String = if (notificationsShown) "repost" else "stop"
+
+    /**
+     * While a report of a share is under way, the newest fix that comes for it waits in `queued`, replacing an older
+     * one; an empty fix (a point that waited, which Rust keeps) never replaces a real one. One queued a share at most.
+     */
+    fun queueFix(queued: MutableMap<String, String>, key: String, fix: String) {
+        if (fix.isNotEmpty() || !queued.containsKey(key)) queued[key] = fix
+    }
+
+    /** A share's key, `account/shareId` (a share id has no `/`). */
+    fun stopKey(account: String, shareId: String): String = "$account/$shareId"
+
+    /** The account and share of a [stopKey], or null. */
+    fun parseStopKey(key: String): Pair<String, String>? {
+        val at = key.lastIndexOf('/')
+        if (at <= 0 || at == key.length - 1) return null
+        return key.substring(0, at) to key.substring(at + 1)
+    }
+
+    /**
+     * Whether a stop on the server is over: `stopped`, `gone` (no such share there) or `signedOut` (nothing can be
+     * told); `retry` and anything else is tried again.
+     */
+    fun stopSettled(state: String): Boolean = state == "stopped" || state == "gone" || state == "signedOut"
+
+    /** The stops still waiting after `key`'s came to `state`. */
+    fun stopsAfter(pending: Set<String>, key: String, state: String): Set<String> =
+        if (stopSettled(state)) pending - key else pending
 }

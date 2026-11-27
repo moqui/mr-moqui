@@ -110,13 +110,15 @@ pub(crate) fn begin(account: &str, share_id: &str, interval_ms: i64) {
 /// of the share `share_id` of `account`, sent now when it may go, through `poster` with the account and its device key
 /// (`signed_in`, none when the account is not signed in here, which stops it). Its [`Outcome`] as JSON. The report is
 /// posted with no lock held, so a stop or a sign-out meanwhile is not held up; the reporter takes the answer unless it
-/// went meanwhile.
+/// went meanwhile. `key_now` reads the account's key after the post: a key renewed meanwhile tries an `OTHER_DEVICE`
+/// again once ([`Reporter::answered_after`]).
 pub(crate) fn report_location(
     account: &str,
     share_id: &str,
     fix_json: Option<&str>,
     signed_in: Option<(&Account, &str)>,
     poster: &dyn Poster,
+    key_now: &dyn Fn() -> Option<String>,
     now_ms: i64,
 ) -> String {
     let fix = fix_json
@@ -153,8 +155,9 @@ pub(crate) fn report_location(
                 // the share and the failure only: never the position
                 log::info!("Location: a report of share {share_id} did not reach {account}: {err}");
             }
+            let key_changed = key_now().is_some_and(|now| now != key);
             with_reporters(|reporters| match reporters.get_mut(&entry) {
-                Some(reporter) => reporter.answered(sent, answer, now_ms),
+                Some(reporter) => reporter.answered_after(sent, answer, now_ms, key_changed),
                 None => Outcome::Stopped(Stopped::SignedOut),
             })
         }
@@ -170,34 +173,100 @@ pub(crate) fn report_location(
     outcome.to_json().to_string()
 }
 
+/// What a stop on the server came to ([`stop_share`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StopState {
+    /// The server stopped it (or nothing was to be told).
+    Stopped,
+    /// The server has no such share of the account's: nothing to stop.
+    Gone,
+    /// The account's key no longer signs in here (or the account is not here): nothing can be told.
+    SignedOut,
+    /// No answer, or one that did not stop it: the native code tries again (`LocationStopWorker`).
+    Retry,
+}
+
+impl StopState {
+    /// The name the native code reads.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Stopped => "stopped",
+            Self::Gone => "gone",
+            Self::SignedOut => "signedOut",
+            Self::Retry => "retry",
+        }
+    }
+}
+
 /// The notification's Stop, or the page's (`stop_on_server` false: the page stopped it itself): the share is no longer
 /// sent from here, and with `stop_on_server` it is stopped on the account's server (`stop#Share`), so its audience is
-/// told at once. Whether the server took the stop (true with nothing to tell it).
+/// told at once. A [`StopState::Retry`] is the native code's to try again until the server answers.
 pub(crate) fn stop_share(
     account: &str,
     share_id: &str,
     stop_on_server: bool,
     signed_in: Option<(&Account, &str)>,
     poster: &dyn Poster,
-) -> bool {
+) -> StopState {
     with_reporters(|reporters| reporters.remove(&(account.to_string(), share_id.to_string())));
     if !stop_on_server {
-        return true;
+        return StopState::Stopped;
     }
     let Some((server, key)) = signed_in else {
-        return false;
+        return StopState::SignedOut;
     };
     match poster.post(server, key, STOP_PATH, &[("shareId", share_id)]) {
-        Ok((status, json)) if status < 400 && json.get("stopped").and_then(Value::as_bool) == Some(true) => true,
+        Ok((status, json)) if status < 400 && json.get("stopped").and_then(Value::as_bool) == Some(true) => {
+            StopState::Stopped
+        }
+        Ok((status, json))
+            if status < 400 && json.get("reasonCode").and_then(Value::as_str) == Some("SHARE_NOT_FOUND") =>
+        {
+            StopState::Gone
+        }
+        Ok((401 | 403, _)) => StopState::SignedOut,
         Ok((status, _)) => {
             log::info!("Location: {account} did not take the stop of share {share_id}: HTTP {status}");
-            false
+            StopState::Retry
         }
         Err(err) => {
             log::info!("Location: the stop of share {share_id} did not reach {account}: {err}");
-            false
+            StopState::Retry
         }
     }
+}
+
+/// `account` signs out, its key still held (`MobileHost::account_signing_out`): each share it sends from here is
+/// stopped on its server first, so none stays on with no device sending it. How many the server took.
+pub(crate) fn stop_account_on_server(account: &str, signed_in: (&Account, &str), poster: &dyn Poster) -> usize {
+    sending(account)
+        .iter()
+        .filter(|share| stop_share(account, share, true, Some(signed_in), poster) == StopState::Stopped)
+        .count()
+}
+
+/// The account whose page's gesture asked for the location (`location_allow`), and when: a share of it may start with
+/// no gesture of its own within [`ARMED_FOR`], once, as its request and Android's question take time.
+static ARMED: Mutex<Option<(String, std::time::Instant)>> = Mutex::new(None);
+
+/// How long a gesture's `location_allow` lets one `location_share_start` go without a gesture of its own.
+pub(crate) const ARMED_FOR: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// The page's gesture asked for the location for a share of `account`.
+pub(crate) fn arm(account: &str) {
+    *moqui_lib::sync::lock(&ARMED) = Some((account.to_string(), std::time::Instant::now()));
+}
+
+/// Whether a share of `account` may start with no gesture of its own: one armed for it within [`ARMED_FOR`], taken.
+pub(crate) fn take_armed(account: &str) -> bool {
+    let mut armed = moqui_lib::sync::lock(&ARMED);
+    let ok = armed
+        .as_ref()
+        .is_some_and(|(of, at)| of == account && at.elapsed() <= ARMED_FOR);
+    if ok {
+        *armed = None;
+    }
+    ok
 }
 
 /// The share `share_id` of `account` is no longer sent from here, with nothing told to its server.

@@ -441,6 +441,24 @@ pub(crate) fn location_stop(account: &str, share_id: &str) -> Result<(), String>
     })
 }
 
+/// The shares of `account` the location service sends now (`LocationShare.sending`, a JSON list of ids).
+pub(crate) fn location_sending(account: &str) -> Result<String, String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.LocationShare"))?;
+        let account = env.new_string(account)?;
+        let list = env
+            .call_static_method(
+                &class,
+                jni_str!("sending"),
+                jni_sig!("(Ljava/lang/String;)Ljava/lang/String;"),
+                &[JValue::Object(&account)],
+            )?
+            .l()?;
+        let list = env.cast_local::<jni::objects::JString>(list)?;
+        list.try_to_string(env)
+    })
+}
+
 /// `account` is signed out or removed: none of its shares is sent from this phone any more
 /// (`LocationShare.forgetAccount`).
 pub(crate) fn location_forget_account(account: &str) -> Result<(), String> {

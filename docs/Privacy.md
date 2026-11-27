@@ -24,9 +24,14 @@ their own.
   for it (people, a group's members, XMPP contacts, a guest link) until its end. A browser, or the desktop app, sends it
   while the Maps page is open; closing the page stops it. The mobile app sends it from the phone while the share lasts,
   also with the app in the background, and then only with its notification showing ("Sharing your location with ...
-  until ...", with Stop); it stops at the share's end, when you stop it (the notification, Maps, another device taking
-  it over), when you sign out, and when you take the location permission away. A share is sent from one device at a
-  time, and your server knows which (the device's key, as in your device list).
+  until ...", with Stop; dismissed, it comes back, and with the app's notifications turned off the share stops). It
+  stops at the share's end, when you stop it (the notification, Maps, another device taking it over: the notification's
+  Stop also tells your server, again until it hears), and when you sign out (your server is told first). Taking the
+  location permission away ends the app's process: nothing more is sent, and the share goes stale (its audience sees
+  how old the last position is) until its end or until you stop it. For an approximate share the app asks only for
+  approximate location; if you allowed precise location (an exact share, a chat place), the phone's fix is precise and
+  your server rounds it to about 1 km before it is kept or shown. A share is sent from one device at a time, and your
+  server knows which (the device's key, as in your device list).
 - **Live location on the server.** While a share you started lasts (at most a day unless you extend it), your server
   keeps only its latest position, read by no one once the share ends and deleted then (when you stop it) or up to an
   hour later (when its time runs out), and a trail only when you choose one for that share, for at most 30 days after it

@@ -687,10 +687,13 @@ In the Play Console, once:
   mail (each account's store, for offline use), contacts' names in them, files attached, and a device key (a
   credential, sealed by the Android Keystore); it records audio (and video) in calls only, sent to the user's server;
   photos and videos the user takes or picks to send, and the precise or approximate location of a place the user
-  shares, go to the user's server; location (precise, or approximate for an approximate share) is collected while a
-  live share the user started is on, also with the app in the background under its notification, and sent to the
-  user's server, which shows it to the people the user chose for that share until its end (shared: with them, by the
-  user's act; not kept by the server past the share unless the user keeps its trail); the device's name in the user's device list and as a chat encryption device, which
+  shares, go to the user's server; location is collected while a live share the user started is on, also with the app
+  in the background under its notification, and sent to the user's server, which shows it to the people the user chose
+  for that share until its end (shared: with them, by the user's act; not kept by the server past the share unless the
+  user keeps its trail): precise location for an exact share, approximate for an approximate share (the app asks for
+  approximate location only for it; where the user allowed precise location, for an exact share or a chat place, the
+  phone's fix is precise, and the server rounds it to about 1 km before it is stored or shown, so declare precise
+  location as collected whenever precise is asked for at all); the device's name in the user's device list and as a chat encryption device, which
   room members see, is the phone's model; the phone's contacts are read on the phone to search the dialer and never
   sent; it shows notifications; with Firebase, the FCM token goes to the user's server and Google; with a UnifiedPush
   distributor, that app gets an endpoint for each account under a random name; pushes are sealed to the account's keys.

@@ -874,11 +874,23 @@ fn page_account(app: &AppHandle, webview: &tauri::Webview) -> Result<String, Str
 }
 
 /// Before a share is started from this phone: the location permission, asked after a dialog that says why when it is
-/// not given yet (`LocationShare.allow`: fine for an exact share, coarse for an approximate one; Android lets the person
-/// choose either). Whether the app may read the location now. A page of the current account's only.
+/// not given yet (`LocationShare.allow`: fine and coarse for an exact share, which the person may answer with either,
+/// coarse alone for an approximate one). Whether the app may read the location now. A page of the current account's
+/// only, and only from the person's act (`gesture`: the page's user activation, read by the bridge as `vault.memory`'s
+/// is), which lets the one share it is for start within [`crate::location::ARMED_FOR`] with no gesture of its own: the
+/// share's request and Android's question outlast a page's activation.
 #[tauri::command(async)]
-pub(crate) fn location_allow(app: AppHandle, webview: tauri::Webview, exact: Option<bool>) -> Result<bool, String> {
-    page_account(&app, &webview)?;
+pub(crate) fn location_allow(
+    app: AppHandle,
+    webview: tauri::Webview,
+    exact: Option<bool>,
+    gesture: Option<bool>,
+) -> Result<bool, String> {
+    let account = page_account(&app, &webview)?;
+    if gesture != Some(true) {
+        return Err("Only from the person's act".to_string());
+    }
+    crate::location::arm(&account);
     #[cfg(target_os = "android")]
     return crate::android::location_allow(exact != Some(false));
     #[cfg(not(target_os = "android"))]
@@ -892,14 +904,19 @@ pub(crate) fn location_allow(app: AppHandle, webview: tauri::Webview, exact: Opt
 /// foreground service (`LocationShareService.kt`, of type `location`), also while the app is in the background, with
 /// its notification for as long as it runs. Android starts it only from the app in front, with the location permission
 /// and notifications allowed; whether it started (false: the page sends while it is open, as a browser does). A page of
-/// the current account's only, for that account.
+/// the current account's only, for that account, from the person's act: its own `gesture`, or the `location_allow`
+/// of one just before.
 #[tauri::command(async)]
 pub(crate) fn location_share_start(
     app: AppHandle,
     webview: tauri::Webview,
     share: crate::location::ShareAsk,
+    gesture: Option<bool>,
 ) -> Result<bool, String> {
     let account = page_account(&app, &webview)?;
+    if gesture != Some(true) && !crate::location::take_armed(&account) {
+        return Err("Only from the person's act".to_string());
+    }
     let share = share.checked(crate::native::now_ms())?;
     crate::location::begin(&account, &share.share_id, share.interval_seconds * 1000);
     #[cfg(target_os = "android")]
@@ -929,10 +946,14 @@ pub(crate) fn location_share_stop(app: AppHandle, webview: tauri::Webview, share
     Ok(())
 }
 
-/// The shares of the page's account this phone sends now, by id.
+/// The shares of the page's account this phone sends now, by id: on Android the location service's own list
+/// (`LocationShare.sending`), which is what sends, so the page never says "sent from this phone" while nothing does.
 #[tauri::command(async)]
 pub(crate) fn location_share_status(app: AppHandle, webview: tauri::Webview) -> Result<Vec<String>, String> {
     let account = page_account(&app, &webview)?;
+    #[cfg(target_os = "android")]
+    return serde_json::from_str(&crate::android::location_sending(&account)?).map_err(|err| err.to_string());
+    #[cfg(not(target_os = "android"))]
     Ok(crate::location::sending(&account))
 }
 
