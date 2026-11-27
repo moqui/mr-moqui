@@ -621,7 +621,11 @@ impl OwnedSpan {
                     .counters
                     .dropped
                     .fetch_add(tail.dropped, std::sync::atomic::Ordering::Relaxed);
-                for span in tail.spans {
+                // the failed and slow spans first: the export's tail buffer, shared with the trace's spans of other
+                // threads and bounded as a whole, then drops ordinary ones when it is full
+                let (important, ordinary): (Vec<DoneSpan>, Vec<DoneSpan>) =
+                    tail.spans.into_iter().partition(|span| span.important);
+                for span in important.into_iter().chain(ordinary) {
                     span.materialize(&root.tracer);
                 }
             }
@@ -752,6 +756,8 @@ struct Tail {
     limit: usize,
     /// The spans past `limit`, counted as dropped when the trace is kept.
     dropped: u64,
+    /// How many of `spans` are not important: none, and a full tail has no room to make.
+    ordinary: usize,
     spans: Vec<DoneSpan>,
 }
 
@@ -796,13 +802,14 @@ fn add_to_tail(done: DoneSpan) -> Option<DoneSpan> {
         Some(tail) => {
             tail.important |= done.important;
             if tail.spans.len() < tail.limit {
+                tail.ordinary += usize::from(!done.important);
                 tail.spans.push(done);
             } else {
                 tail.dropped += 1;
-                if done.important {
+                if done.important && tail.ordinary > 0 {
                     if let Some(at) = tail.spans.iter().rposition(|span| !span.important) {
-                        tail.spans.remove(at);
-                        tail.spans.push(done);
+                        tail.spans[at] = done;
+                        tail.ordinary -= 1;
                     }
                 }
             }
@@ -818,6 +825,7 @@ pub(super) fn waiting_spans(trace: &[u8; 16]) -> usize {
     TAILS.with_borrow(|tails| {
         tails
             .iter()
+            .rev()
             .find(|tail| &tail.trace == trace)
             .map_or(0, |tail| tail.spans.len())
     })
