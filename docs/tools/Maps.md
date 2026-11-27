@@ -206,8 +206,10 @@ so no map mixes the two. The readiness provider `maps.archives` says when a newe
 modification time, which also makes the map-source transition answer 409 until it is registered again). Its
 `maps.archive.space` check warns (`ARCHIVE_SPACE_LOW`) when the filesystem an archive is on has less free room than the
 largest archive on it once more (the old revision is kept while maps move): the runtime's for one on disk, the database's
-for one in a drive or git when the database is the embedded one (with the database's archives once more when the nightly
-backup writes there), from the status map's filesystems; an external database's room is not measured, and off Unix none is.
+for one in a drive or git when its content database is the embedded one. While the scheduled backup runs, the filesystem
+its directory is on (a watched one: the database's, the runtime's, ...) needs the database's archives once more for the
+next local backup. It reads the status map's filesystems; an external database's room is not measured, nor a backup
+directory outside the runtime, and off Unix nothing is (`ARCHIVE_SPACE_EXTERNAL_DB`, `ARCHIVE_SPACE_UNREAD`).
 
 **Reading.** A map reads an archive at `/apps/maps/LocalMap/source?layerId=...&revision=...` (the effective configuration
 hands that URL to a user it lets read the archive, and to no other). Every request, each range included, checks the

@@ -204,13 +204,21 @@ const sizeText = bytes =>
           : bytes >= 1048576
             ? (bytes / 1048576).toFixed(1) + " MiB"
             : Math.max(Math.ceil(bytes / 1024), 0) + " KiB"
-// The archive directory, resolved here from the job's stored parameter, the instance's property or the default: never from
-// a request. {archives} newest first, or {problem} why they could not be listed; the path is not answered.
+// The archive directory, resolved from the job's stored parameter, the instance's property or the default
+// (crates/moqui-drivers/src/backup.rs): never from a request
+const backupDirectory = () =>
+    text(jobParameters().backupDir) ||
+    text(ec.factory.getConfValue(DIR_PROPERTY)) ||
+    String(ec.factory.getRuntimePath()) + "/db/backup"
+// For other modules (MapSources.js, the room archives need): the directory the backup job writes its local archives to while
+// it runs on a schedule (a cron expression, not paused), else null. No caller check: it answers no archive and no state.
+function scheduledDirectory() {
+    const job = backupJob()
+    return job && text(job.cronExpression) && !paused(job) ? backupDirectory() : null
+}
+// {archives} newest first, or {problem} why they could not be listed; the path is not answered.
 function archivesOf() {
-    const directory =
-        text(jobParameters().backupDir) ||
-        text(ec.factory.getConfValue(DIR_PROPERTY)) ||
-        String(ec.factory.getRuntimePath()) + "/db/backup"
+    const directory = backupDirectory()
     let entries
     try {
         const reference = ec.resource.getLocationReference(directory)
@@ -564,5 +572,6 @@ const operations = {getCoverage, findArchives, runBackup, startBackupRun, holdBa
     execute: (op, parameters) => {
         if (!Object.hasOwn(operations, op)) throw new Error("Unknown backup operation " + op)
         return operations[op](parameters)
-    }
+    },
+    scheduledDirectory
 })

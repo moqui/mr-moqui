@@ -10,7 +10,8 @@
 // version 3 file made here. A Cloud Optimized GeoTIFF (P4c) is registered by its header (its CRS and bands recorded, one in
 // strips refused), read by range by a holder of its share and not by another user, and handed to the holder's map with its
 // projection's definition. Readiness's room to replace archives (archiveSpace) is checked on given filesystem rows: room,
-// too little on the runtime's or the database's filesystem, an external database not measured, no filesystems reported.
+// too little on the runtime's or the database's filesystem or for the next backup alone, an external database not measured,
+// no filesystems reported and a status map not read.
 // Run: ./moq test framework --spec MapsSource
 const S = "org.moqui.maps.MapSourceServices."
 const HOLDER = "MAPS_SRC_HOLDER"
@@ -573,12 +574,20 @@ feature("readiness says whether the filesystem an archive is on has room to repl
                 backup
             ),
             external: space([rows[1]], [runtimeRow(10240 * MIB)], {embedded: false, holds: null}),
+            // the backups written under the runtime, apart from runtime/db: that filesystem holds only the next backup
+            backupOnly: space(
+                [rows[1]],
+                [runtimeRow(30 * MIB), {mountPoint: "/srv/db", holds: ["database"], availableBytes: 10240 * MIB}],
+                {embedded: true, holds: "runtime"}
+            ),
             unread: space(rows, [], backup),
+            statusUnread: space(rows, null, backup),
             none: space([rows[3]], [runtimeRow(MIB)], backup)
         }
     },
-    then({fits, tight, dbShort, external, unread, none}) {
+    then({fits, tight, dbShort, external, backupOnly, unread, statusUnread, none}) {
         fits.checkKey == "maps.archive.space" && fits.state == "ready" && fits.fixRoute == "mapsConfiguration"
+        fits.reasonCode === null
         fits.message == "/ has 10 GiB free, room for 150 MiB"
         tight.state == "warning" && tight.reasonCode == "ARCHIVE_SPACE_LOW"
         tight.message.startsWith("/ has 149 MiB free and needs 150 MiB")
@@ -586,7 +595,11 @@ feature("readiness says whether the filesystem an archive is on has room to repl
         !dbShort.message.includes("/ has")
         external.state == "unavailable" && external.reasonCode == "ARCHIVE_SPACE_EXTERNAL_DB"
         external.message.includes("external database")
-        unread.state == "unavailable" && unread.reasonCode == "ARCHIVE_SPACE_UNREAD"
+        backupOnly.state == "warning" && backupOnly.reasonCode == "ARCHIVE_SPACE_LOW"
+        backupOnly.message.startsWith("/ has 30 MiB free and needs 50 MiB: the database's archives once more in the next local")
+        !backupOnly.message.includes("largest")
+        unread.state == "unavailable" && unread.reasonCode == "ARCHIVE_SPACE_UNREAD" && unread.message.includes("only on Unix")
+        statusUnread.reasonCode == "ARCHIVE_SPACE_UNREAD" && !statusUnread.message.includes("Unix")
         none === null
     }
 })

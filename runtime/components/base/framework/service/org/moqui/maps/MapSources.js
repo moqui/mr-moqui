@@ -978,9 +978,10 @@ function rasterCspCheck(layers) {
 // watched filesystem the next one needs the database's archives once more there.
 //
 // layers: MapLayer rows (each registered location counted once, by its sourceSize); filesystems: the status map's
-// Resources.Filesystems rows ({mountPoint, holds, availableBytes}; none off Unix); backup: {embedded: whether the database is
-// the embedded one, holds: the watched directory the local backups are written under ("database", "runtime", ...), or null
-// when none is written or where cannot be told}. The check row, or null when no archive is registered.
+// Resources.Filesystems rows ({mountPoint, holds, availableBytes}; none off Unix), or null when the status map could not be
+// read; backup: {embedded: whether the content blobs are in the embedded database, holds: the watched directory the local
+// backups are written under ("database", "runtime", ...), or null when none is written or where cannot be told}. The check
+// row, or null when no archive is registered.
 function archiveSpace(layers, filesystems, backup) {
     const archives = new Map()
     for (const layer of Array.from(layers || [])) {
@@ -992,17 +993,10 @@ function archiveSpace(layers, filesystems, backup) {
         if (where) archives.set(location, {where, size: num(layer.sourceSize) || 0})
     }
     if (!archives.size) return null
-    const base = {
-        checkKey: "maps.archive.space",
-        title: L("Room to replace map archives"),
-        subject: L("Disk space"),
-        fixRoute: "mapsConfiguration"
-    }
-    const rows = Array.from(filesystems || [])
+    if (filesystems == null) return spaceUnread()
+    const rows = Array.from(filesystems)
     if (!rows.length)
-        return Object.assign(base, {
-            state: "unavailable",
-            reasonCode: "ARCHIVE_SPACE_UNREAD",
+        return Object.assign(spaceUnread(), {
             message: L(
                 "This server reports no filesystem's free space (only on Unix): the room to replace a map archive is not measured"
             )
@@ -1053,47 +1047,66 @@ function archiveSpace(layers, filesystems, backup) {
             largest: bytesText(entry.largest),
             backup: bytesText(entry.backup)
         }
-        if ((num(row.availableBytes) ?? 0) < entry.largest + entry.backup)
+        if ((num(row.availableBytes) ?? 0) >= entry.largest + entry.backup)
+            fits.push(say("${mount} has ${free} free, room for ${needed}", values))
+        else if (entry.largest && entry.backup)
             short.push(
-                entry.backup
-                    ? say(
-                          "${mount} has ${free} free and needs ${needed}: the largest archive on it (${largest}) once more to replace it, and the database's archives (${backup}) in the next local backup",
-                          values
-                      )
-                    : say(
-                          "${mount} has ${free} free and needs ${needed}: the largest archive on it once more to replace it",
-                          values
-                      )
+                say(
+                    "${mount} has ${free} free and needs ${needed}: the largest archive on it (${largest}) once more to replace it, and the database's archives (${backup}) in the next local backup",
+                    values
+                )
             )
-        else fits.push(say("${mount} has ${free} free, room for ${needed}", values))
+        else if (entry.largest)
+            short.push(
+                say("${mount} has ${free} free and needs ${needed}: the largest archive on it once more to replace it", values)
+            )
+        else
+            short.push(
+                say(
+                    "${mount} has ${free} free and needs ${needed}: the database's archives once more in the next local backup written there",
+                    values
+                )
+            )
     }
+    const base = spaceUnread()
     if (short.length)
         return Object.assign(base, {state: "warning", reasonCode: "ARCHIVE_SPACE_LOW", message: short.concat(notes).join(". ")})
     if (notes.length)
         return Object.assign(base, {
-            state: "unavailable",
             reasonCode: external ? "ARCHIVE_SPACE_EXTERNAL_DB" : "ARCHIVE_SPACE_UNREAD",
             message: notes.concat(fits).join(". ")
         })
-    return Object.assign(base, {
-        state: "ready",
-        reasonCode: "",
-        message: fits.join(". ")
-    })
+    return Object.assign(base, {state: "ready", reasonCode: null, message: fits.join(". ")})
 }
+// The space check when what it reads could not be read (the status map, the backup job; each failure logged), and the row
+// the others start from
+const spaceUnread = () => ({
+    checkKey: "maps.archive.space",
+    title: L("Room to replace map archives"),
+    subject: L("Disk space"),
+    fixRoute: "mapsConfiguration",
+    state: "unavailable",
+    reasonCode: "ARCHIVE_SPACE_UNREAD",
+    message: L(
+        "The free space of the filesystems map archives are on could not be read, so the room to replace one is not measured"
+    )
+})
 // What archiveSpace reads of this server: the filesystems and the database's kind from the status map (only those), and
-// where the local backups go. The backup job's directory is its backupDir parameter, else database-backup@dir, else
-// runtime/db/backup (crates/moqui-drivers/src/backup.rs); it counts only while the job runs (not paused) for an embedded
-// database. A directory inside the runtime is placed by its watched directory; one outside it (or relative) is left out,
-// since no host API names the filesystem of a path and a mount point's prefix would put a separately mounted backup disk
-// on "/".
+// where the local backups go. The content blobs (drives' files, Git LFS objects) are the content group's
+// (ResourceEntities.xml), whose datasource with no database-conf-name of its own is in the transactional one's database: so
+// they are in the embedded database when the transactional datasource is embedded and the content one is not on another
+// server (a read clone or another group does not count). The backup job's directory and schedule are Backups.js's
+// (scheduledDirectory: a cron expression, not paused); a directory inside the runtime is placed by its watched directory;
+// one outside it (or relative) is left out, since no host API names the filesystem of a path and a mount point's prefix
+// would put a separately mounted backup disk on "/".
 function spaceSetup() {
-    let status = {}
+    let status
     try {
-        // Filesystems is in the plain map too; whether the database is embedded only in the sensitive one
+        // Filesystems is in the plain map too; whether a datasource is embedded only in the sensitive one
         status = ec.factory.getStatusMap(true) || {}
     } catch (error) {
-        ec.logger.error("Maps archive space: the status map could not be read: " + String(error?.message ?? error))
+        ec.logger.error("Map readiness maps.archive.space: the status map could not be read: " + String(error?.message ?? error))
+        return {filesystems: null, backup: {embedded: false, holds: null}}
     }
     const filesystems = Array.from(status.Resources?.Filesystems || []).map(row => ({
         mountPoint: row.mountPoint,
@@ -1101,18 +1114,18 @@ function spaceSetup() {
         availableBytes: row.availableBytes
     }))
     const sources = Array.from(status.DataSources || [])
-    const embedded = sources.length > 0 && sources.every(source => source.embedded === true)
+    const group = name => sources.find(source => text(source.group) === name)
+    const content = group("content")
+    const embedded = group("transactional")?.embedded === true && (!content || content.embedded === true)
     let holds = null
     if (embedded) {
-        const job = one("moqui.service.job.ServiceJob", {jobName: "backup_EmbeddedDatabase_daily"})
-        if (job && text(job.serviceName) === "org.moqui.impl.ServerServices.backup#EmbeddedDatabase" && job.paused !== "Y") {
-            const parameter = one("moqui.service.job.ServiceJobParameter", {jobName: job.jobName, parameterName: "backupDir"})
-            const directory = text(parameter?.parameterValue) || conf("database-backup@dir")
+        const backups = ec.resource.script("component://framework/service/org/moqui/admin/Backups.js")
+        const directory = text(backups.scheduledDirectory())
+        if (directory) {
             const runtime = String(ec.factory.getRuntimePath() || "").replace(/\/+$/, "")
             const path = directory.replace(/^file:(\/\/)?/i, "")
             const labels = {db: "database", log: "logs", tmp: "temp", txlog: "transaction log", opensearch: "search"}
-            if (!directory) holds = "database"
-            else if (runtime && path.startsWith(runtime + "/") && !/(^|\/)\.\.(\/|$)/.test(path))
+            if (runtime && path.startsWith(runtime + "/") && !/(^|\/)\.\.(\/|$)/.test(path))
                 holds = labels[path.slice(runtime.length + 1).split("/")[0]] || "runtime"
         }
     }
@@ -1153,9 +1166,15 @@ function readiness(p) {
         })
     const csp = rasterCspCheck(layers)
     if (csp) checks.push(csp)
-    const setup = spaceSetup()
-    const space = archiveSpace(layers, setup.filesystems, setup.backup)
-    if (space) checks.push(space)
+    // the room to replace archives: a failure of its own reads is its row's, never the provider's
+    try {
+        const setup = spaceSetup()
+        const space = archiveSpace(layers, setup.filesystems, setup.backup)
+        if (space) checks.push(space)
+    } catch (error) {
+        ec.logger.error("Map readiness maps.archive.space could not be checked: " + String(error?.message ?? error))
+        checks.push(spaceUnread())
+    }
     if (!checks.length)
         checks.push({
             checkKey: "maps.archive.none",
