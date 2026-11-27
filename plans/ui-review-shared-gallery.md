@@ -39,6 +39,11 @@ The three reviewers used checkout `23204bf61b5c6aeffc424523a8f8d59d1b5fdbb8`. Th
 
 All six findings are P2. This order puts content disclosure and misleading operational success first.
 
+**All six were fixed on 2026-11-27 and await a live recheck.** Each owning ledger records the cause, the change and
+the regression tests: SH-UI-009 below, [TOOL-UI-008](ui-review-tools.md), [MON-UI-003](ui-review-system-monitoring.md),
+[DEVA-UI-003](ui-review-dev-aide-authoring.md), [COM-UI-040](ui-review-basic-comms.md) and
+[MAP-UI-001](ui-review-maps.md). The next verification below still applies to each.
+
 | Finding | What the user observed | Next verification |
 |---|---|---|
 | SH-UI-009 · Commons Chatter → notification inbox | Joe received the request ID and note excerpt before he could open the request. | Compare the delivered notification text and record link before and after granting participation. [Inbox and destination](ui-refinement-evidence/pass-2320/record-return.json) |
