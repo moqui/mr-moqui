@@ -19,7 +19,8 @@ From [Maps §8](archive/Maps.md#8-access-publication-and-reliability), mr-home
   starts one: not an administrator, an organizer of a household, a manager, a record or a schedule. No position is
   inferred from an address, a photo, a check-in or a login.
 - **Visible to everyone it concerns.** The owner sees every active share, its audience and its end, wherever they are
-  in the app (the tray, Maps, the Android notification), and can stop any of them at once. Each person in an audience
+  in the app (a status chip in the app bar on every screen, Maps, the Android notification; the user's decision of
+  November 27, 2026, since the shell's tray takes no app item: a generic shell indicator hook), and can stop any of them at once. Each person in an audience
   is told who shares with them and until when.
 - **Ended by time.** Every share has an end, at most `location@max-share-hours` (24) after its start; extending it is
   the owner's act again. Revoking or ending a share stops the feed at once; a device still sending is told to stop.
