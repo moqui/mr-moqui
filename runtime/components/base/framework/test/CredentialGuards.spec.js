@@ -1,4 +1,4 @@
-// Who may make, end and use an account's sign-in credentials (plans/Security-Review-Medium.md SEC-ADM-03 to SEC-ADM-06,
+// Who may make, end and use an account's sign-in credentials (plans/archive/Security-Review-Medium.md SEC-ADM-03 to SEC-ADM-06,
 // SEC-WEB-12; org.moqui.impl.UserServices check#AccountAction, org.moqui.sso.RecentAuthServices require#RecentAuth): a code
 // stands in for the old password only in a pre-authenticated session, never a signed-in one; issuing codes and adding or
 // ending a factor need a recent sign-in; another account's factors need ADMIN_IDENTITY_MANAGE and are refused when that

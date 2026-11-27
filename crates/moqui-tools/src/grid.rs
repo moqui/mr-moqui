@@ -2057,7 +2057,7 @@ fn check_change(
                 .insert(name.clone(), format!("{name} is not written through the data grid"));
         } else if kind == "update" && is_account_identity(&entity.full_name, name) {
             // an account's username, email address or disabled flag: an ADMIN would point another account's email at
-            // their own mailbox and take it by a reset (plans/Security-Review.md SEC-TLS-81); a new account may set them
+            // their own mailbox and take it by a reset (plans/archive/Security-Review.md SEC-TLS-81); a new account may set them
             refused.field_errors.insert(
                 name.clone(),
                 format!("{name} of an account is changed in the account screens, not the data grid"),

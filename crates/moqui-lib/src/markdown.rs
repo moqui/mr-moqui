@@ -142,7 +142,7 @@ pub fn resolve_link(base: &str, dest: &str) -> Option<String> {
 /// Whether a link (`link`) or image destination of the markdown would run script or carry a document where it is
 /// followed: a `javascript:` or `vbscript:` URL, and for a link a `data:` one, as a browser reads the scheme (ASCII
 /// whitespace and control characters taken out, any case). The renderer writes `#` in its place, so the HTML markdown
-/// gives has no script in its links (plans/Security-Review.md SEC-SCR-81); raw HTML is the page's own.
+/// gives has no script in its links (plans/archive/Security-Review.md SEC-SCR-81); raw HTML is the page's own.
 fn script_url(url: &str, link: bool) -> bool {
     let read: String = url
         .chars()

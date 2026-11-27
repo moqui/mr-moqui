@@ -324,7 +324,7 @@ fn is_message_key(original: &str) -> bool {
 }
 
 /// Whether `localized` has a `${}` expression that `original` does not, for a text that is not a message key: a
-/// translation may reorder or drop the original's placeholders but add none (plans/Security-Review-Medium.md SEC-SCR-06;
+/// translation may reorder or drop the original's placeholders but add none (plans/archive/Security-Review-Medium.md SEC-SCR-06;
 /// Admin's store#LocalizedMessage keeps them exactly). A message key's template may hold any.
 pub(crate) fn translation_adds_expression(original: &str, localized: &str) -> bool {
     if !localized.contains("${") || is_message_key(original) {

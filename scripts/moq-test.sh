@@ -357,7 +357,7 @@ else
 fi
 rm -f "$R/cargo.log" "$R/wrapper.log"
 # An add-on component crate builds through the generated crate, a workspace of its own, which takes the repository's
-# crate patches (cargo reads them only from the root of the workspace it builds; plans/Security-Review.md SEC-CLI-126).
+# crate patches (cargo reads them only from the root of the workspace it builds; plans/archive/Security-Review.md SEC-CLI-126).
 mkdir -p "$R/runtime/components/addon/crate-x" "$R/patches/crate-p"
 printf '<component name="crate-x"/>\n' >"$R/runtime/components/addon/crate-x/component.xml"
 printf '[package]\nname = "crate-x"\n' >"$R/runtime/components/addon/crate-x/Cargo.toml"

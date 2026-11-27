@@ -127,7 +127,7 @@ fn the_pin_wrong_then_right_and_the_menu_keys() {
             box_number: None
         }]
     );
-    let (_, says) = played(&machine.on(Event::Pin(PinAnswer::Refused { blocked: false })));
+    let (_, says) = played(&machine.on(Event::Pin(PinAnswer::Refused)));
     assert_eq!(says, vec![Say::Refused, Say::EnterPin]);
     assert_eq!(
         keys(&mut machine, "4719#"),
@@ -165,22 +165,22 @@ fn the_pin_wrong_then_right_and_the_menu_keys() {
     assert_eq!(machine.on(Event::Played(bye)), vec![Action::Hangup]);
 }
 
-/// The rate limit, as the call sees it: a blocked answer ends the call at once, and so do three refusals in one call;
-/// # skips a message without a mark.
+/// The rate limit, as the call sees it: three refusals in one call end it, and a refusal does not say whether the box or
+/// the source is blocked, so the call does not tell a box that is there from digits that name none (SEC-COM-29); # skips
+/// a message without a mark.
 #[test]
-fn a_block_or_three_refusals_end_the_call_and_hash_skips() {
+fn three_refusals_end_the_call_blocked_or_not_and_hash_skips() {
     let (mut machine, _) = Machine::deposit();
     machine.on(Event::Digit('*'));
     keys(&mut machine, "1111#");
-    let (bye, says) = played(&machine.on(Event::Pin(PinAnswer::Refused { blocked: true })));
-    assert_eq!(says, vec![Say::Refused, Say::Goodbye]);
-    assert_eq!(machine.on(Event::Played(bye)), vec![Action::Hangup]);
+    let (_, says) = played(&machine.on(Event::Pin(PinAnswer::Refused)));
+    assert_eq!(says, vec![Say::Refused, Say::EnterPin], "asked again, blocked or not");
 
     let (mut machine, _) = Machine::deposit();
     machine.on(Event::Digit('*'));
     for attempt in 1..=MAX_TRIES {
         keys(&mut machine, "2222#");
-        let (_, says) = played(&machine.on(Event::Pin(PinAnswer::Refused { blocked: false })));
+        let (_, says) = played(&machine.on(Event::Pin(PinAnswer::Refused)));
         let last = if attempt == MAX_TRIES {
             Say::Goodbye
         } else {
@@ -216,7 +216,7 @@ fn the_access_number_asks_for_the_box_then_the_pin() {
             box_number: Some("5551230000".to_string())
         }]
     );
-    let (_, says) = played(&machine.on(Event::Pin(PinAnswer::Refused { blocked: false })));
+    let (_, says) = played(&machine.on(Event::Pin(PinAnswer::Refused)));
     assert_eq!(says, vec![Say::Refused, Say::EnterBox]);
     assert!(
         machine.on(Event::Pin(PinAnswer::Accepted(Vec::new()))).is_empty(),

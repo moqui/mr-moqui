@@ -1,5 +1,5 @@
 // An account disabled for good (disable#UserAccount: disabled Y, no disabledDateTime) stays closed on the password path
-// (plans/Security-Review.md SEC-WEB-01, SEC-ADM-01): failed attempts do not give it a lock time that ends by itself, its
+// (plans/archive/Security-Review.md SEC-WEB-01, SEC-ADM-01): failed attempts do not give it a lock time that ends by itself, its
 // own password does not change it, and no reset password is made for it. A tarpit lock (with a disabledDateTime) still
 // ends with a password change, as in Java. The Rust side (login.rs) is in user/login_tests.rs.
 // Run: ./moq test framework --spec ClosedAccounts

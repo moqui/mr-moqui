@@ -402,14 +402,14 @@ pub enum RecordGuard {
     /// Every field and related record, for code (a script's master graph, a sync, a full backup).
     Full,
     /// An answer (entity REST, a Service REST entity resource): a restricted related entity is left out, the password
-    /// fields too, and an encrypted field is answered as `<field>IsSet` (plans/Security-Review-Medium.md SEC-RTE-06,
+    /// fields too, and an encrypted field is answered as `<field>IsSet` (plans/archive/Security-Review-Medium.md SEC-RTE-06,
     /// SEC-DAT-03).
     Answer,
     /// A file of records (an export): a restricted related entity, the password fields and the encrypted fields are
     /// left out, so the file still loads (SEC-TLS-05).
     File,
     /// A replica for a sync partner: a restricted related entity and the password fields are left out; the encrypted
-    /// fields stay, as the partner's copy of the records needs them (plans/Security-Review-Low.md SEC-DAT-08).
+    /// fields stay, as the partner's copy of the records needs them (plans/archive/Security-Review-Low.md SEC-DAT-08).
     Replica,
 }
 

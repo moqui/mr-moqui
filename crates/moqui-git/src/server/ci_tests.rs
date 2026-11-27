@@ -2772,7 +2772,7 @@ fn retention_removes_what_expired_and_secrets_are_scoped_and_never_read_back() {
     }
 }
 
-/// SEC-GIT-02 (plans/Security-Review.md): a runner token expires (`runner-token-days`; a runner registered before tokens
+/// SEC-GIT-02 (plans/archive/Security-Review.md): a runner token expires (`runner-token-days`; a runner registered before tokens
 /// expired counts from its registration) and is rotated by the runner, which ends the old one at once; a pool's
 /// `allowedAddresses` refuses a register, claim or rotate from another address, and a list it cannot read is refused
 /// when stored.

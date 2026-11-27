@@ -1,4 +1,4 @@
-// A posted _isMulti=true with <name>_0 rows (plans/Security-Review.md SEC-RTE-81): a transition's service-call shortcut is a
+// A posted _isMulti=true with <name>_0 rows (plans/archive/Security-Review.md SEC-RTE-81): a transition's service-call shortcut is a
 // multi call only when it says multi="parameter" or a multi form of its screen posts to it, so on a screen that pins the
 // record to the user (always-actions, as My Account pins userId) a post with testId_0 does not reach another record; and in
 // a multi call a transition makes a posted row value is taken only for a field of the posting form and never for a name

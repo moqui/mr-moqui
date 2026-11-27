@@ -469,7 +469,7 @@ fn the_services_register_at_the_locations_the_service_file_names() {
 /// An update whose attribute value nests arrays far past any editor's, two bytes a level: yrs decoded a value by a
 /// recursion once a level, so applying it overflowed the worker's stack and aborted the process. yrs at moqui's fork
 /// (docs/Build-Test.md Forks) refuses a value nested deeper than 128, so the update is refused as not one, on a small
-/// stack too (plans/Security-Review-Medium.md SEC-TLS-95).
+/// stack too (plans/archive/Security-Review-Medium.md SEC-TLS-95).
 #[test]
 fn an_update_nested_far_past_the_decode_limit_is_refused_on_a_small_stack() {
     use yrs::{Any, Xml};
@@ -551,7 +551,7 @@ fn an_update_nested_far_past_the_decode_limit_is_refused_on_a_small_stack() {
 /// A state vector or an update of a few bytes that claims billions of clients or blocks: yrs reserved what was claimed
 /// before reading it, which took gigabytes or failed to allocate, and a granted reservation of a hash map cost its size
 /// in memory before the input ran out. yrs at moqui's fork reserves at most 1024 entries, so each is refused at the end
-/// of its few bytes (plans/Security-Review-Medium.md SEC-TLS-117).
+/// of its few bytes (plans/archive/Security-Review-Medium.md SEC-TLS-117).
 #[test]
 fn a_claimed_length_past_the_input_is_refused_at_its_end() {
     let _serial = serial();

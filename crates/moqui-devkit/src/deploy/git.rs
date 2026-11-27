@@ -673,12 +673,13 @@ pub fn update_at(
         report.problems.push(err);
     } else {
         report.status = "deployed".to_string();
-        if storage == Storage::Database {
-            publish(factory, name, "update", &preview.from, &preview.to);
-        }
     }
     report.millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     record_update(factory, name, &preview.to, &report);
+    // after the shared row names the new commit: a member applies only the commit the row names (SEC-CLU-07)
+    if report.status == "deployed" && storage == Storage::Database {
+        publish(factory, name, "update", &preview.from, &preview.to);
+    }
     report
 }
 
@@ -1141,6 +1142,13 @@ pub fn install(factory: &Arc<ExecutionContextFactory>) {
     }
 }
 
+/// Why a member does not apply another member's deploy or update to `to`, when the shared `DeployedComponent` row
+/// names `shared`: a message makes no member load a commit no deploy of the cluster put in place, only the one the row
+/// names (SEC-CLU-07).
+pub(crate) fn remote_commit_refusal(shared: &str, to: &str) -> Option<String> {
+    (to.is_empty() || shared != to).then(|| format!("it names commit {}, the shared row {}", short(to), short(shared)))
+}
+
 /// A deploy or update another cluster member published.
 fn apply_remote(factory: &Arc<ExecutionContextFactory>, body: &serde_json::Value) {
     let field = |name: &str| {
@@ -1164,6 +1172,10 @@ fn apply_remote(factory: &Arc<ExecutionContextFactory>, body: &serde_json::Value
             return;
         }
     };
+    if let Some(refused) = remote_commit_refusal(&text(&row, "commitId"), &to) {
+        tracing::error!("Component {name}: another member's {action} is not applied here: {refused}");
+        return;
+    }
     let id = text(&row, "gitRepositoryId");
     let location = factory.runtime_dir().join(DEPLOYED_DIR).join(&name);
     let loaded = factory.components().iter().any(|info| info.name == name);

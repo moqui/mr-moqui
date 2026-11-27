@@ -195,7 +195,7 @@ fn pause_schedule(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
     Ok(Parameters::new())
 }
 /// A report file only under the conf's `report` `save-roots` (`moqui_core::context::report_save_location_problem`,
-/// plans/Security-Review-Medium.md SEC-TLS-06).
+/// plans/archive/Security-Review-Medium.md SEC-TLS-06).
 fn check_save_location(ec: &ExecutionContext, location: &str) -> Result<(), Error> {
     let roots = moqui_core::context::report_save_roots(ec.factory());
     match moqui_core::context::report_save_location_problem(location, &roots) {

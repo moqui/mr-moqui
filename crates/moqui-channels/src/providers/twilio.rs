@@ -512,8 +512,14 @@ impl SmsProvider for Twilio {
         }
     }
 
-    fn media_auth(&self, config: &Config) -> Option<(String, String)> {
-        config.authorization().map(|value| ("authorization".to_string(), value))
+    /// The API's credentials, only to the API's own origin or the media service's (SEC-COM-96): a signed webhook's
+    /// `MediaUrl` elsewhere is fetched without them.
+    fn media_auth(&self, config: &Config, settings: &Settings, url: &str) -> Option<(String, String)> {
+        let own = crate::sms::same_origin(url, &settings.api_base_url)
+            || crate::sms::same_origin(url, &config.media_content_base_url);
+        own.then(|| config.authorization())
+            .flatten()
+            .map(|value| ("authorization".to_string(), value))
     }
 
     fn lookup_request(&self, config: &Config, settings: &Settings, number: &str) -> Option<ApiRequest> {

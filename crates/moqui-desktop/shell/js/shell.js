@@ -27,7 +27,7 @@
     // cannot show here, so the Inbox offers no Show images
     moqui.remoteImages = false;
 
-    // The apps' privacy notice (docs/Privacy.md; plans/Security-Review.md SEC-CLI-122), in the system browser, from the
+    // The apps' privacy notice (docs/Privacy.md; plans/archive/Security-Review.md SEC-CLI-122), in the system browser, from the
     // account menu and the sign-in: the store listings link the same page.
     const PRIVACY_URL = "https://github.com/moqui/mr-moqui/blob/master/docs/Privacy.md";
     moqui.shellPrivacy = () => {

@@ -122,7 +122,8 @@ pub(crate) struct SipSettings {
     pub public: Option<IpAddr>,
     pub ca_file: Option<PathBuf>,
     /// The flood caps: `sip-server/limits@request-rate`, `sip-server/limits@request-burst`, `sip-server/limits@max-transactions`, `sip-server/limits@max-connections`,
-    /// `sip-server/limits@max-connections-per-source`.
+    /// `sip-server/limits@max-connections-per-source`, `sip-server/limits@max-connections-per-unknown-source`,
+    /// `sip-server/limits@unauthenticated-seconds`, `sip-server/limits@max-unknown-connections`.
     pub limits: RequestLimits,
     /// The realm of the digest challenges and the domain phones register to: `sip-server@domain`, else the public address,
     /// else `moqui`.
@@ -158,6 +159,21 @@ fn limits_from(property: &dyn Fn(&str) -> String) -> RequestLimits {
             property,
             "sip-server/limits@max-connections-per-source",
             defaults.max_connections_per_source,
+        ),
+        max_connections_per_unknown_source: read(
+            property,
+            "sip-server/limits@max-connections-per-unknown-source",
+            defaults.max_connections_per_unknown_source,
+        ),
+        unauthenticated_seconds: read(
+            property,
+            "sip-server/limits@unauthenticated-seconds",
+            defaults.unauthenticated_seconds,
+        ),
+        max_unknown_connections: read(
+            property,
+            "sip-server/limits@max-unknown-connections",
+            defaults.max_unknown_connections,
         ),
     }
 }

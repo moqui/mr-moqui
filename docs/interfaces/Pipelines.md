@@ -355,7 +355,7 @@ MOQUI_CI_SERVER_URL=https://moqui.example.com moqui ci-run poll --token-file ~/.
 `MOQUI_CI_RUNNER_TOKEN_FILE` names; `MOQUI_CI_RUNNER_TOKEN` itself still works, with a warning, since a process's
 starting environment can be read by any process of its user (`/proc/<pid>/environ`), a job's steps included. The
 runner token takes any job of the pool and, through that job's token, its secrets, so it is kept out of the steps
-(plans/Security-Review.md SEC-GIT-02): a registered runner's step does not inherit the machine's environment, only
+(plans/archive/Security-Review.md SEC-GIT-02): a registered runner's step does not inherit the machine's environment, only
 `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LANGUAGE`, `TZ`, `TMPDIR`, `SHELL`, `TERM`, the `LC_` variables and the names
 `--pass-env NAME,...` gives, and then the job's own variables; no runner, pool or job token is passed on in any
 case. A step that runs as the runner's user can still read the token file. On unix, `--step-user USER` runs the steps as
@@ -367,17 +367,17 @@ artifacts and caches are then found and read as USER too, by a child of the same
 user per runner process**: the kill before reading takes every process of USER that started during the job, so two
 runners with one step user would end each other's steps; `poll` holds an exclusive lock on
 `/run/moqui-ci-step-user-<uid>.lock` while it runs and refuses to start when another runner holds it. In any mode a report or artifact path is kept only while it resolves inside the workspace, a report that is a
-link is refused, and a link under an artifact directory is stored as a link (plans/Security-Review.md SEC-GIT-81).
+link is refused, and a link under an artifact directory is stored as a link (plans/archive/Security-Review.md SEC-GIT-81).
 `poll` works in a directory of its own: `--work DIR` is made when missing, refused when it is a link, another user's,
 or writable by a group or other users, and set to mode 700 (711 with `--step-user`, which the step user passes
 through and cannot list); without `--work` it is a new `moqui-ci-<random>` in the temporary directory, made at the
 start, so no other local user can have made it first. Each job's directory in it is `<work>/<jobRunId>` (an id, or the
 job is not run), made new with the same mode, and its checkout and `home` are 700 until they are handed to the step
-user; the runner's scratch files there are always made new, never through a name that is there (plans/Security-Review-Medium.md
+user; the runner's scratch files there are always made new, never through a name that is there (plans/archive/Security-Review-Medium.md
 SEC-GIT-98).
 `poll` says at each claim whether it was started with `--step-user` (`stepUser` in the claim's body), and **a pool that takes untrusted runs
 (`trusted` N) gives a job only to a runner that was**: one without it is given none, its claim's answer says why
-(`notice`, which `poll` prints once), and the untrusted run waits, queued, for such a runner (plans/Security-Review-Low.md
+(`notice`, which `poll` prints once), and the untrusted run waits, queued, for such a runner (plans/archive/Security-Review-Low.md
 SEC-GIT-19); for untrusted runs on machines whose runners cannot run steps as another user, use a pool of containers.
 Without `--step-user`, keep a pool for one owner's trusted runs.
 

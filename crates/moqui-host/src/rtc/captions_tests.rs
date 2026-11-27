@@ -584,3 +584,27 @@ fn the_node_cap_limits_the_jobs_started_and_frees_a_place_as_each_ends() {
     assert_eq!(pipeline.start(Instant::now(), usize::MAX).len(), 2);
     assert_eq!(pipeline.wanted(), 0);
 }
+
+/// SEC-COM-85: with stored captions the notice says the text is kept, and for how long; without, it says nothing of it.
+#[test]
+fn the_notice_says_when_the_text_is_kept() {
+    let options = StartOptions {
+        user_id: None,
+        provider_label: "Whisper".to_string(),
+        local: true,
+    };
+    let property = |name: &str| {
+        if name == "calls/captions@retention-days" {
+            "7".to_string()
+        } else {
+            String::new()
+        }
+    };
+    let kept = notice_of(&options, true, &property);
+    assert_eq!(
+        (kept["stored"].as_bool(), kept["retentionDays"].as_u64()),
+        (Some(true), Some(7))
+    );
+    let not_kept = notice_of(&options, false, &property);
+    assert!(not_kept.get("stored").is_none(), "{not_kept}");
+}

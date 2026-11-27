@@ -769,7 +769,7 @@ impl ChromiumProcess {
         };
         #[cfg(not(unix))]
         let mut command = Command::new(binary);
-        // only the named environment, never the server's secrets (plans/Security-Review-Low.md SEC-OUT-09)
+        // only the named environment, never the server's secrets (plans/archive/Security-Review-Low.md SEC-OUT-09)
         moqui_lib::env::limit_child_env(&mut command, CHROMIUM_ENV);
         command.args(ISOLATION_ARGS).args(launch_args());
         #[cfg(unix)]

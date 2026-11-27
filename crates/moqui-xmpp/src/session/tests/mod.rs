@@ -255,6 +255,25 @@ async fn scram_plus_with_bind_2_then_fast_with_its_binding() {
     );
 }
 
+/// SEC-COM-101: a FAST token signs in only by the mechanism it was issued for: one asked for with channel binding is
+/// refused without it, whatever count it names.
+#[tokio::test]
+async fn a_fast_token_is_taken_only_by_its_own_mechanism() {
+    let (server, _fake) = server();
+    let (_client, token) = sign_in(&server, "john.doe", JOHN_PASSWORD, "Conversations").await;
+    let mut unbound = Client::new(&server, Transport::Tcp { tls: true }, Some(EXPORTER.to_vec()));
+    unbound.open().await;
+    let out = unbound
+        .send(&format!(
+            "<authenticate xmlns='urn:xmpp:sasl:2' mechanism='HT-SHA-256-NONE'><initial-response>{}</initial-response>\
+             <user-agent id='d4565fa7-4d72-4749-b3d3-740edbf87770'/><fast xmlns='urn:xmpp:fast:0' count='9'/></authenticate>",
+            STANDARD.encode(fast::initial_response("john.doe", &token, &[]))
+        ))
+        .await;
+    assert!(find(&out, "failure", ns::SASL2).is_some(), "{}", text_of(&out));
+    assert!(find(&out, "success", ns::SASL2).is_none(), "{}", text_of(&out));
+}
+
 /// SEC-COM-11, SEC-COM-22: a SCRAM or FAST sign-in is put to the backend with the session's peer (which checks the
 /// account's ipAllowed and records the sign-in), and each service call carries the peer; a refused sign-in fails.
 #[tokio::test]
@@ -302,7 +321,11 @@ async fn a_verified_sign_in_is_checked_and_recorded_for_the_sessions_peer() {
         ))
         .await;
     assert!(find(&out, "failure", ns::SASL2).is_some(), "{}", text_of(&out));
-    assert_eq!(fake.state.lock().unwrap().sign_ins.len(), 1, "no refused sign-in is recorded");
+    assert_eq!(
+        fake.state.lock().unwrap().sign_ins.len(),
+        1,
+        "no refused sign-in is recorded"
+    );
 }
 
 #[tokio::test]
@@ -916,7 +939,10 @@ async fn user_location_reports_the_share_with_xmpp_contacts_and_reaches_them_alo
         ),
         (json!({"statusCode": 409, "reasonCode": "STALE"}), "type='result'"),
         (json!({"statusCode": 410, "reasonCode": "SHARE_ENDED"}), "<not-allowed"),
-        (json!({"statusCode": 404, "reasonCode": "SHARE_NOT_FOUND"}), "<not-allowed"),
+        (
+            json!({"statusCode": 404, "reasonCode": "SHARE_NOT_FOUND"}),
+            "<not-allowed",
+        ),
         (json!({"statusCode": 409, "reasonCode": "OTHER_DEVICE"}), "<not-allowed"),
     ] {
         fake.state.lock().unwrap().location_answer = Some(answer);
@@ -1413,4 +1439,95 @@ fn an_upload_is_logged_by_its_file_name_not_its_token() {
     let logged = super::chat::upload_file_name(url);
     assert_eq!(logged, "photo.jpg");
     assert!(!logged.contains("S3cr3tT0ken"));
+}
+
+/// SEC-COM-24: a name that is no account's asks for SCRAM verifiers as a user's does (it gets none), so the decoy's
+/// challenge takes the same service calls.
+#[tokio::test]
+async fn an_unknown_name_asks_for_verifiers_as_a_user_does() {
+    let (server, fake) = server();
+    decoy_salt(&server, "nobody").await;
+    let calls = fake.state.lock().unwrap().calls.clone();
+    assert!(
+        calls.iter().any(|call| call == crate::backend::services::SCRAM),
+        "{calls:?}"
+    );
+}
+
+/// SEC-COM-19, SEC-COM-93: another user's routed stanzas are not queued for a detached session at all: a sender sees
+/// it offline (an iq to its full JID is answered service-unavailable), and one queued before it detached is dropped, so no flood fills
+/// its unacknowledged stanzas; a chat notice afterwards is still kept for the resumption.
+#[tokio::test]
+async fn another_users_flood_does_not_end_a_detached_sessions_resumption() {
+    let (server, _) = server();
+    let (mut john, _) = sign_in(&server, "john.doe", JOHN_PASSWORD, "Monal").await;
+    let (mut jane, _) = sign_in(&server, "jane", JANE_PASSWORD, "laptop").await;
+    john.send("<presence/>").await;
+    jane.send("<presence/>").await;
+    john.pump().await;
+    let full = john.session.my_full();
+    assert!(john.session.detach());
+    let before = john.session.unacked();
+    let body = "x".repeat(250 * 1024);
+    let answer = jane
+        .send(&format!(
+            "<iq to='{full}' type='get' id='f-sent'><query xmlns='jabber:iq:version'/></iq>"
+        ))
+        .await;
+    assert!(
+        text_of(&answer).contains("service-unavailable"),
+        "{full}: {}",
+        text_of(&answer)
+    );
+    for n in 0..40 {
+        // queued before the session detached
+        john.session
+            .on_routed(stanza(&format!(
+                "<message from='jane@moqui.local/laptop' type='headline' id='f{n}'><body>{body}</body></message>"
+            )))
+            .await;
+    }
+    john.pump().await;
+    assert_eq!(john.session.unacked(), before, "nothing of the flood is kept");
+    jane.send("<message type='chat' to='john.doe@moqui.local' id='legit'><body>Lunch?</body></message>")
+        .await;
+    john.pump().await;
+    assert!(
+        john.session.unacked() > before,
+        "the chat notice is kept for the resumption"
+    );
+    assert!(john.session.resumable().is_some(), "still resumable");
+}
+
+/// SEC-COM-19, SEC-COM-93: a detached session is not kept another user's location positions, which no archive holds,
+/// so a share's reports cannot fill its unacknowledged stanzas; the end of a share whose position it was sent still is.
+#[tokio::test]
+async fn a_detached_session_keeps_no_location_positions_but_a_shown_shares_end() {
+    let (server, _) = server();
+    let (mut jane, _) = sign_in(&server, "jane", JANE_PASSWORD, "laptop").await;
+    wants_geoloc(&mut jane, "loc1=").await;
+    let push = |share: &str, event: &str| {
+        json!({"topic": format!("{}{share}", crate::registry::LOCATION_TOPIC), "userIds": ["U2"],
+            "message": {"shareId": share, "ownerUserId": "U1", "event": event, "thruDate": 1_900_000_000_000_i64,
+                "latitude": 48.85, "longitude": 2.35, "observedDate": 1_800_000_000_000_i64}})
+    };
+    server.registry.deliver_notice(&push("S1", "position"));
+    assert!(text_of(&jane.pump().await).contains("<lat>48.85</lat>"));
+    assert!(jane.session.detach());
+    let before = jane.session.unacked();
+    for _ in 0..50 {
+        server.registry.deliver_notice(&push("S1", "position"));
+    }
+    server.registry.deliver_notice(&push("S2", "position"));
+    server.registry.deliver_notice(&push("S2", "ended"));
+    jane.pump().await;
+    assert_eq!(
+        jane.session.unacked(),
+        before,
+        "no position, nor the end of a share never shown"
+    );
+    server.registry.deliver_notice(&push("S1", "ended"));
+    jane.pump().await;
+    assert_eq!(jane.session.unacked(), before + 1, "the shown share's end");
+    assert!(jane.session.resumable().is_some());
 }

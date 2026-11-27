@@ -58,7 +58,7 @@ const METHODS: [&str; 7] = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OP
 /// Response headers the page does not get: the cookies (the key is the session), the hop-by-hop ones, the body's
 /// length and encoding (the host hands the page the whole, decoded body), a Basic challenge (the page has no password
 /// to give), what a server's answer could do to every account's pages and the shell (`Clear-Site-Data` wiping their
-/// storage, a service worker's scope, a refresh or preloads elsewhere; plans/Security-Review.md SEC-CLI-85) and, by
+/// storage, a service worker's scope, a refresh or preloads elsewhere; plans/archive/Security-Review.md SEC-CLI-85) and, by
 /// prefix, the CORS grants (no other site reads through the app's origin).
 const DROPPED_RESPONSE_HEADERS: [&str; 14] = [
     "set-cookie",
@@ -157,7 +157,7 @@ impl Proxy {
 
     /// [`Self::send`] with the `Sec-Fetch-Site` the host derived for a page's request, which the runtimes do not give
     /// a custom scheme ([`site_by_origin`]): the server refuses a GET of a writing transition that another site started,
-    /// as it does for a browser (plans/Security-Review.md SEC-CLI-102). The page's own `Sec-Fetch-*` never go on.
+    /// as it does for a browser (plans/archive/Security-Review.md SEC-CLI-102). The page's own `Sec-Fetch-*` never go on.
     ///
     /// # Errors
     ///

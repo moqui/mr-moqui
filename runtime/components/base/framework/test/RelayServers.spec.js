@@ -4,7 +4,7 @@
 // PATCH email/servers/{id} (update#RelayServer) and its poll (poll#EmailServer) refuse such a server the same way. The PATCH
 // holds Admin's rules for a relay too (RelayRules.js): the sign-in mail's relay needs ADMIN_ACCESS_MANAGE and a recent
 // sign-in, a link base URL is on one of the instance's own names, and a relay waiting for a test is not enabled by it
-// (plans/Security-Review-Medium.md SEC-ADM-82, SEC-ADM-83).
+// (plans/archive/Security-Review-Medium.md SEC-ADM-82, SEC-ADM-83).
 // Run: ./moq test framework --spec RelayServers
 const RELAY = "SPEC_RELAY_SHARED"
 const OWNED = "SPEC_RELAY_OWNED"

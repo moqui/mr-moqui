@@ -9,7 +9,7 @@ import android.webkit.WebStorage
 /**
  * The storage of the server pages' origin, which every account's pages share in the app's one webview, cleared when
  * the current account changes or signs out (src/host.rs clear_page_storage, called by Rust by name), so one account's
- * pages leave nothing there for another's (plans/Security-Review-Medium.md SEC-CLI-81). The desktop gives each account
+ * pages leave nothing there for another's (plans/archive/Security-Review-Medium.md SEC-CLI-81). The desktop gives each account
  * a browser profile of its own instead; a webview per account here is a design for later.
  */
 object PageStorage {

@@ -70,7 +70,7 @@ const IDENTITY_ADMIN_ENTITY_KEYS: &[&str] = &[
     "userpasswordhistory",
     // an account's own sign-in credentials, made through UserServices' key, app password and device services (which ask
     // whose account it is and what it holds, heldBeyond): a generic write could plant one on another account
-    // (plans/Security-Review-Medium.md SEC-ADM-81)
+    // (plans/archive/Security-Review-Medium.md SEC-ADM-81)
     "usersshkey",
     "userapppassword",
     "devicecredential",
@@ -86,7 +86,7 @@ const SECRET_CONFIG_ENTITY_KEYS: &[&str] = &["emailserver", "systemmessageremote
 /// the ETL mappings, value maps and runs (§10), whose `expression` fields run as the mapping's user, so a generic write
 /// could plant a script in another user's mapping or take it over; and the database jobs and their statements (§6), whose
 /// text `run#DatabaseJob` executes as written, so a generic write would run any SQL past the SQL runner's permission
-/// and its confirmation (plans/Security-Review-Medium.md SEC-TLS-88); and a person's shared live locations
+/// and its confirmation (plans/archive/Security-Review-Medium.md SEC-TLS-88); and a person's shared live locations
 /// (plans/archive/Location-Sharing.md §1), which no grant reads for anyone but the owner and the share's audience. No
 /// entity-auto service writes them either.
 const AUDIT_ENTITY_KEYS: &[&str] = &[
@@ -120,7 +120,7 @@ const AUDIT_ENTITY_KEYS: &[&str] = &[
 /// services that run, a kind's templates and secrets say what goes into a container and which vault items it binds,
 /// and a host, an image or a database host says where a leased login goes; so these rows are not written through the
 /// generic tools, REST or request loads, where an `ADMIN` without the sealed `INSTANCE_ADMIN` could point a holder's
-/// action at a service or a server of theirs (plans/Security-Review.md SEC-TLS-02). The environments and instances are only their services' to write
+/// action at a service or a server of theirs (plans/archive/Security-Review.md SEC-TLS-02). The environments and instances are only their services' to write
 /// ([`SERVICE_WRITTEN_ENTITY_KEYS`]).
 const HOST_CONFIG_ENTITY_KEYS: &[&str] = &[
     "instancehost",
@@ -198,6 +198,11 @@ const SERVICE_WRITTEN_ENTITY_KEYS: &[&str] = &[
     "servicejob",
     "servicejobparameter",
     "servicejobuser",
+    // a cluster member's row names where every member sends cluster messages, the keys it is pinned by and the
+    // addresses let in to the cluster port and login; only the members' own heartbeat writes it (SEC-CLU-89), and a
+    // cluster message is the members' own
+    "clustermember",
+    "clustermessage",
     // a grid view or saved query may hold SQL that another user runs when they open it: store#GridView and
     // store#SavedQuery refuse a SQL source from a user who may not run SQL and write only the caller's own rows, so a
     // generic write would plant SQL in a shared or another user's row (SEC-TLS-100)
@@ -549,7 +554,10 @@ impl GenericAccess {
         let mut out = Vec::with_capacity(fields.len());
         for (name, value) in fields {
             if self.encrypted.contains(&name) {
-                out.push((format!("{name}IsSet"), Value::Bool(!moqui_lib::object::is_empty(&value))));
+                out.push((
+                    format!("{name}IsSet"),
+                    Value::Bool(!moqui_lib::object::is_empty(&value)),
+                ));
             } else if !self.hidden(&name) {
                 out.push((name, value));
             }
@@ -568,7 +576,8 @@ impl GenericAccess {
 /// [`GenericAccess`] of `entity_name`.
 #[must_use]
 pub fn generic_access(facade: &crate::entity::EntityFacade, entity_name: &str) -> GenericAccess {
-    let full_name = definition_of(facade, entity_name).map_or_else(|| entity_name.to_string(), |entity| entity.full_name);
+    let full_name =
+        definition_of(facade, entity_name).map_or_else(|| entity_name.to_string(), |entity| entity.full_name);
     let read = !is_restricted_entity_or_view(facade, entity_name);
     GenericAccess {
         read,
@@ -657,8 +666,9 @@ mod tests {
     use moqui_lib::object::Value;
 
     use super::{
-        is_audit_entity, is_generic_write_refused, is_host_config_entity, is_identity_admin_entity, is_restricted_generic_entity,
-        is_secret_config_entity, is_service_written_entity, is_user_account_entity, simple_entity_key, strip_user_account_secrets,
+        is_audit_entity, is_generic_write_refused, is_host_config_entity, is_identity_admin_entity,
+        is_restricted_generic_entity, is_secret_config_entity, is_service_written_entity, is_user_account_entity,
+        simple_entity_key, strip_user_account_secrets,
     };
 
     #[test]
@@ -759,6 +769,9 @@ mod tests {
             "moqui.monitor.IngestKey",
             "moqui.monitor.ScrapeTarget",
             "moqui.monitor.SyntheticCheck",
+            // the members' own rows and messages (SEC-CLU-89)
+            "moqui.server.ClusterMember",
+            "moqui.server.ClusterMessage",
             // SEC-TLS-100: SQL planted in a shared or another user's view or query; SEC-TLS-104: a component's directory
             "moqui.database.GridView",
             "moqui.database.SavedQuery",
@@ -767,7 +780,10 @@ mod tests {
             "moqui.server.DeployedComponentHistory",
         ] {
             assert!(!is_restricted_generic_entity(name), "{name}");
-            assert!(is_service_written_entity(name) && is_generic_write_refused(name), "{name}");
+            assert!(
+                is_service_written_entity(name) && is_generic_write_refused(name),
+                "{name}"
+            );
         }
         assert!(is_generic_write_refused("moqui.security.UserLoginKey"));
         assert!(!is_generic_write_refused("moqui.monitor.MonitorIncident"));
@@ -789,11 +805,20 @@ mod tests {
             "moqui.server.instance.InstanceHostType",
             "moqui.server.instance.InstanceKindSecret",
         ] {
-            assert!(is_host_config_entity(name) && is_restricted_generic_entity(name), "{name}");
+            assert!(
+                is_host_config_entity(name) && is_restricted_generic_entity(name),
+                "{name}"
+            );
         }
         // an instance's environment and secret bindings: read by the tools, written only by the instance services
-        for name in ["moqui.server.instance.InstanceEnvironment", "moqui.server.instance.AppInstanceSecret"] {
-            assert!(!is_restricted_generic_entity(name) && is_generic_write_refused(name), "{name}");
+        for name in [
+            "moqui.server.instance.InstanceEnvironment",
+            "moqui.server.instance.AppInstanceSecret",
+        ] {
+            assert!(
+                !is_restricted_generic_entity(name) && is_generic_write_refused(name),
+                "{name}"
+            );
         }
         assert!(is_user_account_entity("moqui.security.UserAccount"));
         assert!(is_user_account_entity("users"));

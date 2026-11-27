@@ -255,7 +255,7 @@ pub fn do_boundary_comments(state: &RenderState) -> bool {
 
 /// Whether the active screen stands at an overlay's text: its file, or a screen-extend of it, is a preview's proposed
 /// text (`screen::overlay`). Its client text, which would run in the application's origin, is then a placeholder
-/// (plans/Security-Review-Medium.md SEC-AI-82).
+/// (plans/archive/Security-Review-Medium.md SEC-AI-82).
 pub fn active_overlaid(state: &RenderState) -> bool {
     crate::screen::overlay::active()
         && active_def(state)

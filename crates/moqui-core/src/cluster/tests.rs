@@ -1729,3 +1729,17 @@ fn messages_go_only_to_a_row_of_this_members_material() {
     assert!(!super::same_material(&row("", ""), Some(&own)));
     assert!(super::same_material(&row("", ""), None), "before this member started");
 }
+
+/// SEC-CLU-89: a heartbeat is live within a window before the database's now, and not more than a window after it, so a
+/// row with a heartbeat set in the future is not a member for ever.
+#[test]
+fn a_heartbeat_in_the_future_is_not_live() {
+    let (now, window) = (1_000_000, 180_000);
+    assert!(super::is_live(Some(now), now, window));
+    assert!(super::is_live(Some(now - window), now, window));
+    assert!(!super::is_live(Some(now - window - 1), now, window));
+    assert!(super::is_live(Some(now + 1_000), now, window), "a clock a little ahead");
+    assert!(!super::is_live(Some(now + window + 1), now, window));
+    assert!(!super::is_live(Some(i64::MAX), now, window));
+    assert!(!super::is_live(None, now, window));
+}

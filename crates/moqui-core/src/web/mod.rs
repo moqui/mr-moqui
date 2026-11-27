@@ -684,7 +684,7 @@ pub(crate) fn set_request(request: std::sync::Arc<WebRequest>, body: bytes::Byte
 /// Whether another site started `request`, as a link or a redirect on another site makes a browser send a top-level GET
 /// with its `SameSite=Lax` cookie: `Sec-Fetch-Site` is not `same-origin` or `none` (typed in, a bookmark), or, from a
 /// browser that sends no `Sec-Fetch-Site`, the `Referer` names another host. A request with neither, as a client that is
-/// not a browser sends, is not (plans/Security-Review.md SEC-WEB-04). A state change on a GET is refused when this
+/// not a browser sends, is not (plans/archive/Security-Review.md SEC-WEB-04). A state change on a GET is refused when this
 /// holds.
 pub fn started_by_another_site(request: &WebRequest) -> bool {
     if let Some(site) = request.header("sec-fetch-site").map(str::trim).filter(|site| !site.is_empty()) {
@@ -704,7 +704,7 @@ pub fn started_by_another_site(request: &WebRequest) -> bool {
 /// there and is not `document`, `iframe`, `frame` or `empty` (an image, a script, a style, a font, media, a worker);
 /// from a browser that sends no `Sec-Fetch-Dest`, an `Accept` that names an image, style, media or font type and not
 /// `text/html`. An image in a stored text (a note, a message, a page) is a same-origin GET with the reader's session,
-/// which [`started_by_another_site`] does not catch (plans/Security-Review-Medium.md SEC-CLI-82). A request with
+/// which [`started_by_another_site`] does not catch (plans/archive/Security-Review-Medium.md SEC-CLI-82). A request with
 /// neither header, as a client that is not a browser sends, is not.
 pub fn loaded_as_subresource(request: &WebRequest) -> bool {
     if let Some(dest) = fetch_dest(request) {
@@ -1434,7 +1434,7 @@ fn email_view_mac(id: &str) -> Result<hmac::Hmac<sha2::Sha256>, Error> {
 }
 
 /// The view key of `EmailMessage` `id` for its tracking image, `/email/{key}.png`: `{id}.{tag}`, the tag a keyed MAC of
-/// the id, so only the mail that carries it marks the message viewed (plans/Security-Review.md SEC-RTE-01). The mail
+/// the id, so only the mail that carries it marks the message viewed (plans/archive/Security-Review.md SEC-RTE-01). The mail
 /// render puts it in the template context as `emailViewKey`.
 ///
 /// # Errors
@@ -2765,7 +2765,7 @@ pub fn finish_response(
 
 /// `webapp@csp-append`'s directives added to the response's `Content-Security-Policy` (each policy, with a semicolon),
 /// or set as its policy where it has none: the Desktop app's sidecar adds `upgrade-insecure-requests`, so a page's
-/// `http://` loads of other hosts go over https as they do in the app's own windows (plans/Security-Review.md
+/// `http://` loads of other hosts go over https as they do in the app's own windows (plans/archive/Security-Review.md
 /// SEC-CLI-105). Nothing for an empty `append`.
 pub(crate) fn append_csp(headers: &mut Vec<(String, String)>, append: &str) {
     let append = append.trim().trim_matches(';').trim();

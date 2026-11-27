@@ -202,7 +202,7 @@ along with this software (see the LICENSE.md file). If not, see
                 ? t('Sign out of this account on this computer? Its device key is revoked, and what was kept for it here is deleted.')
                 : t('Sign out of this account on this computer? Its device key is revoked.')}}</q-card-section>
             <!-- a personal account keeps its mail, chat and drafts here to sign in to again, unless the user asks
-                (plans/Security-Review.md SEC-CLI-08) -->
+                (plans/archive/Security-Review.md SEC-CLI-08) -->
             <q-card-section v-if="!signOutBox.shared" class="q-pt-none m-shell-sign-out-forget">
                 <q-checkbox v-model="signOutBox.forget" dense :label="t('Also delete the mail, chat and drafts kept for it on this computer')"></q-checkbox>
             </q-card-section>

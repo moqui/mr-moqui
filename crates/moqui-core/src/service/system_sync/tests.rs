@@ -127,7 +127,7 @@ fn errors(context: &ExecutionContext) -> String {
 }
 
 /// A sync partner is not an admin: `get#EntitySyncData` gives no restricted entity and no password field, and
-/// `put#EntitySyncData` takes no `UserAccount` password (plans/Security-Review-Low.md SEC-DAT-08).
+/// `put#EntitySyncData` takes no `UserAccount` password (plans/archive/Security-Review-Low.md SEC-DAT-08).
 #[test]
 fn entity_sync_data_keeps_login_keys_and_password_hashes_from_a_partner() {
     let setup = setup("entity-sync");

@@ -157,7 +157,7 @@ fn print_document(
 /// Whether `print#ResourceDocument` reads `location`: a stored document, in the database (`dbresource://`) or the content
 /// store (`content://`), with no `..` segment. Never a file, the runtime directory (its conf and keys), a component's
 /// file or a URL: the bytes go to the printer's server, which the caller may have named
-/// (plans/Security-Review-Medium.md SEC-RTE-83).
+/// (plans/archive/Security-Review-Medium.md SEC-RTE-83).
 fn printable_location(location: &str) -> bool {
     let lower = location.trim().to_ascii_lowercase();
     (lower.starts_with("dbresource://") || lower.starts_with("content://"))
@@ -197,7 +197,7 @@ fn print_resource_document(
 
 /// `print#ScreenDocument`: render the screen as `html-print` (the `xsl-fo` mode), turn it into PDF, and pass the bytes
 /// to `print#Document`, which stores the `PrintJob` and sends it. The screen parameters are `screenParameters` plus the
-/// JSON object `screenParametersStr` holds (read as JSON, never run as script: plans/Security-Review-Medium.md
+/// JSON object `screenParametersStr` holds (read as JSON, never run as script: plans/archive/Security-Review-Medium.md
 /// SEC-SCR-02); the job name defaults to the screen name and those parameter values.
 fn print_screen_document(
     parameters: &BTreeMap<String, Value>,
@@ -533,7 +533,7 @@ fn job_id_of(job: &moqui_lib::object::ValueMap) -> Option<i32> {
 /// that server's records. The server is asked as a printer of it would be (`moqui_core::outbound::deny_private_network`
 /// of an empty `allowPrivateNetwork`: no internal address on a production instance), and each printer made is as
 /// `store#Connection` makes one: disabled until a test print in Admin's Connections passes, and on production
-/// `allowPrivateNetwork` N (plans/Security-Review-Medium.md SEC-RTE-83).
+/// `allowPrivateNetwork` N (plans/archive/Security-Review-Medium.md SEC-RTE-83).
 fn get_server_printers(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,

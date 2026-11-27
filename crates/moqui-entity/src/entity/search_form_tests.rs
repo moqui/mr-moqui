@@ -288,7 +288,7 @@ fn defaults_apply_only_without_input_and_order_and_paging_are_read() {
 }
 
 /// A request's input takes no condition or order on a password field: the row count of `currentPassword_op=begins`
-/// read the stored hash a prefix at a time (plans/Security-Review-Medium.md SEC-DAT-01). An encrypted field takes no
+/// read the stored hash a prefix at a time (plans/archive/Security-Review-Medium.md SEC-DAT-01). An encrypted field takes no
 /// order, no pattern, and on a generic find (its entity named by the request) no condition at all, where an `equals`
 /// confirmed a guessed secret; a screen's own find keeps its `equals`. A skip-fields field takes no order either
 /// (SEC-AI-08). The caller's defaults still may name any field.

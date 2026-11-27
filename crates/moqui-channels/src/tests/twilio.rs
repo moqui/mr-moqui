@@ -501,8 +501,9 @@ fn files(host: &str, auth: Option<String>, redirects: Vec<(&'static str, String)
     Files { base, seen }
 }
 
-/// An MMS's files are fetched with the API's Basic auth (Twilio's media URLs need it); a redirect to the same host
-/// keeps it, and one to another host (a file store) never gets it.
+/// An MMS's files are fetched with the API's Basic auth (Twilio's media URLs need it) when they are at the API's or
+/// the media service's origin; a redirect to the same host keeps it, and one to another host (a file store) never gets
+/// it, nor a signed webhook's `MediaUrl` at another origin (SEC-COM-96).
 #[test]
 fn twilio_files_are_fetched_with_basic_auth_never_sent_to_another_host() {
     let bed = twilio_bed();
@@ -515,6 +516,23 @@ fn twilio_files_are_fetched_with_basic_auth_never_sent_to_another_host() {
         Some(auth.clone()),
         vec![("away", other), ("here", "/pic.jpg".to_string())],
     );
+    // the files server is the bridge's media service
+    let media_config = |config: &mut Json| config["mediaContentBaseUrl"] = Json::String(api.base.clone());
+    {
+        let _authz = bed.ctx.disable_authz();
+        let mut row = bed
+            .facade
+            .find("moqui.chat.ChatBridge")
+            .unwrap()
+            .eq("chatBridgeId", text(BRIDGE))
+            .one()
+            .unwrap()
+            .unwrap();
+        let mut config: Json = serde_json::from_str(&row.get("configJson").map(to_plain_string).unwrap()).unwrap();
+        media_config(&mut config);
+        row.set("configJson", text(&config.to_string()));
+        row.update(&bed.facade).unwrap();
+    }
     let (answer, _) = bed.twilio_in(
         THEIRS,
         "",
@@ -547,13 +565,36 @@ fn twilio_files_are_fetched_with_basic_auth_never_sent_to_another_host() {
     );
 
     // a redirect on the same host keeps it
-    let bridge = bridge_info(&bed);
+    let mut bridge = bridge_info(&bed);
+    media_config(&mut bridge.config);
     let fetched = adapter()
         .fetch_media(&bridge, &format!("{}/here", api.base), u64::MAX)
         .unwrap();
     assert_eq!(fetched.bytes, vec![1, 2, 3]);
     let last = api.seen.lock().unwrap().last().cloned().unwrap();
     assert_eq!(last, ("/pic.jpg".to_string(), Some(auth)));
+    // a file named at another origin is fetched without the credentials
+    adapter()
+        .fetch_media(&bridge, &format!("{}/named.jpg", store.base), u64::MAX)
+        .unwrap();
+    let last = store.seen.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(
+        last,
+        ("/named.jpg".to_string(), None),
+        "no Authorization to another origin"
+    );
+    assert!(crate::sms::same_origin(
+        "https://conversations.twilio.com/v1/x",
+        "https://conversations.twilio.com"
+    ));
+    assert!(!crate::sms::same_origin(
+        "https://conversations.twilio.com.example.org/v1/x",
+        "https://conversations.twilio.com"
+    ));
+    assert!(!crate::sms::same_origin(
+        "https://conversations.twilio.com@evil.example/v1",
+        "https://conversations.twilio.com"
+    ));
 }
 
 // ---- the signature ----

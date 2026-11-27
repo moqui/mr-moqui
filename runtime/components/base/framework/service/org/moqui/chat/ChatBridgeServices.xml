@@ -686,7 +686,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal: the delivery state of messages of a room (eventSeqList): deliveryMap eventSeq to {state (failed,
             uncertain, pending or accepted: the worst of its destinations), retryable, destinations [{chatBridgeDeliveryId,
             chatBridgeId, bridgeName, networkName, state, reasonCode, error, attemptCount, retryable, receipt, recipients,
-            path (an RCS bridge's: rcs, sms or mms, note#DeliveryPath)}]}. retryable: failed or
+            path (an RCS bridge's: rcs, sms or mms, note#DeliveryPath)}]}; error, the provider's text, only for a user with
+            ChatBridgeAdmin (it names the provider's API address and account, SEC-COM-98). retryable: failed or
             uncertain (retry#Delivery decides who may). Messages that went nowhere are left out. The caller has checked access.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
@@ -714,13 +715,16 @@ along with this software (see the LICENSE.md file). If not, see
                 if (!row.recipientReceipts) return null
                 try { return JSON.parse(String(row.recipientReceipts)) } catch (err) { return null }
             }
+            // the error's text names the provider's API address and the account in it: a bridge administrator's to read,
+            // the room's readers get the reason code (SEC-COM-98)
+            const admin = ec.user.hasPermission('ChatBridgeAdmin')
             for (const row of rows) {
                 const state = STATE[row.statusEnumId] || 'pending'
                 const bridge = bridges[row.chatBridgeId] || {}
                 const entry = deliveryMap[Number(row.eventSeq)] = deliveryMap[Number(row.eventSeq)] || {state: 'accepted', retryable: false, destinations: []}
                 entry.destinations.push({chatBridgeDeliveryId: row.chatBridgeDeliveryId, chatBridgeId: row.chatBridgeId, bridgeName: bridge.name ?? null,
                     networkName: types[bridge.typeEnumId]?.description || null, state: state, reasonCode: row.reasonCode ?? null,
-                    error: row.lastErrorText ?? null, attemptCount: Number(row.attemptCount || 0), retryable: state === 'failed' || state === 'uncertain',
+                    error: admin ? (row.lastErrorText ?? null) : null, attemptCount: Number(row.attemptCount || 0), retryable: state === 'failed' || state === 'uncertain',
                     receipt: row.receiptStatus ?? null, recipients: recipientsOf(row), path: row.deliveryPath ?? null,
                     adapterName: bridge.adapterName ?? null, note: row.deliveryNote ?? null, noteText: row.deliveryNoteText ?? null})
                 if (RANK[state] > RANK[entry.state]) entry.state = state

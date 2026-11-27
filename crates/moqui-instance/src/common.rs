@@ -47,7 +47,7 @@ pub(crate) const KIND_SECRET: &str = "moqui.server.instance.InstanceKindSecret";
 pub(crate) const KIND_DEPENDENCY: &str = "moqui.server.instance.InstanceKindDependency";
 pub(crate) const DATABASE_HOST: &str = "moqui.server.instance.DatabaseHost";
 
-/// The permission every instance service asks, whatever calls it (plans/Security-Review.md SEC-TLS-02).
+/// The permission every instance service asks, whatever calls it (plans/archive/Security-Review.md SEC-TLS-02).
 pub(crate) const INSTANCE_ADMIN: &str = "INSTANCE_ADMIN";
 /// The package a host type's services must be of: a row names the service, so it cannot name any other.
 pub(crate) const SERVICE_PACKAGE: &str = "org.moqui.dev.InstanceServices.";

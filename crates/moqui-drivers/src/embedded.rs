@@ -195,7 +195,7 @@ mod cluster {
         }
 
         /// [`Self::save_database`] sealed to `recipient` as `pg_dump` writes it, into `dump` made owner-only first:
-        /// only the sealed bytes reach the disk (plans/Security-Review.md SEC-CLI-114).
+        /// only the sealed bytes reach the disk (plans/archive/Security-Review.md SEC-CLI-114).
         ///
         /// # Errors
         ///

@@ -127,7 +127,7 @@
     }
     // A new subscription, the browser's old one ended first, so the push service gives a new endpoint: the server keeps a
     // subscription it disabled for failing disabled when the same endpoint is stored again (service/web_push.rs
-    // keep_failures, plans/Security-Review-Medium.md SEC-COM-81), and only a new one is active.
+    // keep_failures, plans/archive/Security-Review-Medium.md SEC-COM-81), and only a new one is active.
     function subscribeAgain(publicKey) {
         return current()
             .then(subscription => subscription && subscription.unsubscribe().catch(() => null))

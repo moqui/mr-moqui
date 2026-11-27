@@ -15,7 +15,7 @@
 //! The repository's crate patches reach the apps that build the framework in a workspace of their own. Cargo takes
 //! `[patch.crates-io]` only from the root manifest of the workspace it builds, so the desktop app (a workspace of its
 //! own, whose node in the app links the framework) names the root's patches again; without them it built the crates.io
-//! releases they replace, yrs without SEC-TLS-95's depth limit among them (plans/Security-Review.md SEC-CLI-126). The
+//! releases they replace, yrs without SEC-TLS-95's depth limit among them (plans/archive/Security-Review.md SEC-CLI-126). The
 //! generated crate of `./moq build` copies the root's table as it writes itself (`root_patch_table`,
 //! scripts/moq/build.sh; checked in scripts/moq-test.sh). The apps are outside the workspace, so their manifests are
 //! read here by path, and `./moq test-framework` checks them on every push. The mobile app's and the Tauri glue's

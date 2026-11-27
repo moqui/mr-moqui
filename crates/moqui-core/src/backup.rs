@@ -55,7 +55,7 @@ pub struct BackupRequest {
     pub fast_checkpoint: bool,
     pub timeout: Duration,
     /// The age recipient (`age1...`) each dump is sealed to as it is written, its name ending `.dump.age`
-    /// (`database-backup@recipient`, plans/Security-Review.md SEC-CLI-114); none writes dumps as they are. A physical
+    /// (`database-backup@recipient`, plans/archive/Security-Review.md SEC-CLI-114); none writes dumps as they are. A physical
     /// backup is not sealed.
     pub recipient: Option<String>,
 }
@@ -251,7 +251,7 @@ pub fn is_archive_name(name: &str) -> bool {
 /// Whether `name` on a mirror is one of its archives, when the archives it mirrors are `sealed` ([`sealed_locally`]):
 /// a sealed dump's name (`.dump.age`) is one only then. An encrypted mirror names what it sealed `<name>.age` too, so
 /// a mirror whose own encryption is turned off leaves those objects alone, as it always has, unless the dumps here are
-/// sealed themselves (plans/Security-Review.md SEC-CLI-114).
+/// sealed themselves (plans/archive/Security-Review.md SEC-CLI-114).
 #[must_use]
 pub fn is_mirror_archive(name: &str, sealed: bool) -> bool {
     parse_archive_name(name).is_some_and(|parsed| sealed || !parsed.sealed)

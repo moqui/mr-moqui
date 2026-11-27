@@ -1458,6 +1458,10 @@ interface MoquiServerEc {
         readonly ssoAvailable: boolean;
         /** Expanded declarations, including auto-parameters; does not execute the service. */
         getServiceDefinition(name: string): (MoquiMap & {
+            /** The full name, `verb#noun` with its package path. */
+            serviceName: string;
+            verb: string;
+            noun: string;
             inParameterNames: string[];
             inParameterInfoMap: Record<string, MoquiParameterInfo>;
             outParameterInfoMap: Record<string, MoquiParameterInfo>;

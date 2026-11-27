@@ -426,6 +426,19 @@ fn mirrored_refs(store: &FsStore) -> Result<Vec<(String, ObjectId)>, Error> {
     Ok(refs)
 }
 
+/// Whether a stored access token may be offered to `url`: an `https://` or `ssh://` address, or an scp-like ssh one
+/// (`git@host:path`); never a plain `http://` or `git://` one, nor a local path.
+pub(crate) fn token_offered_to(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    if let Some((scheme, _)) = lower.split_once("://") {
+        return scheme == "https" || scheme == "ssh";
+    }
+    // scp-like: user@host:path, with no slash before the colon
+    lower
+        .split_once(':')
+        .is_some_and(|(host, _)| !host.is_empty() && !host.contains('/'))
+}
+
 /// Fetch `url` into the bare repository at `path` (created when it is not there), replacing local refs with the
 /// remote's: a remote repository is a mirror. With `mirror` every branch and tag is fetched and a local one the remote
 /// no longer has is deleted (gix does not prune); without it only `branch`, for an import. A mirror's refs are fetched
@@ -485,7 +498,22 @@ pub(crate) fn fetch(
         None => connection,
     };
     let username = credentials.username.clone().unwrap_or_default();
-    let token = credentials.token.clone();
+    // a mirror's token answers the remote's credential request only over https or ssh, a mirror stored before that
+    // rule included (SEC-FIL-101)
+    let token = match credentials.token.clone() {
+        Some(_) if !token_offered_to(url) => {
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            tracing::warn!(
+                "Mirror {name}: its access token is not offered to {}, which is not https or ssh",
+                moqui_core::outbound::redacted(url)
+            );
+            None
+        }
+        token => token,
+    };
     let connection = connection.with_credentials(move |action| match action {
         gix::credentials::helper::Action::Get(context) => {
             Ok(token.clone().map(|password| gix::credentials::protocol::Outcome {

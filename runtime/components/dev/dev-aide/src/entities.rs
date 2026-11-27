@@ -59,7 +59,7 @@ const MAX_EXPORT: i64 = 1000;
 /// (`restrictSensitiveEntities`): an entity no generic read takes is refused, and a password or encrypted field is not
 /// compared. An element with a record of an entity whose records export#Records refuses the caller is not checked at
 /// all, so nothing of the answer (a message, a row, the count of fields compared) depends on that entity's rows: one
-/// line names it (plans/Security-Review.md SEC-DEV-01).
+/// line names it (plans/archive/Security-Review.md SEC-DEV-01).
 fn check_data_file(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -167,7 +167,7 @@ const CREDENTIAL_ENTITIES: &[&str] = &[
 /// Why `export#Records` does not export `name` for this caller, or None: below the full tier with `ADMIN`, never a
 /// restricted entity (login keys, sign-in factors, secret configuration, the audit entities, a view over one), a
 /// `moqui.security` entity, Dev AIDE's credential entities, or an entity with an encrypted field
-/// (plans/Security-Review-Medium.md SEC-DEV-01). The text never holds a password or encrypted field for anyone: the
+/// (plans/archive/Security-Review-Medium.md SEC-DEV-01). The text never holds a password or encrypted field for anyone: the
 /// data writer leaves them out without a full backup.
 pub(crate) fn export_refused(context: &Context, name: &str) -> Option<String> {
     let full_name = info::definition_info(&context.facade, name)

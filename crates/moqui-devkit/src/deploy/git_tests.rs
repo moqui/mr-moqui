@@ -879,3 +879,13 @@ fn the_sets_components_xml_lists_are_component_directories_too() {
         ]
     );
 }
+
+/// SEC-CLU-07: a member applies another member's deploy only at the commit the shared row names, not one a message
+/// names.
+#[test]
+fn a_cluster_message_loads_only_the_commit_the_shared_row_names() {
+    use super::remote_commit_refusal;
+    assert_eq!(remote_commit_refusal(COMMIT, COMMIT), None);
+    assert!(remote_commit_refusal(COMMIT, "89abcdef0123456789abcdef0123456789abcdef").is_some());
+    assert!(remote_commit_refusal("", "").is_some(), "no commit named");
+}

@@ -4,7 +4,7 @@ This is a map of the HTTP routes, screens, REST, WebSockets, and the other liste
 
 The map is in several files, one for each area: the [table below](#the-files). The framework's files come first. Application components (mr-boss, mr-pass, and the Mantle services they reach) have their own two files; an application's surface is recorded there, never in a framework file.
 
-To report an issue that should stay private until it is fixed, write to [moqui-board@googlegroups.com](mailto:moqui-board@googlegroups.com). The policy is in [SECURITY.md](../../SECURITY.md). Before 0.1.0 findings are recorded openly, in [Security-Review](../../plans/Security-Review.md).
+To report an issue that should stay private until it is fixed, write to [moqui-board@googlegroups.com](mailto:moqui-board@googlegroups.com). The policy is in [SECURITY.md](../../SECURITY.md). Before 0.1.0 findings are recorded openly, in [Security-Review](../../plans/archive/Security-Review.md).
 
 ## The files
 

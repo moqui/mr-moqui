@@ -19,7 +19,7 @@
 //!
 //! With `database-backup@recipient` set, each dump is sealed to that age recipient as `pg_dump` writes it: its
 //! archive goes to a pipe, not a file, and only the sealed bytes reach the disk, as `<name>.dump.age`
-//! ([`run_bounded_to`]; plans/Security-Review.md SEC-CLI-114). A physical backup is not sealed.
+//! ([`run_bounded_to`]; plans/archive/Security-Review.md SEC-CLI-114). A physical backup is not sealed.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

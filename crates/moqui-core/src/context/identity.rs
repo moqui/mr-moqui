@@ -1,6 +1,8 @@
 //! Shared host identity and credential-name classification.
 use std::sync::OnceLock;
-/// Whole names of secrets: `returnkey` reads a PASS payment attempt's outcome (`getPaymentResult`, SEC-PSA-09).
+/// Whole names of secrets: `returnkey` reads a PASS payment attempt's outcome (`getPaymentResult`, SEC-PSA-09); `pin`
+/// is a voicemail box's (`setPin`, SEC-COM-95), `ha1` a SIP digest's verifier; `ticket` a terminal's recent sign-in in
+/// the `/termws` query (SEC-FIL-64).
 const SECRET_PARAMETER_NAMES: &[&str] = &[
     "code",
     "moquisessiontoken",
@@ -8,6 +10,9 @@ const SECRET_PARAMETER_NAMES: &[&str] = &[
     "sql",
     "sharedsecret",
     "returnkey",
+    "pin",
+    "ha1",
+    "ticket",
 ];
 
 /// Parts that make any name a secret's, wherever they are in it.
@@ -48,7 +53,7 @@ pub fn secret_parameter(key: &str) -> bool {
             .any(|end| lower.ends_with(end))
 }
 
-/// Whether `System.getProperty` refuses the property `name` to a script (plans/Security-Review-Medium.md SEC-SCR-03): a
+/// Whether `System.getProperty` refuses the property `name` to a script (plans/archive/Security-Review-Medium.md SEC-SCR-03): a
 /// conf attribute's environment name (`moqui_conf__...`, in any case), a name [`secret_parameter`] calls a secret's
 /// (password, secret, token, credential, a `_key` ending), and a name that ends in `_pass` or `_pw` or holds `crypt`;
 /// each in lower case with `.` read as `_`, as the lookup reads a name both ways. A script reads the conf by selector

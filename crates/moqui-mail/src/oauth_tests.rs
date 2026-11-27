@@ -697,7 +697,7 @@ fn a_new_account_from_a_sign_in_starts_paused_with_a_sync_window() {
     assert!(errors().contains("Active or Paused"));
 }
 
-/// A provider row's endpoints are used only over https (plans/Security-Review-Medium.md SEC-OUT-82): a token endpoint in
+/// A provider row's endpoints are used only over https (plans/archive/Security-Review-Medium.md SEC-OUT-82): a token endpoint in
 /// plain text on another host is left out, so the provider is not offered and nothing (the client secret, a refresh
 /// token) is posted to it; on an instance that is not production a stand-in on this machine may be http.
 #[test]
@@ -743,7 +743,7 @@ fn a_provider_endpoint_that_is_not_https_is_not_used() {
     assert!(!local_on_production);
 }
 
-/// A token goes only to the provider's own mail servers (plans/Security-Review-Medium.md SEC-MAIL-84): a server row pointed
+/// A token goes only to the provider's own mail servers (plans/archive/Security-Review-Medium.md SEC-MAIL-84): a server row pointed
 /// at another host, as a generic write could leave it, gets no token, kept or refreshed, and the provider is not asked.
 #[test]
 fn no_token_is_made_for_a_server_on_another_host() {
@@ -1669,4 +1669,50 @@ fn a_mail_id_token_for_another_client_is_refused() {
     );
     let taken = exchange(json!(["another-client", CLIENT]));
     assert_eq!(out_text(&taken, "status"), "success", "{taken:?}");
+}
+
+/// SEC-MAIL-97: the callback makes a new account with authorization disabled, so a provider with no incoming server for
+/// the protocol asked makes none (it would be delivered here, a mail administrator's to set up): refused at the start,
+/// and at the callback when the row lost its host meanwhile.
+#[test]
+fn a_provider_with_no_imap_server_makes_no_new_account() {
+    let _serial = serial();
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let _properties = Properties::set();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    user(&facade, "alice");
+    login("alice");
+    let fake = FakeProvider::start(CLIENT, SECRET, REDIRECT);
+    provider_row(&facade, "EopTest", &fake, (1, 2), false);
+    let start = vec![
+        ("oauthProviderEnumId", text("EopTest")),
+        ("emailAddress", text("alice@gmail.test")),
+        ("accountKindEnumId", text("EakShared")),
+    ];
+    let (started, _) = begin(&start);
+    update(
+        &facade,
+        PROVIDER,
+        ("oauthProviderEnumId", "EopTest"),
+        &[("storeHost", Value::Null)],
+    );
+    let code = code_for(&fake, &started, claims(&started, "alice@gmail.test"), MAIL_SCOPE);
+    let parameters: Vec<(&str, Value)> = vec![("state", text(&started["state"])), ("code", text(&code))];
+    let done = call("complete#OAuthSignIn", &parameters);
+    let _ = errors();
+    assert_ne!(out_text(&done, "status"), "success", "{done:?}");
+    let authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let made = facade
+        .find(ACCOUNT)
+        .unwrap()
+        .eq("emailAddress", text("alice@gmail.test"))
+        .use_cache(false)
+        .list()
+        .unwrap();
+    assert!(made.is_empty(), "no account made");
+    drop(authz);
+    call("start#OAuthSignIn", &start);
+    assert!(errors().contains("no IMAP server"), "refused at the start");
 }

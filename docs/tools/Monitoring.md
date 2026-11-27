@@ -357,7 +357,7 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   authorized frame. So its `keyField` is the entity's single primary-key field and its `conditions` are plain
   equalities, it never reads a restricted entity or a view over one, and it never keys, shows or conditions on a
   password or encrypted field, nor on an account's identity field (`username`, `emailAddress` and the rest): `save#Definition` refuses another lookup, and a query leaves the field's values
-  unlabelled, with one warning per dataset field (plans/Security-Review.md SEC-TLS-82). `unitField` names the column an amount's unit comes from (mr-mantle's amounts use
+  unlabelled, with one warning per dataset field (plans/archive/Security-Review.md SEC-TLS-82). `unitField` names the column an amount's unit comes from (mr-mantle's amounts use
   `currencyUomId`, with `USD` as the fallback `unit`): one currency in the frame is the field's unit, several give each
   row its own, and an aggregation without the column asks the same documents for their currencies, so a sum in one
   currency shows it and a sum across currencies shows a plain number.

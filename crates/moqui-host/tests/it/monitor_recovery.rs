@@ -268,7 +268,7 @@ fn recovery_decides_waits_for_approval_acts_through_its_adapters_and_verifies() 
     call("org.moqui.monitor.MonitorServices.run#Recovery", json!({}));
     assert_eq!(decisions(&shop)[0]["decisionId"], proposed["decisionId"]);
     // An action row written around the services, naming the decision that waits for approval, does not run: the pass
-    // re-checks the decision before a first attempt (plans/Security-Review-Medium.md SEC-TLS-11).
+    // re-checks the decision before a first attempt (plans/archive/Security-Review-Medium.md SEC-TLS-11).
     {
         let _authz = context.disable_authz();
         let entity = factory.entity().unwrap();

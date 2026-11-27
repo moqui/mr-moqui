@@ -293,7 +293,7 @@ off by default. Their rules are in [Attack-Surface-Routes](../Attack-Surface-Rou
 ## OWASP Top 10 for LLM Applications (2025)
 
 Read for the agents, Assist, A2A, MCP and the gateway: [Attack-Surface-AI](../Attack-Surface-AI.md) and the AI
-entries of the [register](../../../plans/Security-Review.md) (`SEC-AI-*`). ASVS 5.0.0 has no chapter for model
+entries of the [register](../../../plans/archive/Security-Review.md) (`SEC-AI-*`). ASVS 5.0.0 has no chapter for model
 applications, so half of these items have no counterpart; for those the row says so. The last column names the
 controls and the register entries that bear on the item. **None of it is a proof**: the controls are read from the
 map, and the tests named there are regression tests of the control, not filed under a requirement.

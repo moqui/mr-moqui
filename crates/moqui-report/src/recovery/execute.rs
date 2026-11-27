@@ -745,7 +745,7 @@ pub(crate) fn advance(
     match status.as_str() {
         "Persisted" if attempts < MAX_ATTEMPTS => {
             // a row written around the services (a generic write, a load) has no decision that allows it, and an
-            // allowed one does not run while the emergency stop is on (plans/Security-Review-Medium.md SEC-TLS-11)
+            // allowed one does not run while the emergency stop is on (plans/archive/Security-Review-Medium.md SEC-TLS-11)
             let action = Action::parse(&field(row, "action"));
             if let Some(refused) = refused_by_decision(entity, row, action)? {
                 return apply(ec, entity, row, Ran::Failed(refused), now, attempts);

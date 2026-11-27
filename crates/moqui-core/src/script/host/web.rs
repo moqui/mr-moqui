@@ -474,7 +474,7 @@ pub(super) const MAX_READ_BODY: u64 = 32 * 1024 * 1024;
 /// The headers `RestClient.addPropertyHeader(headerName, propertyName, baseUrlPropertyName)` named for a request to
 /// `url` (`propertyHeaders`: `[[headerName, propertyName, baseUrlPropertyName]]`), each with the setting's value read
 /// here, so the script never sees it (a credential at another server, such as mr-pass's `pass@client-secret`;
-/// plans/Security-Review-Medium.md SEC-SCR-03). Each name is a conf selector (it has an `@`) or a property. A header
+/// plans/archive/Security-Review-Medium.md SEC-SCR-03). Each name is a conf selector (it has an `@`) or a property. A header
 /// goes only to a URL under the base URL the other setting holds (`moqui_lib::http::url_under_base`: the same scheme,
 /// host and port, a path at or below the base's). Refused, with nothing sent: a setting that is not set, a base that is
 /// not set or is itself a secret, a URL outside the base, a conf attribute's environment name, and a secret of this
@@ -603,7 +603,7 @@ fn multipart_body(parts: &moqui_lib::object::ValueMap) -> Result<(String, bytes:
 /// `RestClient.send()`: the request sent, the status and headers back, the body kept on the server by its number.
 /// Whether a request of `ec.service.rest()` (`call()` or `send()`) refuses internal addresses (loopback, private,
 /// link-local), redirects included: when the script said `denyInternal()`, which wins, or on a production instance unless
-/// it said `allowInternal()` (plans/Security-Review-Low.md SEC-SCR-07). A link-local or metadata address is refused
+/// it said `allowInternal()` (plans/archive/Security-Review-Low.md SEC-SCR-07). A link-local or metadata address is refused
 /// either way (`outbound`).
 pub(super) fn rest_denies_internal(request: &moqui_lib::object::ValueMap) -> bool {
     let flag = |name: &str| matches!(request.get(name), Some(Value::Bool(true)));

@@ -259,7 +259,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (ownerUserId && ownerUserId !== ec.user.userId && !authzOff) { ec.message.addError(ec.l10n.localize('An email account is made for yourself')); return }
             if (emailServerId && !authzOff) { ec.message.addError(ec.l10n.localize('An existing email server is chosen only by internal setup')); return }
             // a hosted or shared account with no store server is delivered here: the listener's mail to its address goes to
-            // it, so only a mail administrator gives one an address (plans/Security-Review.md SEC-MAIL-01)
+            // it, so only a mail administrator gives one an address (plans/archive/Security-Review.md SEC-MAIL-01)
             if (['EakHosted', 'EakShared'].includes(accountKindEnumId) && !storeHost && !authzOff
                     && !ec.user.hasPermission('EMAIL_ACCOUNT_HOSTED')) {
                 ec.message.addError(ec.l10n.localize('Only a mail administrator makes an account hosted here; ask one, or add an account of another server'))
@@ -326,7 +326,7 @@ along with this software (see the LICENSE.md file). If not, see
             password of a side that moved and is not given again in the same change, and revokes and
             clears the OAuth refresh token, so a manager who is not the mailbox's owner cannot point its server at a host of
             theirs and receive the mailbox's password or a token for it; the account is then marked EasAuthFailed until its
-            sign-in is entered again (plans/Security-Review-Medium.md SEC-MAIL-84). A server that signs in with OAuth takes
+            sign-in is entered again (plans/archive/Security-Review-Medium.md SEC-MAIL-84). A server that signs in with OAuth takes
             only the provider's own hosts (its storeHost, popHost and smtpHost) or a host under its hostSuffixes.
 
             accountKindEnumId changes the kind among hosted, external (personal) and shared: to shared at any time (the
@@ -1847,7 +1847,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="get" noun="Thread">
         <description>The messages of a thread the current user may read, oldest first, by any message of it (emailMessageId)
             or its root (rootEmailMessageId); a message the user may not read is "not found". Each message has its fields
-            (dates in epoch millis; headersString only with includeHeaders), folderKindEnumId, attachmentList, labelList,
+            (dates in epoch millis; headersString only with includeHeaders), fromVerdict (own, pass, fail or null: the
+            server's verdict on the From), folderKindEnumId, attachmentList, labelList,
             canSend (the user may send from its account) and unsubscribeMethod (how its List-Unsubscribe header says to
             unsubscribe: oneClick, mailto or url, null without one; unsubscribe#Message does it). It marks nothing read;
             set#MessageFlags does.</description>
@@ -1918,6 +1919,49 @@ along with this software (see the LICENSE.md file). If not, see
                 if (mailto) return 'mailto'
                 return web ? 'url' : null
             }
+            // what the server's own verdict says of a received message's From (SEC-MAIL-10), so the reader loads remote
+            // images for a forged own address or trusted sender no more than for a stranger: 'own' for a message of
+            // the account (a draft, one sent), 'pass' for DMARC passing for the From domain in an Authentication-Results
+            // of this server's authserv-id (smtp-server@authserv-id; none trusted when it is empty) on mail its listener
+            // delivered, 'fail' for any dmarc=fail, else null
+            const OWN_STATUSES = ['ES_DRAFT', 'ES_READY', 'ES_SCHEDULED', 'ES_SENT', 'ES_BOUNCED', 'ES_CANCELLED']
+            const authservId = String(ec.factory.getConfValue('smtp-server@authserv-id') || '').trim().toLowerCase()
+            // a pass is believed only for mail this server's listener delivered (an account with no incoming server):
+            // a sync keeps the provider's header as it came, a field naming this server's authserv-id included
+            const listenerAccounts = new Set()
+            const deliveredHere = (accountId) => {
+                if (!listenerAccounts.has('read:' + accountId)) {
+                    listenerAccounts.add('read:' + accountId)
+                    const wasDisabled = ec.artifactExecution.disableAuthz()
+                    try {
+                        const account = ec.entity.find('moqui.basic.email.EmailAccount').condition('emailAccountId', accountId).one()
+                        const server = account && account.emailServerId ? ec.entity.find('moqui.basic.email.EmailServer')
+                                .condition('emailServerId', account.emailServerId).one() : null
+                        if (account && ['EakHosted', 'EakShared'].includes(account.accountKindEnumId) && !(server && server.storeHost))
+                            listenerAccounts.add(accountId)
+                    } finally {
+                        if (!wasDisabled) ec.artifactExecution.enableAuthz()
+                    }
+                }
+                return listenerAccounts.has(accountId)
+            }
+            const fromVerdictOf = (row) => {
+                if (OWN_STATUSES.includes(row.statusId)) return 'own'
+                const fields = String(row.headersString || '').match(/^authentication-results:[^\n]*(?:\r?\n[ \t][^\n]*)*/gim) || []
+                const values = fields.map((field) => field.substring(field.indexOf(':') + 1).replace(/\s+/g, ' ').trim())
+                if (values.some((value) => /\bdmarc\s*=\s*fail\b/i.test(value))) return 'fail'
+                const fromDomain = String(row.fromAddress || '').toLowerCase().split('@').pop().trim()
+                if (!authservId || !fromDomain || !deliveredHere(row.emailAccountId)) return null
+                for (const value of values) {
+                    if (value.split(';')[0].trim().toLowerCase() !== authservId) continue
+                    for (const result of value.split(';').slice(1)) {
+                        const plain = result.replace(/\([^)]*\)/g, ' ')
+                        const domain = (plain.match(/\bheader\.from\s*=\s*"?([^\s";]+)/i) || [])[1]
+                        if (/^\s*dmarc\s*=\s*pass\b/i.test(plain) && domain && domain.toLowerCase() === fromDomain) return 'pass'
+                    }
+                }
+                return null
+            }
             const rows = Array.from(find.orderBy('messageDate').orderBy('emailMessageId').list())
             if (rows.length === 0) { ec.message.addError(`Email message ${wanted} not found`); return }
             const ids = rows.map((row) => row.emailMessageId)
@@ -1944,6 +1988,7 @@ along with this software (see the LICENSE.md file). If not, see
                 for (const field of FIELDS.concat(includeHeaders ? ['headersString'] : [])) message[field] = row[field] ?? null
                 for (const field of DATE_FIELDS) message[field] = toMillis(row[field])
                 message.unsubscribeMethod = unsubscribeOf(row.headersString)
+                message.fromVerdict = fromVerdictOf(row)
                 message.folderKindEnumId = row.emailFolderId ? (folderKind[row.emailFolderId] || null) : null
                 message.attachmentList = attachments[row.emailMessageId] || []
                 message.labelList = labelsOf[row.emailMessageId] || []
@@ -2117,7 +2162,10 @@ along with this software (see the LICENSE.md file). If not, see
             is older than its interval (syncIntervalMinutes, else email-client sync-interval in the conf, 5 minutes; three times
             as long after an error), or whose last sync stopped at email-client sync-batch with mail left on the server (at every
             run of the job, so a large first sync goes on a batch a minute), each on its own. Paused accounts, those whose
-            sign-in failed and those syncing now are left.</description>
+            sign-in failed and those syncing now are left. With service workers the accounts sync on at most four threads
+            of their own and the job does not wait for them (syncedCount counts those started, busyCount those left for
+            the next run), so a slow server holds one thread, not the pass (SEC-MAIL-93); an account over its mailbox
+            quota is not synced.</description>
         <out-parameters>
             <parameter name="syncedCount" type="Integer"/>
             <parameter name="failedCount" type="Integer"/>
@@ -2288,7 +2336,7 @@ along with this software (see the LICENSE.md file). If not, see
             storeHost, popHost or smtpHost, or a host under its hostSuffixes, in any case and with or without a trailing
             dot. refusedHost is the first that is not (empty when both are); with no such provider every host given is.
             update#EmailAccount asks it, and the token is refused for such a server where it is made too
-            (plans/Security-Review-Medium.md SEC-MAIL-84). Internal: callers disable authorization.</description>
+            (plans/archive/Security-Review-Medium.md SEC-MAIL-84). Internal: callers disable authorization.</description>
         <in-parameters>
             <parameter name="oauthProviderEnumId" required="true"/>
             <parameter name="storeHost"/>
@@ -5161,10 +5209,13 @@ along with this software (see the LICENSE.md file). If not, see
             this node signs mail for (a hosted or shared account's, or one of mail-delivery/dkim@domains) other than the
             account's own address, unless the user is a mail administrator (EMAIL_ACCOUNT_HOSTED) or authorization is
             disabled: mail From it gets the node's DKIM signature, which passes DMARC anywhere
-            (plans/Security-Review-Medium.md SEC-MAIL-82).</description>
+            (plans/archive/Security-Review-Medium.md SEC-MAIL-82). For an account delivered here (emailAccountId of a hosted or
+            shared account with no incoming host) any address other than the account's is refused, under the same
+            exception: the listener routes mail to an identity's address (plans/archive/Security-Review-Low.md SEC-MAIL-68).</description>
         <in-parameters>
             <parameter name="emailAddress" required="true" allow-html="any"/>
             <parameter name="accountAddress" allow-html="any"/>
+            <parameter name="emailAccountId"/>
         </in-parameters>
         <actions><script><![CDATA[
             const domainOf = (value) => {
@@ -5179,25 +5230,32 @@ along with this software (see the LICENSE.md file). If not, see
             const configured = String(ec.factory.getConfValue('mail-delivery/dkim@domains') || '').toLowerCase()
                     .split(/[,\s]+/).map((name) => name.replace(/\.+$/, '')).filter((name) => name)
             let signed = configured.includes(domain)
-            if (!signed) {
-                const wasDisabled = ec.artifactExecution.disableAuthz()
-                try {
-                    signed = Array.from(ec.entity.find('moqui.basic.email.EmailAccount')
-                            .condition('accountKindEnumId', 'in', ['EakHosted', 'EakShared']).selectField('emailAddress').list())
-                            .some((account) => domainOf(account.emailAddress) === domain)
-                } finally {
-                    if (!wasDisabled) ec.artifactExecution.enableAuthz()
+            let deliveredHere = false
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                if (!signed) signed = Array.from(ec.entity.find('moqui.basic.email.EmailAccount')
+                        .condition('accountKindEnumId', 'in', ['EakHosted', 'EakShared']).selectField('emailAddress').list())
+                        .some((account) => domainOf(account.emailAddress) === domain)
+                const account = emailAccountId ? ec.entity.find('moqui.basic.email.EmailAccount').condition('emailAccountId', emailAccountId).one() : null
+                if (account && ['EakHosted', 'EakShared'].includes(account.accountKindEnumId)) {
+                    const server = account.emailServerId ? ec.entity.find('moqui.basic.email.EmailServer')
+                            .condition('emailServerId', account.emailServerId).one() : null
+                    deliveredHere = !(server && server.storeHost)
                 }
+            } finally {
+                if (!wasDisabled) ec.artifactExecution.enableAuthz()
             }
             if (signed) ec.message.addError(ec.resource.expand(ec.l10n.localize(
                     'An address of ${domain}, a domain this server signs mail for, is given to an identity only by a mail administrator'), '', {domain}))
+            else if (deliveredHere) ec.message.addError(ec.l10n.localize(
+                    'An identity of an account delivered here is given only by a mail administrator'))
         ]]></script></actions>
     </service>
     <service verb="get" noun="IdentityAccess" allow-remote="false">
         <description>The level at which the current user changes the identities of an account: get#EmailAccountAccess's,
             or for a mail administrator (EMAIL_ACCOUNT_HOSTED) manage on an account delivered here (hosted or shared, its
             server with no incoming host), so the administrator adds an alias of a hosted domain without reaching the
-            account's mail (plans/Security-Review-Medium.md SEC-MAIL-82). accountAddress and isInternal are the
+            account's mail (plans/archive/Security-Review-Medium.md SEC-MAIL-82). accountAddress and isInternal are the
             account's when level is 1 or more.</description>
         <in-parameters><parameter name="emailAccountId" required="true"/></in-parameters>
         <out-parameters>
@@ -5250,7 +5308,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (access.level < 3) { ec.message.addError(`You may not add identities to email account ${emailAccountId}`); return }
             if (access.isInternal) { ec.message.addError(ec.l10n.localize('The Internal account sends as the user')); return }
             ec.service.sync().name('org.moqui.mail.EmailClientServices.check#IdentityAddress')
-                    .parameters({emailAddress, accountAddress: access.accountAddress}).call()
+                    .parameters({emailAddress, accountAddress: access.accountAddress, emailAccountId}).call()
             if (ec.message.hasError()) return
             const others = Array.from(ec.entity.find('moqui.basic.email.EmailIdentity').condition('emailAccountId', emailAccountId).list())
             const makeDefault = isDefault || others.length === 0
@@ -5288,7 +5346,7 @@ along with this software (see the LICENSE.md file). If not, see
             const sameAddress = emailAddress != null && String(emailAddress).trim().toLowerCase() === String(identity.emailAddress || '').trim().toLowerCase()
             if (emailAddress != null && !sameAddress) {
                 ec.service.sync().name('org.moqui.mail.EmailClientServices.check#IdentityAddress')
-                        .parameters({emailAddress, accountAddress: access.accountAddress}).call()
+                        .parameters({emailAddress, accountAddress: access.accountAddress, emailAccountId: identity.emailAccountId}).call()
                 if (ec.message.hasError()) return
                 identity.set('emailAddress', emailAddress)
             }

@@ -279,7 +279,7 @@ impl EntityFind {
 
     /// The entity of this find came from a request, not from the code that runs it: generic entity REST, a Service REST
     /// entity resource, a generic tool's `${aen}`. Its `search_form_map` then takes no condition on an encrypted field,
-    /// where a screen's own search form may take an `equals` on one (plans/Security-Review-Medium.md SEC-DAT-01).
+    /// where a screen's own search form may take an `equals` on one (plans/archive/Security-Review-Medium.md SEC-DAT-01).
     #[must_use]
     pub fn generic_input(mut self, generic: bool) -> Self {
         self.generic_input = generic;

@@ -1393,7 +1393,7 @@ fn generic_entity_rest_keeps_sensitive_entities_and_fields_out() {
 }
 
 /// The entity audit log and Monitor's recovery and ingest rows are read through entity REST but never written there:
-/// any signed-in user could add audit rows saying anyone changed anything (plans/Security-Review-Medium.md
+/// any signed-in user could add audit rows saying anyone changed anything (plans/archive/Security-Review-Medium.md
 /// SEC-RTE-03), or an ingest key or a recovery action (SEC-TLS-11).
 #[test]
 fn entity_rest_does_not_write_the_audit_log_or_the_monitor_rows() {
@@ -1429,7 +1429,7 @@ fn entity_rest_does_not_write_the_audit_log_or_the_monitor_rows() {
 }
 
 /// Entity REST's dependents leave out a restricted related entity (`UserLoginKey` below `UserAccount`), and an
-/// encrypted field is answered only as whether it is set (plans/Security-Review-Medium.md SEC-RTE-06, SEC-DAT-03).
+/// encrypted field is answered only as whether it is set (plans/archive/Security-Review-Medium.md SEC-RTE-06, SEC-DAT-03).
 /// The data writer, without a full backup, leaves out the restricted entities and the password and encrypted fields
 /// (SEC-TLS-05).
 #[test]
@@ -2226,7 +2226,7 @@ fn create_db_view(facade: &EntityFacade, name: &str, members: &[(&str, &str, &st
 }
 
 /// A `DbViewEntityAlias` function is one of the fixed list: another name was written into the SQL as a call of any
-/// database function (plans/Security-Review-Medium.md SEC-DAT-04).
+/// database function (plans/archive/Security-Review-Medium.md SEC-DAT-04).
 #[test]
 fn a_db_view_alias_takes_only_the_listed_functions() {
     let facade = crate::testing::open();
@@ -2307,7 +2307,7 @@ fn a_view_that_renames_a_password_or_reads_a_restricted_entity_is_caught() {
 }
 
 /// A view's alias of a `UserAccount` identity field is one whatever its name, through a view of a view; a field of the
-/// same name on another entity is not (plans/Security-Review.md SEC-TLS-82).
+/// same name on another entity is not (plans/archive/Security-Review.md SEC-TLS-82).
 #[test]
 fn an_accounts_identity_fields_are_found_by_origin() {
     let nanos = std::time::SystemTime::now()

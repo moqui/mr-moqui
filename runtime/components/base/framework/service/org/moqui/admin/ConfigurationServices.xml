@@ -572,7 +572,7 @@ along with this software (see the LICENSE.md file). If not, see
             https-host and allowed-hosts, the public sites' hosts, the names set up with ACME, and on an instance that is
             not production this machine's own (localhost, the loopback addresses, its host name and that name's
             addresses); an IPv6 address in brackets. A relay's link base URL is held to them (RelayRules.js,
-            plans/Security-Review-Medium.md SEC-ADM-83). Internal: callers disable authorization.</description>
+            plans/archive/Security-Review-Medium.md SEC-ADM-83). Internal: callers disable authorization.</description>
         <out-parameters><parameter name="hostNameList" type="List"/></out-parameters>
     </service>
     <service verb="probe" noun="ProtocolTarget" type="rust" location="moqui_core::service::protocol_admin::probe_protocol_target"

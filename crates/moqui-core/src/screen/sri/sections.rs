@@ -776,7 +776,7 @@ pub fn render_text_value(state: &RenderState, location: &str, template: &str) ->
     }
     // A templated text runs as server script (a `.fancy` file has `ec` and `sri`), so only a component's own file is
     // one: a location a request or a record names (a wiki page's, a print screen's templateLocation, a drive or git
-    // file) is logged and renders nothing (plans/Security-Review.md SEC-SCR-81). A wiki page renders through
+    // file) is logged and renders nothing (plans/archive/Security-Review.md SEC-SCR-81). A wiki page renders through
     // WikiServices.render#WikiPage, and a service through `ec.resource.template`.
     if !template_location_allowed(state, location) {
         tracing::error!(

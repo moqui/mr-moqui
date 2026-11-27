@@ -97,6 +97,18 @@ Plan [Maps](archive/Maps.md) (archived 2026-11-26); guide [Maps](../docs/tools/M
 | People | The design §14.3 review walks (PeopleReviewWalk, PeopleNavigationWalk, PeoplePhoneWalk), written and not yet run | mr-boss `plan/impl-people.md` |
 | Marble ERP | Acceptance work after the migration: wiki fixtures, exhaustive role and organization isolation, CSRF, every mounted QVT interaction, physical checks and scanners | [MarbleERPMigration, Limits](archive/MarbleERPMigration.md#limits) |
 
+### Security review remainders
+
+The parts of the security review's last findings that need a device, a build or a tool this machine lacks (closed 2026-11-27; [Security-Review, What is left](archive/Security-Review.md#what-is-left)).
+
+| Item | Source |
+|---|---|
+| On an Android phone: an account switch clears the shared app origin (`deleteOrigin`: localStorage, service workers), and the WebView hands the app scheme a fetch's own headers and the main frame's mark, so a cross-origin frame's GET is told apart (SEC-CLI-81, SEC-CLI-102; the Kotlin is not compiled here, no SDK platform 37) | [-Medium](archive/Security-Review-Medium.md), [-Low](archive/Security-Review-Low.md) |
+| On a built CEF desktop app: the per-account Chromium profiles keep accounts apart, and a subframe's request carries no origin of the window (SEC-CLI-81, SEC-CLI-102) | [-Medium](archive/Security-Review-Medium.md), [-Low](archive/Security-Review-Low.md) |
+| On a machine with the Android toolchain: Gradle dependency verification (`verification-metadata.xml`, from an Android build of the Tauri settings files) and the desktop's lock (SEC-CLI-104) | [-Medium](archive/Security-Review-Medium.md), [-Low](archive/Security-Review-Low.md) |
+| With cargo-deny installed: a run over the whole graph (`--all-features`, no target filter), to see whether the licenses check passes on the feature-gated crates (SEC-DAT-13) | [-Medium](archive/Security-Review-Medium.md), [-Low](archive/Security-Review-Low.md) |
+| Real UDP phones and a PBX against the dialog-aware SIP target, once it is built (SEC-COM-84, [Remaining-Work](Remaining-Work.md#sessions-notifications-and-security)) | [-Medium](archive/Security-Review-Medium.md), [-Low](archive/Security-Review-Low.md) |
+
 ### Build and release
 
 Guide [Build-Test, Offline source release](../docs/Build-Test.md#offline-source-release).

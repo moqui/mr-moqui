@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Where a scheduled report may save its file (plans/Security-Review-Medium.md SEC-TLS-06): under a root the conf's
+//! Where a scheduled report may save its file (plans/archive/Security-Review-Medium.md SEC-TLS-06): under a root the conf's
 //! `report` `save-roots` names, never through `..`, never in a component, the conf or a `.env` file. A report's text is
 //! its author's, so a write anywhere else could replace a file the server reads.
 

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The host a preview's proposed screen text runs on (plans/Security-Review-Low.md SEC-AI-102): an allow-list.
+//! The host a preview's proposed screen text runs on (plans/archive/Security-Review-Low.md SEC-AI-102): an allow-list.
 //!
 //! While a proposed screen's code runs ([`crate::screen::proposed_running`]), each run of its text (an action block, a
 //! widget or condition expression, a `${}` template) is a [`PreviewCode`] region. Inside it a script calls only the host

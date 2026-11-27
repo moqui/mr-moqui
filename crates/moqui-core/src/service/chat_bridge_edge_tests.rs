@@ -636,3 +636,32 @@ fn a_queued_webhook_is_checked_on_the_local_node_and_a_bad_one_refused_and_kept(
     assert_eq!(core.applied.lock().unwrap().last().map(String::as_str), Some("forged"));
     assert_eq!(kept("TW1"), 1);
 }
+
+/// SEC-COM-97: `store#EdgeMedia` runs only for an item the edge queue applies, as `apply#EdgeWebhook` does: a call from
+/// inside the server is refused before any location it names is read.
+#[test]
+fn store_edge_media_is_the_queues_alone() {
+    let ctx = ExecutionContextFactory::test_context_with_conf("<moqui-conf/>");
+    let facade = crate::testing::open();
+    ctx.factory().set_entity(facade.clone());
+    let _entered = ctx.enter();
+    let settings = crate::edge::EdgeSettings {
+        role: crate::edge::NodeRole::Edge,
+        ..crate::edge::EdgeSettings::default()
+    };
+    ctx.factory().extension(|_| settings.clone());
+    let parameters: BTreeMap<String, Value> = [
+        ("queueItemId", "item-1"),
+        ("pairedNodeId", "node-a"),
+        ("payload", r#"{"chatBridgeId": "SMS1", "tokenHash": "00"}"#),
+        ("contentLocation", "component://framework/MoquiConf.xml"),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_string(), Value::string(value)))
+    .collect();
+    let refused = store_edge_media(&parameters, &facade).unwrap_err();
+    assert!(
+        refused.message().contains("only for an item the edge queue applies"),
+        "{refused}"
+    );
+}

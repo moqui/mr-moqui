@@ -56,7 +56,7 @@ or it would get each message twice. Such an account takes its address from a mai
 one another address, or making an account one (a hosted or shared kind, no incoming server) needs the
 `EMAIL_ACCOUNT_HOSTED` permission (the `ADMIN` group has it), or authorization disabled (internal setup). Otherwise any
 mail user could take the mail of an address no account has yet, `postmaster@` or a colleague's
-(plans/Security-Review.md SEC-MAIL-01). Its outgoing server, if it has one, is how its replies and automatic replies go out,
+(plans/archive/Security-Review.md SEC-MAIL-01). Its outgoing server, if it has one, is how its replies and automatic replies go out,
 usually back through the gateway.
 
 ## DNS and the gateway
@@ -268,9 +268,16 @@ certificate), a 4xx tried again from 5 minutes (`mail-delivery@retry-seconds`) d
   after `mail-delivery@days`. Empty by default.
 
 - **Bounces.** Set `mail-delivery@bounce-domain` (as `bounces.example.com`, with its MX at the edge node) and each message
-  goes from `bounce+<item>@` that domain, so a remote server's later bounce names the message. This replaces an app's
-  own bounce address (`send#EmailTemplate`'s `bounceAddress`), so an app that reads its own bounces also reads the
-  message the edge marks bounced (`ES_BOUNCED`), as Mantle's delivery ledger does.
+  goes from `bounce+<item>.<tag>@` that domain (the tag a keyed MAC of the item and the recipient domain), so a
+  remote server's later bounce names the message. A later bounce counts only for a `Final-Recipient` or
+  `Original-Recipient` the edge node recorded for that address (with the MTA in moqui, the recipient domain's; through
+  the relay, every recipient of the message), each marked failed on the message's delivery rows: while some recipients
+  have not failed the message stays Sent with the failed named in its `sendError` (each address with its status code,
+  nothing of the report's own text), and once every recorded recipient has failed it is `ES_BOUNCED`. A refusal at the
+  time of sending still marks it bounced (`ES_BOUNCED` for a template's message, the Outbox for a client's). The tag's
+  key is derived from the session cookie key: rotating that key makes the addresses of mail already sent untagged, so
+  their later bounces are refused. This replaces an app's own bounce address (`send#EmailTemplate`'s
+  `bounceAddress`).
 - **Reports an app reads.** Without the edge's bounce domain, an app may send with a bounce address of its own per
   message (`send#EmailTemplate`'s `bounceAddress`, as `bounces+<key>@` a domain) to a hosted account (`bounces@` it,
   found by the plus tag), and read what comes back with `org.moqui.mail.EmailServices.read#DeliveryReport`: a delivery

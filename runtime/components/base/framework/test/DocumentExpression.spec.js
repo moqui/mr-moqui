@@ -2,7 +2,7 @@
 // server, so writing one needs DATABASE_ADMIN (Security.eecas.xml DataDocumentFieldExpression,
 // crates/moqui-core/src/service/security_checks.rs assert_document_expression). So does a document title or a link URL
 // or label that is a template (it has "${"), and a link condition (DataDocumentTitleTemplate, DataDocumentLinkTemplate;
-// plans/Security-Review.md SEC-SCR-05). A plain field path or text needs nothing more, an update that leaves a template
+// plans/archive/Security-Review.md SEC-SCR-05). A plain field path or text needs nothing more, an update that leaves a template
 // as it was passes, and a load with authorization off, as seed data loads, is allowed.
 // Run: ./moq test framework --spec DocumentExpression
 const adminId = "SPEC_DX_ADMIN"

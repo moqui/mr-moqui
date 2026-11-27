@@ -1647,3 +1647,85 @@ async fn tls_to_an_srv_target_names_the_trunk_s_host_and_a_target_that_refuses_g
     near.shutdown();
     far.shutdown();
 }
+
+/// SEC-COM-26: an accepted TCP connection on which nothing authenticated is closed after
+/// `sip-server/limits@unauthenticated-seconds`, keepalives or not; one from a trunk's address is kept.
+#[tokio::test]
+async fn an_unauthenticated_stream_connection_is_closed_after_its_deadline() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let (tx, _events) = mpsc::unbounded_channel();
+    let ua = Ua::start(
+        UaConfig {
+            tcp: Some("127.0.0.1:0".parse().unwrap()),
+            realm: "moqui.test".to_string(),
+            limits: RequestLimits {
+                unauthenticated_seconds: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        tx,
+    )
+    .await
+    .unwrap();
+    let addr = ua.bound().tcp.unwrap();
+    // the listener starts with the endpoint's loop
+    let connect = || async move {
+        for _ in 0..50 {
+            if let Ok(stream) = tokio::net::TcpStream::connect(addr).await {
+                return stream;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("the SIP TCP listener at {addr} did not start");
+    };
+    // a stranger that sends only CRLF keepalives
+    let mut stranger = connect().await;
+    let closed = tokio::time::timeout(Duration::from_secs(4), async {
+        let mut buf = [0_u8; 64];
+        loop {
+            let _ = stranger.write_all(b"\r\n\r\n").await;
+            match tokio::time::timeout(Duration::from_millis(200), stranger.read(&mut buf)).await {
+                Ok(Ok(0) | Err(_)) => return true,
+                _ => continue,
+            }
+        }
+    })
+    .await;
+    assert_eq!(closed, Ok(true), "closed at its deadline");
+    // from a trunk's address: kept past it
+    let trunk = FakeTrunk::on("127.0.0.1").await;
+    ua.set_trunks(vec![trunk_config(&trunk, false)]).await;
+    let mut kept = connect().await;
+    tokio::time::sleep(Duration::from_millis(1600)).await;
+    let mut buf = [0_u8; 64];
+    let read = tokio::time::timeout(Duration::from_millis(300), kept.read(&mut buf)).await;
+    assert!(read.is_err(), "still open, nothing to read: {read:?}");
+    ua.shutdown();
+}
+
+/// SEC-COM-84 (the part done): a call over UDP whose Contact names a stream transport is refused before any dialog,
+/// so this side never dials the connection it names.
+#[test]
+fn a_contact_naming_a_stream_transport_over_udp_is_refused() {
+    let request = |contact: &str| {
+        Request::try_from(
+            format!(
+                "INVITE sip:100@127.0.0.1 SIP/2.0\r\nVia: SIP/2.0/UDP 127.0.0.1:5070;branch=z9hG4bK-1\r\n\
+                 From: <sip:p@x>;tag=1\r\nTo: <sip:100@127.0.0.1>\r\nCall-ID: c1\r\nCSeq: 1 INVITE\r\n\
+                 Contact: {contact}\r\nContent-Length: 0\r\n\r\n"
+            )
+            .as_str(),
+        )
+        .unwrap()
+    };
+    assert!(!contact_transport_differs(&request("<sip:p@192.0.2.1:5060>")));
+    assert!(!contact_transport_differs(&request(
+        "<sip:p@192.0.2.1:5060;transport=UDP>"
+    )));
+    assert!(contact_transport_differs(&request(
+        "<sip:p@127.0.0.1:5432;transport=tcp>"
+    )));
+    assert!(contact_transport_differs(&request("\"Sips\" <sips:p@10.0.0.1>")));
+    assert!(contact_transport_differs(&request("sip:p@10.0.0.1;transport=tls")));
+}

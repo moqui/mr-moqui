@@ -32,7 +32,6 @@ use super::xml::{attr, form, form_fields, iq_result, E};
 use super::Session;
 use crate::backend::{self, services};
 use crate::ns;
-use crate::registry::Inbound;
 
 /// The nodes this service does not keep as PEP nodes (a PEP service may restrict its nodes, XEP-0163 §4). User location
 /// (XEP-0080) would otherwise be stored and pushed to everyone the user shares a room with (a new node's access is
@@ -268,6 +267,7 @@ impl Session {
             .map(str::to_string)
             .collect();
         let me = self.user_id();
+        let (me_id, me_bare) = (me.clone(), owner.clone());
         if !users.contains(&me) {
             users.push(me);
         }
@@ -292,7 +292,9 @@ impl Session {
                 if entry.id == self.entry_id {
                     self.send(message);
                 } else {
-                    self.server.registry.send(&entry, Inbound::Stanza(message));
+                    // a notification is held to the routed rules as any stanza between users (SEC-COM-19); one
+                    // past them is dropped, as a notification is not answered
+                    let _ = self.server.registry.route(&me_id, &me_bare, &entry, message);
                 }
             }
         }

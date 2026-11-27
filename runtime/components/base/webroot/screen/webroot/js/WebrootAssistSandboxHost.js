@@ -4,7 +4,7 @@
  * site's origin and framed by the drawer. It frames the sandbox (GET /assist/sandbox, an opaque origin) with its own
  * query and fragment, and hands it the drawer's port once both have loaded. Its policy lets its frame load only
  * /assist/sandbox, and a browser holds a frame's own navigations to the policy of the document that frames it, so the
- * component cannot navigate its frame to another site with what it read (plans/Security-Review-Medium.md SEC-AI-81).
+ * component cannot navigate its frame to another site with what it read (plans/archive/Security-Review-Medium.md SEC-AI-81).
  * A second load of the frame is the component navigating it: this document then leaves, which the drawer's watchdog
  * sees as a load of its frame and closes the canvas. Nothing from the frame is read or answered here.
  */

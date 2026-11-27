@@ -161,7 +161,7 @@ fn room_link_signature(key: &[u8], account: &str, room: &str, seq: Option<i64>) 
 }
 
 /// The signature of a page notification's tap (`commands::notify`): of the account it was shown for and the server path
-/// it opens, so a tap's intent another app makes up opens no page (plans/Security-Review-Low.md SEC-CLI-88).
+/// it opens, so a tap's intent another app makes up opens no page (plans/archive/Security-Review-Low.md SEC-CLI-88).
 pub(crate) fn notify_signature(key: &[u8], account: &str, path: &str) -> String {
     link_signature(key, &format!("notify\n{account}\n{path}"))
 }

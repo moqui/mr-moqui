@@ -338,7 +338,7 @@ async fn wait_detached(server: Arc<Server>, mut session: Session) {
     let (handover_tx, mut handover_rx) = oneshot::channel();
     if !server.registry.detach(&id, &user_id, handover_tx) {
         tracing::debug!("XMPP: a session of {user_id} not kept for resumption: too many wait already");
-        session.detached = false;
+        session.set_detached(false);
         return session.end().await;
     }
     let mut rx = session.take_receiver();
@@ -371,6 +371,6 @@ async fn wait_detached(server: Arc<Server>, mut session: Session) {
         }
     }
     server.registry.forget_detached(&id);
-    session.detached = false;
+    session.set_detached(false);
     session.end().await;
 }

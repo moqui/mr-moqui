@@ -98,7 +98,7 @@ function hostOf(url) {
 }
 // A relay's link base URL (the start of every link in the mail it sends, a password reset's and an invitation's among
 // them): an http(s) URL on one of the instance's own names (RelayRules.js linkBaseRefusal, as update#RelayServer holds it
-// too; plans/Security-Review-Medium.md SEC-ADM-83).
+// too; plans/archive/Security-Review-Medium.md SEC-ADM-83).
 function linkBaseText(value, what) {
     const found = urlText(value, what)
     const refusal = relayRules.linkBaseRefusal(found)
@@ -888,7 +888,7 @@ const accountOwned = emailServerId => count(MAIL_ACCOUNT, {emailServerId, ownsEm
 // and codes, so that relay (and SYSTEM, the framework's own) is the access administrator's, as a sign-in provider's role
 // mappings and enabling are (ConfigurationProviders.js): started, changed and tested only with ADMIN_ACCESS_MANAGE, which is
 // sealed, and a recent sign-in (RelayRules.js signInRelay, which update#RelayServer holds too;
-// plans/Security-Review-Medium.md SEC-ADM-82). For a holder of only ADMIN_CONNECTION_MANAGE it is read only here.
+// plans/archive/Security-Review-Medium.md SEC-ADM-82). For a holder of only ADMIN_CONNECTION_MANAGE it is read only here.
 const signInRelay = emailServerId => relayRules.signInRelay(emailServerId)
 const smtpUserOf = server => text(server.smtpUsername) || text(server.mailUsername)
 const relayDefinition = {

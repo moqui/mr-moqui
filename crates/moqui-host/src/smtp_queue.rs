@@ -21,7 +21,8 @@
 //! once, an address not found gets 451, so the gateway tries again rather than bounce mail for an account not copied
 //! yet, and so does an address only a node no longer paired has. A bounce to the VERP address of a message this edge
 //! node relayed (`moqui_mail::edge_mail::bounce_item_id`) is taken only for a `mailOut` item it received from a paired
-//! node, and becomes a `mailStatus` for that node rather than mail.
+//! node and with the tag this node made for it (`bounce_scope`), and becomes a `mailStatus` for that node rather than
+//! mail, naming only the recipients the address was for (SEC-MAIL-91).
 //! After the data the message is queued, once per local node, with the recipient addresses (not the account ids) and
 //! the message as the item's content; each recipient is answered stored once the item is committed, and 451 when the
 //! queue refuses it.
@@ -50,14 +51,15 @@ use super::{AccountResult, AccountResults, Backend, DataAnswer, Message, RcptAns
 /// The most copies the recipients are built from; a set larger than this is a deployment this design does not serve.
 const MAX_COPIES: usize = 1_000_000;
 
-/// The recipients of each paired local node, from the edge node's copies.
-#[derive(Default)]
+/// The recipients of each paired local node, from the edge node's copies. A look-up works on a copy of it
+/// ([`current_copies`]), the recipients shared, so the lock is never held across a look-up or an enqueue.
+#[derive(Clone, Default)]
 struct Copies {
     /// The set's `applied_count` they were built at.
     built_at: Option<u64>,
     /// The nodes whose set has been sent whole at least once.
     loaded: HashSet<String>,
-    nodes: Vec<(String, RecipientMap)>,
+    nodes: Arc<Vec<(String, RecipientMap)>>,
     /// The nodes paired and not revoked, read at each look-up: a revoked node's copies are kept (plans/archive/Edge-Node.md
     /// §5.2), but its mail is not taken.
     active: HashSet<String>,
@@ -103,11 +105,21 @@ fn active_nodes(facade: &EntityFacade) -> Result<HashSet<String>, CoreError> {
         .collect())
 }
 
+/// The copies as they are now (SEC-MAIL-96): the paired nodes and the set's applied count read before the lock is
+/// taken, the recipients built again under it only when a batch was applied since, and a copy returned, so a slow
+/// write of one session never holds another session's `RCPT TO`.
+fn current_copies(copies: &Mutex<Copies>, facade: &EntityFacade) -> Result<Copies, CoreError> {
+    let active = active_nodes(facade)?;
+    let count = replica::applied_count(facade, RECIPIENT_SET);
+    let mut held = lock(copies);
+    held.active = active;
+    held.rebuild(facade, count)?;
+    Ok(held.clone())
+}
+
 impl Copies {
-    /// Read the paired nodes, and build the recipients again when a batch of the set was applied since.
-    fn refresh(&mut self, facade: &EntityFacade) -> Result<(), CoreError> {
-        self.active = active_nodes(facade)?;
-        let count = replica::applied_count(facade, RECIPIENT_SET);
+    /// Build the recipients again when a batch of the set was applied since they were built (`count`).
+    fn rebuild(&mut self, facade: &EntityFacade, count: u64) -> Result<(), CoreError> {
         if self.built_at == Some(count) {
             return Ok(());
         }
@@ -124,7 +136,7 @@ impl Copies {
             values.len(),
             loaded.len()
         );
-        self.nodes = nodes;
+        self.nodes = Arc::new(nodes);
         self.loaded = loaded;
         self.built_at = Some(count);
         Ok(())
@@ -142,7 +154,7 @@ impl Copies {
             &["", delimiters]
         };
         for level in levels {
-            for (node, map) in &self.nodes {
+            for (node, map) in self.nodes.iter() {
                 if let Some(account) = map.find(address, level) {
                     if self.active.contains(node) {
                         let full = map.is_full(&account);
@@ -382,12 +394,21 @@ fn deliver_queued(
     let mut summary = Vec::new();
     // the recipients by the local node that has their account now
     let mut by_node: BTreeMap<String, (Vec<RecipientDsn>, Vec<String>)> = BTreeMap::new();
-    let mut bounces: Vec<(String, String)> = Vec::new();
+    let mut bounces: Vec<(String, String, edge_mail::BounceScope)> = Vec::new();
     for group in groups {
-        if let Some(item) = group.email_account_id.strip_prefix(BOUNCE_ACCOUNT) {
-            match bounce_node(facade, item, &copies.active)? {
-                Some(node) => bounces.push((group.email_account_id.clone(), node)),
-                None => accounts.push((group.email_account_id.clone(), AccountResult::Gone)),
+        if group.email_account_id.starts_with(BOUNCE_ACCOUNT) {
+            // the scope again, from the address the group was taken for
+            let scope = match group.addresses.first() {
+                Some(address) => bounce_scope_of(facade, address)?,
+                None => None,
+            };
+            let node = match &scope {
+                Some(scope) => bounce_node(facade, &scope.item, &copies.active)?,
+                None => None,
+            };
+            match (node, scope) {
+                (Some(node), Some(scope)) => bounces.push((group.email_account_id.clone(), node, scope)),
+                _ => accounts.push((group.email_account_id.clone(), AccountResult::Gone)),
             }
             continue;
         }
@@ -414,22 +435,28 @@ fn deliver_queued(
         entry.1.push(group.email_account_id.clone());
     }
     // a bounce is the status of the message it is for, not mail for an account
-    for (account, node) in bounces {
-        let item = account.trim_start_matches(BOUNCE_ACCOUNT);
-        let Some(report) = edge_mail::parse_dsn(raw).filter(|report| !report.action.is_empty()) else {
+    for (account, node, scope) in bounces {
+        let item = scope.item.as_str();
+        let status = match edge_mail::dsn_status(facade, &scope, raw) {
+            Ok(status) => status,
+            Err(err) => {
+                tracing::error!("SMTP listener (edge mode): the report for item {item} was not read: {err}");
+                accounts.push((account, AccountResult::Failed));
+                continue;
+            }
+        };
+        let Some(status) = status else {
             tracing::info!(
-                "SMTP listener (edge mode): mail to the bounce address of item {item} is not a failure report; dropped"
+                "SMTP listener (edge mode): mail to the bounce address of item {item} is not a failure report for \
+                 a recipient the address was for; dropped"
             );
             summary.push(format!("not a failure report for item {item}, dropped"));
             accounts.push((account, AccountResult::Stored));
             continue;
         };
-        match queue::enqueue(factory, facade, Some(&node), &edge_mail::dsn_status_item(item, &report)) {
+        match queue::enqueue(factory, facade, Some(&node), &status) {
             Ok(queued) => {
-                summary.push(format!(
-                    "{} report for item {item} queued as {}",
-                    report.action, queued.queue_item_id
-                ));
+                summary.push(format!("report for item {item} queued as {}", queued.queue_item_id));
                 accounts.push((account, AccountResult::Stored));
             }
             Err(err) => {
@@ -495,12 +522,24 @@ fn bounce_recipient(
     copies: &Copies,
     address: &str,
 ) -> Result<Option<Option<String>>, CoreError> {
-    let Some(item) = edge_mail::bounce_item_id(address, &edge_mail::bounce_domain()) else {
+    if edge_mail::bounce_item_id(address, &edge_mail::bounce_domain()).is_none() {
         return Ok(None);
+    }
+    let Some(scope) = bounce_scope_of(facade, address)? else {
+        return Ok(Some(None));
     };
     Ok(Some(
-        bounce_node(facade, &item, &copies.active)?.map(|_| format!("{BOUNCE_ACCOUNT}{item}")),
+        bounce_node(facade, &scope.item, &copies.active)?
+            .map(|_| format!("{BOUNCE_ACCOUNT}{}:{}", scope.item, scope.domain)),
     ))
+}
+
+/// The scope of VERP address `address` with its tag checked (SEC-MAIL-91), or none for no such address or a wrong tag.
+fn bounce_scope_of(facade: &EntityFacade, address: &str) -> Result<Option<edge_mail::BounceScope>, CoreError> {
+    let Some(parts) = edge_mail::bounce_item_id(address, &edge_mail::bounce_domain()) else {
+        return Ok(None);
+    };
+    edge_mail::bounce_scope(facade, &parts).map_err(CoreError::from)
 }
 
 /// The listener's backend on an edge node: recipients from the replicated copies, messages to the link's queue.
@@ -535,8 +574,7 @@ impl Backend for QueueBackend {
         let delimiters = self.delimiters.clone();
         let found = crate::worker::on_pool_without_authz(&self.factory, move |factory| {
             let facade = entity(factory)?;
-            let mut copies = lock(&copies);
-            copies.refresh(&facade)?;
+            let copies = current_copies(&copies, &facade)?;
             // a bounce to the VERP sender of a message this edge node relayed for a paired node
             if let Some(bounce) = bounce_recipient(&facade, &copies, &address)? {
                 return Ok(bounce.map_or(RcptAnswer::Unknown, RcptAnswer::Local));
@@ -562,8 +600,7 @@ impl Backend for QueueBackend {
         let trusted = self.trusted.clone();
         let queued = crate::worker::on_pool_without_authz(&self.factory, move |factory| {
             let facade = entity(factory)?;
-            let mut copies = lock(&copies);
-            copies.refresh(&facade)?;
+            let copies = current_copies(&copies, &facade)?;
             let (accounts, summary) = deliver_queued(
                 factory,
                 &facade,
@@ -617,8 +654,7 @@ impl Backend for SplitBackend {
                 || moqui_mail::delivery::find_recipient(&facade, &address, "").map_err(CoreError::from),
                 || moqui_mail::delivery::find_recipient(&facade, &address, &delimiters).map_err(CoreError::from),
             )?;
-            let mut copies = lock(&copies);
-            copies.refresh(&facade)?;
+            let copies = current_copies(&copies, &facade)?;
             // a bounce to the VERP sender of a message relayed for the paired node; a VERP address of no such item
             // is looked up as any other
             if let Some(Some(account)) = bounce_recipient(&facade, &copies, &address)? {
@@ -665,12 +701,9 @@ impl Backend for SplitBackend {
                 }
             }
             if !link.is_empty() {
-                let queued = {
-                    let mut copies = lock(&copies);
-                    copies.refresh(&facade).and_then(|()| {
-                        deliver_queued(factory, &facade, &copies, &delimiters, &options, &raw, &envelope, &link)
-                    })
-                };
+                let queued = current_copies(&copies, &facade).and_then(|copies| {
+                    deliver_queued(factory, &facade, &copies, &delimiters, &options, &raw, &envelope, &link)
+                });
                 match queued {
                     Ok((link_accounts, link_summary)) => {
                         accounts.extend(link_accounts);

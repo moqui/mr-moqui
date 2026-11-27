@@ -838,7 +838,7 @@ fn auth_of(parameters: &Parameters) -> Result<Option<Auth>, String> {
 /// Store a row of `entity` keyed by `key_field`: the fields given (an empty one clears it), the URL checked, the
 /// credential set only when given. A URL moved to another origin keeps no stored credential not given again in the same
 /// change, nor (an MCP server's) the users' own tokens, which would otherwise be sent to the new origin
-/// (`credentialCleared`; as `store#GitRepositoryMirror`; plans/Security-Review-Medium.md SEC-OUT-82).
+/// (`credentialCleared`; as `store#GitRepositoryMirror`; plans/archive/Security-Review-Medium.md SEC-OUT-82).
 fn store_row(
     facade: &EntityFacade,
     parameters: &Parameters,

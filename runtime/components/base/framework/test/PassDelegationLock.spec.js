@@ -1,5 +1,5 @@
 // A PASS delegation (public/Account.js authenticateDelegation) holds through a tarpit lock of its account, which anyone's
-// failed sign-ins set, and ends when the account is disabled for good (plans/Security-Review-Low.md SEC-PSA-02).
+// failed sign-ins set, and ends when the account is disabled for good (plans/archive/Security-Review-Low.md SEC-PSA-02).
 // Run: ./moq test framework --spec PassDelegationLock
 const ACCOUNT_JS = "component://framework/service/org/moqui/public/Account.js"
 const USER = "PASS_DELEGATION_SPEC"

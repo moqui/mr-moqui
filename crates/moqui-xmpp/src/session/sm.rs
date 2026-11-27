@@ -28,6 +28,26 @@ use crate::ns;
 /// Unacknowledged stanzas kept at most; past this the oldest are let go and the session can no longer be resumed (a
 /// resumption would silently miss them), so a dropped connection ends it.
 const MAX_UNACKED: usize = 1000;
+/// The bytes of unacknowledged stanzas kept at most (as [`stanza_bytes`] counts them), let go past as [`MAX_UNACKED`]
+/// (SEC-COM-93): a thousand large stanzas would otherwise be held for each session.
+const MAX_UNACKED_BYTES: usize = 4 * 1024 * 1024;
+
+/// About the bytes `element` takes written: its names, attributes and text, so a large stanza counts as large.
+pub(crate) fn stanza_bytes(element: &Element) -> usize {
+    let attributes: usize = element
+        .attrs()
+        .iter()
+        .map(|((_, name), value)| name.len() + value.len() + 4)
+        .sum();
+    let children: usize = element
+        .nodes()
+        .map(|node| match node {
+            minidom::Node::Element(child) => stanza_bytes(child),
+            minidom::Node::Text(text) => text.len(),
+        })
+        .sum();
+    2 * element.name().len() + 5 + attributes + children
+}
 /// An acknowledgement is asked for after this many stanzas.
 const REQUEST_EVERY: u32 = 5;
 
@@ -36,7 +56,9 @@ pub(crate) struct Sm {
     pub resumable: bool,
     pub h_in: u32,
     h_out: u32,
-    unacked: VecDeque<(u32, Element)>,
+    unacked: VecDeque<(u32, usize, Element)>,
+    /// The bytes of [`Self::unacked`], as [`stanza_bytes`] counts them.
+    unacked_bytes: usize,
     since_request: u32,
     /// Unacknowledged stanzas were let go: resumption is off.
     pub lost: bool,
@@ -50,6 +72,7 @@ impl Sm {
             h_in: 0,
             h_out: 0,
             unacked: VecDeque::new(),
+            unacked_bytes: 0,
             since_request: 0,
             lost: false,
         }
@@ -57,10 +80,14 @@ impl Sm {
 
     pub fn sent(&mut self, stanza: Element) {
         self.h_out = self.h_out.wrapping_add(1);
-        self.unacked.push_back((self.h_out, stanza));
+        let bytes = stanza_bytes(&stanza);
+        self.unacked.push_back((self.h_out, bytes, stanza));
+        self.unacked_bytes += bytes;
         self.since_request += 1;
-        if self.unacked.len() > MAX_UNACKED {
-            self.unacked.pop_front();
+        while self.unacked.len() > MAX_UNACKED || (self.unacked_bytes > MAX_UNACKED_BYTES && self.unacked.len() > 1) {
+            if let Some((_, bytes, _)) = self.unacked.pop_front() {
+                self.unacked_bytes -= bytes;
+            }
             self.lost = true;
         }
     }
@@ -71,10 +98,12 @@ impl Sm {
 
     /// The client handled the first `h` stanzas sent.
     pub fn acked(&mut self, h: u32) {
-        while let Some((seq, _)) = self.unacked.front() {
+        while let Some((seq, _, _)) = self.unacked.front() {
             // wrapping comparison: seq is at or before h
             if h.wrapping_sub(*seq) < u32::MAX / 2 {
-                self.unacked.pop_front();
+                if let Some((_, bytes, _)) = self.unacked.pop_front() {
+                    self.unacked_bytes -= bytes;
+                }
             } else {
                 break;
             }
@@ -165,7 +194,7 @@ impl Session {
         // the resuming connection signed in again, maybe with another app password
         self.credential.clone_from(&new.credential);
         self.state = State::Bound;
-        self.detached = false;
+        self.set_detached(false);
         self.last_push = None;
         self.pushed_count = 0;
         self.out.clear();
@@ -176,7 +205,7 @@ impl Session {
         let Some(sm) = &mut self.sm else {
             return;
         };
-        let pending: Vec<Element> = sm.unacked.iter().map(|(_, stanza)| stanza.clone()).collect();
+        let pending: Vec<Element> = sm.unacked.iter().map(|(_, _, stanza)| stanza.clone()).collect();
         for stanza in pending {
             self.out.push(super::Out::Element(stanza));
         }
@@ -211,11 +240,45 @@ impl Session {
         if self.state != State::Bound || self.resumable().is_none() {
             return false;
         }
-        self.detached = true;
+        self.set_detached(true);
         true
     }
 
     pub fn unacked(&self) -> usize {
         self.sm.as_ref().map_or(0, Sm::unacked)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{stanza_bytes, Sm, MAX_UNACKED_BYTES};
+    use crate::ns;
+    use minidom::Element;
+
+    /// SEC-COM-93: the unacknowledged stanzas are held to a byte bound as well as a count; past it the oldest go and
+    /// resumption is off, as past the count.
+    #[test]
+    fn unacknowledged_stanzas_are_held_to_a_byte_bound() {
+        let body = "x".repeat(200 * 1024);
+        let large = Element::builder("message", ns::CLIENT)
+            .append(Element::builder("body", ns::CLIENT).append(body.as_str()).build())
+            .build();
+        assert!(stanza_bytes(&large) > 200 * 1024);
+        let mut sm = Sm::new(true);
+        for _ in 0..10 {
+            sm.sent(large.clone());
+        }
+        assert!(!sm.lost, "2 MB is within the bound");
+        for _ in 0..20 {
+            sm.sent(large.clone());
+        }
+        assert!(sm.lost);
+        assert!(
+            sm.unacked_bytes <= MAX_UNACKED_BYTES && sm.unacked() < 30,
+            "{}",
+            sm.unacked()
+        );
+        sm.acked(30);
+        assert_eq!((sm.unacked(), sm.unacked_bytes), (0, 0));
     }
 }

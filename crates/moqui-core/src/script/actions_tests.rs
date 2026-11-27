@@ -593,7 +593,7 @@ fn a_paginated_search_sets_the_page_keys_of_the_list() -> Result<(), Error> {
 }
 
 /// A search form on a find whose entity-name is expanded (a generic tool's `${aen}`) takes no condition on an encrypted
-/// field; a screen's own find, its entity written in the screen, keeps an `equals` (plans/Security-Review-Medium.md
+/// field; a screen's own find, its entity written in the screen, keeps an `equals` (plans/archive/Security-Review-Medium.md
 /// SEC-DAT-01).
 #[test]
 fn a_generic_finds_search_form_takes_no_condition_on_an_encrypted_field() -> Result<(), Error> {

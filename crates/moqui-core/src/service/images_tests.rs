@@ -595,6 +595,40 @@ fn a_users_rich_text_images_are_capped_by_count() {
     assert_eq!(row.get("userId").map(to_plain_string).as_deref(), Some("other"));
 }
 
+/// Uploads of one user at the same moment are counted one after another: the upload locks the uploader's account row
+/// before it counts the user's images (SEC-CLI-92). The in-memory driver holds no row lock across transactions, so
+/// the statement and its place are what is checked.
+#[test]
+fn an_upload_locks_its_uploaders_account_before_counting() {
+    let tape = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let ctx = crate::context::ExecutionContextFactory::test_context_in(
+        "<moqui-conf/>",
+        crate::service::ServicePools::idle(),
+        crate::context::framework_dir(),
+    );
+    let facade = crate::testing::open_with_tape(std::sync::Arc::clone(&tape));
+    facade.assume_db_tables();
+    ctx.factory().set_entity(facade.clone());
+    let _entered = ctx.enter();
+    {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let mut account = facade.make_value("moqui.security.UserAccount").unwrap();
+        account.set("userId", Value::string("racer"));
+        account.set("username", Value::string("racer"));
+        account.create(&facade).unwrap();
+    }
+    sign_in("racer");
+    tape.lock().unwrap().clear();
+    upload_png(&png_with_alpha()).unwrap();
+    let statements = tape.lock().unwrap().clone();
+    let locked = statements
+        .iter()
+        .position(|sql| sql.contains("\"user_account\"") && sql.ends_with(" FOR UPDATE"));
+    let counted = statements.iter().position(|sql| sql.contains("\"rich_text_image\""));
+    assert!(locked.is_some(), "{statements:#?}");
+    assert!(locked < counted, "{statements:#?}");
+}
+
 /// A noisy png, which no compression makes small.
 fn noise_png(side: u32) -> Vec<u8> {
     let mut state = 0x2545_f491u32;

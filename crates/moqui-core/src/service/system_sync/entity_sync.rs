@@ -50,7 +50,7 @@ const ARTIFACT_DETAIL: &str = "moqui.entity.sync.EntitySyncArtifactDetail";
 const DAY_MILLIS: i64 = 24 * 60 * 60 * 1000;
 const DEFAULT_DELAY_MILLIS: i64 = 300_000;
 /// The most records one `get#EntitySyncData` reads, whatever `recordThreshold` asks: the answer is one string in memory
-/// (plans/Security-Review-Low.md SEC-DAT-08).
+/// (plans/archive/Security-Review-Low.md SEC-DAT-08).
 const MAX_RECORD_THRESHOLD: i64 = 10_000;
 
 /// `run#EntitySync`.

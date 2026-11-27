@@ -157,7 +157,7 @@ impl NotificationMessage {
 
     /// The link, a URL taken as written: unlike the title and the topic's `linkTemplate`, a caller's link is not
     /// expanded, since callers build it from request and record values, where `${...}` would run as script
-    /// (plans/Security-Review.md SEC-SCR-05). No caller passed a template here.
+    /// (plans/archive/Security-Review.md SEC-SCR-05). No caller passed a template here.
     pub fn link(&mut self, link: impl Into<String>) -> &mut Self {
         self.link_template = Some(link.into());
         self

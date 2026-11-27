@@ -2301,7 +2301,8 @@
         onCaption(frame) {
             const c = state.captions;
             if (frame.rtc === "captions") {
-                if (frame.state === "on") Object.assign(c, { on: true, unavailable: null, provider: frame.provider || c.provider, local: frame.local != null ? !!frame.local : c.local });
+                if (frame.state === "on") Object.assign(c, { on: true, unavailable: null, provider: frame.provider || c.provider, local: frame.local != null ? !!frame.local : c.local,
+                    stored: !!frame.stored, retentionDays: frame.retentionDays ?? null });
                 else if (frame.state === "off") Object.assign(c, { on: false, unavailable: null, lines: [] });
                 else if (frame.state === "unavailable") c.unavailable = frame.message || frame.reason || t("Captions are unavailable");
                 return;
@@ -3798,8 +3799,12 @@
     // The captions notice, as m-call and m-call-guest show it: who hears what people say
     function captionNotice(c) {
         const who = c.provider || t("the configured provider");
-        return c.local ? t("Captions are on: speech is transcribed on this organization's own server") + " (" + who + ")"
+        const on = c.local ? t("Captions are on: speech is transcribed on this organization's own server") + " (" + who + ")"
             : t("Captions are on: what people say is sent to") + " " + who + " " + t("to be transcribed");
+        // the text kept, when the server keeps it (calls/captions@store, SEC-COM-85)
+        if (!c.stored) return on;
+        return on + ". " + (Number(c.retentionDays) > 0 ? t("The text is kept for {days} days").replace("{days}", String(c.retentionDays))
+            : t("The text is kept"));
     }
     // The captions box: the notice while they are on, why they are unavailable, and each speaker's last lines
     function captionsBox(shown, lines) {

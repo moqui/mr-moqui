@@ -227,7 +227,7 @@ no flash.
 ## Decisions
 
 Proposed 2026-11-27, not decided. D1 and D3 are decided before S3 and S4 are built, with their security cost
-weighed; each has an item with the status `proposed` in the security review's [Clients](Security-Review.md#clients)
+weighed; each has an item with the status `proposed` in the security review's [Clients](archive/Security-Review.md#clients)
 register (SEC-CLI-128 and SEC-CLI-129, which refer to SEC-CLI-02). D2 has no security cost.
 
 | ID | Question | Proposal | Why | Security cost | Status |

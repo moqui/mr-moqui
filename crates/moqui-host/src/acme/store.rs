@@ -308,7 +308,7 @@ pub(crate) fn read_challenges(factory: &ExecutionContextFactory, acme: &Acme) ->
 /// a digest it drew at random, before the name is set up and keeps it open [`PROBE_OPEN`](super::check::PROBE_OPEN). A
 /// row for a name not set up that is not a probe, or one open longer than its kind keeps one, is neither (a generic
 /// write's, which would have the listener prove the name to an authority for whoever wrote it:
-/// plans/Security-Review-Medium.md SEC-OUT-81); the rows are written only by these services. A minute is allowed for
+/// plans/archive/Security-Review-Medium.md SEC-OUT-81); the rows are written only by these services. A minute is allowed for
 /// the members' clocks.
 pub(crate) fn refused_challenge(
     host: &str,

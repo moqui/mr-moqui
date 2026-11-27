@@ -172,7 +172,7 @@
     };
 
     // A find whose entity-name is expanded (a generic tool's ${aen}) has its entity named by the request: its search form
-    // takes no condition on an encrypted field (EntityFind.generic_input, plans/Security-Review-Medium.md SEC-DAT-01).
+    // takes no condition on an encrypted field (EntityFind.generic_input, plans/archive/Security-Review-Medium.md SEC-DAT-01).
     const searchFormLines = (listName, node, findNode) => {
         const generic = String(attr(findNode, "entity-name") || "").includes("${") ? "true" : "false";
         const input = has(node, "input-fields-map") ? attr(node, "input-fields-map") : "context";

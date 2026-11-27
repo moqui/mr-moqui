@@ -48,7 +48,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <transition name="setPin">
+    <transition name="setPin" method="post">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.call.VoicemailServices.set#VoicemailPin').parameters({pin: pin || '',
                 clear: String(clear) === 'true'}).requireNewTransaction(true).disableAuthz().call() || {}

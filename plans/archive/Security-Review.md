@@ -1,5 +1,14 @@
 # Security review
 
+> Archived 2026-11-27: finished. Of its 778 findings, 776 are fixed (724), fixed in part (15), accepted (28, all
+> Info), refuted (4), moved (4) or kept by decision (1): the last 220 were closed on 2026-11-27 in four reviewed
+> batches ([What is left](#what-is-left), item 14). The other two, SEC-CLI-128 and SEC-CLI-129, are `proposed`: the
+> security cost of [App-Startup](../App-Startup.md#decisions)'s undecided D1 and D3, which go with that plan's
+> decisions. What is still open, the owner's decisions and the code work, is in
+> [Remaining-Work](../Remaining-Work.md#sessions-notifications-and-security), and the device, build and tool checks in
+> [Testing-Needed](../Testing-Needed.md#security-review-remainders). A new finding goes to
+> [SECURITY.md](../../SECURITY.md)'s process; until 0.1.0 it may still be recorded openly in a plan of its own.
+
 Status 2026-11-15: first pass done, in two rounds. The attack surface map was split by area and every slice of the
 code has been read at least in part by a reviewer; the suspected weaknesses are listed here. Most are as their
 reviewer reported them and have not been read a second time; the Status column says which. The twelve High findings
@@ -14,7 +23,7 @@ findings 159 are fixed and 5 deferred, none refuted, and 51 (12 Low, 39 Info) ar
 
 A third round, 2026-11-17 and 18, read the code the first two did not reach (the "not reached" of the [coverage](#coverage) table and the map files' open questions) in 60 units, and recorded what it found without fixing it: 406 findings with ids from 81 up in each area, 12 High, 89 Medium, 224 Low and 81 Info, none Critical. The lead read the cited lines of every High (8 confirmed, 4 likely) and of 54 of the Medium (23 confirmed, 31 likely); the other 35 Medium, and every Low and Info, are as their reviewer reported them. Round 3's High findings are listed under [the findings that matter most](#round-3); all twelve were fixed on 2026-11-18, each with its regression tests and a reviewer's reading of the fix, and its **Fix** says how; the [counts](#counts) are of all three rounds. [Method](#method) step 7 says how the round was run.
 
-Writing the security proofs ([Proofs-Initial](Proofs-Initial.md), phases P4 and P5, 2026-11-18) found 15 more, each
+Writing the security proofs ([Proofs-Initial](../Proofs-Initial.md), phases P4 and P5, 2026-11-18) found 15 more, each
 read in code by a second reader and recorded with the round-3 numbering (SEC-WEB-87 to 93, SEC-RTE-89 and 90,
 SEC-MAIL-98, SEC-OUT-92 and 93, SEC-PSF-90, SEC-PFS-112, SEC-PSA-81): one Medium (SEC-WEB-87, second-factor codes sent
 at once are not bounded by the lockout), five Low and nine Info. Each entry says "Report: the security proofs". A
@@ -26,10 +35,10 @@ Moving yrs to moqui's fork (2026-11-19) found two Medium in yrs that reach co-ed
 SEC-TLS-117 (a few bytes reserve what they claim; fixed in the fork) and SEC-TLS-118 (a nested delete recurses; open).
 The counts include them.
 
-This is the findings register of the security review that the pre-0.1.0 notice in the [README](../README.md) names:
+This is the findings register of the security review that the pre-0.1.0 notice in the [README](../../README.md) names:
 until 0.1.0, findings are recorded openly in this repository. The map of what can be reached is
-[Attack-Surface](../docs/security/Attack-Surface.md) and its area files; this document holds what looks wrong with
-it. The two secrets plans, [Sealed-Secrets](Sealed-Secrets.md) and [Vault-Instances](archive/Vault-Instances.md), were
+[Attack-Surface](../../docs/security/Attack-Surface.md) and its area files; this document holds what looks wrong with
+it. The two secrets plans, [Sealed-Secrets](../Sealed-Secrets.md) and [Vault-Instances](Vault-Instances.md), were
 reviewed in the same pass and changed in place.
 
 Sections: [method](#method) · [the findings that matter most](#the-findings-that-matter-most) ·
@@ -75,7 +84,8 @@ Status values:
   to check). Not read a second time. Treat it as a lead to check, not as established.
 - **confirmed**, **likely**, **not confirmed (second check)**: a second reader's verdict after trying to refute it.
 - **confirmed**, **likely (lead)**: the lead read the lines named in the finding's Re-check.
-- **refuted**: read again and found not to hold; listed at the end.
+- **refuted**: read again and found not to hold; the entry names the guard that stops it (SEC-BOS-111, SEC-BOS-128,
+  SEC-BAP-122, SEC-BAP-130).
 - **fixed**, **fixed in part**: changed in code, the entry's **Fix** saying how, with its test; in part, the entry
   says what is left.
 - **accepted**: read in code and found to hold, but no change is worth making (an Info finding whose risk is
@@ -83,8 +93,8 @@ Status values:
 - **kept by decision**, **deferred**: the owner's call, recorded in the entry.
 - **proposed**: the security cost of a design a plan proposes and has neither decided nor built; the entry names the
   decision and what it weighs. It becomes an ordinary finding when the design is built, or goes with the proposal.
-- **moved**: carried to [Remaining-Work](Remaining-Work.md), [Testing-Needed](Testing-Needed.md) or
-  [Future-Plans](Future-Plans.md), which link back to the entry (what needs a device, a toolchain or a design of its
+- **moved**: carried to [Remaining-Work](../Remaining-Work.md), [Testing-Needed](../Testing-Needed.md) or
+  [Future-Plans](../Future-Plans.md), which link back to the entry (what needs a device, a toolchain or a design of its
   own).
 
 Severity: Critical, an unauthenticated caller gets code execution, another user's session, or bulk data. High, an
@@ -511,6 +521,56 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
    TLS server-name option in the fork); a new greeting can be pruned before its fallback row replicates (SEC-CLU-90);
    the SupportPortal spec's out-of-memory failure in full mr-mantle runs did not narrow (cumulative over the run).
 
+14. **The last open findings, 2026-11-27.** The 220 findings still open (3 Medium, 90 Low, 127 Info, most with no
+   second reading) were each read in code on the current tree and closed in four batches, each made by one agent, read
+   by a reviewer and read again after its follow-ups (two or three rounds each): F1, the framework's web, routes,
+   administration, tools, AI, git, data, script, outbound and development findings (70); F2, mail, files, calls and
+   chat, cluster and the clients (53); C1, PASS and the forum (45); C2, BOSS, the business apps and SEC-DAT-86 and 88
+   (52). Of the 220: 170 fixed, 15 fixed in part, 28 accepted (every one Info), 4 refuted (SEC-BOS-111, SEC-BOS-128,
+   SEC-BAP-122, SEC-BAP-130), 4 moved (SEC-COM-84, SEC-DAT-13, SEC-PSF-07, SEC-PSA-11) and SEC-BOS-105 kept by
+   decision; no new id was filed. Every finding of the register now has one of those statuses or `fixed`, but for SEC-CLI-128 and
+   SEC-CLI-129, filed the same day by the [App-Startup](../App-Startup.md#decisions) plan with the status `proposed`:
+   the security cost of its decisions D1 and D3, decided with that plan before S3 and S4 are built.
+
+   The Medium ones: SEC-TLS-118 is fixed (moqui-collab decodes each update before it applies it and holds a page's
+   shared types to 256 levels, a cluster peer's update and a stored state included; a reviewer's forged-id bypass was
+   found and closed before the merge); SEC-DAT-82 and SEC-CLI-81 are fixed in part (Mantle's index fields for the hide
+   rules; a webview per account on the phone). The two deferred designs are built: SEC-COM-19 (a routed stanza from a
+   blocked sender is dropped before the target's queue, routed stanzas are held to a rate per sender and target, and
+   another user's routed stanzas are never kept for a detached session) and SEC-COM-26 (a stream that authenticates
+   nothing and is no trunk's is closed, with a cap per unknown source and one for all of them).
+
+   Behaviour to know: a component directory must be named `components` for its deploys and removals (SEC-TLS-104); a
+   MySQL `sslmode=require` now encrypts without verifying, and a conf connection to MySQL with no mode is `verify-full`
+   off loopback (SEC-DAT-97, Run-Deploy); an EDI order whose total is zero or less waits for a person's approval
+   (SEC-BAP-117); turning accounting self approval on takes `ACCOUNTING_SELF_APPROVAL`, ADMIN's (SEC-BOS-06); an
+   invitation's steps are POSTs (SEC-BOS-146); `MANTLE_USER_ORG` filters with no organizations match no rows, and an
+   existing deployment keeps its old maps until it reloads `OrganizationFilters.xml` (SEC-DAT-88); an editor whose
+   co-editing update skips clocks reloads, and a peer's update that arrives out of order waits for the next tick's
+   merge (SEC-TLS-118); a later bounce report counts only for a recorded recipient, and bounces the message only when
+   every recipient failed (SEC-MAIL-91); a detached XMPP session gets no other user's routed stanzas, positions or PEP
+   updates (SEC-COM-19); a forum rule is matched in linear time, so a stored rule with look-around stops matching and is
+   listed as invalid (SEC-PFS-90). New settings: `llm-facade/limits@user-open-runs`, `entity-facade@max-reply-bytes`,
+   `xmpp-server@routed-rate` and `routed-burst`, `sip-server/limits@unauthenticated-seconds`,
+   `max-connections-per-unknown-source` and `max-unknown-connections`, mr-pass's `pass@import-max-bytes` and
+   `import-max-entries`. New host members: `StringUtilities.regexTest` and `regexMask`, `System.propertyMatches`,
+   `ec.resource.writePrivateFile`, and `getServiceDefinition`'s `serviceName`, `verb` and `noun`.
+
+   Accepted with the fixes: through one VERP address, a recipient who saw every other recipient's address can still
+   report them all failed and so bounce the message (SEC-MAIL-91); a terminal ticket is reusable for its 300 seconds
+   (SEC-FIL-64). What is left (the owner's decisions, the code work, and what was found while fixing in items 3 to 13
+   and not fixed since) is in [Remaining-Work](../Remaining-Work.md#sessions-notifications-and-security), and the
+   device, build and tool checks in [Testing-Needed](../Testing-Needed.md#security-review-remainders).
+
+   Validation on master after the four merges and origin's Location-Sharing work (2026-11-27): `cargo lint`,
+   `cargo lint-min` and `scripts/check-packages.sh` pass (the last found a variable only the `imap` feature reads,
+   fixed in `3e1635465`); `./moq test-framework` passes every step on the release binary; `./moq test-apps` passes
+   5038 of 5038 server features, 48 client features and the proofs; `./moq test-clients desktop` passes. A first run
+   on a debug binary failed two specs and the time limits: PurchaseApprovals' budget override and SmithyGithubImport's
+   claim each passed alone twice on the release binary (flaky under load), and the times passed on release. Each
+   batch ran its component's acceptance suite only where it changed an acceptance test; the rule is since that the
+   changed test runs alone (AGENTS.md, `9efbf257f`).
+
 ## Counts
 
 | Area | Critical | High | Medium | Low | Info | Refuted | Total |
@@ -530,19 +590,19 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 | PASS authority and public accounts (`PSA`) | 0 | 0 | 1 | 10 | 3 | 0 | 14 |
 | PASS application services (Mantle) (`PSS`) | 0 | 0 | 8 | 26 | 9 | 0 | 43 |
 | Forum and Smithy (`PFS`) | 0 | 2 | 4 | 23 | 12 | 0 | 41 |
-| BOSS access model; Admin, Commons, People, Accounting (`BOS`) | 0 | 2 | 22 | 37 | 14 | 0 | 75 |
-| BOSS business apps and the Mantle REST root (`BAP`) | 0 | 3 | 17 | 30 | 20 | 0 | 70 |
+| BOSS access model; Admin, Commons, People, Accounting (`BOS`) | 0 | 2 | 22 | 35 | 14 | 2 | 75 |
+| BOSS business apps and the Mantle REST root (`BAP`) | 0 | 3 | 17 | 30 | 18 | 2 | 70 |
 | Clients (`CLI`) | 0 | 0 | 7 | 22 | 29 | 0 | 58 |
 | Script engine, templates and parsers (`SCR`) | 0 | 3 | 7 | 13 | 2 | 0 | 25 |
 | Outbound requests, processes and packaging (`OUT`) | 0 | 0 | 7 | 15 | 5 | 0 | 27 |
 | Development tools (`DEV`) | 0 | 0 | 3 | 7 | 5 | 0 | 15 |
-| **All** | 0 | 24 | 177 | 415 | 162 | 0 | 778 |
+| **All** | 0 | 24 | 177 | 413 | 160 | 4 | 778 |
 
 ## Findings by area
 
 ### Web authentication and controls
 
-Map file: [Attack-Surface-Web.md](../docs/security/Attack-Surface-Web.md). Reviewer report: `security-review-evidence/slice-1.md` (and `slice-1b.md` where the slice was continued).
+Map file: [Attack-Surface-Web.md](../../docs/security/Attack-Surface-Web.md). Reviewer report: `security-review-evidence/slice-1.md` (and `slice-1b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -576,7 +636,7 @@ Map file: [Attack-Surface-Web.md](../docs/security/Attack-Surface-Web.md). Revie
 
 ### Routes, screens and REST
 
-Map file: [Attack-Surface-Routes.md](../docs/security/Attack-Surface-Routes.md). Reviewer report: `security-review-evidence/slice-2.md` (and `slice-2b.md` where the slice was continued).
+Map file: [Attack-Surface-Routes.md](../../docs/security/Attack-Surface-Routes.md). Reviewer report: `security-review-evidence/slice-2.md` (and `slice-2b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -613,7 +673,7 @@ Map file: [Attack-Surface-Routes.md](../docs/security/Attack-Surface-Routes.md).
 
 ### Administration, identity and sign-in
 
-Map file: [Attack-Surface-Admin.md](../docs/security/Attack-Surface-Admin.md). Reviewer report: `security-review-evidence/slice-3.md` (and `slice-3b.md` where the slice was continued).
+Map file: [Attack-Surface-Admin.md](../../docs/security/Attack-Surface-Admin.md). Reviewer report: `security-review-evidence/slice-3.md` (and `slice-3b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -644,7 +704,7 @@ Map file: [Attack-Surface-Admin.md](../docs/security/Attack-Surface-Admin.md). R
 
 ### Tools, System, Monitor and Dashboards
 
-Map file: [Attack-Surface-Tools.md](../docs/security/Attack-Surface-Tools.md). Reviewer report: `security-review-evidence/slice-4.md` (and `slice-4b.md` where the slice was continued).
+Map file: [Attack-Surface-Tools.md](../../docs/security/Attack-Surface-Tools.md). Reviewer report: `security-review-evidence/slice-4.md` (and `slice-4b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -708,7 +768,7 @@ Map file: [Attack-Surface-Tools.md](../docs/security/Attack-Surface-Tools.md). R
 
 ### LLM, A2A, MCP and Assist
 
-Map file: [Attack-Surface-AI.md](../docs/security/Attack-Surface-AI.md). Reviewer report: `security-review-evidence/slice-5.md` (and `slice-5b.md` where the slice was continued).
+Map file: [Attack-Surface-AI.md](../../docs/security/Attack-Surface-AI.md). Reviewer report: `security-review-evidence/slice-5.md` (and `slice-5b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -750,7 +810,7 @@ Map file: [Attack-Surface-AI.md](../docs/security/Attack-Surface-AI.md). Reviewe
 
 ### Git hosting and pipelines
 
-Map file: [Attack-Surface-Git.md](../docs/security/Attack-Surface-Git.md). Reviewer report: `security-review-evidence/slice-6.md` (and `slice-6b.md` where the slice was continued).
+Map file: [Attack-Surface-Git.md](../../docs/security/Attack-Surface-Git.md). Reviewer report: `security-review-evidence/slice-6.md` (and `slice-6b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -796,7 +856,7 @@ Map file: [Attack-Surface-Git.md](../docs/security/Attack-Surface-Git.md). Revie
 
 ### Mail
 
-Map file: [Attack-Surface-Mail.md](../docs/security/Attack-Surface-Mail.md). Reviewer report: `security-review-evidence/slice-7.md` (and `slice-7b.md` where the slice was continued).
+Map file: [Attack-Surface-Mail.md](../../docs/security/Attack-Surface-Mail.md). Reviewer report: `security-review-evidence/slice-7.md` (and `slice-7b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -816,8 +876,8 @@ Map file: [Attack-Surface-Mail.md](../docs/security/Attack-Surface-Mail.md). Rev
 | SEC-MAIL-65 | runtime/components/base/framework/service/org/moqui/impl/UserServices.xml:441-459 | Reset passwords and verification tokens are kept in clear in EmailMessage.body | Low | fixed |
 | SEC-MAIL-66 | crates/moqui-mail/src/mx.rs:977-1010 (`hosts`), 1053-1075, 1138-1160 (`session`), 1313-1326 (`sts::fetch`) | Edge MX delivery connects to whatever address a recipient domain's DNS names, and falls back to clear text | Low | fixed |
 | SEC-MAIL-67 | crates/moqui-mail/src/auth.rs:405-418 (`signing_domain`), 493-512 (`sign_for`), 763-790 (`verify_internal`) | A mail user's hosted domain is one the node signs for and then verifies as its own | Low | fixed |
-| SEC-MAIL-10 | `runtime/components/base/basic-comms/screen/BasicComms/Inbox/Mail.qvue:1880` | Mail forged as from the reader loads remote images without asking | Info | reported (to check) |
-| SEC-MAIL-68 | runtime/components/base/framework/service/org/moqui/mail/EmailClientServices.xml:5002-5034 (`create#EmailIdentity`), 3357-3359 (`save#Draft`) | An identity's address is any text with an @ | Info | reported (confirmed in code) |
+| SEC-MAIL-10 | `runtime/components/base/basic-comms/screen/BasicComms/Inbox/Mail.qvue:1880` | Mail forged as from the reader loads remote images without asking | Info | fixed |
+| SEC-MAIL-68 | runtime/components/base/framework/service/org/moqui/mail/EmailClientServices.xml:5002-5034 (`create#EmailIdentity`), 3357-3359 (`save#Draft`) | An identity's address is any text with an @ | Info | fixed |
 | SEC-MAIL-81 | `crates/moqui-mail/src/auth.rs:643-665` (`verify_with`), `crates/moqui-host/src/smtp.rs:1946-1956`, `crates/moqui-mail/src/store.rs:128-137` | A message whose From names two domains, or none, is not held to DMARC | Medium | fixed |
 | SEC-MAIL-82 | `crates/moqui-mail/src/implementation.rs:1663-1677` (`lettre_send`), `crates/moqui-mail/src/auth.rs:408-417` (`signing_domain`), `crates/moqui-mail/src/edge_mail.rs:629-634`, `EmailClientServices.xml:5107-5122` (`create#EmailIdentity`) | A mail user gets the node's DKIM signature on mail From any address of a hosted domain | Medium | fixed |
 | SEC-MAIL-83 | `crates/moqui-mail/src/mx.rs:1161-1288` (`session`), 1149-1155 (`Target::step`), 442-491 | A recipient domain's mail server holds an MX delivery session without end and makes the node buffer an unbounded line | Medium | fixed |
@@ -826,20 +886,20 @@ Map file: [Attack-Surface-Mail.md](../docs/security/Attack-Surface-Mail.md). Rev
 | SEC-MAIL-86 | `crates/moqui-core/src/edge/queue.rs:273-397` (`enqueue`), 1234-1266 (`fail_over_cap`), `crates/moqui-host/src/smtp_queue.rs:418-439` | Mail the edge node answered 250 for is failed, oldest first, when a pairing's queue passes its size cap | Low | fixed |
 | SEC-MAIL-87 | `crates/moqui-mail/src/edge_mail.rs:284-308` (`inbound_item_trusting`), `crates/moqui-core/src/edge/queue.rs:308-329` | On an edge node a second message with a known Message-ID and the same recipients is answered 250 and dropped (SEC-MAIL-08's fix does not cover the queue) | Low | fixed |
 | SEC-MAIL-88 | `crates/moqui-mail/src/auth.rs:666-677` | A trusted ARC sealer overrides DMARC whatever that sealer recorded about the message | Low | fixed |
-| SEC-MAIL-89 | `crates/moqui-mail/src/auth.rs:385-403` (`from_address`), `crates/moqui-mail/src/edge_mail.rs:810-835` (`refused_sender`), 908-960 (`deliver_own`), `crates/moqui-mail/src/store.rs:128-130` | On an all-in-one node the sender rule and the mailbox read different From fields | Low | reported (likely) |
+| SEC-MAIL-89 | `crates/moqui-mail/src/auth.rs:385-403` (`from_address`), `crates/moqui-mail/src/edge_mail.rs:810-835` (`refused_sender`), 908-960 (`deliver_own`), `crates/moqui-mail/src/store.rs:128-130` | On an all-in-one node the sender rule and the mailbox read different From fields | Low | fixed |
 | SEC-MAIL-90 | `crates/moqui-mail/src/auth.rs:408-417`, `crates/moqui-mail/src/edge_mail.rs:618-634` | With `mail_dkim_domains` set, an edge node signs one pairing's mail for another pairing's domain | Low | fixed |
-| SEC-MAIL-91 | `crates/moqui-mail/src/edge_mail.rs:92-106`, 121-180, 1035-1072, 1111-1142; `crates/moqui-host/src/smtp_queue.rs:177-194`, 394-417 | Anyone who has seen a relayed message's Return-Path can report it bounced | Low | reported (likely) |
+| SEC-MAIL-91 | `crates/moqui-mail/src/edge_mail.rs:92-106`, 121-180, 1035-1072, 1111-1142; `crates/moqui-host/src/smtp_queue.rs:177-194`, 394-417 | Anyone who has seen a relayed message's Return-Path can report it bounced | Low | fixed |
 | SEC-MAIL-92 | `crates/moqui-mail/src/auth.rs:599-608`, 660-665 | A DMARC check that ends in a DNS error accepts the message | Low | fixed |
-| SEC-MAIL-93 | `crates/moqui-mail/src/sync.rs:3292-3324` (`sync_due_accounts`), 1045-1119 (`run_sync`), 2793-2844 (`store_new`), `crates/moqui-mail/src/inbound.rs:1070-1071` | A slow mail server holds the one sync job, and a sync stores without any size or quota limit | Low | reported (likely) |
+| SEC-MAIL-93 | `crates/moqui-mail/src/sync.rs:3292-3324` (`sync_due_accounts`), 1045-1119 (`run_sync`), 2793-2844 (`store_new`), `crates/moqui-mail/src/inbound.rs:1070-1071` | A slow mail server holds the one sync job, and a sync stores without any size or quota limit | Low | fixed |
 | SEC-MAIL-94 | `crates/moqui-mail/src/sync.rs:486-492`, 444-457, 905-906, 1155-1176; `EmailClientServices.xml:133` | A sync shows the remote server's own text, which the test was changed to hide (SEC-MAIL-02's fix does not cover the sync) | Low | fixed |
-| SEC-MAIL-95 | `crates/moqui-mail/src/edge_mail.rs:967-1010` (`queue_back`) | Mail queued back to the local node keeps any Authentication-Results that claims the edge node's name | Info | reported (to check) |
-| SEC-MAIL-96 | `crates/moqui-host/src/smtp_queue.rs:490-496`, 508-519, 108-131 | Every RCPT and every message of an edge node's listener waits on one lock held across database work | Info | reported (confirmed in code) |
-| SEC-MAIL-97 | `crates/moqui-mail/src/oauth.rs:1360`, 1799-1803, 1817; `EmailClientServices.xml:263-267` | The OAuth callback makes an account with authorization disabled, so a shared account needs no mail administrator when the provider row has no IMAP host | Info | reported (to check) |
-| SEC-MAIL-98 | `crates/moqui-mail/src/oauth.rs:1517-1525`, `:1548-1570`, `:1592-1600` | The mail OAuth sign-in reads the ID token's claims without checking its signature, and nothing holds the token endpoint to https | Info | confirmed (second check) |
+| SEC-MAIL-95 | `crates/moqui-mail/src/edge_mail.rs:967-1010` (`queue_back`) | Mail queued back to the local node keeps any Authentication-Results that claims the edge node's name | Info | fixed |
+| SEC-MAIL-96 | `crates/moqui-host/src/smtp_queue.rs:490-496`, 508-519, 108-131 | Every RCPT and every message of an edge node's listener waits on one lock held across database work | Info | fixed |
+| SEC-MAIL-97 | `crates/moqui-mail/src/oauth.rs:1360`, 1799-1803, 1817; `EmailClientServices.xml:263-267` | The OAuth callback makes an account with authorization disabled, so a shared account needs no mail administrator when the provider row has no IMAP host | Info | fixed |
+| SEC-MAIL-98 | `crates/moqui-mail/src/oauth.rs:1517-1525`, `:1548-1570`, `:1592-1600` | The mail OAuth sign-in reads the ID token's claims without checking its signature, and nothing holds the token endpoint to https | Info | accepted |
 
 ### Files, DAV, SSH and the terminal
 
-Map file: [Attack-Surface-Files.md](../docs/security/Attack-Surface-Files.md). Reviewer report: `security-review-evidence/slice-8.md` (and `slice-8b.md` where the slice was continued).
+Map file: [Attack-Surface-Files.md](../../docs/security/Attack-Surface-Files.md). Reviewer report: `security-review-evidence/slice-8.md` (and `slice-8b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -856,11 +916,11 @@ Map file: [Attack-Surface-Files.md](../docs/security/Attack-Surface-Files.md). R
 | SEC-FIL-63 | crates/moqui-host/src/command/shell.rs:185 | Admin shell error text and C1 controls reach the administrator's terminal unescaped | Low | fixed |
 | SEC-FIL-67 | crates/moqui-dav/src/pim/rrule.rs:35 | Calendar and contact objects have no parser limit of their own; the bound is the 256 MiB DAV body | Low | fixed |
 | SEC-FIL-09 | `runtime/components/addon/mr-boss/screen/PublicShare.xml:28,56` | `PublicShare.xml` `open` and `upload` name no method | Info | fixed |
-| SEC-FIL-10 | `FileServices.xml:2649-2655` | A link or share stays valid after its maker loses access | Info | reported (confirmed in code) |
-| SEC-FIL-11 | `crates/moqui-host/src/ssh/server.rs:746-763`, `:1073`, `:1196` | SSH permissions are fixed for the life of a connection | Info | reported (confirmed in code) |
-| SEC-FIL-64 | crates/moqui-host/src/term/registry.rs:96 | A terminal ticket is reusable for 300 seconds and travels in the `/termws` query string | Info | reported (confirmed in code) |
+| SEC-FIL-10 | `FileServices.xml:2649-2655` | A link or share stays valid after its maker loses access | Info | fixed |
+| SEC-FIL-11 | `crates/moqui-host/src/ssh/server.rs:746-763`, `:1073`, `:1196` | SSH permissions are fixed for the life of a connection | Info | fixed |
+| SEC-FIL-64 | crates/moqui-host/src/term/registry.rs:96 | A terminal ticket is reusable for 300 seconds and travels in the `/termws` query string | Info | fixed in part |
 | SEC-FIL-65 | crates/moqui-host/src/term/access.rs:247 | `terminal` `command-line` and `host-sessions` are on in production for any value but `dev` or `false` | Info | fixed |
-| SEC-FIL-66 | crates/moqui-host/src/term/hold.rs:139 | The `term-hold` socket checks file modes only; a connection starts any program | Info | reported (confirmed in code) |
+| SEC-FIL-66 | crates/moqui-host/src/term/hold.rs:139 | The `term-hold` socket checks file modes only; a connection starts any program | Info | fixed |
 | SEC-FIL-81 | `crates/moqui-host/src/ssh/server.rs:765-772`; `crates/moqui-host/src/term/apps.rs:343-344` | An SSH client sets a terminal size of up to 10 million cells, and each `apps` session draws frames that large | Medium | fixed |
 | SEC-FIL-82 | `crates/moqui-dav/src/pim/ics.rs:31-36`, `:54-98` | A calendar file of nested `BEGIN` lines overflows the stack when its parse tree is dropped, which ends the server process | Medium | fixed |
 | SEC-FIL-83 | `crates/moqui-dav/src/dav/files.rs:319-337`; `crates/moqui-dav/src/dav/locks.rs:99-158` | Any user a drive is listed for locks any path of it over WebDAV, the whole drive included, and holds every other writer | Medium | fixed |
@@ -871,21 +931,21 @@ Map file: [Attack-Surface-Files.md](../docs/security/Attack-Surface-Files.md). R
 | SEC-FIL-88 | `crates/moqui-host/src/ssh/server.rs:1108-1128`, `:1321-1341` | A connection's per-channel maps are never cleared, so repeated channels grow the server's memory | Low | fixed |
 | SEC-FIL-89 | `crates/moqui-host/src/ssh/server.rs:1035-1045`; `crates/moqui-core/src/user/login.rs:527-529` | An SSH key login does not check `ipAllowed` and writes no login history | Low | fixed |
 | SEC-FIL-90 | `crates/moqui-host/src/command/line.rs:142-147`; `crates/moqui-host/src/command/mod.rs:143-178` | The prompt's history stores whole command lines, with service parameters and `js` code, as a user preference | Low | fixed |
-| SEC-FIL-91 | `crates/moqui-host/src/ssh/agent.rs:79-84`, `:194-204` | `agent-apps <id>` waits on a blocking lock on the async runtime while another command runs in that session | Low | reported (likely) |
-| SEC-FIL-92 | `crates/moqui-host/src/ssh/server.rs:979-983`, `:1049` | The SSH login lines write the client's username to the log as sent | Low | reported (likely) |
+| SEC-FIL-91 | `crates/moqui-host/src/ssh/agent.rs:79-84`, `:194-204` | `agent-apps <id>` waits on a blocking lock on the async runtime while another command runs in that session | Low | fixed |
+| SEC-FIL-92 | `crates/moqui-host/src/ssh/server.rs:979-983`, `:1049` | The SSH login lines write the client's username to the log as sent | Low | fixed |
 | SEC-FIL-93 | `crates/moqui-dav/src/pim/rrule.rs:227`, `:268-270`; `crates/moqui-dav/src/pim/ics.rs:296-297` | The calendar parsers panic on three malformed values | Low | fixed |
-| SEC-FIL-94 | `crates/moqui-dav/src/pim/ics.rs:893-896`, `:928-930`; `crates/moqui-dav/src/pim/line.rs:160-165` | The iCalendar writer writes RRULE and URL values as stored, so a stored line break adds content lines | Low | reported (likely) |
-| SEC-FIL-95 | `crates/moqui-dav/src/dav/xml.rs:73-84`; `crates/moqui-dav/src/pim/vcard.rs:134-143` | Two parses of a 1 MiB DAV body are quadratic | Low | reported (likely) |
+| SEC-FIL-94 | `crates/moqui-dav/src/pim/ics.rs:893-896`, `:928-930`; `crates/moqui-dav/src/pim/line.rs:160-165` | The iCalendar writer writes RRULE and URL values as stored, so a stored line break adds content lines | Low | fixed |
+| SEC-FIL-95 | `crates/moqui-dav/src/dav/xml.rs:73-84`; `crates/moqui-dav/src/pim/vcard.rs:134-143` | Two parses of a 1 MiB DAV body are quadratic | Low | fixed |
 | SEC-FIL-96 | `crates/moqui-host/src/ssh/client.rs:508-511`; `crates/moqui-core/src/service/system_sync/sftp.rs:358-359` | The SFTP client reads a remote file whole, with no size bound | Low | fixed |
-| SEC-FIL-97 | `crates/moqui-host/src/term/access.rs:179-189`; `crates/moqui-host/src/command/host.rs:51` | Over SSH a loopback peer is the server's own machine, and a recent sign-in is never asked | Info | reported (confirmed in code) |
-| SEC-FIL-98 | `runtime/components/base/framework/service/org/moqui/resource/FileServices.xml:1545-1551`, `:1476-1481` | A drive's `.trash` is guarded in four services only | Info | reported (confirmed in code) |
+| SEC-FIL-97 | `crates/moqui-host/src/term/access.rs:179-189`; `crates/moqui-host/src/command/host.rs:51` | Over SSH a loopback peer is the server's own machine, and a recent sign-in is never asked | Info | fixed |
+| SEC-FIL-98 | `runtime/components/base/framework/service/org/moqui/resource/FileServices.xml:1545-1551`, `:1476-1481` | A drive's `.trash` is guarded in four services only | Info | fixed |
 | SEC-FIL-99 | `crates/moqui-tui/src/decode.rs:72-76`, `:91-104`; `crates/moqui-host/src/term/apps.rs:304`, `:389-393` | A bracketed paste is kept in memory with no cap and no deadline, over SSH before a login | Medium | fixed |
 | SEC-FIL-100 | `crates/moqui-tui/src/decode.rs:300-305`; `crates/moqui-tui/src/ui/session_loop.rs:240-241`, `:251-257`; `crates/moqui-host/src/termws.rs:274-284` | The browser terminal's 500 by 500 limit does not hold: the session takes a window size from its input bytes, which brings SEC-FIL-81 to every signed-in user | Medium | fixed |
-| SEC-FIL-101 | `runtime/components/base/framework/service/org/moqui/resource/FileServices.xml:328-333`, `:417-419`; `crates/moqui-git/src/fs.rs:440-454` | A drive mirror's URL may be plain `http://`, and the mirror's stored token is offered to it | Low | likely (second check) |
+| SEC-FIL-101 | `runtime/components/base/framework/service/org/moqui/resource/FileServices.xml:328-333`, `:417-419`; `crates/moqui-git/src/fs.rs:440-454` | A drive mirror's URL may be plain `http://`, and the mirror's stored token is offered to it | Low | fixed |
 
 ### Calls, chat and messaging
 
-Map file: [Attack-Surface-Comms.md](../docs/security/Attack-Surface-Comms.md). Reviewer report: `security-review-evidence/slice-9.md` (and `slice-9b.md` where the slice was continued).
+Map file: [Attack-Surface-Comms.md](../../docs/security/Attack-Surface-Comms.md). Reviewer report: `security-review-evidence/slice-9.md` (and `slice-9b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -905,45 +965,45 @@ Map file: [Attack-Surface-Comms.md](../docs/security/Attack-Surface-Comms.md). R
 | SEC-COM-15 | `XmppServices.xml:82-90` (`check#Credential`) | An XMPP session outlives the account's `terminateDate` and keeps receiving room messages | Low | fixed |
 | SEC-COM-16 | `crates/moqui-xmpp/src/session/chat.rs:303-310` | An upload URL with its token is written to the log | Low | fixed |
 | SEC-COM-17 | `crates/moqui-rtc/src/turn/mod.rs:495-503` | TURN allocation quotas are per username, and a leg or user can get many usernames | Low | fixed |
-| SEC-COM-18 | `crates/moqui-rtc/src/turn/mod.rs:340-358` | An XMPP user's TURN credential can relay to the host's own public addresses | Low | reported (likely) |
-| SEC-COM-19 | `crates/moqui-xmpp/src/registry.rs:182-190` | One user can close another user's XMPP sessions with routed stanzas | Low | deferred |
+| SEC-COM-18 | `crates/moqui-rtc/src/turn/mod.rs:340-358` | An XMPP user's TURN credential can relay to the host's own public addresses | Low | fixed |
+| SEC-COM-19 | `crates/moqui-xmpp/src/registry.rs:182-190` | One user can close another user's XMPP sessions with routed stanzas | Low | fixed |
 | SEC-COM-20 | `XmppServices.xml:507-514` (PEP), `592-598` (block list), `611-626` (push), `660-667` and `738-750` (uploads) | Per-user storage over XMPP has no total bound | Low | fixed |
 | SEC-COM-21 | `runtime/components/base/basic-comms/screen/BasicComms/Settings/ChatApps.xml:22-27` | Chat apps makes a long-lived, unscoped credential with no recent sign-in | Low | fixed |
 | SEC-COM-22 | `crates/moqui-xmpp/src/session/auth.rs:411-421` | SCRAM and FAST sign-ins leave no login history and no last-used date | Low | fixed |
-| SEC-COM-26 | `crates/moqui-sip/src/ua.rs:492-499`, `crates/moqui-lib/src/source_guard.rs:214-215` | Unauthenticated connections can hold every SIP TCP and TLS slot | Low | deferred |
+| SEC-COM-26 | `crates/moqui-sip/src/ua.rs:492-499`, `crates/moqui-lib/src/source_guard.rs:214-215` | Unauthenticated connections can hold every SIP TCP and TLS slot | Low | fixed |
 | SEC-COM-27 | `crates/moqui-sip/src/media.rs:149-150,264-266`, `crates/moqui-host/src/sip/leg.rs:334` | RTP is sent to whatever address an SDP names, with no address check | Low | fixed |
 | SEC-COM-28 | `crates/moqui-sip/src/digest.rs:472-486` | The digest answer's `uri` is not compared with the request | Low | fixed |
-| SEC-COM-09 | `runtime/components/base/framework/service/org/moqui/chat/ChatServices.xml:192,2225,2231,3125,4164`, `:1367` | "Authorization disabled" doubles as "trusted caller" in the chat and call services | Info | reported (confirmed in code) |
+| SEC-COM-09 | `runtime/components/base/framework/service/org/moqui/chat/ChatServices.xml:192,2225,2231,3125,4164`, `:1367` | "Authorization disabled" doubles as "trusted caller" in the chat and call services | Info | accepted |
 | SEC-COM-10 | `crates/moqui-channels/src/telnyx.rs:97-100,122-124,150-161,242-244,388-391` | An SMS bridge's API base may be `http://`, and one setting lifts the address guard | Info | fixed |
 | SEC-COM-23 | `crates/moqui-rtc/src/turn/mod.rs:84-122` | `is_public` leaves out some non-public IPv6 ranges | Info | fixed |
-| SEC-COM-24 | `crates/moqui-xmpp/src/session/auth.rs:242-248` | The SCRAM decoy differs from a real user by one service call | Info | reported (to check) |
-| SEC-COM-29 | `call/Voicemail.js:625-637`, `crates/moqui-host/src/sip/voicemail.rs:371-374` | The phone-access answers tell an existing box from a number with none | Info | reported (likely) |
-| SEC-COM-30 | `call/Voice.js:302-309` | The emergency call email has no subject | Info | reported (confirmed in code) |
+| SEC-COM-24 | `crates/moqui-xmpp/src/session/auth.rs:242-248` | The SCRAM decoy differs from a real user by one service call | Info | fixed |
+| SEC-COM-29 | `call/Voicemail.js:625-637`, `crates/moqui-host/src/sip/voicemail.rs:371-374` | The phone-access answers tell an existing box from a number with none | Info | fixed |
+| SEC-COM-30 | `call/Voice.js:302-309` | The emergency call email has no subject | Info | fixed |
 | SEC-COM-81 | `crates/moqui-core/src/service/web_push.rs:190-274`, `chat_push.rs:323-325`, `:1087-1111` | One signed-in user can stall every user's chat pushes, and make the server post to a host of their choice without limit | Medium | fixed |
 | SEC-COM-82 | `crates/moqui-xmpp/src/framing.rs:90-104` | An XMPP client can send a stanza far over the 256 KiB limit, before it signs in, and the server keeps it in memory | Medium | fixed |
 | SEC-COM-83 | `crates/moqui-sip/src/ua.rs:447-458`, `:472-490` | A SIP request with a made-up To tag passes the request rate limit and the transaction cap | Low | fixed |
-| SEC-COM-84 | `crates/moqui-sip/src/ua_phones.rs:574-588`, `crates/moqui-sip/src/ua.rs:884`, `:920-925` | A UDP phone's or PBX's Contact decides where the server sends its ACK, BYE and re-INVITE, a new TCP connection included | Low | reported (likely) |
-| SEC-COM-85 | `runtime/components/base/framework/service/org/moqui/call/CallCaptionServices.xml:116-118`, `CallRecordings.js:738` | Stored captions are kept for ever and nothing reads them | Low | fixed in part |
+| SEC-COM-84 | `crates/moqui-sip/src/ua_phones.rs:574-588`, `crates/moqui-sip/src/ua.rs:884`, `:920-925` | A UDP phone's or PBX's Contact decides where the server sends its ACK, BYE and re-INVITE, a new TCP connection included | Low | moved |
+| SEC-COM-85 | `runtime/components/base/framework/service/org/moqui/call/CallCaptionServices.xml:116-118`, `CallRecordings.js:738` | Stored captions are kept for ever and nothing reads them | Low | fixed |
 | SEC-COM-86 | `crates/moqui-sip/src/dtmf.rs:176-186`, `crates/moqui-host/src/sip/leg.rs:305-312`, `crates/moqui-host/src/sip/mod.rs:1575-1587` | Each DTMF packet of a phone leg becomes a task and a service call, with no rate | Low | fixed |
-| SEC-COM-87 | `crates/moqui-rtc/src/audio/opus.rs:82-85`, `jitter.rs:153-154`, `crates/moqui-host/src/rtc/captions.rs:719-721`, `crates/moqui-host/src/sip/leg.rs:218-220` | Hostile Opus packets are decoded by a library that indexes without bounds checks, on threads that do not catch a panic | Low | reported (to check) |
+| SEC-COM-87 | `crates/moqui-rtc/src/audio/opus.rs:82-85`, `jitter.rs:153-154`, `crates/moqui-host/src/rtc/captions.rs:719-721`, `crates/moqui-host/src/sip/leg.rs:218-220` | Hostile Opus packets are decoded by a library that indexes without bounds checks, on threads that do not catch a panic | Low | fixed |
 | SEC-COM-88 | `crates/moqui-core/src/service/chat_bridge.rs:1159-1164`, `:1324`, `crates/moqui-channels/src/sms.rs:849-859`, `:1067-1070` | An SMS bridge whose `start` fails still sends, so an `http://` API address still gets the provider key (the fix of SEC-COM-10 does not hold on the send path) | Low | fixed |
 | SEC-COM-89 | `crates/moqui-core/src/service/chat_bridge_edge.rs:384-442`, `:531-583`, `:705`, `:787-822` | On an edge node an anonymous caller spends a Twilio or Sinch bridge's webhook allowance, learns which bridge ids exist and fills its kept refusals | Low | fixed in part |
 | SEC-COM-90 | `runtime/components/base/framework/service/org/moqui/call/Sms.js:553-561`, `:644-646`, `crates/moqui-core/src/service/chat_bridge.rs:1080-1087` | A STOP or START is remembered for 30 days only, so a signed Twilio text sent again later changes the opt-out again | Low | fixed |
 | SEC-COM-91 | `runtime/components/base/framework/service/org/moqui/call/Sms.js:616-633`, `:657-658`, `crates/moqui-core/src/service/chat_bridge_web.rs:627-645` | Inbound texts and MMS files have no cap: any outside sender makes rooms for every user of the number and stores files without a quota | Low | fixed |
 | SEC-COM-92 | `crates/moqui-core/src/service/chat_push.rs:1166-1216`, `:877`, `:1024-1066` | A chat push that waits is still sent after its message is deleted, the user leaves the room, or the account is disabled | Low | fixed |
-| SEC-COM-93 | `crates/moqui-xmpp/src/session/sm.rs:30`, `:57-66` | Stream management keeps up to 1,000 unacknowledged stanzas a session with no byte bound | Low | reported (likely) |
-| SEC-COM-94 | `crates/moqui-sip/src/ua.rs:1744-1749`, `:1634-1651`, `:1666-1686`, `crates/moqui-host/src/sip/mod.rs:1309-1315` | Whoever names a dialog's Call-ID and tags ends the call, moves its media or asks a transfer, from any address | Info | reported (to check) |
-| SEC-COM-95 | `crates/moqui-core/src/context/identity.rs:4-22`, `runtime/components/base/basic-comms/screen/BasicComms/Settings/Phone.xml:51` | `pin` is not a secret parameter name, and `setPin` takes it from a query | Info | reported (confirmed in code) |
-| SEC-COM-96 | `crates/moqui-channels/src/sms.rs:1245-1253`, `providers/twilio.rs:686-691`, `providers/twilio/group.rs:546-550` | The Twilio API credentials go to whatever host a signed webhook's `MediaUrl` names, and a next-page address is checked by prefix only | Info | reported (confirmed in code) |
-| SEC-COM-97 | `crates/moqui-core/src/service/chat_bridge_edge.rs:1276-1305` | `store#EdgeMedia` does not check that the edge queue calls it, and reads any `contentLocation` | Info | reported (confirmed in code) |
-| SEC-COM-98 | `crates/moqui-channels/src/sms.rs:771-779`, `ChatBridgeServices.xml:715-717` | A failed delivery's error shows a room's readers the provider's API address and account id | Info | reported (likely) |
-| SEC-COM-99 | `runtime/components/base/framework/service/org/moqui/call/Sms.js:300-332` | `open#PairRoom` has no limit: a user with one text number makes a room, with every user of the number in it, for each number typed | Info | reported (confirmed in code) |
-| SEC-COM-100 | `crates/moqui-xmpp/src/jids.rs` (`escape_node`), `XmppServices.xml:43-48` | Two accounts whose usernames differ only by case, or by spaces at the ends, have one JID | Info | reported (to check) |
-| SEC-COM-101 | `crates/moqui-xmpp/src/session/auth.rs:356-392`, `XmppServices.xml:104-108`, `:146-153` | A FAST token is taken by either mechanism, and the count that stops a replay is not covered by the proof | Info | reported (confirmed in code) |
+| SEC-COM-93 | `crates/moqui-xmpp/src/session/sm.rs:30`, `:57-66` | Stream management keeps up to 1,000 unacknowledged stanzas a session with no byte bound | Low | fixed |
+| SEC-COM-94 | `crates/moqui-sip/src/ua.rs:1744-1749`, `:1634-1651`, `:1666-1686`, `crates/moqui-host/src/sip/mod.rs:1309-1315` | Whoever names a dialog's Call-ID and tags ends the call, moves its media or asks a transfer, from any address | Info | accepted |
+| SEC-COM-95 | `crates/moqui-core/src/context/identity.rs:4-22`, `runtime/components/base/basic-comms/screen/BasicComms/Settings/Phone.xml:51` | `pin` is not a secret parameter name, and `setPin` takes it from a query | Info | fixed |
+| SEC-COM-96 | `crates/moqui-channels/src/sms.rs:1245-1253`, `providers/twilio.rs:686-691`, `providers/twilio/group.rs:546-550` | The Twilio API credentials go to whatever host a signed webhook's `MediaUrl` names, and a next-page address is checked by prefix only | Info | fixed |
+| SEC-COM-97 | `crates/moqui-core/src/service/chat_bridge_edge.rs:1276-1305` | `store#EdgeMedia` does not check that the edge queue calls it, and reads any `contentLocation` | Info | fixed |
+| SEC-COM-98 | `crates/moqui-channels/src/sms.rs:771-779`, `ChatBridgeServices.xml:715-717` | A failed delivery's error shows a room's readers the provider's API address and account id | Info | fixed |
+| SEC-COM-99 | `runtime/components/base/framework/service/org/moqui/call/Sms.js:300-332` | `open#PairRoom` has no limit: a user with one text number makes a room, with every user of the number in it, for each number typed | Info | fixed |
+| SEC-COM-100 | `crates/moqui-xmpp/src/jids.rs` (`escape_node`), `XmppServices.xml:43-48` | Two accounts whose usernames differ only by case, or by spaces at the ends, have one JID | Info | fixed |
+| SEC-COM-101 | `crates/moqui-xmpp/src/session/auth.rs:356-392`, `XmppServices.xml:104-108`, `:146-153` | A FAST token is taken by either mechanism, and the count that stops a replay is not covered by the proof | Info | fixed |
 
 ### Cluster and edge node
 
-Map file: [Attack-Surface-Cluster-Edge.md](../docs/security/Attack-Surface-Cluster-Edge.md). Reviewer report: `security-review-evidence/slice-10.md` (and `slice-10b.md` where the slice was continued).
+Map file: [Attack-Surface-Cluster-Edge.md](../../docs/security/Attack-Surface-Cluster-Edge.md). Reviewer report: `security-review-evidence/slice-10.md` (and `slice-10b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -953,26 +1013,26 @@ Map file: [Attack-Surface-Cluster-Edge.md](../docs/security/Attack-Surface-Clust
 | SEC-CLU-04 | `crates/moqui-core/src/cluster/mod.rs:1327`-`1350`, `:1476`-`1483` | A `ClusterMember` row decides where cluster messages go and, for `ssh://`, which host key is trusted | Low | fixed |
 | SEC-CLU-05 | `crates/moqui-host/src/pass_authority/mod.rs:131`-`154`, `:189`-`213` | The PASS authority's wrong-secret limit is keyed by the exact TCP peer | Low | fixed |
 | SEC-CLU-06 | `runtime/components/base/webroot/screen/webroot/js/MoquiLib.js:736` | A notification's `link` is followed with no scheme check | Low | fixed |
-| SEC-CLU-07 | `crates/moqui-devkit/src/deploy/git.rs:1023`-`1066`, `:798`-`801` | A cluster message makes a member load a commit the sender names | Info | reported (confirmed in code) |
+| SEC-CLU-07 | `crates/moqui-devkit/src/deploy/git.rs:1023`-`1066`, `:798`-`801` | A cluster message makes a member load a commit the sender names | Info | fixed |
 | SEC-CLU-81 | `crates/moqui-core/src/edge/pool.rs:209`-`217`, `:313`-`316`; `crates/moqui-host/src/edge_link/accept.rs:2477`-`2485` | A node with only the pairing's shared key links as a listed member that has no key pinned, with no notice | Low | fixed |
 | SEC-CLU-82 | `crates/moqui-host/src/edge_link/store.rs:156`-`193`; `crates/moqui-host/src/edge_link/accept.rs:2705`-`2721` | A valid pairing code pairs any revoked pairing id with a new key, which then has what was kept for that id | Low | fixed |
 | SEC-CLU-83 | `crates/moqui-host/src/edge_link/queue.rs:208`-`256`; `crates/moqui-host/src/edge_link/accept.rs:1623`-`1627` | `PutContent` holds up to 64 MiB a call in memory before the pairing's cap is checked, on a connection with no stream limit of its own | Low | fixed |
 | SEC-CLU-84 | `crates/moqui-host/src/edge_link/accept.rs:1567`-`1584`; `crates/moqui-host/src/edge_link/store.rs:79`-`94` | An up connection with any certificate costs a database transaction and an info log line, with no rate limit | Low | fixed |
 | SEC-CLU-85 | `crates/moqui-core/src/edge/setup.rs:476`-`482`, `:511`-`527` | The PASS client id of the edge node's offer is written unseen at Apply, over an existing client of that id | Low | fixed |
-| SEC-CLU-86 | `runtime/components/base/framework/service/org/moqui/call/Voicemail.js:343`-`366`; `runtime/components/base/framework/service/org/moqui/call/CallRecordings.js:615`-`635` | The voicemail and recording queue handlers do not refuse the wrong role | Low | reported (likely) |
+| SEC-CLU-86 | `runtime/components/base/framework/service/org/moqui/call/Voicemail.js:343`-`366`; `runtime/components/base/framework/service/org/moqui/call/CallRecordings.js:615`-`635` | The voicemail and recording queue handlers do not refuse the wrong role | Low | fixed |
 | SEC-CLU-87 | `crates/moqui-host/src/tui.rs:667`-`673`; `crates/moqui-tui/src/session/shell.rs:810`-`814`; `crates/moqui-tui/src/ui/paint.rs:195`-`213` | A notification's title is drawn on a TUI user's terminal with its control characters | Low | fixed |
 | SEC-CLU-88 | `crates/moqui-host/src/grpc_listen.rs:230`-`233`, `:264`-`267` | The gRPC listener has no idle, keepalive or request timeout | Low | fixed |
-| SEC-CLU-89 | `crates/moqui-entity/src/entity/sensitive.rs:47`-`119`; `crates/moqui-core/src/cluster/mod.rs:938`-`943`, `:1591`-`1593` | A `ClusterMember` row is not among the entities the generic tools refuse, and one with a future heartbeat is live for ever | Low | reported (likely) |
+| SEC-CLU-89 | `crates/moqui-entity/src/entity/sensitive.rs:47`-`119`; `crates/moqui-core/src/cluster/mod.rs:938`-`943`, `:1591`-`1593` | A `ClusterMember` row is not among the entities the generic tools refuse, and one with a future heartbeat is live for ever | Low | fixed |
 | SEC-CLU-90 | `crates/moqui-core/src/edge/media.rs:357`-`362`; `crates/moqui-core/src/service/call_media.rs:262`-`314` | On a dedicated edge node every pairing's greetings and prompts are kept at one location, with no cap and no removal | Low | fixed |
 | SEC-CLU-91 | `runtime/components/base/framework/service/org/moqui/call/Voice.js:924`-`937`, `:944`-`976` | As the edge node's delegate user, `record#AuthFailure` blocks any source address and `note#TrunkStatus` marks any trunk, each with an alert | Low | fixed |
-| SEC-CLU-92 | `crates/moqui-core/src/edge/caps.rs:119`-`150`; `crates/moqui-core/src/edge/replica.rs:707`-`722` | A pairing's replicated records are capped by count, not by size, though SEC-CLU-02's fix names bytes | Low | reported (likely) |
-| SEC-CLU-93 | `crates/moqui-core/src/service/edge.rs:813`-`826`; `crates/moqui-core/src/edge/pool.rs:231`-`236` | An approval of a held node names its instance id, not its key | Info | reported (confirmed in code) |
-| SEC-CLU-94 | `runtime/components/base/tools/screen/System/EdgeNode/Pair/EdgeUrl.xml:35`, `Connect.xml:33`; `crates/moqui-core/src/user/session.rs:2729`-`2730` | The pairing code is kept in clear in the session row while the wizard is open | Info | reported (likely) |
-| SEC-CLU-95 | `runtime/components/base/framework/service/org/moqui/call/CallTransfers.js:428`-`443`; `runtime/components/base/framework/service/org/moqui/call/Calls.js:2299`-`2330` | The edge node acts as a phone's user with no fresh digest answer through `refer#Call` and a device leg's `answered` | Info | reported (confirmed in code) |
+| SEC-CLU-92 | `crates/moqui-core/src/edge/caps.rs:119`-`150`; `crates/moqui-core/src/edge/replica.rs:707`-`722` | A pairing's replicated records are capped by count, not by size, though SEC-CLU-02's fix names bytes | Low | fixed |
+| SEC-CLU-93 | `crates/moqui-core/src/service/edge.rs:813`-`826`; `crates/moqui-core/src/edge/pool.rs:231`-`236` | An approval of a held node names its instance id, not its key | Info | accepted |
+| SEC-CLU-94 | `runtime/components/base/tools/screen/System/EdgeNode/Pair/EdgeUrl.xml:35`, `Connect.xml:33`; `crates/moqui-core/src/user/session.rs:2729`-`2730` | The pairing code is kept in clear in the session row while the wizard is open | Info | fixed |
+| SEC-CLU-95 | `runtime/components/base/framework/service/org/moqui/call/CallTransfers.js:428`-`443`; `runtime/components/base/framework/service/org/moqui/call/Calls.js:2299`-`2330` | The edge node acts as a phone's user with no fresh digest answer through `refer#Call` and a device leg's `answered` | Info | accepted |
 
 ### Data layer and stored secrets
 
-Map file: [Attack-Surface-Data.md](../docs/security/Attack-Surface-Data.md). Reviewer report: `security-review-evidence/slice-12.md` (and `slice-12b.md` where the slice was continued).
+Map file: [Attack-Surface-Data.md](../../docs/security/Attack-Surface-Data.md). Reviewer report: `security-review-evidence/slice-12.md` (and `slice-12b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -1010,7 +1070,7 @@ Map file: [Attack-Surface-Data.md](../docs/security/Attack-Surface-Data.md). Rev
 
 ### PASS frontend (mr-pass)
 
-Map file: [Attack-Surface-Apps-PASS.md](../runtime/components/addon/mr-pass/docs/security/Attack-Surface-Apps-PASS.md). Reviewer report: `security-review-evidence/slice-14.md` (and `slice-14b.md` where the slice was continued).
+Map file: [Attack-Surface-Apps-PASS.md](../../runtime/components/addon/mr-pass/docs/security/Attack-Surface-Apps-PASS.md). Reviewer report: `security-review-evidence/slice-14.md` (and `slice-14b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -1036,7 +1096,7 @@ Map file: [Attack-Surface-Apps-PASS.md](../runtime/components/addon/mr-pass/docs
 
 ### PASS authority and public accounts
 
-Map file: [Attack-Surface-Apps-PASS.md](../runtime/components/addon/mr-pass/docs/security/Attack-Surface-Apps-PASS.md). Reviewer report: `security-review-evidence/slice-15.md` (and `slice-15b.md` where the slice was continued).
+Map file: [Attack-Surface-Apps-PASS.md](../../runtime/components/addon/mr-pass/docs/security/Attack-Surface-Apps-PASS.md). Reviewer report: `security-review-evidence/slice-15.md` (and `slice-15b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -1057,7 +1117,7 @@ Map file: [Attack-Surface-Apps-PASS.md](../runtime/components/addon/mr-pass/docs
 
 ### PASS application services (Mantle)
 
-Map file: [Attack-Surface-Apps-PASS-Commerce.md](../runtime/components/addon/mr-pass/docs/security/Attack-Surface-Apps-PASS-Commerce.md). Reviewer report: `security-review-evidence/slice-16.md` (and `slice-16b.md` where the slice was continued).
+Map file: [Attack-Surface-Apps-PASS-Commerce.md](../../runtime/components/addon/mr-pass/docs/security/Attack-Surface-Apps-PASS-Commerce.md). Reviewer report: `security-review-evidence/slice-16.md` (and `slice-16b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -1107,7 +1167,7 @@ Map file: [Attack-Surface-Apps-PASS-Commerce.md](../runtime/components/addon/mr-
 
 ### Forum and Smithy
 
-Map file: [Attack-Surface-Apps-PASS-Forum-Smithy.md](../runtime/components/addon/mr-pass/docs/security/Attack-Surface-Apps-PASS-Forum-Smithy.md). Reviewer report: `security-review-evidence/slice-17.md` (and `slice-17b.md` where the slice was continued).
+Map file: [Attack-Surface-Apps-PASS-Forum-Smithy.md](../../runtime/components/addon/mr-pass/docs/security/Attack-Surface-Apps-PASS-Forum-Smithy.md). Reviewer report: `security-review-evidence/slice-17.md` (and `slice-17b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -1155,7 +1215,7 @@ Map file: [Attack-Surface-Apps-PASS-Forum-Smithy.md](../runtime/components/addon
 
 ### BOSS access model; Admin, Commons, People, Accounting
 
-Map file: [Attack-Surface-Apps-BOSS.md](../runtime/components/addon/mr-boss/docs/security/Attack-Surface-Apps-BOSS.md). Reviewer report: `security-review-evidence/slice-18.md` (and `slice-18b.md` where the slice was continued).
+Map file: [Attack-Surface-Apps-BOSS.md](../../runtime/components/addon/mr-boss/docs/security/Attack-Surface-Apps-BOSS.md). Reviewer report: `security-review-evidence/slice-18.md` (and `slice-18b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -1220,7 +1280,7 @@ Map file: [Attack-Surface-Apps-BOSS.md](../runtime/components/addon/mr-boss/docs
 | SEC-BOS-130 | `runtime/components/addon/mr-boss/service/ironstone/projects/TimeServices.xml:693-720`; `runtime/components/addon/mr-boss/screen/Projects/Billing/Rates.xml:138` | The time screens name any party by id with authorization disabled | Low | fixed |
 | SEC-BOS-131 | `runtime/components/addon/mr-boss/service/ironstone/projects/TimeServices.xml:1274-1280` | A Projects manager renames another organization's work type | Low | fixed |
 | SEC-BOS-132 | `runtime/components/addon/mr-boss/service/ironstone/projects/CodeServices.xml:1121-1149` | A Projects manager grants `SSH_GIT` to any user group, the client group included | Low | fixed |
-| SEC-BOS-133 | `crates/moqui-llm/src/tools/screen.rs:285`, `:320`; `crates/moqui-llm/src/skills/mod.rs:1062-1067` | A skill's `risk` never reaches the approval card of a screen write, so no BOSS skill's risk is shown (SEC-BOS-07's fix changes a value nothing reads for these writes) | Info | reported (confirmed in code) |
+| SEC-BOS-133 | `crates/moqui-llm/src/tools/screen.rs:285`, `:320`; `crates/moqui-llm/src/skills/mod.rs:1062-1067` | A skill's `risk` never reaches the approval card of a screen write, so no BOSS skill's risk is shown (SEC-BOS-07's fix changes a value nothing reads for these writes) | Info | fixed |
 | SEC-BOS-134 | `runtime/components/addon/mr-boss/screen/Admin/Users/Invitations.xml:67-72`; `runtime/components/addon/mr-mantle/service/mantle/party/Invitations.js:697-716` | Admin's Invitations page makes a new invitation link in its render actions, on a GET parameter | Info | accepted |
 | SEC-BOS-135 | `runtime/components/addon/mr-mantle/service/mantle/work/CalendarServices.xml:424`, `:597`; `runtime/components/addon/mr-mantle/service/mantle/request/RequestServices.xml:723-725`, `:754-755` | A published calendar's token and a project form's token are stored in clear | Info | accepted |
 | SEC-BOS-136 | `runtime/components/base/framework/service/org/moqui/resource/WikiServices.xml:1219-1222` | Duplicating a Knowledge page does not carry its restriction | Info | fixed |
@@ -1237,7 +1297,7 @@ Map file: [Attack-Surface-Apps-BOSS.md](../runtime/components/addon/mr-boss/docs
 
 ### BOSS business apps and the Mantle REST root
 
-Map file: [Attack-Surface-Apps-BOSS.md](../runtime/components/addon/mr-boss/docs/security/Attack-Surface-Apps-BOSS.md). Reviewer report: `security-review-evidence/slice-19.md` (and `slice-19b.md` where the slice was continued).
+Map file: [Attack-Surface-Apps-BOSS.md](../../runtime/components/addon/mr-boss/docs/security/Attack-Surface-Apps-BOSS.md). Reviewer report: `security-review-evidence/slice-19.md` (and `slice-19b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -1314,7 +1374,7 @@ Map file: [Attack-Surface-Apps-BOSS.md](../runtime/components/addon/mr-boss/docs
 
 ### Clients
 
-Map file: [Attack-Surface-Clients.md](../docs/security/Attack-Surface-Clients.md). Reviewer report: `security-review-evidence/slice-11.md` (and `slice-11b.md` where the slice was continued).
+Map file: [Attack-Surface-Clients.md](../../docs/security/Attack-Surface-Clients.md). Reviewer report: `security-review-evidence/slice-11.md` (and `slice-11b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -1379,7 +1439,7 @@ Map file: [Attack-Surface-Clients.md](../docs/security/Attack-Surface-Clients.md
 
 ### Script engine, templates and parsers
 
-Map file: [Attack-Surface-Scripts.md](../docs/security/Attack-Surface-Scripts.md). Reviewer report: `security-review-evidence/slice-13.md` (and `slice-13b.md` where the slice was continued).
+Map file: [Attack-Surface-Scripts.md](../../docs/security/Attack-Surface-Scripts.md). Reviewer report: `security-review-evidence/slice-13.md` (and `slice-13b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -1411,7 +1471,7 @@ Map file: [Attack-Surface-Scripts.md](../docs/security/Attack-Surface-Scripts.md
 
 ### Outbound requests, processes and packaging
 
-Map file: [Attack-Surface-Outbound.md](../docs/security/Attack-Surface-Outbound.md). Reviewer report: `security-review-evidence/slice-21.md` (and `slice-21b.md` where the slice was continued).
+Map file: [Attack-Surface-Outbound.md](../../docs/security/Attack-Surface-Outbound.md). Reviewer report: `security-review-evidence/slice-21.md` (and `slice-21b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -1445,7 +1505,7 @@ Map file: [Attack-Surface-Outbound.md](../docs/security/Attack-Surface-Outbound.
 
 ### Development tools
 
-Map file: [Attack-Surface-Dev.md](../docs/security/Attack-Surface-Dev.md). Reviewer report: `security-review-evidence/slice-22.md` (and `slice-22b.md` where the slice was continued).
+Map file: [Attack-Surface-Dev.md](../../docs/security/Attack-Surface-Dev.md). Reviewer report: `security-review-evidence/slice-22.md` (and `slice-22b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |

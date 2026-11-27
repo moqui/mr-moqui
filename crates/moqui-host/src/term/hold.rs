@@ -136,6 +136,14 @@ pub(crate) fn make_dir(dir: &Path) -> io::Result<()> {
     std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
 }
 
+/// Whether the peer of a connection to the socket runs as this holder's own user, from the kernel's credentials: a
+/// second check behind the directory's and the socket's modes, since a connection starts any program (SEC-FIL-66).
+fn peer_is_own_user(stream: &UnixStream) -> bool {
+    stream
+        .peer_cred()
+        .is_ok_and(|cred| cred.uid() == rustix::process::geteuid().as_raw())
+}
+
 async fn serve(dir: &Path) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     make_dir(dir)?;
@@ -154,7 +162,9 @@ async fn serve(dir: &Path) -> io::Result<()> {
         tokio::select! {
             accepted = listener.accept() => {
                 if let Ok((stream, _)) = accepted {
-                    tokio::spawn(connection(stream, Arc::clone(&sessions)));
+                    if peer_is_own_user(&stream) {
+                        tokio::spawn(connection(stream, Arc::clone(&sessions)));
+                    }
                 }
             }
             _ = tick.tick() => {

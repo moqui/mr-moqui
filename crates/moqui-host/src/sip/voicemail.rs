@@ -152,11 +152,12 @@ pub(crate) struct Message {
     pub(crate) location: String,
 }
 
-/// The PIN's answer.
+/// The PIN's answer. A refusal does not say whether the box or the source is blocked: the call goes on the same way
+/// either way (SEC-COM-29).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PinAnswer {
     Accepted(Vec<Message>),
-    Refused { blocked: bool },
+    Refused,
 }
 
 /// What happened on the call.
@@ -368,9 +369,11 @@ impl Machine {
                 self.messages = messages;
                 self.message(0)
             }
-            (Phase::Checking, Event::Pin(PinAnswer::Refused { blocked })) => {
+            // a blocked answer is told as any refusal, and ends the call only after the same tries: a box that is
+            // there (blocked by its own count) is not told from digits that name none (SEC-COM-29)
+            (Phase::Checking, Event::Pin(PinAnswer::Refused)) => {
                 self.tries += 1;
-                if blocked || self.tries >= MAX_TRIES {
+                if self.tries >= MAX_TRIES {
                     self.end(vec![Say::Refused])
                 } else {
                     self.ask_again(Say::Refused)
@@ -775,12 +778,10 @@ impl Engine {
                 };
                 PinAnswer::Accepted(messages)
             }
-            Ok(out) => PinAnswer::Refused {
-                blocked: super::flag(&out, "blocked"),
-            },
+            Ok(_) => PinAnswer::Refused,
             Err(err) => {
                 tracing::warn!("SIP leg {leg}: the voicemail PIN was not checked: {err}");
-                PinAnswer::Refused { blocked: false }
+                PinAnswer::Refused
             }
         };
         self.voicemail_event(leg, Event::Pin(answer));

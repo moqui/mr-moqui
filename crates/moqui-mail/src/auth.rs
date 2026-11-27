@@ -630,7 +630,7 @@ pub struct Verdict {
 /// Why a message whose author is not one domain is refused, or none: more than one `From` field, no `From` address,
 /// or `From` addresses of more than one domain. DMARC judges one author domain and `mail-auth` passes over such a
 /// message (an empty result, no policy), while the stored sender is the first address, so `From: ceo@bank.example,
-/// x@evil.example` would come in as the bank's whatever its policy (RFC 7489 section 6.6.1; plans/Security-Review-Medium.md
+/// x@evil.example` would come in as the bank's whatever its policy (RFC 7489 section 6.6.1; plans/archive/Security-Review-Medium.md
 /// SEC-MAIL-81).
 fn author_refusal(raw: &[u8], addresses: &[String]) -> Option<String> {
     let (head, _) = super::delivery::split_head(raw);

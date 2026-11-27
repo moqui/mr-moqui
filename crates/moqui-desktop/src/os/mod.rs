@@ -212,7 +212,7 @@ pub(crate) fn node_started(qapps: Url) -> Url {
 }
 
 /// The file in the app's config directory where an earlier version kept the Comms app's root a node's page reported;
-/// deleted, as a page no longer says where the OS's links go (plans/Security-Review.md SEC-CLI-05).
+/// deleted, as a page no longer says where the OS's links go (plans/archive/Security-Review.md SEC-CLI-05).
 const COMMS_ROOT_FILE: &str = "comms-root";
 
 /// The conf's `comms@app-root` (basic-comms's own element).

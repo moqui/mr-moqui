@@ -36,6 +36,8 @@ impl Drop for Scratch {
 fn isolated(home: &Path, root: &Path) -> Vec<(&'static str, String)> {
     let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
     let home = home.display().to_string();
+    // Git for Windows refuses a verbatim GIT_DIR, as it does a verbatim working directory (Git::run)
+    let root = moqui_lib::fs_link::plain_path(root);
     let git_dir = root.join(".git");
     vec![
         ("GIT_DIR", git_dir.display().to_string()),

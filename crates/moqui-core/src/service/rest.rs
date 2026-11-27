@@ -733,7 +733,7 @@ fn run_entity(
             // a `UserAccount` write takes neither the password fields nor the identity fields, an ADMIN's included: those
             // are changed through `update#UserAccount` and the password services, whose rules (another account that holds
             // more access than the caller, a recent sign-in for the email address) an entity write would pass by
-            // (plans/Security-Review-Medium.md SEC-ADM-81)
+            // (plans/archive/Security-Review-Medium.md SEC-ADM-81)
             let mut parms = params.clone();
             if operation != "delete" && sensitive::is_user_account_entity(&full_name) {
                 sensitive::remove_user_account_secrets(&mut parms);

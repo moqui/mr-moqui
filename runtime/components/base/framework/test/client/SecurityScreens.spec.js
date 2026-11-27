@@ -59,7 +59,7 @@ feature("A01 an unknown email tracking id returns the 1x1 PNG", {
     },
 })
 
-// plans/Security-Review.md SEC-TLS-01: Export's EntityExport writes on the server, so a GET with URL parameters (a link
+// plans/archive/Security-Review.md SEC-TLS-01: Export's EntityExport writes on the server, so a GET with URL parameters (a link
 // from another site) does not run it; it takes a POST with the session token.
 feature("Tools Data Export does not run on a GET with URL parameters", {
     when() {
@@ -74,7 +74,7 @@ feature("Tools Data Export does not run on a GET with URL parameters", {
     },
 })
 
-// plans/Security-Review.md SEC-WEB-04: a transition that changes data does not run on a GET another site started (a
+// plans/archive/Security-Review.md SEC-WEB-04: a transition that changes data does not run on a GET another site started (a
 // link the browser follows with the Lax cookie); the app's own link still does. Logout is the one that needs no
 // parameter: refused cross-site, the session stays signed in.
 feature("a GET of a writing transition that another site started is refused; the app's own runs", {
@@ -99,7 +99,7 @@ feature("a GET of a writing transition that another site started is refused; the
     },
 })
 
-// plans/Security-Review-Low.md SEC-CLI-102: the apps' pages sign in every request by a device key, and the desktop's
+// plans/archive/Security-Review-Low.md SEC-CLI-102: the apps' pages sign in every request by a device key, and the desktop's
 // host derives the `Sec-Fetch-Site` its runtime does not send a custom scheme, so a key-signed GET of a writing transition
 // that says another site started it (a frame inside the page) is refused as a browser's is; the page's own, and a
 // program's with no fetch metadata, run. The login key is ClientFixtures' (sec.key.http).
@@ -119,7 +119,7 @@ feature("a key-signed GET of a writing transition that says another site started
     },
 })
 
-// plans/Security-Review-Low.md SEC-RTE-08, SEC-ADM-09: the read-only transitions that changed state on a GET are not
+// plans/archive/Security-Review-Low.md SEC-RTE-08, SEC-ADM-09: the read-only transitions that changed state on a GET are not
 // read-only now. /sso/logout another site started is refused and the session stays signed in; setPrefGoLast takes only a
 // POST, so a GET with the preference in its URL sets nothing; the DataDocument field tree's createFieldDynamic is a POST
 // from the tree, and a GET with its parameters in the URL is refused.
@@ -148,7 +148,7 @@ feature("a GET of sso/logout, setPrefGoLast or createFieldDynamic changes nothin
     },
 })
 
-// plans/Security-Review.md SEC-RTE-05, SEC-FIL-01: /resources is read-only, so its file changes are refused when another
+// plans/archive/Security-Review.md SEC-RTE-05, SEC-FIL-01: /resources is read-only, so its file changes are refused when another
 // site started the request; a read is not
 feature("a /resources file change another site started is refused", {
     when() {

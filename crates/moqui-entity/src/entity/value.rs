@@ -552,7 +552,7 @@ impl EntityValue {
     /// the database each field it holds, on one read from it or written since each field set since then. On an entity
     /// ECA rule's value of an update, the fields the write's caller set, not those the update filled in from the stored
     /// row ([`Self::set_given`]). [`Self::is_field_modified`] tells a change; this tells a value given again, as a secret
-    /// entered again with a new address is (plans/Security-Review-Low.md SEC-TLS-116).
+    /// entered again with a new address is (plans/archive/Security-Review-Low.md SEC-TLS-116).
     pub fn is_field_given(&self, field: &str) -> bool {
         if !self.fields.contains_key(field) {
             return false;

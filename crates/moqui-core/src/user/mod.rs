@@ -69,7 +69,7 @@ pub use login::{
 pub use login::{last_auth_millis, last_strong_auth_millis, recent_auth, strong_recent_auth};
 pub use login::{now_effective_millis, value_millis};
 pub use login::{now_effective_value, now_millis};
-pub use login::{user_account_closed, username_account_closed};
+pub use login::{account_may_sign_in, user_account_closed, username_account_closed};
 #[cfg(test)]
 pub(crate) use login::note_recent_auth;
 pub(crate) use login::{AUTHC_FACTOR_REQUIRED, PRE_AUTHC_USERNAME};

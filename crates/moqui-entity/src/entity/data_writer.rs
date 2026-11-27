@@ -208,7 +208,7 @@ impl EntityDataWriter {
 
     /// Every entity and every field: a full backup, for a caller that holds the sealed `ADMIN_BACKUP_DOWNLOAD`. Without
     /// it the entities generic access does not read (identity-admin, secret-config, audit, a view over one) are not
-    /// written, and neither are the password and encrypted fields of the others (plans/Security-Review-Medium.md
+    /// written, and neither are the password and encrypted fields of the others (plans/archive/Security-Review-Medium.md
     /// SEC-TLS-05).
     pub fn full(&mut self, full: bool) -> &mut Self {
         self.full = full;

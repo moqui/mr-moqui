@@ -226,7 +226,7 @@ impl Store {
     /// This account's server said its time is `server_ms` now (an answer just received): disappearing messages go by
     /// the server's time, so a device whose clock is wrong neither keeps nor drops them early. Each account's server is
     /// its own, so another server's clock never decides this account's messages; a time more than a day from the
-    /// device's is passed over as the server's error (plans/Security-Review.md SEC-CLI-86).
+    /// device's is passed over as the server's error (plans/archive/Security-Review.md SEC-CLI-86).
     pub(crate) fn learn_server_time(&self, server_ms: i64) {
         if server_ms <= 0 {
             return;

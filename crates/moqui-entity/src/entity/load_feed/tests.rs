@@ -1246,7 +1246,7 @@ fn a_related_write_without_values_is_fed_by_the_documents_primary_keys() {
 
 /// Every `UserSecurityChecks` assert is a security check, which a load's `disableEntityEca` leaves running: those of
 /// stored scripts, templates and translations as well as the membership and grant checks
-/// (plans/Security-Review-Medium.md SEC-DAT-83).
+/// (plans/archive/Security-Review-Medium.md SEC-DAT-83).
 #[test]
 fn every_user_security_checks_assert_is_a_security_check() {
     for actions in [

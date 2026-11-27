@@ -50,7 +50,7 @@ pub struct EntityFlags {
 /// What a data load switches for its own writes (`disableEntityEca`, `disableAuditLog`, `disableDataFeed`, `dummyFks`,
 /// `disableFkCreate`): only on the thread that runs it, as Java keeps them on the loader and the `ExecutionContext`,
 /// so a write any other thread makes meanwhile keeps its entity ECA rules, its audit row, its feed and its foreign keys
-/// (plans/Security-Review-Medium.md SEC-DAT-83). With `disable_entity_eca` the `UserSecurityChecks` rules still run
+/// (plans/archive/Security-Review-Medium.md SEC-DAT-83). With `disable_entity_eca` the `UserSecurityChecks` rules still run
 /// ([`super::load_feed::is_security_check`]); the facade's own flags ([`EntityFacade::shared_flags`]) turn off all.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WriteSwitches {

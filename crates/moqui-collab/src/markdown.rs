@@ -38,7 +38,7 @@ pub const FRAGMENT: &str = "default";
 
 /// How deep quotes, lists and elements nest before the rest is written as plain text: in a page's text as it is read, and
 /// in the document as it is written out. An editor's update may nest elements to any depth, and a render that recursed
-/// once a level would overflow a worker's stack, which ends the process (plans/Security-Review-Medium.md SEC-TLS-95).
+/// once a level would overflow a worker's stack, which ends the process (plans/archive/Security-Review-Medium.md SEC-TLS-95).
 pub const MAX_DEPTH: usize = 32;
 
 // ---------- the parsed tree ----------

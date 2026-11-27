@@ -3,7 +3,7 @@
 Part of [Agent Code](README.md). T3 sources: `t3:apps/server/src/auth/**`, `t3:packages/contracts/src/{auth,
 clientRpcPermissions}.ts`, `t3:apps/server/src/mcp/{McpToolAccess,linkOrigin,threadAccess}.ts`,
 `t3:docs/internals/environment-auth.md`. MR Moqui sources: [docs/security/](../../docs/security/Attack-Surface.md),
-[plans/Security-Review.md](../Security-Review.md), [docs/security/Recent-Auth.md](../../docs/security/Recent-Auth.md).
+[plans/archive/Security-Review.md](../archive/Security-Review.md), [docs/security/Recent-Auth.md](../../docs/security/Recent-Auth.md).
 
 Agent Code runs model-driven programs with shell access on a server that many people use. T3 trusts the one user of
 the machine. MR Moqui cannot. This file lists every gate.
@@ -212,10 +212,10 @@ The port adds routes, sockets and child processes. These rows go into the map in
 | [Attack-Surface-Outbound.md](../../docs/security/Attack-Surface-Outbound.md) | Code host APIs, provider APIs called by harnesses, peer links, APNs, Tailscale. |
 | [Attack-Surface-SSH.md](../../docs/security/Attack-Surface-SSH.md) | SSH launch script and helpers; server-side SSH launches. |
 
-## 9. Open findings that touch the port
+## 9. Findings that touch the port
 
-All are still open in [plans/Security-Review.md](../Security-Review.md). The port must not copy them and fixes the
-ones in its path.
+All are fixed in [plans/archive/Security-Review.md](../archive/Security-Review.md) (SEC-FIL-64 in part: the ticket
+is still reusable for its 300 seconds). The port keeps each rule below and must not bring the weakness back.
 
 | Id | Finding | What the port does |
 |---|---|---|

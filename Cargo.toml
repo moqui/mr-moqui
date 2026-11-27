@@ -437,6 +437,9 @@ str0m = { version = "0.25.0", default-features = false, features = ["aws-lc-rs"]
 # host owns its listeners and relay sockets and wraps TLS with its own rustls. The client half is for the tests.
 turn-server-proto = { version = "0.8.0", default-features = false, features = ["std"] }
 turn-client-proto = { version = "0.8.0", default-features = false, features = ["std"] }
+# The host's interface addresses, which an XMPP user's TURN credential may not relay to (SEC-COM-18). Already in the
+# graph through rsipstack.
+if-addrs = "0.14"
 # SFrame (RFC 9605) for the tests of encrypted calls only (W8): moqui-rtc's tests check the RFC's vectors, which the browser's
 # own SFrame (webroot js/WebrootSFrame.js) runs too, against this independent implementation. rust-crypto: the CTR suites
 # as well, on the aes-gcm, hkdf, sha2, ctr and cipher already in the graph; not ring.
@@ -472,6 +475,6 @@ rusqlite = { version = "0.43", features = ["bundled"] }
 stun-proto = { git = "https://github.com/moqui/stun-proto", rev = "051ca03ff92d04998cfec70a735d23369117b9c9" }
 stun-types = { git = "https://github.com/moqui/stun-proto", rev = "051ca03ff92d04998cfec70a735d23369117b9c9" }
 # yrs 0.28.2 at moqui's fork, branch moqui/0.28.2-decode-bounds (docs/Build-Test.md Forks): an update's values nest at
-# most 128 levels, which decoded by a recursion once a level with no limit (plans/Security-Review-Medium.md SEC-TLS-95),
+# most 128 levels, which decoded by a recursion once a level with no limit (plans/archive/Security-Review-Medium.md SEC-TLS-95),
 # and a length read from an update reserves at most 1024 entries up front (SEC-TLS-117)
 yrs = { git = "https://github.com/moqui/y-crdt", rev = "6ad5c94af9c4b50ac9c05dec67c3b96a8e8fd782" }

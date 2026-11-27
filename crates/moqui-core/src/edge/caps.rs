@@ -117,12 +117,38 @@ pub fn paused(facade: &EntityFacade, node: &str) -> Result<Option<String>, Error
 ///
 /// Returns the entity facade's error.
 pub fn admit_batch(facade: &EntityFacade, settings: &EdgeSettings, node: &str, batch: &Batch) -> Result<Admit, Error> {
+    match judge_batch(facade, settings, node, batch)? {
+        Verdict::Take => Ok(Admit::Take),
+        Verdict::Paused(why) => Ok(Admit::Paused(why)),
+        Verdict::OverCap(reason) => pause_at_cap(facade, node, reason),
+    }
+}
+
+/// What [`judge_batch`] says of a batch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Verdict {
+    Take,
+    /// The pairing is paused (why).
+    Paused(String),
+    /// The batch would take the pairing past its cap (why): the caller pauses it, outside its transaction.
+    OverCap(String),
+}
+
+/// [`admit_batch`]'s check without the pause: in the caller's transaction, when there is one, so a caller that holds
+/// the pairing's row ([`lock_client`]) counts its records with no other batch of the pairing between the count and the
+/// apply (SEC-CLU-92).
+pub(crate) fn judge_batch(
+    facade: &EntityFacade,
+    settings: &EdgeSettings,
+    node: &str,
+    batch: &Batch,
+) -> Result<Verdict, Error> {
     if !settings.takes_links() {
-        return Ok(Admit::Take);
+        return Ok(Verdict::Take);
     }
     let caps = client_caps(facade, settings, node)?;
     if let Some(why) = caps.paused {
-        return Ok(Admit::Paused(why));
+        return Ok(Verdict::Paused(why));
     }
     let writes = batch
         .changes
@@ -130,23 +156,43 @@ pub fn admit_batch(facade: &EntityFacade, settings: &EdgeSettings, node: &str, b
         .filter(|change| change.fields_json.is_some())
         .count() as u64;
     if writes == 0 {
-        return Ok(Admit::Take);
+        return Ok(Verdict::Take);
     }
     let held = held_rows(facade, node)?;
     if held.saturating_add(writes) <= caps.max_rows {
-        return Ok(Admit::Take);
+        return Ok(Verdict::Take);
     }
     // near the cap: an update of a record kept adds none, and a delete of one makes room
     let (kept_writes, kept_deletes) = kept_in_batch(facade, node, batch)?;
     let after = held.saturating_add(writes - kept_writes).saturating_sub(kept_deletes);
     if after <= caps.max_rows {
-        return Ok(Admit::Take);
+        return Ok(Verdict::Take);
     }
-    let reason = format!(
+    Ok(Verdict::OverCap(format!(
         "its replicated records would be {after}, over its cap of {} (replica-max-rows, or the pairing's own)",
         caps.max_rows
-    );
-    pause_at_cap(facade, node, reason)
+    )))
+}
+
+/// Lock pairing `node`'s row in the caller's transaction, so the batches of all its sets are judged and applied one
+/// at a time. A pairing with no row locks nothing.
+pub(crate) fn lock_client(facade: &EntityFacade, node: &str) -> Result<(), Error> {
+    facade
+        .find(CLIENT)?
+        .eq("pairedNodeId", Value::string(node))
+        .select_field("pairedNodeId")
+        .for_update(true)
+        .disable_authz()
+        .one()?;
+    Ok(())
+}
+
+/// Pause pairing `node` for a batch over its cap ([`Verdict::OverCap`]): why the batch is refused.
+pub(crate) fn refuse_over_cap(facade: &EntityFacade, node: &str, reason: String) -> Result<String, Error> {
+    match pause_at_cap(facade, node, reason.clone())? {
+        Admit::Paused(why) => Ok(why),
+        Admit::Take => Ok(reason),
+    }
 }
 
 /// Whether the edge node keeps `size` bytes of content pairing `node` sends before a delivery: not while the pairing

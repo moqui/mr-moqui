@@ -1320,6 +1320,21 @@ fn store_edge_media(
     }
     let item = param(parameters, "queueItemId").unwrap_or_default();
     let node = param(parameters, "pairedNodeId").unwrap_or_default();
+    // as apply#EdgeWebhook: only the queue's apply of an item it received, with that item's own received copy
+    // (SEC-COM-97); a caller inside the server reads no other location through it
+    if !called_by_queue(facade, &item, &node)? {
+        tracing::error!("store#EdgeMedia was called for item {item} other than by the edge queue; refused");
+        return Err(LibError::new(
+            "store#EdgeMedia runs only for an item the edge queue applies",
+        ));
+    }
+    let content_location = param(parameters, "contentLocation").unwrap_or_default();
+    if !content_location.is_empty() && !queue::is_received(&node, &item, &content_location) {
+        tracing::error!("store#EdgeMedia for item {item} names a file that is not the item's own; refused");
+        return Err(LibError::new(format!(
+            "chat file item {item} names a file that is not its own"
+        )));
+    }
     let payload: serde_json::Value = serde_json::from_str(&param(parameters, "payload").unwrap_or_default())
         .map_err(|error| LibError::new(format!("chat file item {item}: its payload is not JSON: {error}")))?;
     let text = |name: &str| payload[name].as_str().map(str::trim).unwrap_or_default().to_string();
@@ -1327,7 +1342,6 @@ fn store_edge_media(
     let location = media_location(&node, &token_hash)
         .filter(|_| token_hash.len() == 64 && !bridge_id.is_empty())
         .ok_or_else(|| LibError::new(format!("chat file item {item} names no bridge or token")))?;
-    let content_location = param(parameters, "contentLocation").unwrap_or_default();
     let now = now_millis();
     // the files that ran out first, each in a transaction of its own, so the node's total is what it keeps now
     sweep_edge_media(&factory, facade, now);

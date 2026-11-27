@@ -141,7 +141,7 @@ pub(crate) fn claim(path: &Path, links: &[tauri::Url]) -> Claim {
         let _ = std::fs::remove_file(path);
     }
     // the socket's directory is this user's alone before the socket is made in it, so no other account of the computer
-    // reaches the socket in the moment before its own mode is set (plans/Security-Review.md SEC-CLI-09)
+    // reaches the socket in the moment before its own mode is set (plans/archive/Security-Review.md SEC-CLI-09)
     if let Some(dir) = path.parent() {
         if let Err(err) = private_dir(dir) {
             tracing::warn!("Single instance: {} is not this user's alone ({err}); no socket", dir.display());

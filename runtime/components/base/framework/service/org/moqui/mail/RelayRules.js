@@ -5,7 +5,7 @@
 // - The sign-in mail (a reset password, a sign-in code, a factor added, the new-device notice, PASS's verification link)
 //   signs an account in or takes it over, so the relay it goes through (SYSTEM, the framework's own, or one such a
 //   template names) is changed and tested only by a holder of the sealed ADMIN_ACCESS_MANAGE after a recent sign-in
-//   (plans/Security-Review-Medium.md SEC-ADM-82).
+//   (plans/archive/Security-Review-Medium.md SEC-ADM-82).
 // - A relay's link base URL (the start of every link in the mail it sends) is on one of the instance's own names
 //   (ConfigurationServices.get#OwnHostNames; SEC-ADM-83).
 const text = value => String(value ?? "").trim()

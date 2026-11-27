@@ -2984,11 +2984,8 @@ impl Link for LinkService {
                 let facade = store::facade(factory)?;
                 // not while the pairing is paused, nor past its cap on replicated records, which pauses it (SEC-CLU-02)
                 let settings = moqui_core::edge::settings(factory);
-                match moqui_core::edge::caps::admit_batch(&facade, &settings, &key, &batch)? {
-                    moqui_core::edge::caps::Admit::Take => {}
-                    moqui_core::edge::caps::Admit::Paused(why) => return Ok(Err(why)),
-                }
-                moqui_core::edge::replica::apply_batch(&facade, &key, &batch).map(Ok)
+                // the count is read in the apply's transaction, under the pairing's row lock (SEC-CLU-92)
+                moqui_core::edge::replica::apply_batch_within_caps(&facade, &settings, &key, &batch)
             })
             .await
             .map_err(|err| {

@@ -146,7 +146,7 @@ impl fmt::Debug for Provider {
 /// Whether a provider endpoint may be used: an `https` URL, or `http` to this machine's loopback on an instance that is
 /// not production (a test's or a developer's stand-in provider). The client secret and users' refresh tokens are posted
 /// to the token endpoint, so a row's endpoint in plain text, or on an address it was not meant for, gets none
-/// (plans/Security-Review-Medium.md SEC-OUT-82).
+/// (plans/archive/Security-Review-Medium.md SEC-OUT-82).
 fn endpoint_allowed(url: &str) -> bool {
     let lower = url.trim().to_ascii_lowercase();
     if lower.starts_with("https://") {
@@ -693,7 +693,7 @@ pub(super) fn access_token(
     };
     let server = read()?;
     // a token goes only to the provider's own mail servers: a server row pointed at another host (by a generic write, or
-    // one written before update#EmailAccount held its hosts to the provider's) gets none (plans/Security-Review-Medium.md
+    // one written before update#EmailAccount held its hosts to the provider's) gets none (plans/archive/Security-Review-Medium.md
     // SEC-MAIL-84)
     let provider_id = field_text(&server, "oauthProviderEnumId");
     let provider = load_provider(facade, &provider_id)
@@ -1259,6 +1259,12 @@ pub(super) fn start_sign_in(
             "{} has no POP server set up here; read the mail over IMAP",
             provider.name
         ));
+        return Ok(out);
+    }
+    // a new account with no incoming host would be delivered here by the listener, which only a mail administrator
+    // sets up (SEC-MAIL-97)
+    if pending.account.is_empty() && !pending.pop && provider.store_host.trim().is_empty() {
+        note_error(format!("{} has no IMAP server set up here", provider.name));
         return Ok(out);
     }
     pending.provider = provider.id.clone();
@@ -1851,6 +1857,20 @@ fn store_new_account(
     tokens: &Tokens,
     address: &str,
 ) -> Result<(String, String), String> {
+    // the account is made with authorization disabled: one with no incoming host would be delivered here, which
+    // create#EmailAccount lets only a mail administrator make (SEC-MAIL-97), so the provider's row must name one
+    let store_host = if pending.pop {
+        &provider.pop_host
+    } else {
+        &provider.store_host
+    };
+    if store_host.trim().is_empty() {
+        return Err(format!(
+            "{} has no {} server set up here, so no account is made",
+            provider.name,
+            if pending.pop { "POP" } else { "IMAP" }
+        ));
+    }
     let made = force_new(facade, || {
         let mut parameters: BTreeMap<String, Value> = BTreeMap::new();
         parameters.insert("emailAddress".into(), Value::string(address));

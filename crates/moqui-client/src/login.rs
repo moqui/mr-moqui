@@ -72,7 +72,7 @@ const REVOKE_RETRY_MILLIS: i64 = 5 * 60 * 1000;
 /// Revoke on their servers the device keys whose sign-out did not reach them ([`crate::keys::Keys::pending_revokes`]),
 /// with `revoke` (`sign_out` but in a test): each the server answers (revoked, or no longer a key) goes from the list,
 /// as does one past its life ([`crate::keys::PENDING_MILLIS`]); the rest wait, tried again at most every five minutes,
-/// so a sign-out with the server unreachable does not leave the key good there for months (plans/Security-Review.md
+/// so a sign-out with the server unreachable does not leave the key good there for months (plans/archive/Security-Review.md
 /// SEC-CLI-108). How many were revoked.
 pub fn revoke_pending(
     keys: &crate::keys::Keys,

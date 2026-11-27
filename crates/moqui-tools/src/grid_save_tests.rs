@@ -13,7 +13,7 @@
  */
 
 //! The data grid's save of `UserAccount` rows, on the in-memory facade: an existing account's identity fields are
-//! refused, a new account's are not (plans/Security-Review.md SEC-TLS-81).
+//! refused, a new account's are not (plans/archive/Security-Review.md SEC-TLS-81).
 
 use std::collections::BTreeMap;
 

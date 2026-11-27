@@ -188,7 +188,7 @@ fn acme_error(what: &str) -> impl Fn(instant_acme::Error) -> Error + '_ {
 }
 
 /// The authority's directory as a name row stores it: `https://` only, as `setup#AcmeName` takes it, so a row written
-/// another way (plans/Security-Review-Medium.md SEC-OUT-81) sends no order, account key or contact in plain text.
+/// another way (plans/archive/Security-Review-Medium.md SEC-OUT-81) sends no order, account key or contact in plain text.
 pub(crate) fn directory_url(stored: &str) -> Result<String, Error> {
     let directory = stored.trim();
     if directory.starts_with("https://") {

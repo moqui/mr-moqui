@@ -624,7 +624,7 @@ fn load_info(facade: &EntityFacade, data_document_id: &str) -> Result<DocumentIn
                     })
             })?;
             // an encrypted field or a password field is not put in a document, whose rows are read with
-            // authorization off, decrypted, and indexed (plans/Security-Review-Medium.md SEC-DAT-02)
+            // authorization off, decrypted, and indexed (plans/archive/Security-Review-Medium.md SEC-DAT-02)
             if encrypted || super::sensitive::USER_ACCOUNT_SECRET_FIELDS.contains(&last.as_str()) {
                 omitted.push(format!("{alias} ({entity_name})"));
                 tracing::warn!(

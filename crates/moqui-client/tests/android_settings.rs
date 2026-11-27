@@ -18,7 +18,7 @@
 //! `cargo test --workspace` (`./moq test-framework`) checks them on every push: this crate is the one workspace member
 //! the app carries, and on Android its requests are checked by the platform's trust manager, whose trust anchors these
 //! settings decide. The checks after the proofs hold the app's fixes of the security review's findings, each by its
-//! register id (`SEC-CLI-*`, plans/Security-Review-Low.md).
+//! register id (`SEC-CLI-*`, plans/archive/Security-Review-Low.md).
 
 use std::path::{Path, PathBuf};
 

@@ -128,7 +128,7 @@ task_desktop() {
     check_cef_archives "$app/Cargo.lock"
 }
 
-# The SHA-256 of each CEF archive the desktop app was built from, by its file name (plans/Security-Review.md
+# The SHA-256 of each CEF archive the desktop app was built from, by its file name (plans/archive/Security-Review.md
 # SEC-CLI-104): download-cef checks an archive only against a SHA-1 from the index of the CDN it downloads it from, so the
 # repository pins it. An archive with no entry yet (a new CEF version, another platform) is recorded on its first
 # build here, for the developer to commit; one whose hash differs stops the build.
@@ -452,7 +452,7 @@ desktop_updater_config() {
         list="${list:+$list,}\"$endpoint\""
     done
     # requireSignedVersion: an update's signature must name its version, so an older release signed with the same key is
-    # never taken as a newer one (plans/Security-Review.md SEC-CLI-98); the bundle signs with the app's version
+    # never taken as a newer one (plans/archive/Security-Review.md SEC-CLI-98); the bundle signs with the app's version
     printf '{"bundle":{"createUpdaterArtifacts":true},"plugins":{"updater":{"pubkey":"%s","endpoints":[%s],"requireSignedVersion":true}}}\n' \
         "$pubkey" "$list"
 }

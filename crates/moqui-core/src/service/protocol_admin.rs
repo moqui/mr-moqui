@@ -214,7 +214,7 @@ pub(crate) fn normal_host(host: &str) -> String {
     bare.trim_end_matches('.').to_string()
 }
 
-/// The names this instance answers by, for a link it sends (a relay's link base URL, plans/Security-Review-Medium.md
+/// The names this instance answers by, for a link it sends (a relay's link base URL, plans/archive/Security-Review-Medium.md
 /// SEC-ADM-83): the webroot webapp's `http-host`, `https-host` and `allowed-hosts`, the public sites' hosts and the names
 /// set up with ACME (System › Certificates); and on an instance that is not production this machine's own names too:
 /// `localhost`, the loopback addresses, its host name and the addresses that name has. Sorted, each once, as
@@ -500,7 +500,7 @@ mod tests {
     use super::{failure_kind, normal_host, own_host_names, state_parts, ATTRIBUTES, ENTRIES, TARGETS};
     use crate::startup::State;
 
-    /// The names a relay's link base URL may name (plans/Security-Review-Medium.md SEC-ADM-83): the names set up with ACME
+    /// The names a relay's link base URL may name (plans/archive/Security-Review-Medium.md SEC-ADM-83): the names set up with ACME
     /// on every instance, and on one that is not production this machine's own (localhost, its host name and addresses);
     /// a name compares in any case, with no port or trailing dot.
     #[test]

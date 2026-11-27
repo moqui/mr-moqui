@@ -78,7 +78,7 @@ impl EntityFind {
             .map(str::to_string)
             .collect();
         let fields = self.search_fields()?;
-        // The input is a request's (plans/Security-Review-Medium.md SEC-DAT-01): a password field takes no condition or
+        // The input is a request's (plans/archive/Security-Review-Medium.md SEC-DAT-01): a password field takes no condition or
         // order from it, whose row count or order would read the stored hash a prefix at a time; an encrypted field takes
         // no order, no condition on a generic find (its entity named by the request, `generic_input`), and only an
         // `equals` on a screen's or script's own find, whose author chose the entity. The caller's own defaults and

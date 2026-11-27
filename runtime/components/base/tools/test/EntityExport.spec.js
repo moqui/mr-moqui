@@ -1,5 +1,5 @@
 // Entity data export (screen/Tools/Data/Export.xml, EntityExport): its filter is a JSON object of field values, parsed
-// and never evaluated, since an expression there ran as a server script with the caller's ec (plans/Security-Review.md
+// and never evaluated, since an expression there ran as a server script with the caller's ec (plans/archive/Security-Review.md
 // SEC-TLS-01). The transition is not read-only, so a GET with URL parameters does not run it: the client check of that
 // is in framework/test/client/SecurityScreens.spec.js.
 // Run: ./moq test tools --spec EntityExport
@@ -35,8 +35,8 @@ feature("a script filter is refused without running; a JSON filter selects the r
     },
 })
 
-// plans/Security-Review-Medium.md SEC-TLS-05: AutoEditMaster's export refuses the entities its update refuses (the
-// parent screen's check is in its actions, which a transition does not run). plans/Security-Review-Low.md SEC-TLS-07:
+// plans/archive/Security-Review-Medium.md SEC-TLS-05: AutoEditMaster's export refuses the entities its update refuses (the
+// parent screen's check is in its actions, which a transition does not run). plans/archive/Security-Review-Low.md SEC-TLS-07:
 // a snapshot's baseFilename is one path segment, so the zip is never written outside runtime/db/snapshot.
 feature("a record export refuses a restricted entity, and a snapshot name with a path is refused", {
     when() {

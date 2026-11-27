@@ -68,6 +68,8 @@ function pairKey(ours, theirs) {
 
 /** The most numbers a group text is read with (typed, or a list); the bridge's provider's maximum is the bound (groupMaxOf). */
 const NUMBERS_READ = 32
+/** New phone rooms one user may open by typing numbers in an hour (SEC-COM-99): each puts every user of the number in it. */
+const NEW_ROOMS_PER_USER_HOUR = 30
 
 /** New group rooms a day that one outside number may start with one of our numbers, and that one of our numbers takes. */
 const GROUP_ROOMS_PER_SENDER = 5
@@ -318,6 +320,9 @@ function openPairRoom(p) {
   }
   const classRefusal = destinationRefusal(dest, me)
   if (classRefusal) return refuse(classRefusal.reasonCode, classRefusal.text)
+  if (!newRoomAllowed(me, fromNumber, pairKey(fromNumber, dest.number))) {
+    return refuse('tooManyRooms', 'You have opened too many new conversations in the last hour; try again later')
+  }
   const out = ec.service.sync().name('org.moqui.call.SmsServices.ensure#PairRoom').parameters({ ourNumber: fromNumber,
     theirNumber: dest.number }).requireNewTransaction(true).disableAuthz().call() || {}
   if (ec.message.hasError()) return {}
@@ -331,6 +336,21 @@ function openPairRoom(p) {
       chatRoomId: out.chatRoomId, change: { member: true, roleEnumId: mine.roleEnumId ?? null, action: 'joined' } }).disableAuthz().call()
   }
   return { chatRoomId: out.chatRoomId, ourNumber: fromNumber, theirNumber: dest.number }
+}
+
+/**
+ * Whether user `me` may open the room of external key `externalRoomId` on number `ours` (SEC-COM-99): one that is there is
+ * always opened; a new one counts against NEW_ROOMS_PER_USER_HOUR, since it puts every user of the number in it.
+ */
+function newRoomAllowed(me, ours, externalRoomId) {
+  const number = one(NUMBER, { phoneNumber: ours })
+  if (!number || blank(number.messagingBridgeId)) return true
+  const there = Array.from(find(MAPPING).condition('chatBridgeId', number.messagingBridgeId).condition('externalRoomId', externalRoomId)
+    .condition('thruDate', null).list()).some((mapping) => one(ROOM, { chatRoomId: mapping.chatRoomId }))
+  if (there) return true
+  return ec.service.sync().throwOnError(true).name('org.moqui.public.AccountServices.record#Attempt')
+    .parameters({ input: { key: 'phone-room:user:' + me, limit: NEW_ROOMS_PER_USER_HOUR, windowMillis: 3600000 } })
+    .requireNewTransaction(true).disableAuthz().call().result.allowed
 }
 
 /** The number the user texts from (fromNumber, else their only one), or a refusal. */
@@ -357,6 +377,9 @@ function openGroupRoom(p, me, dests) {
   // refused here, with its reason (ensure#PairRoom's own refusal would come back as an error alone)
   const refusal = groupRefusal((one(NUMBER, { phoneNumber: from.fromNumber }) || {}).messagingBridgeId, theirNumberList.length)
   if (refusal) return refuse(refusal.reasonCode, refusal.text)
+  if (!newRoomAllowed(me, from.fromNumber, groupKey(from.fromNumber, numberSet(theirNumberList)))) {
+    return refuse('tooManyRooms', 'You have opened too many new conversations in the last hour; try again later')
+  }
   const out = ec.service.sync().name('org.moqui.call.SmsServices.ensure#PairRoom').parameters({ ourNumber: from.fromNumber,
     theirNumberList }).requireNewTransaction(true).disableAuthz().call() || {}
   if (ec.message.hasError()) return {}

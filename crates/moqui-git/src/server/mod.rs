@@ -490,7 +490,7 @@ const INSECURE_SIGN_IN: &str = "this needs a sign-in, which is taken only over H
 const INSECURE_CREDENTIALS: &str = "credentials over plain HTTP are refused; use HTTPS";
 
 /// A refusal of a git or LFS request that needs no database and no repository, so the host answers it before the
-/// request takes a worker of the git pool (plans/Security-Review-Low.md SEC-GIT-18): credentials over plain HTTP, an
+/// request takes a worker of the git pool (plans/archive/Security-Review-Low.md SEC-GIT-18): credentials over plain HTTP, an
 /// `Authorization` header this server takes in no form, an empty `api_key`. It is the answer [`serve_http`] and
 /// [`lfs::serve_lfs`] give the same request.
 #[derive(Debug)]

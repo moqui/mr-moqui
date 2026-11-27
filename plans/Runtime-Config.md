@@ -203,7 +203,7 @@ check treats the cluster port as optional in every mode (a busy port, at boot or
 on Home and a Needs attention item, and the boot goes on). Nothing may use a cluster port of 0 to mean "reached in
 process only" any more (RC0 moved the Cluster row from `record_web_listeners`, now gone, to the cluster entry). The startup report says "off: no other member" for a lone member. A forged `ClusterMember` row
 with copied fingerprints can make a member open the port; what it exposes is the mTLS handshake pinned to the shared
-certificate, as today (SEC-CLU-89 in [Security-Review-Low](Security-Review-Low.md)).
+certificate, as today (SEC-CLU-89 in [Security-Review-Low](archive/Security-Review-Low.md)).
 
 ### 3.6 Services, authorization and the ways back
 

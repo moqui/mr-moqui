@@ -614,6 +614,11 @@ function recorderEnd(p) {
  */
 function receiveEdge(p) {
   if (ec.user.username !== '_edge_') return refuse('notAllowed', 'Only the edge link queue stores an edge recording')
+  // the items go from an edge node to its local node: a node that takes links (an edge or all-in-one node) stores none
+  // a paired node sends it (SEC-CLU-86)
+  if (['front', 'front_edge', 'edge', 'all-in-one'].includes(String(ec.factory.getConfValue('instance@node-role') || '').trim().toLowerCase())) {
+    return refuse('notAllowed', 'A node that takes links stores no recording a paired node sends')
+  }
   let item
   try {
     item = JSON.parse(p.payload || '{}')

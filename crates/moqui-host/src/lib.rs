@@ -694,7 +694,7 @@ pub fn load_save(
 }
 
 /// The option of `save-db` (`--recipient <age1...>`) or `load-save` (`--identity <file>`, `-` for stdin) after its two
-/// paths: the recipient's text, or the identity file's (plans/Security-Review.md SEC-CLI-114).
+/// paths: the recipient's text, or the identity file's (plans/archive/Security-Review.md SEC-CLI-114).
 fn backup_key_option(command: &str, rest: &[String]) -> Result<Option<String>, moqui_lib::error::Error> {
     let wanted = if command == "save-db" {
         "--recipient"

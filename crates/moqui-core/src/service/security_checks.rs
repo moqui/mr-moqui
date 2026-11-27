@@ -202,7 +202,7 @@ pub(crate) fn assert_document_expression(facade: &EntityFacade, field_path: &str
 
 /// Refuses a `DataDocument` `documentTitle`, or a `DataDocumentLink` `linkUrl` or `label`, that is a template (it has
 /// `${`, which runs as script when a search hit or a notification of the document is shown) unless the user has
-/// `DATABASE_ADMIN` (plans/Security-Review.md SEC-SCR-05). Plain text, and any write while authorization is disabled,
+/// `DATABASE_ADMIN` (plans/archive/Security-Review.md SEC-SCR-05). Plain text, and any write while authorization is disabled,
 /// are allowed.
 pub(crate) fn assert_document_template(facade: &EntityFacade, text: &str) -> Result<(), Error> {
     SECURITY_CHECKS.with(|count| count.set(count.get() + 1));
@@ -224,7 +224,7 @@ pub(crate) fn assert_document_condition(facade: &EntityFacade, condition: &str) 
 
 /// Refuses stored text that is a template (it has `${`), run as script where the record is used (an email template's
 /// subject or sender, an attachment's file name, a message remote's send URL, a subscreen row's menu title), unless the
-/// user has [`DOCUMENT_EXPRESSION_PERMISSION`], the permission for script stored in records (plans/Security-Review-Medium.md
+/// user has [`DOCUMENT_EXPRESSION_PERMISSION`], the permission for script stored in records (plans/archive/Security-Review-Medium.md
 /// SEC-SCR-06, SEC-SCR-12). Plain text, and any write while authorization is disabled (a data load), are allowed.
 pub(crate) fn assert_stored_template(facade: &EntityFacade, text: &str, what: &str) -> Result<(), Error> {
     SECURITY_CHECKS.with(|count| count.set(count.get() + 1));

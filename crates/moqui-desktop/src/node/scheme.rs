@@ -112,7 +112,7 @@ pub(crate) fn passed_on(name: &str) -> bool {
 /// already allowed here, and the page it opens is on the node's own origin. With them the `Sec-Fetch-Site` Chromium
 /// does not send a scheme, from the request's `Origin` ([`moqui_client::proxy::site_by_origin`]: the runtime gives the
 /// main frame's requests its origin), so the node refuses a GET of a writing transition that a frame inside its page
-/// started, with the session's cookie the host adds (plans/Security-Review.md SEC-CLI-102).
+/// started, with the session's cookie the host adds (plans/archive/Security-Review.md SEC-CLI-102).
 pub(crate) fn forwarded(sent: Vec<(String, String)>, cross: bool) -> Vec<(String, String)> {
     let site = moqui_client::proxy::site_by_origin(header(&sent, "origin"), NODE_ORIGIN);
     let mut headers: Vec<(String, String)> = sent

@@ -1475,7 +1475,7 @@ fn deliver_one(
             finish_sent(facade, row, attempt, now)?;
             // an endpoint that holds the one push worker most of its timeout counts as failing, toward its disabling,
             // as one that never answers does: a host a browser names cannot stall every user's pushes by answering late
-            // (plans/Security-Review-Medium.md SEC-COM-81)
+            // (plans/archive/Security-Review-Medium.md SEC-COM-81)
             let slow = provider != Provider::Fcm && started.elapsed() >= transport.slow_after();
             if slow {
                 let took = started.elapsed();
@@ -2063,7 +2063,7 @@ fn send_test_push(
         .filter_map(|row| text_of(row, "subscriptionId"))
         .collect();
     // one test a user in that time, whichever device asks: a test per endpoint let one user queue a post to each of
-    // their endpoints every ten seconds (plans/Security-Review-Medium.md SEC-COM-81)
+    // their endpoints every ten seconds (plans/archive/Security-Review-Medium.md SEC-COM-81)
     let all_devices: Vec<String> = facade
         .find(DEVICE)?
         .eq("userId", Value::string(&user))

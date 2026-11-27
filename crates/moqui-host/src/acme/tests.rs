@@ -287,7 +287,7 @@ fn the_certificate_is_written_where_the_listener_reads_it() {
     let _ = std::fs::remove_dir_all(dir.parent().unwrap());
 }
 
-/// Only an order's challenge is answered and only a DNS name's files are written (plans/Security-Review-Medium.md
+/// Only an order's challenge is answered and only a DNS name's files are written (plans/archive/Security-Review-Medium.md
 /// SEC-OUT-81): a challenge row of a name not set up here, or one open longer than an order keeps one, is left out; a
 /// certificate under `default`, `localhost` or a path is not written, and an authority's directory is https only.
 #[test]

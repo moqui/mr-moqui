@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- A printer is made and changed as Admin's Connections make one (store#Connection, the printer kind): a new one waits
         for a test print there, and on a production instance reaches no internal address; only its fields of that kind are
-        taken (plans/Security-Review-Medium.md SEC-RTE-83). The lookup asks the server and makes rows, so it is a POST. -->
+        taken (plans/archive/Security-Review-Medium.md SEC-RTE-83). The lookup asks the server and makes rows, so it is a POST. -->
     <transition name="getServerPrinters" method="post"><service-call name="org.moqui.impl.PrintServices.get#ServerPrinters"/>
         <default-response url="."/></transition>
     <transition name="createNetworkPrinter" method="post"><actions><script><![CDATA[

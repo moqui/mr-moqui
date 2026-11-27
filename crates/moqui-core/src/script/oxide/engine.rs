@@ -698,7 +698,7 @@ thread_local! {
 
 /// The thread's main runtime set aside while a preview of proposed screen text renders, and a fresh runtime in its place
 /// whose built-in objects and prototypes are frozen; dropped, the fresh one is let go and the main one put back
-/// (plans/Security-Review-Low.md SEC-AI-102). So nothing the proposed text changes of the language (a prototype's
+/// (plans/archive/Security-Review-Low.md SEC-AI-102). So nothing the proposed text changes of the language (a prototype's
 /// method, a constructor) is there for the framework code that renders around it, or for a later request.
 pub(crate) struct PreviewRuntime {
     saved: Option<Option<Rc<OxideEngine>>>,

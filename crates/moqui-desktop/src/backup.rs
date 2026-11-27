@@ -28,7 +28,7 @@
 //! - **Sealed.** Each backup, the nightly one and the tray's, is sealed as it is written to the public key of the
 //!   app's backup key (`crate::backup_key`, kept in the OS key store), `<name>.dump.age`: the folder, which the user's
 //!   own backup or a cloud may copy, holds no plain copy of the data. The tray's Save backup key… writes the key to a
-//!   file, which a restore on another computer needs (plans/Security-Review.md SEC-CLI-114). Where the key cannot be
+//!   file, which a restore on another computer needs (plans/archive/Security-Review.md SEC-CLI-114). Where the key cannot be
 //!   had, the backups are written as they are, and the user is told.
 //! - **Told.** The first start that has the nightly backup on tells the user what it holds, where it goes and to save
 //!   the key, and how to turn it off; one told before the backups were sealed is told of the key once. The `backups`

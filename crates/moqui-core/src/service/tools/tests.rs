@@ -179,7 +179,7 @@ fn a_disabled_printer_takes_only_its_connection_test() {
     crate::print::clear_print_client();
 }
 
-/// `print#ResourceDocument` prints a stored document only (plans/Security-Review-Medium.md SEC-RTE-83): a `dbresource://`
+/// `print#ResourceDocument` prints a stored document only (plans/archive/Security-Review-Medium.md SEC-RTE-83): a `dbresource://`
 /// or `content://` location, never a file, the runtime directory, a component's file or a URL, which would send what
 /// the server can read to the printer's server.
 #[test]

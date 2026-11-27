@@ -2,7 +2,7 @@
 // start containers and make databases on the hosts their rows name, so every InstanceServices service asks the sealed
 // INSTANCE_ADMIN, which an ADMIN outside ADMIN_ADV does not have; the configuration rows that hold a command, a script or
 // a service name are not written through the generic tools, nor an instance's environment or secret bindings
-// (plans/Security-Review.md SEC-TLS-02, plans/archive/Vault-Instances.md §4.1).
+// (plans/archive/Security-Review.md SEC-TLS-02, plans/archive/Vault-Instances.md §4.1).
 // Run: ./moq test tools --spec HostedInstances
 const ADMIN_ONLY = "SPEC_HI_ADMIN"
 const HOLDER = "SPEC_HI_HOLDER"
@@ -98,7 +98,7 @@ feature("the generic tools do not write an InstanceImage, whose kind and registr
 })
 
 // Service Run calls the service a request names: an entity-auto service of an entity no generic write takes is refused
-// there too, as Service REST refuses it, and other services still run (plans/Security-Review-Medium.md SEC-TLS-85)
+// there too, as Service REST refuses it, and other services still run (plans/archive/Security-Review-Medium.md SEC-TLS-85)
 feature("Service Run does not call the entity-auto services of a hosted-instance row or a service-written row", {
     when() {
         const run = (parameters) => {

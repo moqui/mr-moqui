@@ -455,7 +455,7 @@
     // the page streams; one to encode is rendered for its value and encoded.
     // A screen that stands at a preview's proposed text (sri.isOverlaid(): a dev-aide change set, a screen-xml canvas)
     // writes a placeholder for its render-mode text, a qvt or a template: model-written client code would run in the
-    // application's origin (plans/Security-Review-Medium.md SEC-AI-82)
+    // application's origin (plans/archive/Security-Review-Medium.md SEC-AI-82)
     const PREVIEW_PLACEHOLDER = '<div class="m-preview-placeholder text-caption">(text, scripts and templates are not shown in a preview)</div>';
     const renderTextCode = (node) => {
         const code = renderTextCodeOf(node);

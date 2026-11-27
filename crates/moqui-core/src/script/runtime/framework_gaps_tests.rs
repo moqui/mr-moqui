@@ -982,7 +982,7 @@ fn a_resource_expression_ends_what_it_disables() {
 }
 
 // A load's disableEntityEca and disableAuditLog are its own: another thread's writes keep their entity ECA rules and
-// their audit rows while it runs, and nothing is left switched off after it (plans/Security-Review-Medium.md SEC-DAT-83).
+// their audit rows while it runs, and nothing is left switched off after it (plans/archive/Security-Review-Medium.md SEC-DAT-83).
 #[test]
 fn a_loads_switches_are_not_seen_by_another_thread() {
     use std::sync::atomic::{AtomicBool, Ordering};

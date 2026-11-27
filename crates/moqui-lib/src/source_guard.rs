@@ -189,7 +189,8 @@ impl SourceGuard {
 }
 
 /// The caps of [`RequestGate`], from the host's properties (`sip-server/limits@request-rate`, `sip-server/limits@request-burst`,
-/// `sip-server/limits@max-transactions`, `sip-server/limits@max-connections`, `sip-server/limits@max-connections-per-source`). 0 turns one off.
+/// `sip-server/limits@max-transactions`, `sip-server/limits@max-connections`, `sip-server/limits@max-connections-per-source`,
+/// `sip-server/limits@max-connections-per-unknown-source`, `sip-server/limits@unauthenticated-seconds`). 0 turns one off.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RequestLimits {
     /// New requests a second from one source, refilled continuously.
@@ -203,6 +204,15 @@ pub struct RequestLimits {
     /// TCP and TLS connections open at once from one source (an IPv6 /64 is one), so one source cannot hold every
     /// connection the registrar's phones keep open; one past it is closed.
     pub max_connections_per_source: usize,
+    /// The same for a source the caller does not know (no trunk's address, no authenticated connection or phone's
+    /// binding from it), so unauthenticated hosts hold far fewer of the slots (SEC-COM-26).
+    pub max_connections_per_unknown_source: usize,
+    /// How long an accepted stream connection may stay open without a request on it that authenticated (a phone's
+    /// REGISTER or a PBX trunk's digest) unless it is a trunk's: the user agent closes it then (SEC-COM-26).
+    pub unauthenticated_seconds: u64,
+    /// The stream connections from unknown sources open at once, all of them together: unauthenticated hosts from many
+    /// sources never hold more than this share of [`Self::max_connections`] (SEC-COM-26).
+    pub max_unknown_connections: usize,
 }
 
 impl Default for RequestLimits {
@@ -213,6 +223,9 @@ impl Default for RequestLimits {
             max_transactions: 2_000,
             max_connections: 500,
             max_connections_per_source: 100,
+            max_connections_per_unknown_source: 10,
+            unauthenticated_seconds: 30,
+            max_unknown_connections: 250,
         }
     }
 }
@@ -239,6 +252,8 @@ pub struct RequestGate {
     connections: usize,
     /// The connections open from each source, while it has any.
     by_source: HashMap<IpAddr, usize>,
+    /// The connections opened from a source that was not known then, open now.
+    unknown: usize,
 }
 
 impl RequestGate {
@@ -248,6 +263,7 @@ impl RequestGate {
             buckets: HashMap::new(),
             connections: 0,
             by_source: HashMap::new(),
+            unknown: 0,
         }
     }
 
@@ -289,9 +305,13 @@ impl RequestGate {
     }
 
     /// A stream connection opened from `source` (when known): false when it is past a cap, overall or for its
-    /// source, and must be closed (its close is still told to [`Self::connection_closed`]).
-    pub fn connection_opened(&mut self, source: Option<IpAddr>) -> bool {
+    /// source (the lower one for a source that is not `known`), or past the unknown sources' total, and must be closed
+    /// (its close is still told to [`Self::connection_closed`], with the same `known`).
+    pub fn connection_opened(&mut self, source: Option<IpAddr>, known: bool) -> bool {
         self.connections += 1;
+        if !known {
+            self.unknown += 1;
+        }
         let from_source = match source {
             Some(source) => {
                 let count = self.by_source.entry(key_of(source)).or_insert(0);
@@ -300,13 +320,26 @@ impl RequestGate {
             }
             None => 0,
         };
-        let per_source = self.limits.max_connections_per_source;
+        let per_source = match (known, self.limits.max_connections_per_unknown_source) {
+            (false, unknown) if unknown > 0 => match self.limits.max_connections_per_source {
+                0 => unknown,
+                known => known.min(unknown),
+            },
+            _ => self.limits.max_connections_per_source,
+        };
         (self.limits.max_connections == 0 || self.connections <= self.limits.max_connections)
             && (per_source == 0 || from_source <= per_source)
+            && (known
+                || self.limits.max_unknown_connections == 0
+                || self.unknown <= self.limits.max_unknown_connections)
     }
 
-    pub fn connection_closed(&mut self, source: Option<IpAddr>) {
+    /// A stream connection closed; `known` as it was told to [`Self::connection_opened`].
+    pub fn connection_closed(&mut self, source: Option<IpAddr>, known: bool) {
         self.connections = self.connections.saturating_sub(1);
+        if !known {
+            self.unknown = self.unknown.saturating_sub(1);
+        }
         if let Some(source) = source {
             let key = key_of(source);
             if let Some(count) = self.by_source.get_mut(&key) {

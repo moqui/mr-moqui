@@ -568,7 +568,7 @@
         },
         // An outbox this browser kept (localStorage, under the scope) is dropped, never moved into the host: in the apps every
         // server's pages share one origin, so another server's page may have written it under this account's key, and the
-        // host would send it as this user (plans/Security-Review-Medium.md SEC-CLI-81). The host's outbox is the one the
+        // host would send it as this user (plans/archive/Security-Review-Medium.md SEC-CLI-81). The host's outbox is the one the
         // apps send from. Answers how many items there were.
         dropBrowserOutbox() {
             const key = chat.outboxKey();

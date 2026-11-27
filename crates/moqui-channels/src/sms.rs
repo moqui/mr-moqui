@@ -569,10 +569,11 @@ pub trait SmsProvider: Send + Sync + Sized + 'static {
         response
     }
 
-    /// The header a file a text names is fetched with (Basic auth), when the provider's files need one. The client
-    /// sends it only to the file's own host: a redirect to another drops it.
-    fn media_auth(&self, config: &Self::Config) -> Option<(String, String)> {
-        let _ = config;
+    /// The header the file at `url` a text names is fetched with (Basic auth), when the provider's files need one and
+    /// `url` is the provider's own (SEC-COM-96). The client sends it only to the file's own host: a redirect to another
+    /// drops it.
+    fn media_auth(&self, config: &Self::Config, settings: &Settings, url: &str) -> Option<(String, String)> {
+        let _ = (config, settings, url);
         None
     }
 
@@ -1252,6 +1253,20 @@ impl<P: SmsProvider> ChatBridgeAdapter for SmsAdapter<P> {
     }
 }
 
+/// Whether `url` is at the origin (scheme, host and port) of `base`, compared without case, not by a string prefix:
+/// `https://api.example.com.evil` and `https://api.example.com@evil` are not `https://api.example.com`'s.
+pub(crate) fn same_origin(url: &str, base: &str) -> bool {
+    let origin = |text: &str| -> Option<(String, String)> {
+        let (scheme, rest) = text.trim().split_once("://")?;
+        let authority = rest.split(['/', '?', '#']).next()?;
+        if authority.is_empty() || authority.contains('@') {
+            return None;
+        }
+        Some((scheme.to_ascii_lowercase(), authority.to_ascii_lowercase()))
+    };
+    origin(url).is_some_and(|url| origin(base).is_some_and(|base| url == base))
+}
+
 /// How long a number lookup may take: the text it judges waits for it.
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -1615,7 +1630,10 @@ impl<P: SmsProvider> SmsAdapter<P> {
             .timeout(Duration::from_secs(20))
             // read no further than the bridge's bound (the client's own is the 20 MiB cap)
             .max_response_bytes(max);
-        if let Some((name, value)) = self.provider.media_auth(&self.provider.config(&bridge.config)) {
+        if let Some((name, value)) = self
+            .provider
+            .media_auth(&self.provider.config(&bridge.config), &settings, url)
+        {
             call = call.header(name, value);
         }
         let response = call.send(false).map_err(|error| {

@@ -1639,7 +1639,7 @@ fn path_client_context(defs: &[Arc<ScreenDef>], first_pre: usize) -> BTreeSet<St
 /// Whether `GET {screen}/actions` answers the screen's package: only for a screen that is sent as a server-static
 /// template (its qvt macro module, `server-static` naming qvt and a structure the template can hold, or a static report),
 /// whose client reads the package. Any other screen's actions put names in the context for checks and renders that
-/// are never sent, so they are not answered (plans/Security-Review-Medium.md SEC-RTE-02). A form-list's rows and a
+/// are never sent, so they are not answered (plans/archive/Security-Review-Medium.md SEC-RTE-02). A form-list's rows and a
 /// tree's nodes (`{screen}/actions/{name}`) are answered as before.
 fn sends_package(state: &RenderState) -> bool {
     let info = &state.url_info;

@@ -304,7 +304,7 @@ pub fn claim(entity: &EntityFacade, runner_token: &str, step_user: bool) -> Resu
 }
 
 /// Whether a runner of pool `pool_id` is given jobs only when it runs its steps as another user: the pool is of
-/// registered runners and takes untrusted runs (plans/Security-Review-Low.md SEC-GIT-19).
+/// registered runners and takes untrusted runs (plans/archive/Security-Review-Low.md SEC-GIT-19).
 pub fn needs_step_user(entity: &EntityFacade, pool_id: &str) -> Result<bool, Error> {
     let _rows = crate::rows_guard();
     Ok(super::one(entity, RUNNER_POOL, "runnerPoolId", pool_id)?.is_some_and(|pool| {

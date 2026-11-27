@@ -1371,7 +1371,7 @@
         canvas.previewUrl = (path, token) => path ? path + (path.indexOf("?") >= 0 ? "&" : "?") + "moquiPreview=" + encodeURIComponent(token) : "";
         // the page path the model names is a frame's src only when it is a plain path of the apps (/apps/... or /qapps/...,
         // no scheme, host, .., // or backslash), as the server's prepare refuses any other: never javascript: or another
-        // site (plans/Security-Review-Medium.md SEC-AI-82)
+        // site (plans/archive/Security-Review-Medium.md SEC-AI-82)
         canvas.plainAppPath = (path) => {
             const bare = String(path || "").split(/[?#]/)[0];
             return /^\/(q?apps)(\/|$)/.test(bare) && bare.indexOf("//") < 0 && bare.indexOf("\\") < 0

@@ -1,6 +1,6 @@
 // Records whose text runs as script where they are used need DATABASE_ADMIN to write that text (Security.eecas.xml,
 // crates/moqui-core/src/service/security_checks.rs assert_stored_template, assert_stored_expression, assert_translation;
-// plans/Security-Review-Medium.md SEC-SCR-06, SEC-SCR-12; plans/Security-Review.md SEC-BAP-81): an email template's sender
+// plans/archive/Security-Review-Medium.md SEC-SCR-06, SEC-SCR-12; plans/archive/Security-Review.md SEC-BAP-81): an email template's sender
 // or subject with ${}, an entity filter's map, a subscreen row's menu title with ${}, a translation that adds an expression to
 // its original, and a text block's body with a ${} that is not a ${name} placeholder. Plain text, a translation that keeps
 // the original's placeholders, a text block's placeholders, and a holder of DATABASE_ADMIN pass.

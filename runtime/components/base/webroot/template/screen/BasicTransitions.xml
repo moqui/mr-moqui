@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- The email transitions send mail, so they take a POST with the session token (not read-only), and pass the
         service only the form's own fields: the whole context let a request choose the template, Cc and Bcc, and a
-        fileName that was expanded as script (plans/Security-Review.md SEC-MAIL-61). The report's own parameters go
+        fileName that was expanded as script (plans/archive/Security-Review.md SEC-MAIL-61). The report's own parameters go
         as bodyParameters, the data the screen renders with. -->
     <transition name="emailScreenAsync">
         <service-call name="org.moqui.mail.EmailServices.send#ScreenRenderEmail" async="true"

@@ -18,7 +18,7 @@
 //! so a lookup labels only the rows the frame's ids name: its key is the entity's single primary-key field, its
 //! conditions are plain equalities, it never reads a restricted entity or a view over one, and it never keys, shows or
 //! conditions on a password or encrypted field, nor on an identity field of `UserAccount` (its username, email address
-//! and the rest), so a dataset does not list accounts' emails (plans/Security-Review.md SEC-TLS-82: a lookup on
+//! and the rest), so a dataset does not list accounts' emails (plans/archive/Security-Review.md SEC-TLS-82: a lookup on
 //! `UserAccount` keyed by `disabled` answered password hashes).
 
 use std::collections::BTreeSet;

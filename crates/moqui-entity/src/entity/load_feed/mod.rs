@@ -91,12 +91,12 @@ pub struct LoadOptions {
     /// them and checked only root and CSV entity names.
     pub restrict_sensitive_entities: bool,
     /// With `restrict_sensitive_entities`, also refuse a `UserAccount` record that sets a password field: a sync
-    /// partner's load (`put#EntitySyncData`, plans/Security-Review-Low.md SEC-DAT-08).
+    /// partner's load (`put#EntitySyncData`, plans/archive/Security-Review-Low.md SEC-DAT-08).
     pub refuse_password_fields: bool,
     /// With `restrict_sensitive_entities`, also refuse a `UserAccount` record that changes an identity field (its
     /// username, email address, external id, disabled flag and the rest) of an account that is there: Tools' Data Load,
     /// whose holder would set another account's email address and take it over by a password reset
-    /// (plans/Security-Review.md SEC-TLS-81). A record of a new account may set them.
+    /// (plans/archive/Security-Review.md SEC-TLS-81). A record of a new account may set them.
     pub refuse_account_identity: bool,
     /// With `restrict_sensitive_entities`, also refuse every entity of these packages: a sync partner's load refuses
     /// `moqui.service.job`, whose jobs run with authorization off (SEC-DAT-08).

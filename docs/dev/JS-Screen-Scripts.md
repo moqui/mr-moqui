@@ -241,7 +241,7 @@ related rows for the whole list in the screen's `actions`.
 ## In a preview of proposed text
 
 A screen that stands at a preview's proposed text (a dev-aide change set or a `screen-xml` canvas, `screen::overlay`)
-runs its code on an allow-list host (`crates/moqui-core/src/script/preview.rs`, plans/Security-Review-Low.md
+runs its code on an allow-list host (`crates/moqui-core/src/script/preview.rs`, plans/archive/Security-Review-Low.md
 SEC-AI-102). That is its actions (always-, pre-, transition and form row actions, a form's or a drop-down's
 `entity-find`, a tree node's), its widget, field and condition expressions, and the forms that `extends` one of its
 forms. The screen is told by the nearest screen frame above the last service frame, so a transition, the menu data and

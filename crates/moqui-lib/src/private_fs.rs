@@ -14,7 +14,7 @@
 
 //! Files and directories only this user may read: a file `0600` and a directory `0700` on Unix, whatever the process
 //! umask, for what holds a secret or a copy of the data (a password file, a data export or snapshot, a database dump,
-//! the log) (plans/Security-Review-Low.md SEC-DAT-06). On other systems they are as the system makes them.
+//! the log) (plans/archive/Security-Review-Low.md SEC-DAT-06). On other systems they are as the system makes them.
 
 use std::fs::OpenOptions;
 use std::io;

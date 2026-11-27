@@ -104,6 +104,25 @@ fn apple_labels_companies_and_groups() {
     assert_eq!(text(acme, "phone1.label"), "Main");
 }
 
+/// SEC-FIL-95: a card's grouped labels are read once, and a card keeps at most 10,000 properties, so a hostile card's
+/// reading stays bounded.
+#[test]
+fn a_card_with_many_grouped_lines_reads_its_labels_and_stops_at_its_cap() {
+    let mut body = String::from("BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Many\r\nitem1.X-ABLabel:Desk\r\n");
+    for index in 0..12_000 {
+        body.push_str(&format!("item1.TEL:+1 555 {index:05}\r\n"));
+    }
+    body.push_str("END:VCARD\r\n");
+    let cards = vcard::parse(&body);
+    let card = &cards[0];
+    assert_eq!(text(card, "phone1.label"), "Desk");
+    assert_eq!(text(card, "phone9998"), "+1 555 09997");
+    assert!(
+        !card.contains_key("phone9999"),
+        "past the cap: FN and the label are two of the 10,000"
+    );
+}
+
 #[test]
 fn outlook_21_quoted_printable_and_charsets() {
     let cards = vcard::parse(&sample("outlook21.vcf"));

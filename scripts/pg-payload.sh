@@ -57,7 +57,7 @@ verify_sha256() {
 }
 
 # The archive $1 against the SHA-256 the repository pins for its name $2 (scripts/pg-payload.sha256), besides the sum
-# published beside it at the same address (plans/Security-Review-Low.md SEC-OUT-91). A name with no pin stops the
+# published beside it at the same address (plans/archive/Security-Review-Low.md SEC-OUT-91). A name with no pin stops the
 # download: on a POSTGRESQL_VERSION bump, add the new archives' sums there once they are checked.
 verify_pinned() {
     local file=$1 name=$2 pins=$root/scripts/pg-payload.sha256 pinned actual

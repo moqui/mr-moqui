@@ -1,4 +1,4 @@
-// Tools › Data's generic writes of a request's rows (plans/Security-Review.md SEC-TLS-81). Load's storeSelected writes
+// Tools › Data's generic writes of a request's rows (plans/archive/Security-Review.md SEC-TLS-81). Load's storeSelected writes
 // the rows a check found, each posted as base64url JSON the holder chooses, so a row is written only where a generic
 // write may be: not an entity WebUtilities.isGenericWriteRefused names (a hosted-instance row, a SqlRunToken), nor a
 // UserAccount password or identity field, as a value or in the primary key map; the other rows are stored. It needs
@@ -135,7 +135,7 @@ function renderCheck(username, xmlText) {
     return out
 }
 
-// the check answers the stored value of each field the data gives that differs (plans/Security-Review-Medium.md SEC-TLS-84)
+// the check answers the stored value of each field the data gives that differs (plans/archive/Security-Review-Medium.md SEC-TLS-84)
 feature("Load's check needs all actions on Tools and answers no password hash or restricted record", {
     when() {
         const guess = `<entity-facade-xml><moqui.security.UserAccount userId="${TARGET}" userFullName="Spec Guess" currentPassword="guess"/></entity-facade-xml>`
