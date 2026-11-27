@@ -203,6 +203,14 @@ fn ec_llm_embed_returns_the_vectors_in_the_order_of_the_texts() {
         seen: std::sync::Mutex::new(Vec::new()),
     });
     moqui_core::outbound::install_http_sender(stub.clone());
+    // the stub goes when the test ends, a failed assertion too
+    struct ClearSender;
+    impl Drop for ClearSender {
+        fn drop(&mut self) {
+            moqui_core::outbound::clear_http_sender();
+        }
+    }
+    let _clear = ClearSender;
     let embedded = |options: &str| {
         let out = moqui_core::script::eval_value(&format!(
             r#"JSON.stringify(ec.llm.embed(["first", "second"], {options}))"#
@@ -251,7 +259,7 @@ fn ec_llm_embed_returns_the_vectors_in_the_order_of_the_texts() {
         late.error.map(|error| error.class),
         Some(crate::provider::ErrorClass::Timeout)
     );
-    moqui_core::outbound::clear_http_sender();
+    drop(_clear);
     let seen = stub.seen.lock().unwrap();
     assert_eq!(seen.len(), 2);
     assert_eq!(seen[0].url, format!("{STUB_HOST}v1/embeddings"));
