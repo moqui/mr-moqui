@@ -152,6 +152,18 @@ pub(crate) async fn handle(
         .get::<ClientAddr>()
         .map_or(peer.ip(), |client| client.0);
     let (parts, body) = request.into_parts();
+    // nothing of the body is read while the gateway is off or for a request with no credential: every route needs one
+    // (SEC-AI-88)
+    if !gateway::enabled(&state.factory) {
+        return response_of(gateway::off());
+    }
+    let credential = parts
+        .headers
+        .get(axum::http::header::AUTHORIZATION)
+        .is_some_and(|value| !value.as_bytes().trim_ascii().is_empty());
+    if !credential {
+        return response_of(gateway::credentials_required());
+    }
     let declared = parts
         .headers
         .get(axum::http::header::CONTENT_LENGTH)

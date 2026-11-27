@@ -659,6 +659,20 @@ fn the_gateway_passes_calls_through_with_keys_quotas_and_usage_on_postgres() {
     assert_eq!(status, 401, "{body}");
     assert!(header(&headers, "www-authenticate").is_some_and(|value| value.starts_with("Bearer")));
     assert_eq!(body["error"]["code"], "invalid_api_key");
+    // SEC-AI-88: a request with no credential is answered before its body is read: a head that says 16 MiB follow, and
+    // none of them sent, gets its 401 at once
+    let mut anonymous = TcpStream::connect(address).unwrap();
+    anonymous.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    write!(
+        anonymous,
+        "POST /llm/v1/chat/completions HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{{",
+        16 * 1024 * 1024
+    )
+    .unwrap();
+    let mut first = [0u8; 12];
+    anonymous.read_exact(&mut first).unwrap();
+    assert_eq!(&first, b"HTTP/1.1 401", "{}", String::from_utf8_lossy(&first));
+    drop(anonymous);
     let (status, _, _) = send(
         address,
         "Bearer 0123456789012345678901234567890123456789",

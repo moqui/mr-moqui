@@ -249,7 +249,8 @@ along with this software (see the LICENSE.md file). If not, see
             artifactTypeEnumId="AT_LLM" inheritAuthz="N"/>
     <moqui.security.ArtifactTarpit userGroupId="ALL_USERS" artifactGroupId="AssistModelCalls" maxHitsCount="60"
             maxHitsDuration="60" tarpitDuration="120"/>
-    <!-- AT_LLM also counts an MCP tool call (mcp:<toolName>) -->
+    <!-- AT_LLM also counts an MCP tool call and tool list by the method (mcp:tools/call, mcp:tools/list), whatever
+        tool a call names -->
     <moqui.security.ArtifactGroup artifactGroupId="McpToolCalls" description="MCP tool calls"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="McpToolCalls" artifactName="mcp:.*" nameIsPattern="Y"
             artifactTypeEnumId="AT_LLM" inheritAuthz="N"/>

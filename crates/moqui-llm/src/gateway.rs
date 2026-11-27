@@ -141,6 +141,32 @@ fn too_many(code: &str, message: &str, seconds: u64) -> Reply {
     .with_header("retry-after", seconds.max(1).to_string())
 }
 
+/// The answer to a request with no `Authorization` header: 401 with `WWW-Authenticate`. The host gives it before it
+/// reads the request's body, so an anonymous client is not given 16 MiB of the server's memory (SEC-AI-88).
+#[must_use]
+pub fn credentials_required() -> Reply {
+    error(
+        401,
+        "invalid_request_error",
+        Some("invalid_api_key"),
+        None,
+        "an API key is required: Authorization: Bearer <login key or app password>",
+    )
+    .with_header("www-authenticate", "Bearer realm=\"llm\", Basic realm=\"llm\"")
+}
+
+/// The answer to a request while the gateway is off (404).
+#[must_use]
+pub fn off() -> Reply {
+    error(
+        404,
+        "invalid_request_error",
+        Some("gateway_off"),
+        None,
+        "the LLM gateway is off",
+    )
+}
+
 /// Whether the gateway is on: the `llm-facade` and its `gateway` are both enabled.
 pub fn enabled(factory: &ExecutionContextFactory) -> bool {
     let llm = super::facade(factory);
@@ -718,9 +744,7 @@ pub fn authenticate(
         .map(str::trim)
         .filter(|text| !text.is_empty())
     else {
-        return Err(unauthorized(
-            "an API key is required: Authorization: Bearer <login key or app password>",
-        ));
+        return Err(credentials_required());
     };
     if !request.secure {
         return Err(error(
@@ -950,13 +974,7 @@ fn route(method: &str, path: &str) -> Result<Route, Reply> {
 /// the host's room for it (`open`), and hand the model call to the host. 404 while the gateway is off.
 pub fn serve(factory: &Arc<ExecutionContextFactory>, request: &HttpRequest, open: Open<'_>) -> Answer {
     if !enabled(factory) {
-        return Answer::Reply(error(
-            404,
-            "invalid_request_error",
-            Some("gateway_off"),
-            None,
-            "the LLM gateway is off",
-        ));
+        return Answer::Reply(off());
     }
     let route = match route(&request.method, &request.path) {
         Ok(route) => route,
@@ -993,6 +1011,31 @@ pub fn serve(factory: &Arc<ExecutionContextFactory>, request: &HttpRequest, open
             Ok(answer) | Err(answer) => answer,
         },
     }
+}
+
+/// The first url of a content part in `fields` that is not inline: the value of a `url`, `image_url` or `file_url`
+/// key (a string, or an object's `url`) that does not start with `data:`. Walked with a stack of its own.
+fn remote_content_url(fields: &Map<String, Json>) -> Option<String> {
+    let mut pending: Vec<&Json> = fields.values().collect();
+    while let Some(value) = pending.pop() {
+        match value {
+            Json::Object(object) => {
+                for (key, inner) in object {
+                    if matches!(key.as_str(), "url" | "image_url" | "file_url") {
+                        if let Json::String(url) = inner {
+                            if !url.trim_start().to_ascii_lowercase().starts_with("data:") {
+                                return Some(url.clone());
+                            }
+                        }
+                    }
+                    pending.push(inner);
+                }
+            }
+            Json::Array(items) => pending.extend(items),
+            _ => {}
+        }
+    }
+    None
 }
 
 fn model_json(alias: &Alias) -> Json {
@@ -1046,6 +1089,21 @@ fn call(
                 kind.path()
             ),
         )));
+    }
+    // a model server on the private network that fetches a content part's url would fetch it from there for the caller:
+    // only inline (data:) content goes to one (SEC-AI-100)
+    if target.endpoint.local || target.endpoint.allow_private_network {
+        if let Some(url) = remote_content_url(&prepared.fields) {
+            return Err(Answer::Reply(invalid(
+                Some("messages"),
+                "unsupported_content",
+                &format!(
+                    "model {} is on a private network: a content part may be inline (data:) only, not {}",
+                    alias.name,
+                    url.chars().take(100).collect::<String>()
+                ),
+            )));
+        }
     }
     // the reservation lasts the call's time and a minute more, should this node stop before the call ends
     let ttl = Duration::from_secs(llm.conf().gateway.timeout.max(1) + 60);

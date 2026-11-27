@@ -89,6 +89,12 @@ fn a_part_is_exactly_one_of_text_raw_url_and_data() {
         -32602,
         "max part bytes"
     );
+    // SEC-AI-85: the parts together are held to the limit too, not only each one
+    assert_eq!(
+        refused(json!([{"text": "twelve bytes"}, {"text": "twelve bytes"}])).code,
+        -32602,
+        "max message bytes"
+    );
     assert_eq!(refused(json!([{"raw": "not base64!"}])).code, -32602);
     assert_eq!(
         refused(json!([{"url": "https://example.com/x"}])).code,

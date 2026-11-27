@@ -170,8 +170,8 @@ canonical JSON), the approval's expiry and a nonce. On the retry (the same name 
 
 A decision does not run the write by itself: the run engine never steps an MCP run (one taken over after its node
 stopped fails as `mcp_interrupted`), so an approved write the client never retries expires with its run's pause. Each
-authenticated request counts against the AT_LLM tarpit before anything is built (`mcp:tools/list`, `mcp:<tool>`
-for a call, an unknown name too; 120 a minute by default); a caller over it gets 429 with
+authenticated request counts against the AT_LLM tarpit before anything is built (`mcp:tools/list`, and
+`mcp:tools/call` for every call whatever tool it names; 120 a minute by default); a caller over it gets 429 with
 `Retry-After` and `-31429`. A retry's wait counts with the user's A2A waits and streams (16 at once).
 
 ## The documents
