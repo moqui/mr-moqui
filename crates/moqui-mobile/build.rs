@@ -81,6 +81,7 @@ const COMMANDS: &[&str] = &[
     "call_dial_from",
     "contacts_search",
     "contact_names",
+    "web_request",
 ];
 
 fn main() {

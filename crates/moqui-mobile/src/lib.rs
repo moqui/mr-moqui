@@ -44,6 +44,7 @@ mod native;
 mod push;
 mod scheme;
 mod screen;
+mod web;
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -150,7 +151,8 @@ pub fn run() {
             commands::call_dial_choice,
             commands::call_dial_from,
             commands::contacts_search,
-            commands::contact_names
+            commands::contact_names,
+            commands::web_request
         ])
         .setup(move |app| {
             let embedded = files.take().ok_or("the app was set up twice")?;
