@@ -70,13 +70,16 @@ pub struct State {
     pub refused_from: Vec<IpAddr>,
     pub statuses: HashMap<String, String>,
     pub push: Vec<(String, Json)>,
-    /// The user's location share with XMPP contacts that `report#XmppPosition` reports (plans/Location-Sharing.md
-    /// §3.6), else none, which the service answers `NO_XMPP_SHARE`.
+    /// The user's location share that takes the XMPP app's location (`takeXmppLocation`) for its XMPP contacts, which
+    /// `report#XmppPosition` reports (plans/Location-Sharing.md §3.6), else none, which the service answers
+    /// `NO_XMPP_SHARE`.
     pub location_share: Option<LocationShare>,
     /// What `report#XmppPosition` answers in place of taking the report (a 429, a 400), when set.
     pub location_answer: Option<Json>,
     /// The parameters of each `report#XmppPosition`.
     pub location_reports: Vec<Json>,
+    /// The JIDs each user blocked (`get#BlockedJids`), by userId.
+    pub blocks: HashMap<String, Vec<String>>,
 }
 
 /// A location share as `report#XmppPosition` stands in for it: its XMPP contacts' users, and whether it is approximate.
@@ -577,13 +580,14 @@ impl Fake {
                 }
                 let body = json!({"topic": format!("{}S1", crate::registry::LOCATION_TOPIC), "userIds": share.audience,
                     "message": {"shareId": "S1", "ownerUserId": me, "event": "position", "latitude": latitude,
-                        "longitude": longitude, "accuracy": accuracy, "observedDate": p.get("observedMillis")}});
+                        "longitude": longitude, "accuracy": accuracy, "observedDate": p.get("observedMillis"),
+                        "thruDate": 1_900_000_000_000_i64}});
                 if let Some(server) = self.server.get().and_then(Weak::upgrade) {
                     server.registry.deliver_notice(&body);
                 }
                 Ok(json!({"statusCode": 200}))
             }
-            services::BLOCKS => Ok(json!({"jidList": []})),
+            services::BLOCKS => Ok(json!({"jidList": state.blocks.get(&me).cloned().unwrap_or_default()})),
             services::STATUSES => Ok(json!({"statusMap": {}})),
             services::SET_STATUS => {
                 state.statuses.insert(me, text(p, "status"));

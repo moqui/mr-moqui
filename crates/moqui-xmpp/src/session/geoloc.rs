@@ -15,17 +15,22 @@
 //! User location (XEP-0080) mapped onto Moqui's location shares (plans/Location-Sharing.md §3.6, LL5). The `geoloc`
 //! PEP node is never a PEP node here (`pep::REFUSED_NODES`): no item is kept, fetched or subscribed to.
 //!
-//! - **In.** A publish from the user's own client is a report of the user's active location share made in Moqui with
-//!   XMPP contacts in its audience (`LocationServices.report#XmppPosition`, through `report#Position` with the share's
-//!   rules: the rate, approximate rounding). With no such share it is refused `not-allowed`, so a client's setting alone
-//!   never starts sharing. Of XEP-0080's fields `lat`, `lon`, `accuracy` and `timestamp` are read, checked here and again
-//!   by the service; the rest are left out. An empty `geoloc` (the XEP's "stopped") is answered and is no report: it
-//!   ends nothing, as a client's setting starts nothing; the share stays the owner's to stop in Moqui.
+//! - **In.** A publish from the user's own client is taken by each of the user's active location shares made in Moqui
+//!   with XMPP contacts whose owner turned on its XMPP app's location (`LocationServices.report#XmppPosition`, with the
+//!   share's rules: the rate, approximate rounding). With no such share it is refused `not-allowed`, so a client's
+//!   setting alone never starts or feeds a share; one too soon or older than the last is answered as taken, with nothing
+//!   new kept. Of XEP-0080's fields `lat`, `lon`, `accuracy` and `timestamp` are read, checked here and again by the
+//!   service; the rest are left out. An empty `geoloc` (the XEP's "stopped") is answered and is no report: it ends
+//!   nothing, as a client's setting starts nothing; the share stays the owner's to stop in Moqui.
 //! - **Out.** The positions a share takes, from any device or page, reach its XMPP contacts' sessions on the bus topic
 //!   `locationShareXmpp:<shareId>` (only those contacts' users, as the services wrote them), each as a `geoloc` event to
 //!   a session that asked for it (`geoloc+notify`), from the owner's JID; an ended or revoked share sends an empty
-//!   `geoloc` item. What the push carries is what the share's audience may see: an approximate share's cell, never the
-//!   fix.
+//!   `geoloc` item, also when its time ends it (the session keeps each share's end from its pushes, and sends the item at
+//!   its tick: the services end it only at their hourly clean). What the push carries is what the share's audience may
+//!   see: an approximate share's cell, never the fix.
+//! - **The opt-in.** A publish feeds only a share whose owner turned on `takeXmppLocation` in Moqui, and goes to its XMPP
+//!   contacts only, never to its users, groups or link; the first one a share takes tells the owner's XMPP sessions by
+//!   a headline (whom with, until when).
 //!
 //! No position is logged: a refused call is logged by its service's errors, which name no value.
 
@@ -36,6 +41,9 @@ use super::xml::{attr, iq_result, parse_stamp, stamp, text_el, E};
 use super::Session;
 use crate::backend::{self, services};
 use crate::ns;
+
+/// How many shares' ends a session keeps (each a share that sent it a position).
+const GEOLOC_ENDS_MAX: usize = 256;
 
 /// A position as XEP-0080 gives it, checked.
 #[derive(Debug, Clone, PartialEq)]
@@ -154,16 +162,17 @@ impl Session {
             backend::number(&found, "statusCode"),
             backend::text(&found, "reasonCode").as_str(),
         ) {
-            // taken, or older than what the share holds already (nothing new to take)
-            (Some(200), _) | (_, "STALE") => self.geoloc_published(iq, item_id),
-            // no share of the user's own with XMPP contacts that this client may send: a client never starts one
-            (_, "NO_XMPP_SHARE") => self.refuse(
+            // taken; or older than what the share holds, or too soon after the last one (its rate): nothing new to take,
+            // and a client that publishes on every move is not shown an error for it
+            (Some(200 | 429), _) | (_, "STALE") => self.geoloc_published(iq, item_id),
+            // no share of the user's own that takes its XMPP app's location (the owner's choice in Moqui), or one that
+            // ended or went meanwhile: a client never starts or feeds one
+            (_, "NO_XMPP_SHARE" | "OTHER_DEVICE") | (Some(403 | 404 | 409 | 410), _) => self.refuse(
                 iq,
                 "cancel",
                 "not-allowed",
-                Some("start a location share with XMPP contacts in Moqui first"),
+                Some("turn on your XMPP app's location for a location share in Moqui first"),
             ),
-            (Some(429), _) => self.refuse(iq, "wait", "policy-violation", Some("too soon after the last position")),
             (Some(400), _) => self.pubsub_error(iq, "modify", "bad-request", "invalid-payload"),
             _ => self.refuse(iq, "wait", "internal-server-error", None),
         }
@@ -182,20 +191,70 @@ impl Session {
         self.send(result);
     }
 
-    /// A location share's position or end for this session's user, an XMPP contact of the share: a `geoloc` event from
-    /// the owner, to a session that asked for user location notifications and has not blocked the owner.
+    /// A location share's push for this session's user (plans/Location-Sharing.md §3.6). To an XMPP contact of the
+    /// share: a position or the end as a `geoloc` event from the owner, to a session that asked for user location
+    /// notifications and has not blocked the owner, and the share's end kept, so the empty item goes out when it comes
+    /// ([`Session::geoloc_expire`]) though the services end it only at their hourly clean. To the owner: the headline that
+    /// their XMPP app's location now feeds a share.
     pub(super) async fn geoloc_out(&mut self, message: &Json) {
+        let owner = backend::text(message, "ownerUserId");
+        let share_id = backend::text(message, "shareId");
+        let event = backend::text(message, "event");
+        if owner.is_empty() || share_id.is_empty() {
+            return;
+        }
+        if owner == self.user_id() {
+            if event == "feeding" {
+                let text = backend::text(message, "text");
+                let headline = E::new("message", ns::CLIENT)
+                    .a("type", "headline")
+                    .a("from", self.domain())
+                    .a("to", self.my_full())
+                    .a("id", super::xml::random_id())
+                    .c(text_el("body", ns::CLIENT, text))
+                    .build();
+                self.send(headline);
+            }
+            return;
+        }
+        match event.as_str() {
+            "ended" | "revoked" => {
+                self.geoloc_ends.remove(&share_id);
+            }
+            "position" | "changed" => {
+                if let Some(thru) = backend::number(message, "thruDate") {
+                    if self.geoloc_ends.len() < GEOLOC_ENDS_MAX || self.geoloc_ends.contains_key(&share_id) {
+                        self.geoloc_ends.insert(share_id.clone(), (owner.clone(), thru));
+                    }
+                }
+            }
+            _ => {}
+        }
+        if let Some(payload) = geoloc_payload(message) {
+            self.geoloc_send(&owner, &share_id, payload).await;
+        }
+    }
+
+    /// The shares whose end has come by `now` (Unix milliseconds), each sent its empty item, as an ended share's.
+    pub(super) async fn geoloc_expire(&mut self, now: i64) {
+        let ended: Vec<(String, String)> = self
+            .geoloc_ends
+            .iter()
+            .filter(|(_, (_, thru))| *thru <= now)
+            .map(|(share_id, (owner, _))| (share_id.clone(), owner.clone()))
+            .collect();
+        for (share_id, owner) in ended {
+            self.geoloc_ends.remove(&share_id);
+            self.geoloc_send(&owner, &share_id, E::new("geoloc", ns::GEOLOC).build())
+                .await;
+        }
+    }
+
+    async fn geoloc_send(&mut self, owner: &str, share_id: &str, payload: Element) {
         if !moqui_lib::sync::lock(&self.notify).contains(ns::GEOLOC) {
             return;
         }
-        let owner = backend::text(message, "ownerUserId");
-        if owner.is_empty() || owner == self.user_id() {
-            return;
-        }
-        let Some(payload) = geoloc_payload(message) else {
-            return;
-        };
-        let Some(from) = self.jid_of(&owner).await else {
+        let Some(from) = self.jid_of(owner).await else {
             return;
         };
         if self.is_blocked(&from).await {
@@ -203,7 +262,7 @@ impl Session {
         }
         // one item a share, so a client that holds items by id sees each share's end
         let item = E::new("item", ns::PUBSUB_EVENT)
-            .a("id", format!("share-{}", backend::text(message, "shareId")))
+            .a("id", format!("share-{share_id}"))
             .c(payload);
         let event =
             E::new("event", ns::PUBSUB_EVENT).c(E::new("items", ns::PUBSUB_EVENT).a("node", ns::GEOLOC).c(item));

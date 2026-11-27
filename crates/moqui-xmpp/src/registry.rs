@@ -152,8 +152,9 @@ impl Registry {
         let Some(topic) = body.get("topic").and_then(Json::as_str) else {
             return;
         };
-        // the XMPP contacts' copy of a location share's positions and its end (plans/Location-Sharing.md §3.6), which
-        // no web client follows
+        // a location share's positions and its end for its XMPP contacts, and the owner's headline
+        // (plans/Location-Sharing.md §3.6): the same users' browsers that follow every topic (WebrootChat.js registers
+        // ALL) get them too, as theirs
         if !(topic.starts_with("chatRoom:")
             || topic.starts_with("chatUser:")
             || topic == "userStatus"
