@@ -248,6 +248,12 @@ feature("My location shares opens for an owner with ALL_USERS alone, lists their
             label: "Plain errand"
         }).shareId
         const page = as(PLAIN, "apps/maps/MyShares", {}, null, "qvt")
+        // the XMPP app's opt-in (plans/Location-Sharing.md §3.6): the owner's alone to turn on
+        const optIn = () => (Array.from(shareCall(PLAIN, "find#MyShares").shareList || []).find(row => row.shareId === shareId) || {}).takeXmppLocation
+        as(WRITER, "apps/maps/MyShares/takeXmppShare", {shareId, takeXmppLocation: "true"}, "post")
+        const optInOther = optIn()
+        as(PLAIN, "apps/maps/MyShares/takeXmppShare", {shareId, takeXmppLocation: "true"}, "post")
+        const optInOwn = optIn()
         as(WRITER, "apps/maps/MyShares/stopShare", {shareId}, "post")
         const afterOther = Array.from(shareCall(PLAIN, "find#MyShares").shareList || []).some(row => row.shareId === shareId)
         as(PLAIN, "apps/maps/MyShares/stopShare", {shareId}, "post")
@@ -261,9 +267,11 @@ feature("My location shares opens for an owner with ALL_USERS alone, lists their
                 ec.user.logoutUser()
             }
         }
-        return {shareId, page, afterOther, afterOwn, writerMaps: mapsOpen(WRITER), plainMaps: mapsOpen(PLAIN)}
+        return {shareId, page, afterOther, afterOwn, optInOther, optInOwn, writerMaps: mapsOpen(WRITER), plainMaps: mapsOpen(PLAIN)}
     },
-    then({shareId, page, afterOther, afterOwn, writerMaps, plainMaps}) {
+    then({shareId, page, afterOther, afterOwn, optInOther, optInOwn, writerMaps, plainMaps}) {
+        optInOther == false
+        optInOwn == true
         writerMaps == true
         plainMaps == false
         page.status == 200

@@ -284,7 +284,7 @@ along with this software (see the LICENSE.md file). If not, see
                             : ageWords(share) + (share.lastSource ? ' · ' + t('from this page or phone') : '')}}</div>
                     <div v-if="share.takeXmppLocation && share.lastSource !== 'xmpp'" class="text-caption m-muted" data-maps-xmpp-source="true">
                         {{t('Your XMPP app\'s location, to your XMPP contacts only')}}: {{xmppAgeWords(share)}}</div>
-                    <q-toggle v-if="share.audience.some((entry) => entry.audienceTypeEnumId === 'LsaXmpp')" dense size="sm" class="q-mt-xs"
+                    <q-toggle v-if="share.takeXmppLocation || share.audience.some((entry) => entry.audienceTypeEnumId === 'LsaXmpp')" dense size="sm" class="q-mt-xs"
                             :model-value="share.takeXmppLocation === true" @update:model-value="(on) => takeXmpp(share, on)" data-maps-take-xmpp="true"
                             :label="t('Also use my XMPP app\'s location (sent to my XMPP contacts only)')"></q-toggle>
                     <q-list dense>
@@ -581,7 +581,12 @@ module.exports = {
                 const position = held && held.latest ? { lat: held.latest.lat, lon: held.latest.lon }
                     : latest && latest.latitude !== null && latest.latitude !== undefined ? { lat: Number(latest.latitude), lon: Number(latest.longitude) } : null;
                 const seenAt = held ? held.seenAt : latest && typeof latest.seenAt === 'number' ? latest.seenAt : null;
-                return Object.assign({}, share, { position, seenAt, thruDate: held && held.thruDate ? held.thruDate : share.thruDate });
+                // where the last position came from follows a newer push (a page's or the phone's, the only ones pushed
+                // here), not only the read: the XMPP app's is stamped at the read alone
+                let lastSource = share.lastSource || null;
+                if (held && held.latest && typeof seenAt === 'number' && (typeof share.xmppSeenAt !== 'number' || seenAt > share.xmppSeenAt))
+                    lastSource = 'device';
+                return Object.assign({}, share, { position, seenAt, lastSource, thruDate: held && held.thruDate ? held.thruDate : share.thruDate });
             }).filter((share) => share && (!share.thruDate || share.thruDate > this.now));
         },
         myShares() { return this.locationShares.filter((share) => share.role === 'owner'); },

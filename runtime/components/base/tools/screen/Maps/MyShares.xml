@@ -32,7 +32,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <!-- the owner's XMPP app's location for the share's XMPP contacts, on or off (update#Share takeXmppLocation;
         plans/Location-Sharing.md §3.6) -->
-    <transition name="takeXmppShare">
+    <transition name="takeXmppShare" method="post">
         <actions><script><![CDATA[
             const on = String(takeXmppLocation ?? '') === 'true'
             ec.service.sync().name('org.moqui.maps.LocationServices.update#Share').parameters({shareId: String(shareId ?? ''),

@@ -743,6 +743,13 @@ function revokeRows(share, rows, now) {
     // an XMPP contact taken out gets an empty geoloc item (one still in the share by another entry does not)
     const contactsAfter = new Set(xmppUserIds(share))
     pushXmpp(share, contactsBefore.filter(id => !contactsAfter.has(id)), {event: "revoked"})
+    // the last XMPP contact out: the owner's XMPP app's location goes nowhere now, so the opt-in goes with it (a contact
+    // added later does not bring it back unasked), and the XMPP latest with it; the version is not raised by an end
+    if (share.takeXmppLocation === "Y" && !activeAudience(share.shareId).some(row => row.audienceTypeEnumId === "LsaXmpp")) {
+        share.takeXmppLocation = "N"
+        share.update()
+        find(XMPP_LATEST).condition("shareId", share.shareId).deleteAll()
+    }
 }
 
 /**
@@ -1563,11 +1570,12 @@ function appShare(p) {
                 approximate,
                 intervalSeconds: approximate ? Math.max(minimum, setting("approximate-interval-seconds", 60)) : minimum,
                 // the owner's XMPP app's location goes to the share's XMPP contacts too (plans/Location-Sharing.md §3.6):
-                // the app's dialog says so, from these words, and the version raised by turning it on asks for that
+                // the app's dialog and notification say so, from these words, which they put mid-sentence ("to ... until
+                // 15:30"), so as a parenthetical; the version raised by turning it on asks for that confirmation
                 audienceText:
                     audienceWords(share) +
-                    (share.takeXmppLocation === "Y"
-                        ? ". " + ec.l10n.localize("Your XMPP app's location also goes to your XMPP contacts")
+                    (share.takeXmppLocation === "Y" && xmppUserIds(share).length
+                        ? " (" + ec.l10n.localize("your XMPP app's location also goes to your XMPP contacts") + ")"
                         : ""),
                 audienceVersion: Number(share.audienceVersion) || 0,
                 fromThisDevice: view.fromThisDevice

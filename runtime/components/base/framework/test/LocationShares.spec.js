@@ -1496,8 +1496,10 @@ feature("over XMPP: a position from the owner's XMPP app feeds only a share they
             capture().clear()
             out.phoneXmpp = as(A, XMPP, {latitude: "44.7", longitude: "-111.9"}).statusCode
             out.phoneTook = xmppPushes(sent).filter(push => push.event === "position").length
-            // turned off: the XMPP latest goes, and the XMPP app's position no longer reaches it
+            // turned off: the XMPP latest goes, the version stays, and the XMPP app's position no longer reaches it
+            const onVersion = versionOf(sent)
             as(A, "update#Share", {shareId: sent, takeXmppLocation: "false"})
+            out.offVersion = versionOf(sent) - onVersion
             out.offKept = xmppLatest(sent).length
             later(61000)
             capture().clear()
@@ -1527,6 +1529,9 @@ feature("over XMPP: a position from the owner's XMPP app feeds only a share they
             const row = rows("moqui.maps.LocationShareAudience", {shareId: rough, audienceTypeEnumId: "LsaXmpp"})[0]
             as(A, "revoke#Audience", {shareId: rough, audienceSeqId: row.audienceSeqId})
             out.revoked = xmppPushes(rough).filter(push => push.event === "revoked").map(push => push.userIds.join())
+            const roughRow = sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", rough).one())
+            out.roughOptIn = roughRow.takeXmppLocation
+            out.roughXmppKept = xmppLatest(rough).length
             as(A, "stop#Share", {shareId: rough})
             out.afterRevoke = xmppPushes(rough).filter(push => push.event === "ended").length
             as(A, "stop#Share", {shareId: late})
@@ -1580,15 +1585,17 @@ feature("over XMPP: a position from the owner's XMPP app feeds only a share they
         out.bothRough.length == 1
         out.bothRough[0].latitude == 44.125
         out.bothRough[0].accuracy == 1000
-        out.bothRough[0].heading === undefined
+        // the XMPP push holds the cell and its times, nothing else: no heading, speed or fix
+        Object.keys(out.bothRough[0]).sort().join() == "accuracy,event,latitude,longitude,observedDate,ownerUserId,shareId,thruDate,userIds"
         !JSON.stringify(out.bothRough).includes("44.12345")
         out.roughKept == "44.125"
         !out.phoneBefore.includes("XMPP app")
-        out.phoneAfter.includes("Your XMPP app's location also goes to your XMPP contacts")
+        out.phoneAfter.endsWith(" (your XMPP app's location also goes to your XMPP contacts)")
         out.phoneOld == "AUDIENCE_CHANGED"
         out.phoneNew == 200
         out.phoneXmpp == 200
         out.phoneTook == 1
+        out.offVersion == 0
         out.offKept == 0
         out.offTook == 0
         out.feeding.length == 1
@@ -1601,6 +1608,8 @@ feature("over XMPP: a position from the owner's XMPP app feeds only a share they
         out.ended.join() == C
         out.xmppLatestAfter == 0
         out.revoked.join() == C
+        out.roughOptIn == "N"
+        out.roughXmppKept == 0
         out.afterRevoke == 0
     }
 })
