@@ -159,6 +159,10 @@ class LocationRulesTest {
         val long = LocationRules.confirmWhom("Sam ".repeat(200))!!
         assertEquals(LocationRules.WHOM_MAX, long.length)
         assertTrue(long.endsWith("…"))
+        // cut by code point: an emoji outside the BMP is never split
+        val emoji = LocationRules.confirmWhom("\uD83D\uDE00".repeat(500))!!
+        assertEquals(LocationRules.WHOM_MAX, emoji.codePointCount(0, emoji.length))
+        assertTrue(emoji.dropLast(1).chunked(2).all { it == "\uD83D\uDE00" })
         // a touch through another window, wholly or in part, never presses Send, whatever other flags it has; it waits a
         // second after each focus
         val obscured = android.view.MotionEvent.FLAG_WINDOW_IS_OBSCURED

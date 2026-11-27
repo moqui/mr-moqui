@@ -67,8 +67,9 @@ In the framework (`entity/MapEntities.xml`, package `moqui.maps`):
   back: accepted).
 - **`LocationLatest`**: one row a share (`shareId`), `latitude`, `longitude`, `accuracy` (metres, as the device gives
   it), `heading`, `speed`, `observedDate`, `receivedDate`. Not cached.
-- **`LocationTrailPoint`**: `shareId`, `observedDate`, the same values, indexed by share and date. A share's trail is Each point keeps the server's `receivedDate` (LL3 review), and a viewer sees only points received after they were reached.
-  read in bounded pages.
+- **`LocationTrailPoint`**: `shareId`, `observedDate`, the same values, indexed by share and date. A share's trail is
+  read in bounded pages. Each point keeps the server's `receivedDate` (LL3 review), and a viewer sees only points
+  received after they were reached.
 - Settings on a new `location` element of `MoquiDefaultConf.xml` (each with its XSD attribute and `conf_schema.rs`
   entry): `max-share-hours` (24), `trail-max-days` (30), `min-interval-seconds` (5), `link-max-views-per-minute` (30).
 
@@ -128,6 +129,10 @@ group takes a new snapshot of it (LL1 review).
 
 ### 3.5 In chat
 
+Decided in LL4: live location only in unencrypted rooms (the phone's background sender cannot seal to a room's keys;
+sealing per report is later); someone removed from the room by another, or blocked by the owner, loses that room's
+live shares, while someone who leaves keeps them until the owner removes them.
+
 "Share live location" beside the location message's Share: a share whose audience is the room's members (as users),
 and a `content.location` message with its `liveShareId`. The card shows the live position and its age while the share
 is on, and "Live location ended" after. In an encrypted room the server must not see the position: LL4 decides between
@@ -136,6 +141,10 @@ empty for that share) and offering live location only in unencrypted rooms, sayi
 them when I arrive") stays later, built on this.
 
 ### 3.6 XMPP (XEP-0080)
+
+Decided November 27, 2026 (the user's choice, after LL5's review): XMPP positions feed a share only when its owner
+ticked "also use my XMPP app's location" for it (audited, raising the audience version), and go only to that share's
+XMPP contacts, never to its users, groups or guest link.
 
 The `geoloc` PEP node is refused today (LL0). LL5 maps it: a publish from the user's XMPP client updates the user's
 active share whose audience includes XMPP contacts, and is refused with no such share (so a client's setting alone never
