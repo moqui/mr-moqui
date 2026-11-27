@@ -923,6 +923,12 @@
         <!-- xlsx is a binary mode (the moqui-poi port): the module fills a workbook with a sheet for each form-list -->
         <screen-output type="xlsx" mime-type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 always-standalone="true" macro-template-location="framework/template/screen/ScreenXlsx.js"/>
+
+        <!-- live location's "Sharing location" chip in the shell's app bar for every share owner, whatever apps they may
+            open (plans/Location-Sharing.md §3.3; LocationServices get#ShellIndicator counts the caller's own shares) -->
+        <shell-providers>
+            <shell-indicator name="framework.locationSharing" service="org.moqui.maps.LocationServices.get#ShellIndicator" sequence="10"/>
+        </shell-providers>
     </screen-facade>
 
     <!-- scheduled-job-check-time: how often (in seconds) to check for scheduled jobs to run, 0 to run none.

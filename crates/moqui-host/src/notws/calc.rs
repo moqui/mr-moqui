@@ -47,6 +47,9 @@ struct Member {
     client: String,
     user_id: String,
     name: String,
+    /// A view that follows the document without being one of its viewers (a dashboard's range panel): it is told of
+    /// the document's changes, and has no place or presence for the others.
+    watch: bool,
 }
 
 fn members() -> &'static Mutex<Vec<Member>> {
@@ -74,12 +77,15 @@ fn error(slot: &Slot, room: &str, client: &str, code: u16, message: &str) {
 }
 
 /// Send `frame` to the views of the document `doc` on this server, each on its own room's topic, but the client
-/// `except`; with `rooms`, only to the views of those rooms.
+/// `except`; with `rooms`, only to the views of those rooms, watchers too; without, a frame of the viewers, to the
+/// views that are not watchers.
 fn broadcast(doc: &str, except: Option<&str>, rooms: Option<&[String]>, frame: &Json) {
     let targets: Vec<Member> = lock(members())
         .iter()
         .filter(|member| member.doc == doc && except != Some(member.client.as_str()))
         .filter(|member| rooms.is_none_or(|rooms| rooms.contains(&member.room)))
+        // a frame of the viewers (sent to every room) is not a watcher's: it has no place among them
+        .filter(|member| rooms.is_some() || !member.watch)
         .cloned()
         .collect();
     for member in targets {
@@ -117,7 +123,13 @@ pub(super) fn handle(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, t
         return true;
     }
     match kind {
-        "join" => join(factory, slot, room, client),
+        "join" => join(
+            factory,
+            slot,
+            room,
+            client,
+            message.get("watch") == Some(&Json::Bool(true)),
+        ),
         "select" => select(factory, slot, &room, &client, &message),
         "leave" => leave(factory, slot.id, Some(&client)),
         _ => error(slot, &room, &client, 400, &format!("unknown calc message {kind}")),
@@ -125,7 +137,7 @@ pub(super) fn handle(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, t
     true
 }
 
-fn join(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, room: String, client: String) {
+fn join(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, room: String, client: String, watch: bool) {
     // a socket's presence is bounded: its joins a minute and its clients in one room (SEC-TLS-113)
     let caps = super::PresenceCaps::of(factory);
     let others = lock(members())
@@ -172,8 +184,17 @@ fn join(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, room: String, 
             client: client.clone(),
             user_id: slot.user_id.clone(),
             name: name.clone(),
+            watch,
         };
         if !admit(&factory, &slot, member) {
+            return;
+        }
+        if watch {
+            // a watcher is told of changes only: no place of its own, and the others are not told of it
+            send(
+                &slot,
+                &json!({"topic": topic(&room), "type": "joined", "client": client, "peers": []}),
+            );
             return;
         }
         let presence = Presence::of(&factory);
@@ -213,7 +234,7 @@ fn member(slot_id: u64, client: &str) -> Option<Member> {
 }
 
 fn select(factory: &ExecutionContextFactory, slot: &Slot, room: &str, client: &str, message: &Json) {
-    let Some(member) = member(slot.id, client).filter(|member| member.room == room) else {
+    let Some(member) = member(slot.id, client).filter(|member| member.room == room && !member.watch) else {
         return error(slot, room, client, 409, "join the document first");
     };
     let sheet = message
@@ -245,6 +266,9 @@ fn leave(factory: &ExecutionContextFactory, slot_id: u64, client: Option<&str>) 
 
 /// `member` is no longer a view of its document: the others are told, here and on every server.
 fn gone_peer(factory: &ExecutionContextFactory, member: &Member) {
+    if member.watch {
+        return;
+    }
     Presence::of(factory).leave(&member.doc, &member.client);
     let frame = json!({"type": "peer", "client": member.client, "userId": member.user_id, "name": member.name,
         "joined": false});
@@ -464,6 +488,7 @@ mod tests {
                 client: client.into(),
                 user_id: slot.user_id.clone(),
                 name: name.into(),
+                watch: false,
             });
         }
         select(
@@ -497,6 +522,59 @@ mod tests {
         socket_closed(&factory, otto.id);
     }
 
+    /// DASH-UI-008: a watcher (a dashboard's range panel) is told of the document's changes on its room's topic, but
+    /// not of its viewers, and it has no place for them.
+    #[test]
+    fn a_watcher_is_told_of_changes_but_not_of_the_viewers_and_has_no_place() {
+        let context = ExecutionContextFactory::test_context();
+        let factory = Arc::clone(context.factory());
+        let (ann, mut ann_rx) = slot("ann-watch");
+        let (dash, mut dash_rx) = slot("dash-watch");
+        let doc = "calc-watch-regression";
+        for (slot, client, name, watch) in [(&ann, "a1", "Ann", false), (&dash, "w1", "Dash", true)] {
+            lock(members()).push(Member {
+                slot: Arc::downgrade(slot),
+                slot_id: slot.id,
+                room: "d-watch".into(),
+                doc: doc.into(),
+                client: client.into(),
+                user_id: slot.user_id.clone(),
+                name: name.into(),
+                watch,
+            });
+        }
+        // Ann's place goes to no watcher; the watcher's own place is refused
+        select(
+            &factory,
+            &ann,
+            "d-watch",
+            "a1",
+            &json!({"sheet": 0, "area": {"row": 1, "column": 1, "width": 1, "height": 1}}),
+        );
+        assert!(dash_rx.try_recv().is_err(), "a viewer's place is not a watcher's");
+        select(&factory, &dash, "d-watch", "w1", &json!({"sheet": 0}));
+        let refused: Json = serde_json::from_str(&dash_rx.try_recv().unwrap().text).unwrap();
+        assert_eq!(refused["code"], 409);
+        assert!(ann_rx.try_recv().is_err());
+        assert!(
+            Presence::of(&factory).peers(doc, "a1").is_empty(),
+            "a watcher is not among the viewers"
+        );
+        // a change of the room's document goes to the watcher on the room's topic
+        let rooms = ["d-watch".to_string()];
+        broadcast(doc, None, Some(&rooms), &json!({"type": "changed", "seq": 3}));
+        let changed: Json = serde_json::from_str(&dash_rx.try_recv().unwrap().text).unwrap();
+        assert_eq!(
+            (changed["topic"].as_str(), changed["type"].as_str()),
+            (Some("calc:d-watch"), Some("changed"))
+        );
+        // the watcher's leaving tells the viewers nothing
+        while ann_rx.try_recv().is_ok() {}
+        socket_closed(&factory, dash.id);
+        assert!(ann_rx.try_recv().is_err(), "a watcher's leaving is not a viewer's");
+        socket_closed(&factory, ann.id);
+    }
+
     /// SEC-TLS-113: a socket keeps at most four clients in one room, its joins in flight counted with them; SEC-TLS-111:
     /// a member admitted after its socket closed leaves at once.
     #[test]
@@ -512,13 +590,14 @@ mod tests {
             client: client.into(),
             user_id: "ann-cap".into(),
             name: "Ann".into(),
+            watch: false,
         };
         for client in ["a", "b", "c"] {
             lock(members()).push(member(client));
         }
         // a fourth in flight holds the last place
         let held = super::super::reserve(ann.id, "cap-room", 3, 4).expect("the fourth place");
-        join(&factory, &ann, "cap-room".into(), "e".into());
+        join(&factory, &ann, "cap-room".into(), "e".into(), false);
         let refused: Json = serde_json::from_str(&ann_rx.try_recv().unwrap().text).unwrap();
         assert_eq!(refused["code"], 429);
         drop(held);
@@ -534,6 +613,7 @@ mod tests {
             client: "g".into(),
             user_id: "gone".into(),
             name: "Gone".into(),
+            watch: false,
         };
         assert!(!admit(&factory, &gone, late));
         assert!(
