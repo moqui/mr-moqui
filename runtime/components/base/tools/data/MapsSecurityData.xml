@@ -78,6 +78,12 @@ along with this software (see the LICENSE.md file). If not, see
         <artifacts artifactName="org.moqui.maps.MapServices.store#Place" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.delete#Place" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.find#Places" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <!-- offline map packages (plans/Maps-Offline.md, Maps/Offline.xml): each acts on the signed-in user's own packages,
+            built from what they may see; the build job's run and the cut itself are no group's -->
+        <artifacts artifactName="org\.moqui\.maps\.MapSourceServices\.(estimate|create|update|cancel|delete)#Package" artifactTypeEnumId="AT_SERVICE"
+                nameIsPattern="Y" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapSourceServices.find#Packages" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapSourceServices.get#PackageAccess" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <authz artifactAuthzId="MAPS_APP_SVC_USERS" userGroupId="MAPS_USERS" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
         <authz artifactAuthzId="MAPS_APP_SVC_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
