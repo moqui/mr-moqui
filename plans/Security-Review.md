@@ -100,7 +100,7 @@ that builds this document are in `plans/security-review-evidence/`, which is not
 
 No finding is rated Critical. These are the ones to look at first; each High one has its section below, each Medium one in
 [Security-Review-Medium](Security-Review-Medium.md). Every High one below is fixed (2026-11-15), and every Medium one
-(2026-11-16).
+(2026-11-16) but SEC-DAT-82 and SEC-CLI-81, fixed in part, and SEC-CLI-129, a proposed design's, decided with its plan.
 
 - **A disabled account comes back** (SEC-WEB-01, SEC-ADM-01; High; confirmed by the lead). An account disabled for
   good becomes a five-minute lock after four failed sign-in attempts, and a password change writes `disabled=N`. An
