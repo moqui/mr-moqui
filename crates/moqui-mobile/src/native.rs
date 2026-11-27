@@ -264,7 +264,7 @@ pub(crate) fn asked(core: &Client) -> Vec<Asked> {
 }
 
 /// Posts through the client's proxy, as the pages' requests and the outbox's go.
-struct ProxyPoster<'a>(&'a Client);
+pub(crate) struct ProxyPoster<'a>(pub(crate) &'a Client);
 
 impl Poster for ProxyPoster<'_> {
     fn post(&self, account: &Account, key: &str, path: &str, form: &[(&str, &str)]) -> Result<(u16, Value), String> {
@@ -822,6 +822,55 @@ pub(crate) fn flush_background(dir: &Path, budget_ms: i64) -> i64 {
     next.map_or(-1, |due| due.saturating_sub(now).max(0))
 }
 
+/// `Native.reportLocation(dataDir, account, shareId, fix)` (the host command `report_location`, plans/Location-Sharing.md
+/// §3.4): a fix of a share the location service sends (its JSON, empty for none: a point that waited), kept as the
+/// newest and sent with the account's device key ([`crate::location::report_location`]). What it came to, as JSON. With
+/// no TLS verifier yet the point waits.
+pub(crate) fn report_location(dir: &Path, account: &str, share_id: &str, fix: &str) -> String {
+    let fix = Some(fix).filter(|fix| !fix.is_empty());
+    if !network_ready() {
+        return moqui_client::location::Outcome::Waiting(5_000).to_json().to_string();
+    }
+    let core = match core_in(dir) {
+        Ok(core) => core,
+        Err(err) => {
+            log::warn!("Location: no client to send share {share_id}: {err}");
+            return moqui_client::location::Outcome::Waiting(5_000).to_json().to_string();
+        }
+    };
+    let signed_in = asked(&core).into_iter().find(|asked| asked.account.id == account);
+    crate::location::report_location(
+        account,
+        share_id,
+        fix,
+        signed_in.as_ref().map(|asked| (&asked.account, asked.key.as_str())),
+        &ProxyPoster(&core),
+        now_ms(),
+    )
+}
+
+/// `Native.stopLocation(dataDir, account, shareId)`: the notification's Stop, the share stopped on the account's
+/// server too ([`crate::location::stop_share`]); whether the server took it.
+pub(crate) fn stop_location(dir: &Path, account: &str, share_id: &str) -> bool {
+    let core = network_ready().then(|| core_in(dir).ok()).flatten();
+    let signed_in = core
+        .as_ref()
+        .and_then(|core| asked(core).into_iter().find(|asked| asked.account.id == account));
+    match core.as_ref() {
+        Some(core) => crate::location::stop_share(
+            account,
+            share_id,
+            true,
+            signed_in.as_ref().map(|asked| (&asked.account, asked.key.as_str())),
+            &ProxyPoster(core),
+        ),
+        None => {
+            crate::location::forget_share(account, share_id);
+            false
+        }
+    }
+}
+
 /// Whether an account here has a key: the native code asks for the notification permission only then.
 pub(crate) fn has_account(dir: &Path) -> bool {
     match core_in(dir) {
@@ -1275,6 +1324,46 @@ mod entries {
             Ok(())
         })
         .resolve::<LogErrorAndDefault>();
+    }
+
+    /// `Native.reportLocation(dataDir, account, shareId, fix)`: a live location share's fix (JSON; empty for none), what
+    /// it came to as JSON (plans/Location-Sharing.md §3.4). The position is never logged.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_reportLocation<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+        account: JString<'caller>,
+        share_id: JString<'caller>,
+        fix: JString<'caller>,
+    ) -> JString<'caller> {
+        env.with_env(|env| -> Result<JString<'caller>, jni::errors::Error> {
+            let dir = client_dir(&data_dir.try_to_string(env)?);
+            let (account, share_id, fix) = (
+                account.try_to_string(env)?,
+                share_id.try_to_string(env)?,
+                fix.try_to_string(env)?,
+            );
+            env.new_string(super::report_location(&dir, &account, &share_id, &fix))
+        })
+        .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.stopLocation(dataDir, account, shareId)`: the notification's Stop; whether the server took it.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_stopLocation<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+        account: JString<'caller>,
+        share_id: JString<'caller>,
+    ) -> jboolean {
+        env.with_env(|env| -> Result<bool, jni::errors::Error> {
+            let dir = client_dir(&data_dir.try_to_string(env)?);
+            let (account, share_id) = (account.try_to_string(env)?, share_id.try_to_string(env)?);
+            Ok(super::stop_location(&dir, &account, &share_id))
+        })
+        .resolve::<LogErrorAndDefault>()
     }
 
     /// `Native.screenFrame(data, ptsUs)`: an encoded VP8 frame of the screen share, for its leg (`crate::screen`).

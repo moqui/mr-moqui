@@ -40,6 +40,7 @@ mod dial;
 mod host;
 mod join;
 mod keystore;
+mod location;
 mod native;
 mod push;
 mod scheme;
@@ -150,7 +151,11 @@ pub fn run() {
             commands::call_dial_choice,
             commands::call_dial_from,
             commands::contacts_search,
-            commands::contact_names
+            commands::contact_names,
+            commands::location_allow,
+            commands::location_share_start,
+            commands::location_share_stop,
+            commands::location_share_status
         ])
         .setup(move |app| {
             let embedded = files.take().ok_or("the app was set up twice")?;

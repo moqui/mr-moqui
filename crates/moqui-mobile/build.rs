@@ -81,6 +81,10 @@ const COMMANDS: &[&str] = &[
     "call_dial_from",
     "contacts_search",
     "contact_names",
+    "location_allow",
+    "location_share_start",
+    "location_share_stop",
+    "location_share_status",
 ];
 
 fn main() {

@@ -47,6 +47,14 @@ object Native {
     @JvmStatic external fun chatReply(dataDir: String, account: String, chatRoomId: String, text: String): String?
     @JvmStatic external fun chatRead(dataDir: String, account: String, chatRoomId: String, eventSeq: Long): String?
     @JvmStatic external fun ackPush(dataDir: String, account: String, ackId: String)
+    /**
+     * A fix of a live location share ([LocationShareService]; JSON, empty for none: a point that waited) to Rust, the
+     * host command `report_location`, which keeps the newest point and sends it with the account's device key: what it
+     * came to, as JSON (`{state: sent | waiting | dropped | idle | stopped, waitMs, reason}`). Not on the main thread.
+     */
+    @JvmStatic external fun reportLocation(dataDir: String, account: String, shareId: String, fix: String): String?
+    /** The notification's Stop: the share stopped on the account's server too; whether the server took it. */
+    @JvmStatic external fun stopLocation(dataDir: String, account: String, shareId: String): Boolean
     @JvmStatic external fun vaultLock()
 
     /**

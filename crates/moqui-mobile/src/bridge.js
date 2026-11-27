@@ -312,8 +312,21 @@
             memory: (action, minutes) => ask("vault_memory", { action: String(action || ""), minutes: minutes == null ? null : Math.max(0, Math.floor(Number(minutes)) || 0),
             gesture: userGesture() })
         });
+        // live location from the phone (plans/Location-Sharing.md §3.4): the permission, asked with the app's reason (allow:
+        // exact for an exact share); a share sent by the app's foreground service, also in the background, with its
+        // notification (start: whether it started; Maps' Share and Send from this device), no longer sent from here (stop),
+        // and the shares sent now (status). The host takes them for this page's account only.
+        const location = Object.freeze({
+            allow: (exact) => ask("location_allow", { exact: exact !== false }).then((ok) => ok === true, () => false),
+            start: (share) => ask("location_share_start", { share: {
+                shareId: String((share && share.shareId) || ""), thruDate: Number(share && share.thruDate) || 0,
+                approximate: !!(share && share.approximate), intervalSeconds: Number(share && share.intervalSeconds) || 0,
+                audience: String((share && share.audience) || "") } }).then((started) => started === true, () => false),
+            stop: (shareId) => invoke("location_share_stop", { shareId: String(shareId || "") }),
+            status: () => ask("location_share_status").then((list) => (Array.isArray(list) ? list : []), () => [])
+        });
         // pushDelivers: the chat's notifications come by FCM, not from the page's socket (plans/Comms-Messaging.md §7.2 rule 7)
-        window.moquiDesktop = Object.freeze({ socket, outbox, drafts, vault, notify, windowSeen, pushDelivers: true,
+        window.moquiDesktop = Object.freeze({ socket, outbox, drafts, vault, notify, windowSeen, pushDelivers: true, location,
             storageScope: String(page.storageScope || ""),
             openInShell: (path) => ask("open_in_shell", { path: String(path || "") }),
             openExternal: (url) => invoke("open_external", { url: String(url || "") }),

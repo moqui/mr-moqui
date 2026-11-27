@@ -15,7 +15,9 @@ sent when the server can be reached. How it works on Android is [docs/ui/Mobile-
   contacts through the app (`dial.rs` and the Kotlin `DialAccount`, `PhoneBook`;
   [Mobile-Client](../../docs/ui/Mobile-Client.md#the-phones-dialer-and-contacts)), and the native screen share in a
   call, a str0m leg the page signals for (`screen.rs` and the Kotlin `ScreenShare`, `ScreenRules`;
-  [Mobile-Client](../../docs/ui/Mobile-Client.md#sharing-the-screen-in-a-call)).
+  [Mobile-Client](../../docs/ui/Mobile-Client.md#sharing-the-screen-in-a-call)), and a live location share sent from
+  the phone, also in the background, by a foreground service of type location (`location.rs` and the Kotlin
+  `LocationShare`, `LocationRules`; [Mobile-Client](../../docs/ui/Mobile-Client.md#live-location)).
   The rest is shared with the desktop
   app: [moqui-client](../moqui-client/README.md) and [moqui-client-tauri](../moqui-client-tauri/README.md).
 - **The shell** is the desktop's (`crates/moqui-desktop/shell`), staged by `./moq android` into

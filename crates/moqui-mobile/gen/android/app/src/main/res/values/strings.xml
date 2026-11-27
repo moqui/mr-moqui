@@ -51,7 +51,16 @@
     <string name="ask_not_now">Not now</string>
     <string name="ask_open_settings">Open settings</string>
     <string name="ask_contacts_title">Your contacts</string>
+    <string name="ask_location_title">Sharing your location</string>
+    <string name="ask_location_reason">Allow location so the app can send where you are to the people you chose, until the time you chose. While it does, a notification says so, with Stop, also when the app is in the background. Choose Precise for an exact share.</string>
+    <string name="ask_location_reason_approximate">Allow location so the app can send about where you are (to within about 1 km) to the people you chose, until the time you chose. While it does, a notification says so, with Stop, also when the app is in the background.</string>
     <string name="ask_contacts_reason">Allow contacts so the app can find people as you type a number and show their names on texts and calls. They are read on this phone only and never sent to the server.</string>
+
+    <!-- Live location from this phone (LocationShare.kt, plans/Location-Sharing.md §3.4) -->
+    <string name="channel_location">Location sharing</string>
+    <string name="channel_location_about">Shown while the app sends your location for a share you started</string>
+    <string name="location_sharing_title">Sharing your location</string>
+    <string name="location_stop">Stop</string>
 
     <!-- The phone's dialer through the app (DialAccount.kt) -->
     <string name="dial_account_label">MR Moqui</string>

@@ -225,7 +225,9 @@ answered (plans/Mobile-Desktop.md MD6, MT2; a Rust native audio client is later)
   notifications, and asks nothing when the dialog named the microphone alone (SEC-CLI-120). Android's permission
   dialog asks for the unlock first, so on a locked phone the Answer does not ask and the page asks after the unlock.
   `CAMERA` is asked at a video call's Answer or by the page. `READ_CONTACTS` is asked at the first contacts
-  search ([The phone's dialer and contacts](#the-phones-dialer-and-contacts)). `MANAGE_OWN_CALLS`,
+  search ([The phone's dialer and contacts](#the-phones-dialer-and-contacts)). The location is asked at a chat
+  location's first use, or before the first live location share with a dialog that says why ([Live location](#live-location)).
+  `MANAGE_OWN_CALLS`,
   `FOREGROUND_SERVICE_PHONE_CALL` and `USE_FULL_SCREEN_INTENT` are granted at install; Android 14+ lets the user (and
   Google Play's policy) turn the full-screen intent off, so after the notifications question the app says why calls
   need it and opens its setting, once. The notification check fixes either later.
@@ -520,9 +522,51 @@ before it), Chat downloads the event's `.ics` file instead.
 A chat location's Use my current location (plans/Comms-Messaging.md §18.3 phase 20) is the WebView's
 `navigator.geolocation`: the manifest has `ACCESS_COARSE_LOCATION` and `ACCESS_FINE_LOCATION`, and the patched wry
 `RustWebChromeClient` asks for them at the first use (refused, Chat says how to allow it and offers to enter the place).
-The app never reads the position in the background. Open in maps hands a `geo:` URI to Android
-(`moquiDesktop.openExternal`, which takes `geo:` beside http, https, mailto, tel and sip), so the person's maps app
-opens at the place.
+Open in maps hands a `geo:` URI to Android (`moquiDesktop.openExternal`, which takes `geo:` beside http, https, mailto,
+tel and sip), so the person's maps app opens at the place. The app reads the position in the background only for a live
+location share the person started, under its notification (below).
+
+### Live location
+
+A live location share started in Maps (plans/Location-Sharing.md §3.4, LL3; [Maps, Live location](../tools/Maps.md#live-location))
+is sent from the phone by the app, also while it is in the background. The Kotlin is `LocationShare.kt` (the object and
+`LocationShareService`) and `LocationRules.kt` (JVM-tested); the Rust is `src/location.rs` with `moqui_client::location`.
+
+- **From the page's Share only.** A server page has `moquiDesktop.location` (`allow`, `start`, `stop`, `status`; the
+  host commands `location_allow`, `location_share_start`, `location_share_stop`, `location_share_status`, each for the
+  page's account while it is the current one). Browse's Share asks `allow` first: without the location permission the
+  app shows a dialog that says why (to send where you are to the people you chose, until the time you chose, with a
+  notification and Stop while it does), then Android's question for precise and approximate (the person may give
+  either; an exact share with approximate only sends approximate fixes). Once the share is made, `start` starts
+  `LocationShareService`, a foreground service of type `location` (`FOREGROUND_SERVICE_LOCATION`), and only while the app
+  is in front (`LocationShare.foreground`), with the permission and notifications allowed (`LocationRules.mayStart`);
+  otherwise it answers false and the page sends while it is open, as a browser does. So the app has no
+  `ACCESS_BACKGROUND_LOCATION`: Android lets a foreground service started from the app in front keep reading the
+  location once the app goes to the background. The service is not sticky: a process Android ended does not start it
+  again, and the share goes stale.
+- **The notification** (channel Location sharing, low importance, ongoing) lasts as long as the service runs: "Sharing
+  your location with Sam and 2 others until 15:30" (several shares: the first's audience and the latest end), with
+  Stop, which stops each share on its server too (`Native.stopLocation`, `/qapps/stopClientLocation`, so the audience
+  is told at once), and a tap that opens the app.
+- **The fixes.** Android's `LocationManager`, no Google Play services: the platform's `fused` provider (Android 12+),
+  else GPS for an exact share and the network's for an approximate one, else whichever is on. The interval is the
+  shortest of the shares': 5 seconds while the phone moves, 30 while it is still (a speed of 0.8 m/s, or 25 m from the
+  last fix), never under a share's own interval (`location@min-interval-seconds`), and an approximate share's own
+  (`location@approximate-interval-seconds`). Each fix goes to Rust on the native code's thread (`Native.reportLocation`,
+  the host command `report_location`): a `Reporter` a share keeps only the newest point not yet sent and posts it to
+  `/qapps/reportClientLocation` through the client's proxy with the account's device key, the same path as the app's
+  other requests, so the share's device binding (`LocationShare.userLoginKeyId`) takes it. A 429 waits
+  `retryAfterSeconds`, a stale point or another 400 is passed over, `CLOCK_AHEAD` and `BEFORE_SHARE` send from then on
+  with the server's time, no answer tries again after the interval; a point that waits is sent when its wait is over.
+- **It stops** a share at its end, on a 410 or 404, when another device sends it (409 `OTHER_DEVICE`: a Send from here
+  in a browser or another phone), at the account's sign-out or removal (`MobileHost::account_signing_out` and
+  `account_signed_out`, `LocationShare.forgetAccount`), on Stop (the notification's or the page's), and when the
+  location permission is taken away (checked each half minute); with no share left the service and its notification
+  end. Send from this device on a share another device sends takes it over (`sendFromHere`) and starts the service.
+- **Never logged.** A position goes to no log (Kotlin's `Log`, Rust's), crash report or telemetry: the logs name a share
+  and an outcome only.
+- **The notification check** lists the location permission (precise, approximate only, or not allowed, with a Fix that
+  opens the app's settings) and, while the phone sends any, how many shares it sends.
 
 ## Screen security
 
@@ -570,12 +614,17 @@ What fills each gap of MT1 and MT2 is MT3's record ([Mobile-Desktop](../../plans
 ## Tests
 
 - `cd crates/moqui-mobile && cargo test`: the page check, where a navigation goes, the
-  sealed key store, the schemes' redirect and `fetch` handling, the build's conf, the bridge's split by origin.
+  sealed key store, the schemes' redirect and `fetch` handling, the build's conf, the bridge's split by origin, and live
+  location's ask from the page and its reports through a stand-in poster (`location_tests.rs`).
 - `cd crates/moqui-client-tauri && cargo test`: the schemes' answer, with no network.
 - `scripts/check-android.sh`: clippy for both Android targets.
 - `./gradlew :app:testUniversalDebugUnitTest` in `gen/android` (`ANDROID_HOME` set): the Kotlin rules' JVM tests
   (`CallRules`: the ring's time, the audio route, the screen at the ear, picture-in-picture, the service's types, the
-  calling account's state, a contact's number, the contacts' question once; `ChatRules`: channels, tags, links, mute).
+  calling account's state, a contact's number, the contacts' question once; `ChatRules`: channels, tags, links, mute;
+  `LocationRules`: live location's interval moving, still and approximate, its stop rules, its start only from the app
+  in front, the provider and the notification's words).
+- `cargo test -p moqui-client --lib location`: `report_location`'s reporter (the newest point only, 429, a stale point,
+  the device's clock, a 410, 404, another device or a sign-out stopping it).
 - Instrumented, on the emulator when asked: `CallTelecomTest` (a joined call in Telecom, held and resumed by the page,
   its audio on the earpiece for voice and the speaker for video, the page's choice holding, left); `DialAccountTest`
   (the calling account registered and taken away, a dialed number handed to the app by a nonce only with Telecom's call

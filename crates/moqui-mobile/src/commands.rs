@@ -313,6 +313,7 @@ pub(crate) fn push_check_fix(
             | "firebase"
             | "callingAccounts"
             | "contacts"
+            | "location"
     ) {
         return Err(format!("Nothing to fix: {what}"));
     }
@@ -853,6 +854,86 @@ pub(crate) fn screen_status(app: AppHandle, webview: tauri::Webview, nonce: Opti
         crate::screen::status(),
         capture
     ))
+}
+
+// ---- live location from the phone (plans/Location-Sharing.md §3.4, LL3) ----
+
+/// The account of the page asking: the shell's (the current account), or a server page's while it is the current
+/// account's (`PageState::account`); none while a navigation is under way or for any other page.
+fn page_account(app: &AppHandle, webview: &tauri::Webview) -> Result<String, String> {
+    let host = host(app)?;
+    let at = webview.url().ok().map(|url| url.origin().ascii_serialization());
+    if !matches!(
+        at.as_deref(),
+        Some(moqui_client_tauri::SHELL_ORIGIN | moqui_client_tauri::APP_ORIGIN)
+    ) {
+        return Err("Not the app's page".to_string());
+    }
+    moqui_client::app::ClientHost::page_account(host.as_ref(), crate::host::MAIN)
+        .ok_or_else(|| "No account's page".to_string())
+}
+
+/// Before a share is started from this phone: the location permission, asked after a dialog that says why when it is
+/// not given yet (`LocationShare.allow`: fine for an exact share, coarse for an approximate one; Android lets the person
+/// choose either). Whether the app may read the location now. A page of the current account's only.
+#[tauri::command(async)]
+pub(crate) fn location_allow(app: AppHandle, webview: tauri::Webview, exact: Option<bool>) -> Result<bool, String> {
+    page_account(&app, &webview)?;
+    #[cfg(target_os = "android")]
+    return crate::android::location_allow(exact != Some(false));
+    #[cfg(not(target_os = "android"))]
+    {
+        log::info!("No phone location here to allow (exact: {exact:?})");
+        Ok(false)
+    }
+}
+
+/// The page's Share (a share it just started, or its Send from this device): the share is sent from this phone by its
+/// foreground service (`LocationShareService.kt`, of type `location`), also while the app is in the background, with
+/// its notification for as long as it runs. Android starts it only from the app in front, with the location permission
+/// and notifications allowed; whether it started (false: the page sends while it is open, as a browser does). A page of
+/// the current account's only, for that account.
+#[tauri::command(async)]
+pub(crate) fn location_share_start(
+    app: AppHandle,
+    webview: tauri::Webview,
+    share: crate::location::ShareAsk,
+) -> Result<bool, String> {
+    let account = page_account(&app, &webview)?;
+    let share = share.checked(crate::native::now_ms())?;
+    crate::location::begin(&account, &share.share_id, share.interval_seconds * 1000);
+    #[cfg(target_os = "android")]
+    {
+        let started = crate::android::location_start(&share.to_json(&account))?;
+        if !started {
+            crate::location::forget_share(&account, &share.share_id);
+        }
+        Ok(started)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        crate::location::forget_share(&account, &share.share_id);
+        log::info!("No location service here for share {}", share.share_id);
+        Ok(false)
+    }
+}
+
+/// The page stopped a share (its Stop), or it is sent from another device or page now: this phone no longer sends it.
+#[tauri::command(async)]
+pub(crate) fn location_share_stop(app: AppHandle, webview: tauri::Webview, share_id: String) -> Result<(), String> {
+    let account = page_account(&app, &webview)?;
+    let share_id = clip(&share_id, 64);
+    crate::location::forget_share(&account, &share_id);
+    #[cfg(target_os = "android")]
+    crate::android::location_stop(&account, &share_id)?;
+    Ok(())
+}
+
+/// The shares of the page's account this phone sends now, by id.
+#[tauri::command(async)]
+pub(crate) fn location_share_status(app: AppHandle, webview: tauri::Webview) -> Result<Vec<String>, String> {
+    let account = page_account(&app, &webview)?;
+    Ok(crate::location::sending(&account))
 }
 
 #[cfg(test)]

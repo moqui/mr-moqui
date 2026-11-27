@@ -1,0 +1,103 @@
+// This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License.
+
+package org.moqui.mobile
+
+import kotlin.math.asin
+import kotlin.math.cos
+import kotlin.math.min
+import kotlin.math.sin
+import kotlin.math.sqrt
+
+/**
+ * The live location service's rules (plans/Location-Sharing.md §3.4; [LocationShareService]), apart from Android so
+ * the JVM tests check them: how often the phone's location is asked for, when a share stops being sent from here, which
+ * of Android's providers is read, and the notification's words.
+ */
+object LocationRules {
+    /** Moving: a fix every few seconds, at least the share's own interval (location@min-interval-seconds). */
+    const val MOVING_MS = 5_000L
+    /** Still: a fix every half minute, so a still phone spends little battery and the audience still sees it is fresh. */
+    const val STILL_MS = 30_000L
+    /** Faster than this (metres a second) is moving: a walk is about 1.4. */
+    const val MOVING_SPEED = 0.8
+    /** Farther than this from the last fix (metres) is moving, for a fix with no speed. */
+    const val MOVING_METRES = 25.0
+
+    /**
+     * The interval asked of Android's LocationManager for one share: an approximate share's own interval
+     * (location@approximate-interval-seconds, which the server takes at most), an exact one's at least [MOVING_MS] while
+     * moving and [STILL_MS] while still, never under the share's own.
+     */
+    fun intervalMs(approximate: Boolean, shareIntervalMs: Long, moving: Boolean): Long {
+        val own = shareIntervalMs.coerceAtLeast(1_000L)
+        if (approximate) return own
+        return maxOf(own, if (moving) MOVING_MS else STILL_MS)
+    }
+
+    /** The interval for the shares sent (`approximate` to their interval): the shortest of theirs. */
+    fun serviceIntervalMs(shares: List<Pair<Boolean, Long>>, moving: Boolean): Long =
+        shares.minOfOrNull { (approximate, interval) -> intervalMs(approximate, interval, moving) } ?: STILL_MS
+
+    /** Whether the phone moves: its speed, else the distance from the last fix. */
+    fun moving(speed: Double?, metresFromLast: Double?): Boolean = when {
+        speed != null -> speed >= MOVING_SPEED
+        metresFromLast != null -> metresFromLast >= MOVING_METRES
+        else -> true
+    }
+
+    /** The distance between two points in metres (haversine, on a sphere of the Earth's mean radius). */
+    fun metres(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val r = 6_371_000.0
+        val p1 = Math.toRadians(lat1)
+        val p2 = Math.toRadians(lat2)
+        val dp = p2 - p1
+        val dl = Math.toRadians(lon2 - lon1)
+        val a = sin(dp / 2) * sin(dp / 2) + cos(p1) * cos(p2) * sin(dl / 2) * sin(dl / 2)
+        return 2 * r * asin(min(1.0, sqrt(a)))
+    }
+
+    /**
+     * Why a share is no longer sent from here at `nowMs`, or null to go on: `ended` at its end, `permission` once the
+     * location permission is gone, `signedOut` for an account not signed in here, else the reason of a report's
+     * outcome that stopped it (`ended` on a 410, `notFound` on a 404, `otherDevice` when another device sends it,
+     * `signedOut`). The notification's Stop and the page's are the user's, not this.
+     */
+    fun stopReason(thruMs: Long, nowMs: Long, permitted: Boolean, signedIn: Boolean, outcomeState: String?, outcomeReason: String?): String? =
+        when {
+            nowMs >= thruMs -> "ended"
+            !permitted -> "permission"
+            !signedIn -> "signedOut"
+            outcomeState == "stopped" -> outcomeReason?.takeIf { it.isNotBlank() } ?: "ended"
+            else -> null
+        }
+
+    /** Whether the service may start: only from the app in front, with the location permission and its notification. */
+    fun mayStart(foreground: Boolean, permitted: Boolean, notificationsShown: Boolean): Boolean =
+        foreground && permitted && notificationsShown
+
+    /**
+     * The provider read: the platform's fused one where Android has it (12+; no Google Play services), else GPS for an
+     * exact share and the network's for an approximate one, else whichever is on; null with none.
+     */
+    fun provider(exact: Boolean, fused: Boolean, gps: Boolean, network: Boolean): String? = when {
+        fused -> "fused"
+        exact && gps -> "gps"
+        network -> "network"
+        gps -> "gps"
+        else -> null
+    }
+
+    /**
+     * The notification's text: "Sharing your location with Sam and 2 others until 15:30" for one share; for more, with
+     * the first's audience and the latest end. `until` is the end as the phone shows times.
+     */
+    fun notificationText(audiences: List<String>, until: String): String {
+        val named = audiences.map { it.trim() }.filter { it.isNotEmpty() }
+        val whom = when {
+            named.isEmpty() -> "the people you chose"
+            named.size == 1 -> named[0]
+            else -> "${named[0]} and ${named.size - 1} more ${if (named.size == 2) "share" else "shares"}"
+        }
+        return "Sharing your location with $whom until $until"
+    }
+}

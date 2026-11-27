@@ -962,8 +962,9 @@ A person shares where they are, until a time they choose, with people they choos
 `org.moqui.maps.LocationServices` (`framework/service/org/moqui/maps/LocationServices.xml`, `LocationShares.js`), the
 entities `LocationShare`, `LocationShareAudience`, `LocationShareAudienceMember`, `LocationShareOwner` (the lock of an
 owner's share count), `LocationLatest` and `LocationTrailPoint` (`moqui.maps`,
-`framework/entity/MapLocationEntities.xml`) and the hourly clean, and Maps shows them (below, "In Maps"). The Android
-app's background sharing, chat's live location, XMPP and the guest page for a link are still to come.
+`framework/entity/MapLocationEntities.xml`) and the hourly clean, Maps shows them (below, "In Maps"), and the Android
+app sends a share from the phone, also in the background (below, "From the Android app"). Chat's live location, XMPP
+and the guest page for a link are still to come.
 
 **In Maps** (Browse; LL2):
 
@@ -1003,7 +1004,39 @@ app's background sharing, chat's live location, XMPP and the guest page for a li
   the account (`moqui.scopedKey`), so a reload goes on sending them, pruned to the user's active shares and forgotten at
   a sign-out (`moqui.beforeLogoutHooks`); Send from here takes over one started elsewhere. When the page closes the
   share stays active and goes stale; its audience sees the age. A banner above the map names every active share of the
-  user's own and every share the page sends (with whom, until when, whether this page sends it) with Stop.
+  user's own and every share the page sends (with whom, until when, whether this page sends it, or the device that does)
+  with Stop. Send from here posts the `sendFromHere` transition first (`update#Share` with `sendFromHere`), so a share
+  another device sent is sent from this page from then on, and that device is refused (409 `OTHER_DEVICE`) and stops; a
+  page that gets `OTHER_DEVICE` stops sending too and offers Send from here again.
+- **The device it is sent from.** A share records the device whose request started it (`LocationShare.userLoginKeyId`:
+  the request's device key, `ec.user.loginKeyId`, the key's stored hash as the device list names a device, never the
+  key), or none for a browser page; `report#Position` takes that device's reports only, and for a share with none no
+  device's, so the owner on another device or page gets 409 `OTHER_DEVICE` ("Another device sends this share's
+  location") until they take it over (Send from here, Send from this device: `sendFromHere`). The renewal of the
+  device's key moves its shares to the new key (`renew_device_key`). The owner's reads say where each share is sent from
+  (`sentFromDevice`, the device's `deviceName`, `fromThisDevice`), never the key's id.
+- **From the Android app** (LL3; [Mobile-Client, Live location](../ui/Mobile-Client.md#live-location)). Browse in the app
+  has `moquiDesktop.location`: Share asks for the phone's location permission first, after the app's dialog that says
+  why, and once the share is made the app's foreground service of type `location` (`LocationShareService.kt`) sends it
+  from the phone, also with the app in the background, under its notification ("Sharing your location with Sam until
+  15:30", with Stop) for as long as it does; a share the service could not start (notifications off, the app not in
+  front) is sent by the page while it is open, as a browser does. The service reads Android's `LocationManager` (the
+  platform's fused provider, else GPS or the network's; no Google Play services) every 5 seconds while the phone moves,
+  every 30 while it is still, and at the share's own interval for an approximate one, and hands each fix to the host's
+  `report_location` (`moqui_client::location::Reporter`), which keeps only the newest point not yet sent and posts it to
+  `/qapps/reportClientLocation` with the account's device key: a transition of the webroot's `qapps` that every
+  signed-in user reaches (Browse's own are `MAPS_APP`'s, while every signed-in user may own a share), POST only, which
+  calls `report#Position` and answers its outcome as `statusCode`, as `reportPosition` does. It handles the answers as
+  the page does (429 waits `retryAfterSeconds`, `STALE` and another 400 are passed over, `CLOCK_AHEAD` and
+  `BEFORE_SHARE` send with the server's time) and stops a share at its end, on a 410 or 404, on `OTHER_DEVICE`, at the
+  account's sign-out or removal, on the notification's Stop (which stops the share on the server too,
+  `/qapps/stopClientLocation`) or the page's, and when the location permission is taken away. The notification check
+  lists the location permission and the shares the phone sends.
+- **The desktop app** shares as a browser does: Browse sends while its window is open (`watchPosition`). A server's page
+  in a client window gets `Permissions-Policy: geolocation=(self)` (`moqui_client_tauri::scheme::PAGE_PERMISSIONS_POLICY`),
+  which lets Browse, the window's own page, ask and keeps a frame of another origin from it; the permission itself is
+  left to CEF (`bridge::on_permission` answers only the camera, the microphone and screen capture), and whether a
+  position comes is the platform's (see [Desktop-Client](../ui/Desktop-Client.md)).
 - **The app bar's chip.** While the user has any active share of their own, the shell shows "Sharing location" (with the
   count when there are more than one) in the app bar on every screen, a shell indicator ([Qvt-Client, Shell
   indicators](../ui/Qvt-Client.md)) that Maps' `shell-indicator` provider answers (`LocationServices.get#ShellIndicator`,
@@ -1055,8 +1088,9 @@ app's background sharing, chat's live location, XMPP and the guest page for a li
 - **Reports.** From the owner only, for an active share: the values checked (latitude and longitude in range, accuracy,
   heading and speed, a time not before the share began and later than the latest), at most one a
   `location@min-interval-seconds`, or `location@approximate-interval-seconds` for an approximate share (a sooner one is
-  dropped with 429), 410 for a share that has ended or was stopped, which stops a device, and 409 `CLOCK_AHEAD` for a
-  time more than a minute ahead of the server's clock. An approximate share's position is made here, before it is stored
+  dropped with 429), 410 for a share that has ended or was stopped, which stops a device, 409 `CLOCK_AHEAD` for a
+  time more than a minute ahead of the server's clock, and 409 `OTHER_DEVICE` for a request not from the device the
+  share is sent from (above). An approximate share's position is made here, before it is stored
   or sent: the centre of a cell of about 1 km on one fixed grid that every share uses (so two shares of one person at
   one place show the same cell), the last cell kept until a fix is more than a quarter of a cell inside another one, for
   the person rather than the share (a new share starts from the cell the person's other approximate shares hold, so they
@@ -1092,7 +1126,12 @@ qvue render in a browser in the client spec `tools/test/client/MapsBrowseExtent.
 its map, opened on an extent across the antimeridian at the first load, and the extent check's refusals; a share started
 with a guest link, sent from the page, drawn on the live layer and stopped). The live layer's pushes, stale style, end and
 escaped labels are `webroot/test/client/pages/WebrootMap.page.js`; the share services' rules, with who sees what in the
-effective configuration's `locationShares`, `framework/test/LocationShares.spec.js`. The configuration services' rules are `framework/test/MapsConfig.spec.js` (with a record link resolved to the host
+effective configuration's `locationShares` and a share's device (another device or a browser refused, Send from here
+and Send from this device, the app's `reportClientLocation` and `stopClientLocation`, a renewed key),
+`framework/test/LocationShares.spec.js`; the phone's sending, `moqui-client` `location_tests.rs` (`report_location`: the
+newest point only, 429, stale, the clock, a 410, 404, another device or a sign-out stopping it), `moqui-mobile`
+`location_tests.rs` and the Kotlin `LocationRulesTest` (the interval, the stop rules, the start only from the app in
+front). The configuration services' rules are `framework/test/MapsConfig.spec.js` (with a record link resolved to the host
 app's route, else one of no app, and left out for a non-holder, and a profile's view projection: a registered one handed
 to the map with its definition, refused for a vector-style basemap and for an unknown code), and the archives'
 (registering, the map-source transition's access, ranges, revocation and stale revisions, and the tile transition's tile,

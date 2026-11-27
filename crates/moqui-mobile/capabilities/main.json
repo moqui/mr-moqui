@@ -59,6 +59,10 @@
     "allow-call-dial-choice",
     "allow-call-dial-from",
     "allow-contacts-search",
-    "allow-contact-names"
+    "allow-contact-names",
+    "allow-location-allow",
+    "allow-location-share-start",
+    "allow-location-share-stop",
+    "allow-location-share-status"
   ]
 }

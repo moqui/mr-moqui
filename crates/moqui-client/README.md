@@ -22,6 +22,10 @@ Each installed client is a device with its own login key. The host keeps the key
   the `clientApi` this client knows (`CLIENT_API`, 4) and what a server supports of the sync (`ServerSync`: its
   `clientApi` and `server.features`), and the key's renewal: its life from the device list
   (`key_period`), renewed when less than a third is left (`renew_due`, `/qapps/renewClientDevice`).
+- `location`: a live location share sent from this device (plans/Location-Sharing.md §3.4, the Android app's
+  foreground service): a `Reporter` a share keeps only the newest point not yet sent and sends it to
+  `/qapps/reportClientLocation` with the device key, waiting out a 429, passing over a stale point, sending with the
+  server's time when the device's clock is off, and stopping at a 410, 404, another device's takeover or a sign-out.
 - `proxy`: a page's request forwarded to the same path on the server with the key. Only plain request headers pass;
   cookies are dropped from the answer and a redirect to the server is pointed back at the app scheme.
 - `socket`: `/notws`, `/callws` and the terminal's `/termws` held by the host for a page, connecting again after a
