@@ -1,7 +1,8 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 // The Calc mode walks of plans/archive/IronCalc-DB.md, in the browser on the qvt shell (./moq accept tools --spec
 // CalcGrid): an entity's rows in the grid, then as the data sheet of a workbook drawn from the server's cells; the
-// document saved, listed, exported as XLSX and deleted; and Records again as it was. And a share taken away while the
+// document saved, listed, exported as XLSX and deleted; and Records again as it was. The editing of
+// plans/IronCalc-DB2.md CG2: the fill handle, pointing, merges, borders and conditional formats. And a share taken away while the
 // other person has the document open and a range of it on a dashboard (CalcShareFixtures).
 spec({ timeout: 120 })
 
@@ -174,6 +175,140 @@ feature("in Calc a sheet is added, a formula over the data is typed in the bar, 
         page.evaluate(() => { document.querySelector('.m-calc-toolbar button[aria-label="Undo"]').click(); return true })
         page.waitFor(() => Number(getComputedStyle(document.querySelectorAll(".m-calc-grid .tabulator-row")[0].querySelectorAll(".tabulator-cell")[1]).fontWeight) < 600)
         page.evaluate(() => window.walkTexts()[0][1] == window.walkCount) === true
+        page.close()
+    },
+})
+
+// Editing in the browser (plans/IronCalc-DB2.md CG2): on a sheet beside the data, the fill handle dragged down fills a
+// series, a reference is pointed into the formula bar from the data sheet's tab (as its table's column), a range is
+// merged and drawn as one box, a border and a conditional format are set, and Undo takes the format back.
+feature("in Calc the fill handle fills down, a reference is pointed in from the data sheet, and cells are merged, bordered and formatted", {
+    expect() {
+        const page = gridPage()
+        page.goto("/qapps/tools/Data/Grid?entityName=moqui.basic.Enumeration&enumTypeId=ComparisonOperator").status == 200
+        page.waitFor(() => !!(window.Tabulator && document.querySelector(".m-data-grid.tabulator") && document.querySelectorAll(".m-data-grid .tabulator-row").length >= 3))
+        page.evaluate(() => {
+            const label = (b) => Array.from(b.querySelectorAll(".block")).map((part) => part.textContent).join("").trim()
+            window.walkButton = (text) => Array.from(document.querySelector(".m-data-grid").closest(".q-pa-sm").querySelectorAll("button")).find((b) => label(b).startsWith(text))
+            window.walkTexts = () => Array.from(document.querySelectorAll(".m-calc-grid .tabulator-row")).map((row) => Array.from(row.querySelectorAll(".tabulator-cell")).map((cell) => cell.textContent))
+            window.walkTabs = () => Array.from(document.querySelectorAll(".m-calc-sheet .q-tab"))
+            // a sheet cell by its row and column (A is 1), and a mouse event on it as Tabulator takes one
+            window.walkCell = (row, column) => document.querySelectorAll(".m-calc-grid .tabulator-row")[row - 1].querySelectorAll(".tabulator-cell")[column]
+            window.walkMouse = (element, type) => element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, buttons: type === "mouseup" ? 0 : 1 }))
+            window.walkSelect = (from, to) => {
+                window.walkMouse(window.walkCell(from[0], from[1]), "mousedown")
+                window.walkMouse(window.walkCell(to[0], to[1]), "mousemove")
+                window.walkMouse(document, "mouseup")
+                return true
+            }
+            window.walkType = (text) => {
+                const bar = document.querySelector(".m-calc-formula")
+                bar.focus(); bar.value = text; bar.setSelectionRange(text.length, text.length); bar.dispatchEvent(new Event("input", { bubbles: true }))
+                bar.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))
+                return true
+            }
+            window.walkButton("Calc").click()
+            return true
+        })
+        page.waitFor(() => { const rows = window.walkTexts(); return rows.length > 2 && rows[0].includes("enumId") })
+        const dataRows = page.evaluate(() => { window.walkCount = String(window.walkTexts().filter((row) => row.some((text) => text.startsWith("ENTCO_"))).length); return Number(window.walkCount) })
+        dataRows >= 3
+        page.evaluate(() => { document.querySelector('.m-calc-sheet button[aria-label="Add a sheet"]').click(); return true })
+        page.waitFor(() => window.walkTabs().length == 2 && window.walkTexts().length > 2 && window.walkTexts()[0].every((text, index) => index == 0 || text == ""))
+
+        // 1 and 2 in A1 and A2, then the fill handle dragged from A1:A2 down to A5 fills the series
+        page.evaluate(() => window.walkType("1"))
+        page.waitFor(() => window.walkTexts()[0][1] == "1")
+        page.evaluate(() => { window.walkSelect([2, 1], [2, 1]); return true })
+        page.waitFor(() => document.querySelector(".m-calc-name").textContent.trim() == "A2")
+        page.evaluate(() => window.walkType("2"))
+        page.waitFor(() => window.walkTexts()[1][1] == "2")
+        page.evaluate(() => window.walkSelect([1, 1], [2, 1]))
+        page.waitFor(() => document.querySelector(".m-calc-name").textContent.trim() == "A1:A2" && !!document.querySelector(".m-calc-grid .tabulator-range-fill-handle"))
+        page.evaluate(() => {
+            window.walkMouse(document.querySelector(".m-calc-grid .tabulator-range-fill-handle"), "mousedown")
+            window.walkMouse(window.walkCell(5, 1), "mousemove")
+            window.walkMouse(document, "mouseup")
+            return true
+        })
+        page.waitFor(() => [3, 4, 5].every((row) => window.walkTexts()[row - 1][1] == String(row)))
+
+        // pointing: in B1 =COUNTA( is typed, the data sheet's tab chosen and its first column clicked: the bar takes the
+        // table's column, and Enter writes it into B1 on its own sheet
+        page.evaluate(() => { window.walkSelect([1, 2], [1, 2]); return true })
+        page.waitFor(() => document.querySelector(".m-calc-name").textContent.trim() == "B1")
+        page.evaluate(() => {
+            const bar = document.querySelector(".m-calc-formula")
+            bar.focus(); bar.value = "=COUNTA("; bar.setSelectionRange(8, 8); bar.dispatchEvent(new Event("input", { bubbles: true }))
+            return true
+        })
+        // a press as the mouse makes one: mousedown (which the sheet takes in the capture phase), then the click
+        page.evaluate(() => {
+            const tab = window.walkTabs()[0]
+            for (const type of ["mousedown", "mouseup", "click"]) window.walkMouse(tab, type)
+            return true
+        })
+        page.waitFor(() => { const rows = window.walkTexts(); return rows.length > 2 && rows[0].includes("enumId") })
+        page.evaluate(() => {
+            const cell = window.walkCell(3, 1)
+            for (const type of ["mousedown", "mouseup", "click"]) window.walkMouse(type === "mouseup" ? document : cell, type)
+            return true
+        })
+        page.waitFor(() => document.querySelector(".m-calc-formula").value == "=COUNTA(Enumeration[enumId]")
+        page.evaluate(() => {
+            const bar = document.querySelector(".m-calc-formula")
+            bar.focus(); bar.value += ")"; bar.setSelectionRange(bar.value.length, bar.value.length); bar.dispatchEvent(new Event("input", { bubbles: true }))
+            bar.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))
+            return true
+        })
+        page.waitFor(() => window.walkTabs()[1].classList.contains("q-tab--active") && window.walkTexts().length > 2 && window.walkTexts()[0][2] == window.walkCount)
+
+        // B3:C4 merged, its text in B3: one box over four cells, each drawing its slice
+        page.evaluate(() => { window.walkSelect([3, 2], [3, 2]); return true })
+        page.waitFor(() => document.querySelector(".m-calc-name").textContent.trim() == "B3")
+        page.evaluate(() => window.walkType("one box"))
+        page.waitFor(() => window.walkTexts()[2][2] == "one box")
+        page.evaluate(() => window.walkSelect([3, 2], [4, 3]))
+        page.waitFor(() => document.querySelector(".m-calc-name").textContent.trim() == "B3:C4")
+        page.evaluate(() => { window.walkButton("Rows and columns").click(); return true })
+        page.waitFor(() => Array.from(document.querySelectorAll(".q-menu .q-item")).some((item) => item.textContent.includes("Merge the cells selected")))
+        page.evaluate(() => { Array.from(document.querySelectorAll(".q-menu .q-item")).find((item) => item.textContent.includes("Merge the cells selected")).click(); return true })
+        page.waitFor(() => document.querySelectorAll(".m-calc-grid .tabulator-cell.m-calc-merged").length == 4)
+        const merged = page.evaluate(() => {
+            const slices = Array.from(document.querySelectorAll(".m-calc-grid .tabulator-cell.m-calc-merged .m-calc-box"))
+            return { texts: slices.map((box) => box.textContent), lefts: slices.map((box) => box.style.left), width: slices[0].style.width }
+        })
+        merged.texts.every((text) => text == "one box")
+        merged.lefts.includes("0px") && merged.lefts.some((left) => left != "0px")
+        parseInt(merged.width, 10) > 150
+        // a click on a covered cell selects the box
+        page.evaluate(() => { window.walkSelect([4, 3], [4, 3]); return true })
+        page.waitFor(() => document.querySelector(".m-calc-name").textContent.trim() == "B3:C4")
+
+        // all borders on A1, then a rule that colours A1:A5 over 3, which Undo takes back
+        page.evaluate(() => { window.walkSelect([1, 1], [1, 1]); return true })
+        page.waitFor(() => document.querySelector(".m-calc-name").textContent.trim() == "A1")
+        page.evaluate(() => { document.querySelector('.m-calc-toolbar button[aria-label="Borders"]').click(); return true })
+        page.waitFor(() => !!document.querySelector('.q-menu button[aria-label="All borders"]'))
+        page.evaluate(() => { document.querySelector('.q-menu button[aria-label="All borders"]').click(); return true })
+        page.waitFor(() => (window.walkCell(1, 1).style.borderTop || "").includes("solid") && (window.walkCell(1, 1).style.borderRight || "").includes("solid"))
+        page.evaluate(() => window.walkSelect([1, 1], [5, 1]))
+        page.waitFor(() => document.querySelector(".m-calc-name").textContent.trim() == "A1:A5")
+        page.evaluate(() => { document.querySelector('.m-calc-toolbar button[aria-label="Conditional formats"]').click(); return true })
+        page.waitFor(() => !!document.querySelector(".m-calc-rules") && document.querySelector(".m-calc-rules").textContent.includes("No conditional formats"))
+        page.evaluate(() => {
+            const number = Array.from(document.querySelectorAll(".m-calc-rules .q-field")).find((field) => field.textContent.includes("Number")).querySelector("input")
+            number.value = "3"; number.dispatchEvent(new Event("input", { bubbles: true }))
+            return true
+        })
+        page.waitFor(() => { const add = Array.from(document.querySelectorAll(".m-calc-rules button")).find((b) => b.textContent.includes("Add")); return !!add && !add.disabled })
+        page.evaluate(() => { Array.from(document.querySelectorAll(".m-calc-rules button")).find((b) => b.textContent.includes("Add")).click(); return true })
+        page.waitFor(() => document.querySelector(".m-calc-rules").textContent.includes("Value > 3") && document.querySelector(".m-calc-rules").textContent.includes("A1:A5"))
+        page.evaluate(() => { Array.from(document.querySelectorAll(".m-calc-rules button")).find((b) => b.textContent.includes("Close")).click(); return true })
+        page.waitFor(() => !document.querySelector(".m-calc-rules") && window.walkCell(4, 1).style.backgroundColor == "rgb(255, 205, 210)"
+            && window.walkCell(5, 1).style.backgroundColor == "rgb(255, 205, 210)" && !window.walkCell(3, 1).style.backgroundColor)
+        page.evaluate(() => { document.querySelector('.m-calc-toolbar button[aria-label="Undo"]').click(); return true })
+        page.waitFor(() => !window.walkCell(4, 1).style.backgroundColor && document.querySelectorAll(".m-calc-grid .tabulator-cell.m-calc-merged").length == 4)
         page.close()
     },
 })
