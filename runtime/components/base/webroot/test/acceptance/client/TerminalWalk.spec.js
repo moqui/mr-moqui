@@ -30,10 +30,14 @@ feature("a shell on the server floats through another app and a reload, and come
         page.waitFor("!!document.querySelector('.m-terminal-pane')", { timeout: 30 })
         page.locator("#TerminalNew").click()
         page.locator("#TerminalNew-host-shell").click()
-        // The host shell chooses its own prompt. Wait for its output and for the New menu to release focus.
+        // The host shell chooses its own prompt, and may set its own title (OSC 0 or 2, as Ubuntu's bash prompt does), so
+        // the pane is found by its session's kind and profile, not by the profile's title "Shell". Wait for its output
+        // and for the New menu to release focus.
         page.waitFor(() => {
             const pane = document.querySelector(".m-terminal-pane-focused")
-            return pane?.querySelector(".m-terminal-pane-header")?.textContent.includes("Shell")
+            const shell = Object.values(moqui.terminal.state.sessions)
+                .find((info) => info.kind === "host" && info.profile === "shell" && info.state === "running")
+            return !!shell && !!shell.title && !!pane?.querySelector(".m-terminal-pane-header")?.textContent.includes(shell.title)
                 && !!pane.querySelector(".xterm-rows")?.textContent.trim() && !document.querySelector(".q-menu")
         }, { timeout: 30 })
         page.locator(".m-terminal-pane-focused .xterm-screen").click()
