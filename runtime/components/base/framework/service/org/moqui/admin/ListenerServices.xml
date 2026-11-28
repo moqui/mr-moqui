@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
+    <!-- The listeners turned on and off while the server runs (plans/Runtime-Config.md 3.6), in
+        crates/moqui-core/src/service/listeners.rs over moqui_core::listeners, which the operator socket calls too. A
+        switch is a conf setting: these services change the same settings System > Conf, runtime/.env, the environment and
+        SIGHUP do, and the listener registry makes the listeners match. A refusal adds an error and answers reasonCode. -->
+    <service verb="get" noun="Listeners" type="rust" location="moqui_core::service::listeners::get_listeners"
+            allow-remote="false" transaction="ignore">
+        <description>Each listener with a switch (HTTP, HTTPS, gRPC, SSH, SMTP, XMPP, SIP, Call media, TURN), then the
+            registry's others (the cluster port). For each: name, state (on, off, failed, skipped; not-running when this
+            process runs no listeners, as under moqui test, where the row comes from the conf alone), detail, since,
+            cause (who or what changed it last, and why), address, live (a change applies while the server runs; until
+            then it waits for a restart, pending), lastError, connections, dependents (what turning it off would end:
+            the edge node's SSH tunnel, the cluster's SSH transport), switchable, wayIn (HTTPS, HTTP and SSH), enabled
+            (its switch in the running conf), ownRequest (the caller's request came over it) and settingList: each
+            setting behind it with selector, envName, value, source (conf file with file, fileLabel and line;
+            runtime/.env; the environment; -D; or set while running and not kept past a restart). Also running
+            (listeners run in this process) and origin (the listener the caller's request came over). Needs the ADMIN
+            group.</description>
+        <out-parameters>
+            <parameter name="listenerList" type="List"><parameter name="listener" type="Map"/></parameter>
+            <parameter name="running" type="Boolean"/>
+            <parameter name="origin"/>
+        </out-parameters>
+    </service>
+    <service verb="set" noun="Listener" type="rust" location="moqui_core::service::listeners::set_listener"
+            allow-remote="false" transaction="ignore">
+        <description>Turn one listener on or off, and optionally move it (port, host) or set its own settings (access,
+            SSH's: open, login or key). Needs the ADMIN group, the sealed LISTENER_CONTROL permission and a recent sign-in
+            ("Confirm it is you"), in that order (reasonCode permission or reauthRequired). Then, each refused with its
+            reasonCode: invalid (no such listener, a port that is not 1 to 65535, a host the listener cannot bind, an own
+            setting or value it does not take, or no reason to turn it off, or a reason that is not one line of at most
+            500 characters); portBusy (the port it would bind is held,
+            and by what); lockout (it leaves none of HTTPS, HTTP and SSH on at an address clients reach, SSH on loopback
+            being none, nor HTTP or HTTPS on loopback unless trusted-proxies names a loopback address for a proxy on this
+            machine: turning off the last way in, or moving it to
+            loopback; the message names the ways back from where the change is kept, first moqui operator listener NAME on
+            over the operator socket, then runtime/.env and systemctl reload, or a restart);
+            publicHttp (it turns plain HTTP on at a public address, http-bind empty or not loopback, while
+            trusted-proxies is empty); dependents (it turns SSH off while the edge tunnel or the cluster's SSH transport
+            uses it). A guard's refusal names in confirm the parameter that lets it through. Only the settings whose value
+            changes are kept, as persist says (runtime/.env, or this process until a restart when the environment names one; persist=false
+            sets them until the process ends) and one pass of the listener registry applies them, with the user and the
+            reason as its cause; endNow ends the connections of a listener turned off at once instead of after 5 seconds,
+            except those of the listener the request came over. A change that affects that listener applies a second
+            after this answer. A switch has
+            no timer: what is turned off stays off until someone turns it on. Logged on moqui.monitor.audit, a refusal
+            too, and as a config annotation on the Monitor charts. Out: name, enabled, applied (now, deferred, no-listeners, failed),
+            message, settingList (each selector, envName, value, previous, kept, outrankedBy, applies, note),
+            outcomeList (each listener's name, action, detail) and noteList.</description>
+        <in-parameters>
+            <parameter name="name" required="true"/>
+            <parameter name="enabled" type="Boolean" required="true"/>
+            <parameter name="port"/>
+            <parameter name="host"/>
+            <parameter name="access"/>
+            <parameter name="reason"/>
+            <parameter name="persist" type="Boolean" default-value="true"/>
+            <parameter name="endNow" type="Boolean" default-value="false"/>
+            <parameter name="confirmLockout" type="Boolean" default-value="false"/>
+            <parameter name="confirmPublicHttp" type="Boolean" default-value="false"/>
+            <parameter name="confirmDependents" type="Boolean" default-value="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="name"/>
+            <parameter name="enabled" type="Boolean"/>
+            <parameter name="applied"/>
+            <parameter name="message"/>
+            <parameter name="settingList" type="List"><parameter name="setting" type="Map"/></parameter>
+            <parameter name="outcomeList" type="List"><parameter name="outcome" type="Map"/></parameter>
+            <parameter name="noteList" type="List"/>
+            <parameter name="reasonCode"/>
+            <parameter name="confirm"/>
+        </out-parameters>
+    </service>
+</services>

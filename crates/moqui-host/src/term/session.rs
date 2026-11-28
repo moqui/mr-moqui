@@ -196,6 +196,8 @@ pub(crate) struct Session {
     next_client: AtomicU64,
     /// The user typed since the pump last looked.
     typed: std::sync::atomic::AtomicBool,
+    /// The listener its calls came over: a kept session's is that of the page attached to it now.
+    pub(crate) origin: super::Origin,
 }
 
 /// What a session that wants its user while nobody looks tells (§11.1): the notification's sender.
@@ -237,6 +239,8 @@ pub(crate) struct Spec {
     pub agent: bool,
     /// What an attention is told to; none for a session that notifies nothing (the apps).
     pub attend: Option<Attend>,
+    /// The listener its calls came over, which an attach sets ([`super::Origin`]).
+    pub origin: super::Origin,
 }
 
 pub(crate) fn now_millis() -> i64 {
@@ -382,6 +386,7 @@ pub(crate) fn spawn(registry: &Arc<Registry>, spec: Spec, program: Program) -> A
         input,
         next_client: AtomicU64::new(1),
         typed: std::sync::atomic::AtomicBool::new(false),
+        origin: spec.origin.clone(),
     });
     registry.insert(Arc::clone(&session));
     let pump = Pump {

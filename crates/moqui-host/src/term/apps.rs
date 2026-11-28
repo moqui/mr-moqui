@@ -340,12 +340,15 @@ pub(crate) async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S, sta
             if log {
                 forward_log(&events, username);
             }
-            let link = HostLink::weak_as_user(Weak::clone(&start.factory), username.clone());
+            let link = HostLink::weak_as_user(Weak::clone(&start.factory), username.clone())
+                .over_listener(start.listener.clone());
             (log, link, None)
         }
         Who::Login { name, .. } => (
             false,
-            HostLink::weak(Weak::clone(&start.factory)).from_address(start.client_ip.clone()),
+            HostLink::weak(Weak::clone(&start.factory))
+                .from_address(start.client_ip.clone())
+                .over_listener(start.listener.clone()),
             name.clone(),
         ),
     };

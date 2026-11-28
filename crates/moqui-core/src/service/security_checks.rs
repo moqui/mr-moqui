@@ -30,7 +30,7 @@ use crate::entity::{EntityFacade, EntityValue};
 
 const DEFAULT_PRIVILEGED_GROUPS: &str = "ADMIN,ADMIN_ADV,SYSMSG_RECEIVE";
 const DEFAULT_SEALED_PERMISSIONS: &str =
-    "GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,TERMINAL_HOST,LOAD_RUNNER,INSTANCE_ADMIN,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,CONF_EDIT,DATABASE_ADMIN,DATABASE_EXTERNAL,ADMIN_CONSTITUTION_GLOBAL,ADMIN_IDENTITY_GLOBAL,ADMIN_ACCESS_MANAGE,ADMIN_BACKUP_DOWNLOAD,GIT_CI_ADMIN,REPORT_SAVE_LOCATION,VAULT_ADMIN,VAULT_RECOVERY";
+    "GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,TERMINAL_HOST,LOAD_RUNNER,INSTANCE_ADMIN,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,CONF_EDIT,LISTENER_CONTROL,DATABASE_ADMIN,DATABASE_EXTERNAL,ADMIN_CONSTITUTION_GLOBAL,ADMIN_IDENTITY_GLOBAL,ADMIN_ACCESS_MANAGE,ADMIN_BACKUP_DOWNLOAD,GIT_CI_ADMIN,REPORT_SAVE_LOCATION,VAULT_ADMIN,VAULT_RECOVERY";
 
 /// How many times `UserSecurityChecks` ran on this thread, for a load report to show the ECAs fired.
 pub fn security_checks_run() -> u64 {
@@ -473,6 +473,8 @@ mod tests {
             "ADMIN_CONSTITUTION_GLOBAL",
             // the CI's runner pools: a pool's runners run any job sent to it, its secrets among them
             "GIT_CI_ADMIN",
+            // the listeners turned on and off: it can close every way in (plans/Runtime-Config.md §3.6)
+            "LISTENER_CONTROL",
         ] {
             assert!(sealed.contains(permission), "{permission}");
         }

@@ -446,7 +446,8 @@ What is not built, not bound or not reachable cannot be attacked. Apply these in
 5. **Fewer privileged accounts.** An administrator uses a separate admin account with a second factor.
 6. **A role report.** `moqui operator surface` lists, for the running node, each feature built in, each listener bound
    (address and port), each enabled integration, each key file on disk (§3.1) and each account with a privileged
-   group. An operator compares it with what the node's role needs.
+   group. An operator compares it with what the node's role needs. Its listener part is built ([Runtime-Config](Runtime-Config.md)
+   RC4): `moqui operator listeners`, with `surface` the same command until the rest of the report is added.
 
 ### 3.10 Who has access to what
 

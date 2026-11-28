@@ -2,7 +2,7 @@
 
 Status 2026-11-27: reviewed against the code and being built, RC0 to RC10 in one run. Its open points were decided
 with the user the same day (§6). The review's corrections are in place below, and the implementation design is §8.
-Built so far: RC0, RC1, RC2, RC3.
+Built so far: RC0 to RC4.
 
 Goal: an administrator turns services and ports on and off while the server runs, from a dialog on System Home, from
 the terminal, or by editing the conf, and no listener setting waits for a restart. It serves two tasks: setting a
@@ -236,6 +236,20 @@ confirmed the same way, with `confirmPublicHttp`, §3.3):
 - `moqui operator listeners` and `moqui operator listener <name> on|off [--now]` over the operator socket, which
   needs no network listener. `listeners` is the `moqui operator surface` of [Sealed-Secrets](Sealed-Secrets.md) S12.
 - Edit the conf or `runtime/.env` and reload (`systemctl reload`, SIGHUP), or restart.
+
+As built (RC4): a way in counts only where clients reach it (SSH not on loopback; HTTP and HTTPS not on loopback, or on
+it behind a proxy on this machine, a loopback entry of `trusted-proxies`), and the guard runs on the state after the change, so moving the last way in
+to loopback is a lockout too (`http-bind` moves HTTP and HTTPS both). Only settings whose value changes are written, so a
+change of SSH's `access` pins no switch into `.env`. The ways back are named from where the change is kept: a value in
+`runtime/.env` outranks the conf files, and a process property outranks `.env` in a reload, so for those the message
+names editing `.env` or a restart, never the conf alone. The operator socket's change has no lockout guard (it is the
+way back) and needs no permission (the socket's access is the authorization); its peer's uid is on the audit line, and
+refused attempts are audited too. Changes are serialized per factory, and a listener counts as on only while its row
+runs and its switch is on, so a deferred turn-off in its second counts as off. `Cause::Request` carries the selectors
+set, so a server started on an address releases the held HTTP settings as a set does (a held setting is written even at
+the conf's value, as is one a live process property holds when the change is kept). A reason is one line of at most 500
+characters. A no-op change is audited as unchanged and still asks for a pass, which retries a failed listener. A kept
+browser-terminal session says the listener of the page attached to it now.
 
 Audit: a line on `moqui.monitor.audit` (user, listener, from, to, reason, as conf saves and the recovery stop write)
 and a `config` annotation on the Monitor charts, as Monitor › Settings writes.

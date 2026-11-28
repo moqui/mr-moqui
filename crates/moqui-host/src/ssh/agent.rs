@@ -136,12 +136,12 @@ fn parse_open(words: &[&str]) -> Result<Open, String> {
 async fn new_agent(access: &AgentAccess, open: Open) -> Result<(Agent<HostLink>, SessionSlot), String> {
     let slot = access.sessions.take(&access.username)?;
     // agent-apps renders say where they come from; it writes with the authority of its own credentials, ungated.
-    let link = HostLink::weak_as_user(Weak::clone(&access.factory), access.username.clone()).with_render_options(
-        moqui_core::screen::RenderOptions {
+    let link = HostLink::weak_as_user(Weak::clone(&access.factory), access.username.clone())
+        .with_render_options(moqui_core::screen::RenderOptions {
             origin: moqui_core::screen::RenderOrigin::AgentApps,
             ..moqui_core::screen::RenderOptions::default()
-        },
-    );
+        })
+        .over_listener(crate::term::Origin::of(Some(moqui_core::listeners::SSH_SWITCH.name)));
     tokio::task::spawn_blocking(move || {
         let mut agent = Agent::open(link, &open.path, open.size.0, open.size.1);
         agent.set_json(open.json);

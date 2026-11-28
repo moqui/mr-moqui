@@ -21,6 +21,9 @@
 //!
 //! [`SWITCHES`] names each listener's switch and the settings that turned it on before it had one (§3.2), for the boot's
 //! upgrade warning ([`upgrade_warnings`], §8.2), the test server's ports and the readers that list them.
+//!
+//! [`rows`] and [`change`] (`manage`) list the listeners with the settings behind each, and switch one as a person asks,
+//! for `org.moqui.admin.ListenerServices` and the operator socket (§3.6).
 
 use std::cell::OnceCell;
 use std::fmt;
@@ -34,6 +37,12 @@ use crate::context::conf_env::{self, Override};
 use crate::context::{ConfFile, ConfRole, ExecutionContextFactory};
 use crate::startup::State;
 
+mod manage;
+pub use manage::{
+    audit_refused, change, origin, rows, Actor, Answer, Applied, Change, OwnSetting, Refusal, RefusalKind, SettingSet,
+    OWN_SETTINGS, WAYS_IN,
+};
+
 /// A listener's switch and the settings that turned it on before it had one (plans/Runtime-Config.md §3.2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ListenerSwitch {
@@ -43,6 +52,17 @@ pub struct ListenerSwitch {
     pub enabled: &'static str,
     /// Its ports' selectors, with XMPP's domain, which counts with its ports: each turned the listener on while set.
     pub ports: &'static [&'static str],
+}
+
+impl ListenerSwitch {
+    /// Its port's selector: the first of [`Self::ports`] that is a port and not a TLS one (XMPP's first is its domain).
+    #[must_use]
+    pub fn port(&self) -> Option<&'static str> {
+        self.ports
+            .iter()
+            .copied()
+            .find(|selector| selector.ends_with("port") && !selector.ends_with("tls-port"))
+    }
 }
 
 /// The web listeners' entries of [`SWITCHES`], by name for the host's web listeners, whose rows and settings they name.
@@ -61,17 +81,19 @@ pub const GRPC_SWITCH: ListenerSwitch = ListenerSwitch {
     enabled: "webapp-list/webapp[webroot]@grpc-listen-enabled",
     ports: &["webapp-list/webapp[webroot]@grpc-listen-port"],
 };
+/// The SSH server's entry of [`SWITCHES`], by name for the host's SSH sessions, which say they came over it ([`origin`]).
+pub const SSH_SWITCH: ListenerSwitch = ListenerSwitch {
+    name: "SSH",
+    enabled: "ssh-server@enabled",
+    ports: &["ssh-server@port"],
+};
 
 /// The listeners with a switch, in the startup report's order.
 pub const SWITCHES: [ListenerSwitch; 9] = [
     HTTP_SWITCH,
     HTTPS_SWITCH,
     GRPC_SWITCH,
-    ListenerSwitch {
-        name: "SSH",
-        enabled: "ssh-server@enabled",
-        ports: &["ssh-server@port"],
-    },
+    SSH_SWITCH,
     ListenerSwitch {
         name: "SMTP",
         enabled: "smtp-server@enabled",
@@ -120,6 +142,16 @@ pub trait ListenerControl: Send + Sync {
     /// Reconcile after `delay`, without waiting: a change that closes the connection its request came over is
     /// answered first and applied a little later (plans/Runtime-Config.md §3.6).
     fn reconcile_later(&self, request: ReconcileRequest, delay: Duration);
+    /// Whether the listener `name` could bind `port` now, on `host` or, with none, where it binds now (its running
+    /// address, else its conf's): the services' check before a change that binds a new port (§3.6). Err says why not:
+    /// the port, the setting, the host, the error and the processes holding it.
+    fn check_port(&self, name: &str, host: Option<&str>, port: u16) -> Result<(), String>;
+    /// The settings a server started on an address holds at that address's until they are set (HTTP's switch, port and
+    /// address): a change that sets one to the value the conf has still writes it, so the hold is released. None by
+    /// default.
+    fn held(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// Why a reconcile ran: recorded on each listener row it changed, beside the time.
@@ -135,8 +167,13 @@ pub enum Cause {
     SetValue(String),
     /// A signal other than the conf: a cluster member appeared, ACME wants the HTTPS listener.
     Signal(&'static str),
-    /// A person, from the services or the operator socket, with the reason they gave.
-    Request { user: String, reason: String },
+    /// A person, from the services or the operator socket, with the reason they gave and the settings their change set
+    /// (which a server started on an address no longer holds at that address's, as a set's).
+    Request {
+        user: String,
+        reason: String,
+        selectors: Vec<String>,
+    },
 }
 
 impl fmt::Display for Cause {
@@ -147,8 +184,8 @@ impl fmt::Display for Cause {
             Self::ConfReload => f.write_str("conf reload"),
             Self::SetValue(selector) => write!(f, "set {selector}"),
             Self::Signal(signal) => write!(f, "signal {signal}"),
-            Self::Request { user, reason } if reason.trim().is_empty() => write!(f, "request by {user}"),
-            Self::Request { user, reason } => write!(f, "request by {user}: {reason}"),
+            Self::Request { user, reason, .. } if reason.trim().is_empty() => write!(f, "request by {user}"),
+            Self::Request { user, reason, .. } => write!(f, "request by {user}: {reason}"),
         }
     }
 }
@@ -444,5 +481,4 @@ pub fn off_reason(factory: &ExecutionContextFactory, name: &str, reason: String)
 }
 
 #[cfg(test)]
-#[path = "listeners_tests.rs"]
 mod tests;
