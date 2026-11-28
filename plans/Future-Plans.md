@@ -172,6 +172,11 @@ bindings' own tests and `ironcalc_base` on `wasm32-wasip2`, which upstream's CI 
   text, `MEDIAN`, and `VLOOKUP` and `MATCH`'s copy of the lookup column; a formula that calls a named function or a
   `LAMBDA` is a dynamic array, so an edit it reads evaluates the whole workbook.
 - Images and charts in `UserModel`'s undo, and the fork's tests reading charts from rust_xlsxwriter's files.
+- The fork's xlsx import keeps any colour (`get_color_indexed`, the theme's slots and name) and its export writes them
+  unescaped (`rgb="FF{}"` in styles, dxfs and conditional formats; `theme1.xml`'s name and `srgbClr`); a malformed
+  theme slot panics in `hex_to_rgb`, and an 8-byte `rgb` with a multibyte character panics at `raw[2..]`. CalcGrid
+  cleans every colour on open (IronCalc-DB2 CG2), but `calculate#Spreadsheet` round-trips a caller's file without it:
+  validate on import and escape on export in the fork, which covers every path.
 
 **Moved out of IronCalc-DB2 at review** (the notes are what the code needs, from the Nov 27 reading):
 - **Undo across a save.** What a room takes for undo lives in its memory, so a room opened after a save has none of

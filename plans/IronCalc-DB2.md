@@ -1,6 +1,6 @@
 # IronCalc DB 2: finishing CalcGrid for the first release
 
-Status 2026-11-28: CG1 and CG3 (but CG3.2) built; CG2, CG4, CG5 and CG6 not yet. It follows [IronCalc-DB](archive/IronCalc-DB.md), built Nov 13, 2026 (Phases 0
+Status 2026-11-28: CG1, CG2, CG4 and CG3 (but CG3.2) built; CG3.2, CG5 and CG6 not yet. It follows [IronCalc-DB](archive/IronCalc-DB.md), built Nov 13, 2026 (Phases 0
 to 4) and archived the same day as this plan was written. The IronCalc fork was merged with upstream on 2026-11-27
 (`a0e66946`, [Working with upstream](archive/IronCalc-DB.md#working-with-upstream)). This plan takes the items that
 plan left open and that the user chose to finish on Nov 27, 2026. What waits on IronCalc upstream, the larger engine
@@ -87,6 +87,26 @@ The large items are CG2.6 merged cells, CG3.4 the push to the terminal and CG5.7
 
 ### 2.2 CG2: editing in the browser
 
+**Built 2026-11-28** (merge `48391e721`). What differed from the plan, and what it records:
+- **Found and fixed on the way:** cell texts were drawn as HTML (Tabulator's formatter returned a string); a fill left
+  blank cells in other views (the engine's change list leaves out autofilled cells); an undo copied neighbours'
+  borders into a cell.
+- **Conditional formats** are refused on data sheets (a rule's range is cells, which the log replays in rooms with
+  other row counts). Bounded: 500 rules and a million rule cells a sheet, 2,000 and two million a workbook, a rule's
+  JSON 4 KB, thresholds 3 (colour scale), 5 (icon set), 9 (rating); every colour `#RRGGBB`, server side, and a file's
+  colours (fonts, fills, borders, rules, the theme's slots and name) cleaned on open, since the fork's export writes
+  them unescaped. A cell-value rule compares numbers only (the engine's CellIs).
+- **Rule undo** names rules by ids that live in each room (a room opened after a save numbers afresh, and every room
+  applies the same edits to the same rules); a client edit names a rule by its place and an `expect`. An undo step
+  whose rule, sheet or target someone else changed since passes by, counted and told ("N changes were changed by
+  others since and not undone"); the rest of the undo applies and the person's undo stack moves on; a redo leaves out
+  what its undo passed by. Undo steps are held to the rule bounds, and a rule past them after an undo is taken off.
+  Sheet undo steps find their sheet by its id.
+- **Merged cells:** at most 2,000 a sheet, all in the layout; refused on data sheets.
+- **Open:** pointing from the in-cell editor; a data sheet's row heights are kept by row number (they apply to other
+  rows in other scopes and after a refresh); each rule undo adds dxfs the engine never removes; a merged box's text is
+  bottom-aligned and drawn only once its anchor row is loaded.
+
 In `js/WebrootCalc.js` and `calc/room.rs`, both screens.
 
 1. **The fill handle by dragging (S).** `selectableRangeFill: true`; in `tableBuilt` the table's
@@ -143,6 +163,24 @@ In `tui/components/calc.rs` unless named.
    warning past `calc@slow-ms`.
 
 ### 2.4 CG4: dashboards
+
+**Built 2026-11-28**, but CG4.3, deferred (merge `829f77d67`, mr-boss `ef19386b`, mr-mantle `6582835a`). What it
+records:
+- **Parameters:** a dataset body declares `parameters` (up to 16 of name, label, kind, optional, choices); a choices
+  service is called as the viewer under their own grant, once per listing for each service and its parameters, and a
+  saved dataset may name only a shipped dataset's choices (service and parameters). In BOSS, `get#CalcProfiles` is
+  granted to the Insights groups for the profile field.
+- **Charts** have ids, given before an edit is logged (`chart<n>` for documents saved before); a chart panel follows
+  the document live and is cleared when its share is taken away; a bar panel can run across (`horizontal`).
+- **A saved overlay is checked at every open**, whatever wrote the definition (save#Definition, import, git sync,
+  REST): a data sheet keeps only its header, widths, heights (bounded both ways) and frozen panes; a lookalike tab is
+  renamed aside (within 31 characters), never refused; a table, defined name or named function of a data sheet's
+  table name elsewhere refuses the document. Data cells are written in a plain style of their own, number formats a
+  workbook redefines are dropped, and dates go in the workbook's date system.
+- **An upload** under a profile is an author's, over a source the profile offers; `upload::prepare` re-types
+  formulas whose table references the file could not resolve.
+- **Open:** `crates/moqui-calc/src/service.rs` is about 1,560 lines; homoglyphs from other scripts are not taken for
+  lookalikes (harmless: such a sheet is never taken for the data sheet).
 
 1. **A dataset's parameters in the panel editor (M).** A dataset's body declares its `parameters`; `calcgrid.json`
    names the document (from `list#Definitions` of type calcgrid), the range and the profile (from `get#CalcProfiles`).
