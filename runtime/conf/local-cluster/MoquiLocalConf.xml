@@ -29,7 +29,9 @@
     <!-- How peers reach this member: empty for its cluster port (TLS with the cluster certificate, client certificate
         required), notify for Postgres LISTEN/NOTIFY on the shared database when members cannot connect to each other
         (Postgres only), ssh through its SSH server (ssh-server@enabled; a build with the ssh feature). cluster-member@protocol: empty or grpc for gRPC on HTTP/2, rest for HTTP/1.1
-        only; members on different settings or builds still reach each other. -->
+        only; members on different settings or builds still reach each other. The cluster port opens while another
+        member is live (cluster-member@listen="auto"); a member on notify or ssh opens none under auto, and sets
+        cluster-member@listen="off" to say so (plans/Runtime-Config.md 3.5). -->
     <cluster-member transport="" protocol=""/>
 
     <!-- The load balancer (.env): webapp-list/webapp[webroot]@trusted-proxies, its address ranges, which also turns on web protection by

@@ -368,12 +368,11 @@ fn listening_text(http: std::net::SocketAddr, https: Option<std::net::SocketAddr
     }
 }
 
-/// A running plain HTTP listener and the cluster HTTPS listener.
-/// Drop stops both, then joins the thread that owns the database.
+/// A running server: its web listeners, its cluster port while it is open, and the others its conf turns on.
+/// Drop stops them, then joins the thread that owns the database.
 #[must_use = "dropping the server stops the listener"]
 pub struct Server {
     address: std::net::SocketAddr,
-    cluster_address: std::net::SocketAddr,
     https_address: Option<std::net::SocketAddr>,
     factory: Option<std::sync::Arc<moqui_core::context::ExecutionContextFactory>>,
     posts: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
@@ -516,11 +515,12 @@ impl Server {
         self.in_process.as_ref()
     }
 
-    /// The cluster HTTPS listener. Empty `cluster-member@https-port` binds 8444. `0` is ephemeral, and this
-    /// is the address the kernel chose.
+    /// The cluster port's address while it is open ([`Server::listener_address`]): with `cluster-member@listen="auto"`
+    /// (the default) only while another member is live, `on` always, `off` never (plans/Runtime-Config.md §3.5). Empty
+    /// `cluster-member@https-port` binds 8444; `0` is ephemeral, and this is the address the kernel chose.
     #[must_use]
-    pub fn cluster_address(&self) -> std::net::SocketAddr {
-        self.cluster_address
+    pub fn cluster_address(&self) -> Option<std::net::SocketAddr> {
+        self.listener_address("Cluster")
     }
 
     /// The factory serving this process. Gone once drop has started.
@@ -570,8 +570,7 @@ impl Drop for Server {
 ///
 /// # Errors
 ///
-/// Returns an error when this build has no HTTP server, boot fails, or a required port (the cluster port) cannot
-/// be bound.
+/// Returns an error when this build has no HTTP server or the boot fails.
 pub fn start_server_by_conf(
     runtime_dir: impl AsRef<std::path::Path>,
     framework_dir: impl AsRef<std::path::Path>,
@@ -1774,7 +1773,6 @@ fn start_server_in(
         Ok(Ok(bound)) => Ok(Server {
             address: bound.http,
             https_address: bound.https,
-            cluster_address: bound.cluster,
             factory: Some(bound.factory),
             posts: bound.posts,
             in_process: Some(bound.in_process),
@@ -1824,8 +1822,6 @@ fn serve_thread(
         tracing::warn!("The web listeners' settings: {err}");
         None
     });
-    // no port: the addresses a server reports are port 0
-    let unbound = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 0));
     let factory = process
         .factory
         .clone()
@@ -1879,7 +1875,7 @@ fn serve_thread(
         if factory.conf_setting("dev-aide", "shared") == "true" {
             tracing::info!(
                 "Dev AIDE in shared mode (a team dev server) on {}: network git commands are off until an admin enables them",
-                address.map_or(unbound.ip(), |address| address.ip)
+                address.map_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), |address| address.ip)
             );
         } else {
             tracing::warn!(
@@ -1893,15 +1889,8 @@ fn serve_thread(
     if !matches!(bind, ListenBind::None) {
         moqui_core::user::log_initial_admin_setup(&factory);
     }
-    let cluster = process
-        .listeners
-        .as_ref()
-        .and_then(|registry| registry.address(listeners::CLUSTER));
-    let (cluster_address, posts) = match cluster {
-        Some(address) => (address, std::sync::Arc::clone(&process.cluster_posts)),
-        None if matches!(bind, ListenBind::None) => (unbound, std::sync::Arc::default()),
-        None => return Err(moqui_lib::error::Error::new("http server has no cluster listener")),
-    };
+    // the topics peers posted, over the cluster port (open or not now) or the SSH channel
+    let posts = std::sync::Arc::clone(&process.cluster_posts);
     // the web listeners start and stop through the registry too, inside the listen below
     let registry = process
         .listeners
@@ -1950,16 +1939,7 @@ fn serve_thread(
     };
     #[cfg(unix)]
     operator::set_serving(true);
-    let listened = runtime.block_on(http::listen(
-        factory,
-        https,
-        cluster_address,
-        posts,
-        registry,
-        stop,
-        termination,
-        sender,
-    ));
+    let listened = runtime.block_on(http::listen(factory, https, posts, registry, stop, termination, sender));
     // still serving for the operator socket's signal handler, which must not end the process now: the signal that
     // stopped the listener (or a restart's, or a seal's stop) is shutting the server down, and its embedded Postgres
     // stops with it. Ending here would leave the postmaster running. The next boot sets it back.
@@ -2067,8 +2047,8 @@ fn boot_server(
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
 #[derive(Clone)]
 enum Listeners {
-    /// The port check, and the bind the listeners start for: the cluster port opens unless it is
-    /// [`ListenBind::None`], a node reached in process only.
+    /// The port check, and the bind the listeners start for: the cluster port may open (as `cluster-member@listen`
+    /// says) unless it is [`ListenBind::None`], a node reached in process only.
     All(moqui_core::context::BeforeInit, ListenBind),
     None,
 }
@@ -2280,6 +2260,9 @@ fn boot_server_factory(
         },
     );
     listeners::add_boot_entries(&registry);
+    // the cluster port follows this member's cluster under `auto` (plans/Runtime-Config.md §3.5): told from the
+    // cluster's start on
+    listeners::follow_cluster_membership(&registry);
     // The SSH server binds before the member row is written: with moqui_conf__cluster_member__transport=ssh the row carries its address
     // and host key. A failed bind is a Failed row and the boot goes on (plans/Runtime-Config.md §6); the ssh transport
     // then fails the cluster's start, which needs the address.
@@ -2340,11 +2323,14 @@ fn boot_server_factory(
             moqui_core::startup::State::off("cluster-member@transport is not notify")
         },
     );
-    // the cluster port, unless the node is reached in process only; a failed bind stops the boot
-    registry.run(
+    // the cluster port, as cluster-member@listen says: under auto open now only when the cluster's start found another
+    // live member; a failed bind is a Failed row and the boot goes on (plans/Runtime-Config.md §3.5, §6)
+    if let Err(err) = registry.run(
         listeners::Scope::Stage(listeners::Stage::ClusterPort),
         moqui_core::listeners::Cause::Boot,
-    )?;
+    ) {
+        tracing::error!("The cluster port did not start, the server starts without it: {err}");
+    }
     notws::install_push().map_err(moqui_lib::error::Error::from)?;
     #[cfg(feature = "ssh")]
     ssh::install_client(&factory, &runtime_dir);

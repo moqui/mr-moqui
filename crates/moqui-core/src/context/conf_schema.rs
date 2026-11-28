@@ -417,8 +417,17 @@ pub static CATALOG: &[Unit] = &[
     single("xmpp-server", LISTENER)
         .secrets(&[("scram-decoy-key", Secret::Generated)])
         .children(&[single("upload", Class::Live).secrets(&[("secret", Secret::Generated)])]),
-    // the TLS pair is made together at boot (conf_env::generate_secrets), not as two random values
-    single("cluster-member", BOOT).secrets(&[("tls-cert", Secret::Kept), ("tls-key", Secret::Kept)]),
+    // the TLS pair is made together at boot (conf_env::generate_secrets), not as two random values; the cluster port's
+    // switch, port and address the listener registry applies while the server runs, and a member that is alone reads
+    // lone-check-seconds before each read of the member table (plans/Runtime-Config.md §3.5, RC6)
+    single("cluster-member", BOOT)
+        .attrs(&[
+            ("listen", LISTENERS),
+            ("https-port", LISTENERS),
+            ("bind-address", LISTENERS),
+            ("lone-check-seconds", Class::Live),
+        ])
+        .secrets(&[("tls-cert", Secret::Kept), ("tls-key", Secret::Kept)]),
     single("push", Class::Live).children(&[
         single("web", Class::Live).secrets(&[("vapid-key", Secret::Generated)]),
         single("fcm", Class::Live).secrets(&[("service-account", Secret::Kept)]),

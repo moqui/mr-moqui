@@ -18,7 +18,8 @@
 //! Empty `cluster-member@https-port` is 8444 on `cluster-member@bind-address` (default `0.0.0.0`, so other hosts reach it; the
 //! listener takes only peers that present the cluster certificate). `0` is ephemeral: the listener binds port 0
 //! and [`ClusterEdge::address`] is the address the kernel chose. The public HTTP and HTTPS listeners do not ask
-//! for a client certificate.
+//! for a client certificate. The listener registry opens and closes the port as `cluster-member@listen` says
+//! (`crate::listeners`, plans/Runtime-Config.md §3.5): under `auto` only while there is another member.
 //!
 //! - **Protocols** (`cluster-member@protocol`, [`Protocol`]). On one port, TLS picks by ALPN: gRPC on HTTP/2
 //!   (`moqui.cluster.v1.Cluster`, [`grpc`]) or `POST /cluster/{topic}` on HTTP/1.1, the same messages and statuses.
@@ -80,24 +81,25 @@ struct Material {
     digest: [u8; 32],
 }
 
-/// `cluster-member@bind-address`, else every interface: a member on another host must reach this one.
-pub(crate) fn bind_address() -> Result<IpAddr, HostError> {
-    let raw = moqui_core::context::conf_env::setting("cluster-member@bind-address");
-    if raw.trim().is_empty() {
+/// `cluster-member@bind-address` as `raw` gives it (the running conf's, or the start check's merged conf), else every
+/// interface: a member on another host must reach this one.
+pub(crate) fn bind_address(raw: &str) -> Result<IpAddr, HostError> {
+    let raw = raw.trim();
+    if raw.is_empty() {
         return Ok(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
     }
-    raw.trim()
-        .parse()
+    raw.parse()
         .map_err(|_| HostError::new(format!("cluster-member@bind-address {raw} is not an IP address")))
 }
 
 /// `cluster-member@https-port`. Empty is 8444. `0` is ephemeral and is passed through to `bind`.
 pub(crate) fn listen_port(raw: &str) -> Result<u16, HostError> {
+    let raw = raw.trim();
     if raw.is_empty() {
         return Ok(DEFAULT_PORT);
     }
     raw.parse()
-        .map_err(|_| HostError::new("cluster-member@https-port is not a port"))
+        .map_err(|_| HostError::new(format!("cluster-member@https-port {raw} is not a port")))
 }
 
 /// How this member speaks on the cluster port, from `cluster-member@protocol`.

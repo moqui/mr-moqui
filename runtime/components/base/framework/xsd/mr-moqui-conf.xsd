@@ -2498,7 +2498,16 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="base-url" type="xs:string"/>
             <xs:attribute name="transport" type="xs:string"><xs:annotation><xs:documentation>Empty (the cluster port), ssh or notify.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="protocol" type="xs:string"><xs:annotation><xs:documentation>Empty or grpc, or rest.</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="bind-address" type="xs:string"/>
+            <xs:attribute name="bind-address" type="xs:string"><xs:annotation><xs:documentation>The address the cluster port binds; empty for every interface.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="listen" default="auto"><xs:annotation><xs:documentation>Whether the cluster port is open (plans/Runtime-Config.md 3.5): auto, only while
+                another live member with the same session key and cluster certificate is in the member table, opened within lone-check-seconds of its start and
+                closed once the last other member's row is deleted as dead, and never for a member peers reach elsewhere (transport ssh or notify, or a base-url
+                that is not https://); on, always; off, never. Applies while the server runs. Only these three values are taken; another is off, named on its row.</xs:documentation></xs:annotation>
+                <xs:simpleType><xs:restriction base="xs:token"><xs:enumeration value="auto"/><xs:enumeration value="on"/><xs:enumeration value="off"/></xs:restriction></xs:simpleType></xs:attribute>
+            <xs:attribute name="lone-check-seconds" type="xs:positiveInteger" default="15"><xs:annotation><xs:documentation>How often, in seconds, a member that is alone
+                under listen auto reads the member table for a second one (a clock query and one read of the table), and a member whose posts to a peer failed sends
+                it a clear of every entity cache once its backoff is over; with a peer and nothing owed, the table is read at the heartbeat's own interval. Read
+                before each check.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="xmpp-server">

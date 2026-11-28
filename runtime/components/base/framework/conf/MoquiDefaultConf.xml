@@ -187,9 +187,18 @@
         entity database, for members that cannot open a connection to each other. protocol: what this member speaks on its
         cluster port, as listener and as sender: empty or "grpc" for gRPC on HTTP/2 where TLS chooses h2, with the
         HTTP/1.1 POST /cluster/{topic} for a peer that does not; "rest" for HTTP/1.1 only. bind-address: the address the
-        cluster listener binds; empty for every interface, as a member on another host must reach it. -->
+        cluster listener binds; empty for every interface, as a member on another host must reach it. listen: whether the
+        cluster port is open (plans/Runtime-Config.md 3.5): "auto" only while the member table has another live member with
+        this member's session key and cluster certificate, so a server alone opens no cluster port (its row says "off: no
+        other member"), opening it within lone-check-seconds of a second member's start and closing it once the last other
+        member's row is deleted as dead (ten liveness windows), and never for a member peers reach elsewhere (transport
+        "ssh" or "notify", or a base-url that is not https://); "on" always; "off" never. lone-check-seconds: how often
+        a member that is alone under auto reads the member table for a second one (a clock query and one read of the
+        table; at the heartbeat's own interval once it has a peer), and how soon a member whose posts to a peer failed
+        sends it a clear of every entity cache once its backoff is over. listen, https-port and bind-address apply while
+        the server runs. -->
     <cluster-member tls-cert="CHANGEME" tls-key="CHANGEME" https-port="" base-url="" transport="" protocol=""
-            bind-address=""/>
+            bind-address="" listen="auto" lone-check-seconds="15"/>
 
     <!-- XMPP for local users (the xmpp feature, C3a; plans/archive/Comms-Framework.md §4.3, §6.5, docs/interfaces/XMPP.md): on
         while xmpp-server@enabled is true (plans/Runtime-Config.md 3.2), off by default; on with no xmpp-server@domain it
