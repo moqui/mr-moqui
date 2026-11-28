@@ -719,15 +719,24 @@ pub(crate) fn contact_numbers(numbers: &[String]) -> Vec<String> {
     out
 }
 
-/// Open `url` outside the app: http and https on the web, mailto, tel, sip and geo.
+/// Open `url` outside the app: http and https on the web, mailto, tel, sip and geo, or another app's own scheme. An
+/// error when no app on the phone opens it, so the page can offer another way.
 #[tauri::command(async)]
 pub(crate) fn open_external(url: String) -> Result<(), String> {
     let url = external_url(&url)?;
-    crate::open_externally(&url);
-    Ok(())
+    crate::try_open_externally(&url)
 }
 
-/// `text` as a URL the system may open: http and https with a host that is not the app's, or mailto, tel, sip and geo.
+/// The schemes never opened outside the app, though a phone app may say it handles them: the phone's files and data,
+/// scripts, intents and pages of the WebView.
+const SCHEMES_KEPT: [&str; 14] = [
+    "file", "content", "intent", "javascript", "data", "blob", "about", "android-app", "jar", "view-source", "chrome",
+    "ws", "wss", "ftp",
+];
+
+/// `text` as a URL the system may open: http and https with a host that is not the app's, mailto, tel, sip and geo,
+/// or another app's own scheme (letters, digits, `+` and `-`, as `notes-app:`). A scheme with a dot is an app's
+/// reverse-domain link, as this app's own sign-in return, so it is not opened.
 pub(crate) fn external_url(text: &str) -> Result<Url, String> {
     if text.len() > URL_MAX {
         return Err("The URL is too long".to_string());
@@ -743,8 +752,17 @@ pub(crate) fn external_url(text: &str) -> Result<Url, String> {
         },
         // geo: a chat location's Open in maps, for the phone's maps app (plans/Comms-Messaging.md §18.3 phase 20)
         "mailto" | "tel" | "sip" | "geo" => Ok(url),
+        scheme if app_scheme(scheme) => Ok(url),
         scheme => Err(format!("Not opened outside the app: {scheme}:")),
     }
+}
+
+/// Another app's own scheme: a short name of letters, digits, `+` and `-`, not one of SCHEMES_KEPT.
+fn app_scheme(scheme: &str) -> bool {
+    (2..=32).contains(&scheme.len())
+        && scheme.starts_with(|c: char| c.is_ascii_lowercase())
+        && scheme.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '+' || c == '-')
+        && !SCHEMES_KEPT.contains(&scheme)
 }
 
 /// `text` without control characters, trimmed, at most `max` characters.

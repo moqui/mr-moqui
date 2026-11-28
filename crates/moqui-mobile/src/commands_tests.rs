@@ -41,6 +41,24 @@ fn only_the_webs_and_the_handlers_links_open_outside_the_app() {
 }
 
 #[test]
+fn another_apps_own_scheme_opens_outside_the_app_but_not_the_phones_files_or_scripts() {
+    assert!(external_url("notes-app://new?file=a&content=b").is_ok());
+    assert!(external_url("spotify:track:1").is_ok());
+    for bad in [
+        "content://com.android.contacts/contacts",
+        "data:text/html,<b>x</b>",
+        "blob:http://moqui-app.localhost/1",
+        "about:blank",
+        "android-app://com.example/http/x",
+        "org.moqui.mobile:/sso?code=1",
+        "ftp://example.com/a",
+        "x:1",
+    ] {
+        assert!(external_url(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
 fn a_server_page_shows_in_the_shell_only_its_comms_apps_screens() {
     assert!(under("/qapps/BasicComms/Chat?room=1", "/qapps/BasicComms"));
     assert!(under("/qapps/Comms/Inbox/Mail", "/qapps/Comms/"));

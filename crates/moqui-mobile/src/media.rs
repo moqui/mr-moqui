@@ -15,12 +15,15 @@
 //! A server page's media in the background (`moquiDesktop.media`): a page that plays audio or video tells the app
 //! what plays, and the app keeps it playing when the app goes to the background or the screen turns off.
 //!
-//! - `start({title, artist, artworkUrl, playing, position, duration, rate})`: the app starts its foreground service
+//! - `start({title, artist, artworkUrl, playing, position, duration, rate, hasNext, hasPrevious})`: the app starts its foreground service
 //!   of type mediaPlayback (`MediaPlayback.kt`), with a media notification and a MediaSession;
 //! - `update({...})`: the same fields, for the notification and the session (play or pause, the place);
 //! - `stop()`: the service and the notification go.
 //!
-//! The notification's and the session's buttons (play, pause, seek, stop) go back to the page as
+//! `hasNext` and `hasPrevious`: the page plays a list (a queue), so the notification and the session show Next and
+//! Previous, which go back to the page as `nexttrack` and `previoustrack`.
+//!
+//! The notification's and the session's buttons (play, pause, seek, stop, next, previous) go back to the page as
 //! `moquiDesktop.media.on(fn)` events. While the service runs, the activity does not pause the webview.
 //!
 //! The checks here: the action is one of [`ACTIONS`]; the texts are clipped to [`TEXT_MAX`] characters with no
@@ -60,6 +63,8 @@ pub(crate) struct MediaInfo {
     pub position: Option<f64>,
     pub duration: Option<f64>,
     pub rate: Option<f64>,
+    pub has_next: Option<bool>,
+    pub has_previous: Option<bool>,
 }
 
 /// What the native code gets (`MediaPlayback.fromPage`), checked.
@@ -82,6 +87,12 @@ pub(crate) struct MediaState {
     pub duration: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate: Option<f64>,
+    /// the page plays a list and has a next item
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub has_next: bool,
+    /// the page plays a list and has an item before this one
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub has_previous: bool,
 }
 
 /// The action, if it is one of [`ACTIONS`].
@@ -127,13 +138,15 @@ pub(crate) fn state(info: &MediaInfo) -> MediaState {
         position: amount(info.position, 864_000.0),
         duration: amount(info.duration, 864_000.0),
         rate: amount(info.rate, 16.0).filter(|r| *r > 0.0),
+        has_next: info.has_next.unwrap_or(false),
+        has_previous: info.has_previous.unwrap_or(false),
     }
 }
 
 /// What a notification's or the session's button tells the page: the script for `moquiDesktop.media.on`'s listeners,
 /// or none for an action that is not one. `position` is in seconds, for `seekto`.
 pub(crate) fn action_script(what: &str, position: Option<f64>) -> Option<String> {
-    const PAGE_ACTIONS: &[&str] = &["play", "pause", "stop", "seekto", "seekforward", "seekbackward"];
+    const PAGE_ACTIONS: &[&str] = &["play", "pause", "stop", "seekto", "seekforward", "seekbackward", "nexttrack", "previoustrack"];
     if !PAGE_ACTIONS.contains(&what) {
         return None;
     }

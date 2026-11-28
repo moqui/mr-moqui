@@ -343,7 +343,8 @@
             const number = (value) => (typeof value === "number" && isFinite(value) ? value : null);
             return { title: text(info.title), artist: text(info.artist), artworkUrl: text(info.artworkUrl),
                 playing: typeof info.playing === "boolean" ? info.playing : null, position: number(info.position),
-                duration: number(info.duration), rate: number(info.rate) };
+                duration: number(info.duration), rate: number(info.rate), hasNext: info.hasNext === true,
+                hasPrevious: info.hasPrevious === true };
         };
         const media = Object.freeze({
             start: (info) => invoke("media_session", { action: "start", info: mediaInfo(info) }),

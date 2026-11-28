@@ -22,6 +22,8 @@
     <string name="media_pause">Pause</string>
     <string name="media_back">Back 10 seconds</string>
     <string name="media_forward">Forward 10 seconds</string>
+    <string name="media_next">Next</string>
+    <string name="media_previous">Previous</string>
 
     <!-- A chat notification -->
     <string name="chat_new_message">New message</string>

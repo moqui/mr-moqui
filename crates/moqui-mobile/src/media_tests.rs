@@ -45,6 +45,7 @@ fn state_clips_texts_and_drops_bad_numbers() {
         position: Some(f64::NAN),
         duration: Some(-3.0),
         rate: Some(2.5),
+        ..Default::default()
     };
     let checked = state(&info);
     let title = checked.title.unwrap();
@@ -75,6 +76,19 @@ fn page_actions_are_known_ones_with_json_arguments() {
     assert!(action_script("seekto", Some(42.0)).unwrap().contains(r#""position":42.0"#));
     assert!(action_script("seekto", Some(f64::INFINITY)).unwrap().contains(r#""position":null"#));
     assert_eq!(action_script("alert(1)", None), None);
+    // a list's Next and Previous (the notification's buttons when the page has a next or a previous item)
+    assert!(action_script("nexttrack", None).unwrap().contains(r#""action":"nexttrack""#));
+    assert!(action_script("previoustrack", None).unwrap().contains(r#""action":"previoustrack""#));
+}
+
+#[test]
+fn a_list_gives_next_and_previous_only_when_the_page_says_so() {
+    let json = serde_json::to_string(&state(&MediaInfo { has_next: Some(true), has_previous: Some(false), ..Default::default() })).unwrap();
+    assert_eq!(json, r#"{"hasNext":true}"#);
+    let given: MediaInfo = serde_json::from_str(r#"{"hasNext":true,"hasPrevious":true}"#).unwrap();
+    let checked = state(&given);
+    assert!(checked.has_next && checked.has_previous);
+    assert!(!state(&MediaInfo::default()).has_next);
 }
 
 #[test]

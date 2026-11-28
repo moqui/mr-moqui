@@ -60,6 +60,10 @@ object MediaPlayback {
         /** milliseconds, or -1 */
         var duration = -1L
         var rate = 1f
+        /** the page plays a list with a next item: Next in the notification and the session */
+        var hasNext = false
+        /** the page plays a list with an item before this one: Previous */
+        var hasPrevious = false
     }
 
     val state = State()
@@ -106,6 +110,9 @@ object MediaPlayback {
         if (given.has("position")) { s.position = (given.optDouble("position") * 1000).toLong(); s.at = SystemClock.elapsedRealtime() }
         if (given.has("duration")) s.duration = (given.optDouble("duration") * 1000).toLong()
         if (given.has("rate")) s.rate = given.optDouble("rate", 1.0).toFloat()
+        // given only when true (media.rs), so each word of the page says them again
+        s.hasNext = given.optBoolean("hasNext", false)
+        s.hasPrevious = given.optBoolean("hasPrevious", false)
         val url = given.optString("artworkUrl", "").ifEmpty { null }
         if (url != null && url != s.artworkUrl) {
             s.artworkUrl = url
@@ -198,6 +205,8 @@ class MediaPlaybackService : Service() {
         private const val ACTION_BACK = "org.moqui.mobile.media.BACK"
         private const val ACTION_FORWARD = "org.moqui.mobile.media.FORWARD"
         private const val ACTION_STOP = "org.moqui.mobile.media.STOP"
+        private const val ACTION_NEXT = "org.moqui.mobile.media.NEXT"
+        private const val ACTION_PREVIOUS = "org.moqui.mobile.media.PREVIOUS"
     }
 
     private lateinit var session: MediaSession
@@ -223,8 +232,10 @@ class MediaPlaybackService : Service() {
             override fun onSeekTo(pos: Long) = MediaPlayback.tellPage("seekto", pos)
             override fun onFastForward() = MediaPlayback.tellPage("seekforward")
             override fun onRewind() = MediaPlayback.tellPage("seekbackward")
-            override fun onSkipToNext() = MediaPlayback.tellPage("seekforward")
-            override fun onSkipToPrevious() = MediaPlayback.tellPage("seekbackward")
+            // a list's next or previous item when the page has one, else a skip in this one (a headset's buttons)
+            override fun onSkipToNext() = MediaPlayback.tellPage(if (MediaPlayback.state.hasNext) "nexttrack" else "seekforward")
+            override fun onSkipToPrevious() =
+                MediaPlayback.tellPage(if (MediaPlayback.state.hasPrevious) "previoustrack" else "seekbackward")
         })
         launchIntent()?.let { session.setSessionActivity(it) }
         session.isActive = true
@@ -238,6 +249,8 @@ class MediaPlaybackService : Service() {
             ACTION_BACK -> MediaPlayback.tellPage("seekbackward")
             ACTION_FORWARD -> MediaPlayback.tellPage("seekforward")
             ACTION_STOP -> MediaPlayback.tellPage("stop")
+            ACTION_NEXT -> MediaPlayback.tellPage("nexttrack")
+            ACTION_PREVIOUS -> MediaPlayback.tellPage("previoustrack")
         }
         try {
             val notification = build()
@@ -298,9 +311,12 @@ class MediaPlaybackService : Service() {
         if (s.duration > 0) meta.putLong(MediaMetadata.METADATA_KEY_DURATION, s.duration)
         s.artwork?.let { meta.putBitmap(MediaMetadata.METADATA_KEY_ART, it) }
         session.setMetadata(meta.build())
-        val actions = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or
+        var actions = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or
             PlaybackState.ACTION_STOP or PlaybackState.ACTION_SEEK_TO or PlaybackState.ACTION_FAST_FORWARD or
             PlaybackState.ACTION_REWIND
+        // the system's media controls show Next and Previous for these (Android 13 and later build them from the session)
+        if (s.hasNext) actions = actions or PlaybackState.ACTION_SKIP_TO_NEXT
+        if (s.hasPrevious) actions = actions or PlaybackState.ACTION_SKIP_TO_PREVIOUS
         session.setPlaybackState(
             PlaybackState.Builder()
                 .setActions(actions)
@@ -334,13 +350,24 @@ class MediaPlaybackService : Service() {
             .setCategory(Notification.CATEGORY_TRANSPORT)
             .setDeleteIntent(PendingIntent.getService(this, ACTION_STOP.hashCode(),
                 Intent(this, MediaPlaybackService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE))
-            .addAction(button(android.R.drawable.ic_media_rew, R.string.media_back, ACTION_BACK))
+        // a list: Previous and Next around the skips; the small view shows Previous, Play or Pause, Next
+        val list = s.hasNext || s.hasPrevious
+        if (s.hasPrevious) builder.addAction(button(android.R.drawable.ic_media_previous, R.string.media_previous, ACTION_PREVIOUS))
+        builder.addAction(button(android.R.drawable.ic_media_rew, R.string.media_back, ACTION_BACK))
             .addAction(
                 if (s.playing) button(android.R.drawable.ic_media_pause, R.string.media_pause, ACTION_PAUSE)
                 else button(android.R.drawable.ic_media_play, R.string.media_play, ACTION_PLAY)
             )
             .addAction(button(android.R.drawable.ic_media_ff, R.string.media_forward, ACTION_FORWARD))
-            .setStyle(Notification.MediaStyle().setMediaSession(session.sessionToken).setShowActionsInCompactView(0, 1, 2))
+        if (s.hasNext) builder.addAction(button(android.R.drawable.ic_media_next, R.string.media_next, ACTION_NEXT))
+        val play = if (s.hasPrevious) 2 else 1
+        val compact = when {
+            !list -> intArrayOf(0, 1, 2)
+            s.hasPrevious && s.hasNext -> intArrayOf(0, play, play + 2)
+            s.hasPrevious -> intArrayOf(0, play, play + 1)
+            else -> intArrayOf(0, play, play + 2)
+        }
+        builder.setStyle(Notification.MediaStyle().setMediaSession(session.sessionToken).setShowActionsInCompactView(*compact))
         s.artwork?.let { builder.setLargeIcon(it) }
         launchIntent()?.let { builder.setContentIntent(it) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
