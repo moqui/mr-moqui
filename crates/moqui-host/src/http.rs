@@ -1255,6 +1255,8 @@ async fn dispatch_screen(
         .get::<moqui_core::web::RequestVia>()
         .copied()
         .unwrap_or_default();
+    // which listener it came over, for the listener services' lockout guard (plans/Runtime-Config.md §3.6)
+    web.listener = parts.extensions.get::<OnListener>().map(|on| on.name.to_string());
     web.headers = header_map(&parts.headers);
     web.query = moqui_core::web::form_pairs(parts.uri.query().unwrap_or(""));
     web.raw_query = parts.uri.query().map(str::to_string);

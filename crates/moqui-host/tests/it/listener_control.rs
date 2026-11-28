@@ -224,6 +224,7 @@ fn reconcile(factory: &ExecutionContextFactory, end_now: &[&str]) -> Outcome {
     let cause = Cause::Request {
         user: "listener_control".to_string(),
         reason: "the test".to_string(),
+        selectors: Vec::new(),
     };
     reconcile_for(factory, cause, end_now)
 }

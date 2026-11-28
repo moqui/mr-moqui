@@ -29,11 +29,9 @@ use super::HttpState;
 
 /// The listener a request came over: its name in the startup report (`HTTP`, `HTTPS`) and its closing signal, which
 /// turns true as it stops taking connections. It stays in the request's extensions, where the request's record of
-/// its listener is read from (`WebRequest`, RC4).
+/// its listener is read from (`WebRequest::listener`, plans/Runtime-Config.md §3.6).
 #[derive(Clone, Debug)]
 pub(crate) struct OnListener {
-    // what RC4 copies into the request's record; the tests read it until then
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) name: &'static str,
     pub(crate) closing: watch::Receiver<bool>,
 }

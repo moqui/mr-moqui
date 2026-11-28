@@ -67,6 +67,7 @@ fn session(kind: Kind, replay: usize, detached_for: Duration) -> (Arc<Registry>,
         held: false,
         agent: false,
         attend: None,
+        origin: crate::term::Origin::default(),
         adopted: false,
     };
     let session = spawn(&registry, spec, program_value);

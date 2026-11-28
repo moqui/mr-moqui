@@ -28,7 +28,7 @@ Server
   serve            [options]                                Start the HTTP server in the background, with no console log
   tui              [--path P] [--user U] [options]          The apps in this terminal, on this runtime
   term             list | capture | send | wait | events     Read and drive your terminal sessions on a running server
-  operator         status | init | unseal | seal | ...      The sealed start: a server's operator socket
+  operator         status | unseal | listener ...           The operator socket: the sealed start and the listeners
   vault            --server URL --user U <command>          A vault client on this machine: your key, vaults and items
 
 Data
@@ -843,6 +843,16 @@ moqui operator <command> [--socket PATH]
                              A new entity-facade@crypt-pass needs --force; the old one becomes crypt-pass-old
     secret list              The kept secrets' names, kinds (bootstrap or value) and generations
     secret rm NAME           Remove a kept secret (not a crypt pass or a datasource password)
+    listeners                Each listener of the serving server: its state, address, since when and why, its
+                             connections, what waits for a restart and its last error (surface is the same)
+    listener NAME on|off [--reason TEXT] [--now] [--port N] [--host H] [--access open|login|key]
+             [--confirm-public-http] [--confirm-dependents] [--no-persist]
+                             Turn a listener (HTTP, HTTPS, gRPC, SSH, SMTP, XMPP, SIP, \"Call media\", TURN) on or
+                             off, move it or set SSH's access, as System's Services and ports does: the way back
+                             to a server with every listener off (plans/Runtime-Config.md 3.6). Off needs
+                             --reason; --now ends its connections at once; kept in runtime/.env unless
+                             --no-persist. Plain HTTP on a public address with no trusted proxy, and SSH off
+                             under the edge tunnel or the cluster's SSH transport, need their confirmation
     bind PATH [--group G] -- COMMAND ...
                              As root: make the operator socket at PATH (root's, mode 0660 with group G or
                              0600) and run COMMAND with it open, for a server that then drops to its own user
@@ -850,6 +860,8 @@ moqui operator <command> [--socket PATH]
   moqui operator status
   moqui operator init --method tpm
   moqui operator unseal
+  moqui operator listener HTTPS on
+  moqui operator listener SSH off --reason \"incident 12\" --now
 ";
 
 const VAULT: &str = "\
@@ -1217,7 +1229,8 @@ pub fn command_usage(command: &str) -> Error {
         "operator" => {
             "moqui operator status | init [--method M | --take-shares | --from FILE] | unseal [--recovery] | seal \
              | rekey --method M | rotate-root | export-seal FILE | secret put NAME [--file PATH] [--force] | secret list \
-             | secret rm NAME [--socket PATH]"
+             | secret rm NAME | listeners | listener NAME on|off [--reason TEXT] [--now] [--port N] [--host H] \
+             [--access M] [--confirm-public-http] [--confirm-dependents] [--no-persist] [--socket PATH]"
         }
         "vault" => "moqui vault --server URL --user USERNAME key init | key show | key check <username> | list | open <vaultId>",
         "embedded" => {

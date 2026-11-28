@@ -277,6 +277,29 @@ pub(crate) struct Start {
     pub admission: Admission,
     /// Notified when a client attaches again to a kept session: the session writes its whole screen again.
     pub redraw: Option<Arc<tokio::sync::Notify>>,
+    /// The listener the session's calls came over, which they say ([`Origin`]).
+    pub listener: Origin,
+}
+
+/// The listener a terminal session's calls came over, which they say (plans/Runtime-Config.md §3.6): `SSH` over the
+/// SSH server, a browser terminal's upgrade request's; a kept session's is that of the page attached to it now, set
+/// again at each attach. Shared by the session and its link, which reads it at each call.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Origin(Arc<Mutex<Option<&'static str>>>);
+
+impl Origin {
+    pub(crate) fn of(listener: Option<&'static str>) -> Self {
+        Self(Arc::new(Mutex::new(listener)))
+    }
+
+    /// The listener the page attached now came over.
+    pub(crate) fn set(&self, listener: Option<&'static str>) {
+        *lock(&self.0) = listener;
+    }
+
+    pub(crate) fn get(&self) -> Option<&'static str> {
+        *lock(&self.0)
+    }
 }
 
 impl Start {
@@ -296,6 +319,7 @@ impl Start {
                 Admission::Take | Admission::Held(_) => Admission::Take,
             },
             redraw: self.redraw.clone(),
+            listener: self.listener.clone(),
         }
     }
 }

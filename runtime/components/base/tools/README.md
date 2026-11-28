@@ -124,7 +124,13 @@ preference `database.selected`; `template/DatabaseParts.xml` has the picker.
 - **Configuration** (`System/Conf/`) shows the merged conf with the file each value came from (Settings), edits one
   conf file with `CONF_EDIT` (Edit, `Edit.qvue`, `EditTui.xml` in the terminal) and reloads it (Changes)
   ([docs/tools/Component-Deploy.md](../../../../docs/tools/Component-Deploy.md)). Its Logging and telemetry tab
-  (`Logging.xml`) is Monitor › Settings mounted a second time.
+  (`Logging.xml`) is Monitor › Settings mounted a second time. Its Services and ports tab (`ServicesPorts.xml`,
+  [plans/Runtime-Config.md](../../../../plans/Runtime-Config.md) §3.7) lists each listener from
+  `ListenerServices.get#Listeners` (state, address, since and why, connections, a pending or last error, the one the user is
+  connected through), the settings behind each with where each value comes from, SSH's services with their own switches,
+  and the changes people made since the start; a holder of the sealed `LISTENER_CONTROL` turns a listener on or off, moves
+  it or sets SSH's access (`setListener`, over `set#Listener`), and a change a guard refuses comes back as its form with
+  the confirmation it needs. System Home's Services and ports dialog includes it.
 - **LLM and Agents** (`System/Llm/`): among its screens, Evals (agent evals) and Traces (`Traces.xml`, Monitor › AI
   mounted a second time).
 - **Constitution** (`System/Constitution/`) reads and edits the instance's Constitution, previews its agent prompt
@@ -132,9 +138,11 @@ preference `database.selected`; `template/DatabaseParts.xml` has the picker.
   shared parts are `template/ConstitutionParts.xml`.
 
 **Home** (`System/Home.xml`, [plans/archive/Tools-Fancy.md](../../../../plans/archive/Tools-Fancy.md) §3) answers whether the instance is
-healthy, what it is, what it has been doing, what is switched on, what needs an administrator and where to go. It
-writes nothing, so it works for a view-only administrator; Auto refresh (`refresh=60` in the address) reads it again
-each minute in the browser. Each block is read in its actions:
+healthy, what it is, what it has been doing, what is switched on, what needs an administrator and where to go. The one
+thing it writes is a listener switched in its Services and ports dialog (Conf › Services and ports included, its
+`setListener` taken in), shown only to a holder of `LISTENER_CONTROL`; for a view-only administrator nothing that writes
+is rendered or callable. Auto refresh (`refresh=60` in the address) reads it again each minute in the browser. Each
+block is read in its actions:
 
 | Block | Reads |
 | --- | --- |
@@ -144,7 +152,7 @@ each minute in the browser. Each block is read in its actions:
 | Needs attention | `moqui.tools.SystemHomeServices.get#SystemAttention` (below): its own readings and counts, and the readiness checks that are not ready |
 | Resources | The status map's `Resources` ([resource watch](../../../../docs/Run-Deploy.md#resource-watch)): each reading with its level, a meter when it is a share, and a link to its series in Monitor › Metrics; a reading the platform does not report is "—" |
 | Database | The `DataSources` by connection pool, `get#Capabilities` (kind, version, size) and the embedded database's backup job; the `moqui.server.ClusterMember` rows when there is more than one |
-| Listeners and integrations | The runtime report: each listener and integration with its state and detail (failed and skipped first) and the screen that configures it, the tool factories, what the build leaves out, and the routes in a dialog |
+| Listeners and integrations | The runtime report: each listener and integration with its state and detail (failed and skipped first), a listener linked to Conf › Services and ports and an integration to the screen that configures it, the tool factories, what the build leaves out, the routes in a dialog, and for a holder of `LISTENER_CONTROL` the Services and ports dialog |
 | Navigation | The navigation catalog |
 
 The navigation catalog is a list of entries in a home's actions (`navCatalog`), shown by the `NavFeatured`,
@@ -156,8 +164,10 @@ whether Dev AIDE is mounted (`devMounted`): then an entity's and a service's pag
 
 `service/moqui/tools/SystemHomeServices.xml` has `get#SystemAttention`, the one list of what needs an administrator
 ([plans/archive/Tools-Fancy.md](../../../../plans/archive/Tools-Fancy.md) §3.4): the resource readings past their
-`resource-watch` thresholds and the live state it reads itself (a failed listener, a draining instance, saturated
-workers or pool), the counts of work that waits (system messages in error, incidents, alerts, checks, approvals), and
+`resource-watch` thresholds and the live state it reads itself (a listener that failed at the start or after a change,
+plain HTTP on a public address with no proxy believed in front, no way in over the network left by a change while
+running, each linked to Conf › Services and ports; a draining instance, saturated workers or pool), the counts of work
+that waits (system messages in error, incidents, alerts, checks, approvals), and
 the readiness checks that are not ready, from `org.moqui.admin.ReadinessServices.get#Readiness`, the source Health
 reads too: the framework's own (mail, backup, report delivery, administrator factors, failed job runs, the cluster,
 telemetry, protocols, the Constitution) and what a component registers for the instance. A check of an organization

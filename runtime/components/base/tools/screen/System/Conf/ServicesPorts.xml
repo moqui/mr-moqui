@@ -1,0 +1,391 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Configuration › Services and ports (plans/Runtime-Config.md §3.7; guide docs/Run-Deploy.md, "Settings and the
+    environment"): each listener of this server from org.moqui.admin.ListenerServices.get#Listeners, with its state, the
+    address it is bound to, since when and why, its connections, a pending or last error, the one the user is connected
+    through marked; the settings behind each with where each value comes from, the services carried on a listener with
+    their own switches (SSH's), and the changes people made since the server started. System Home's Services and ports
+    dialog includes this screen (with share-scope, so its names are prefixed "services" and it links no sibling screen)
+    and takes in setListener by transition-include: one definition.
+
+    For a holder of LISTENER_CONTROL each listener with a switch has Turn on or Turn off; a row that needs more opens its
+    form in a dialog: a reason (always, to turn off, with End connections now), a port it has none of, an address or
+    SSH's access (Change). setListener calls set#Listener, which checks ADMIN, the sealed LISTENER_CONTROL and a recent
+    sign-in (refused, it sets X-Moqui-Reauth, so the browser's form asks "Confirm it is you" and sends again). A guarded
+    refusal (lockout, publicHttp, dependents: the answer's confirm names the parameter) and a busy port are not errors:
+    what was asked and the refusal are kept in the user's session (listenerConfirm) for the next render, which takes them
+    out as servicesConfirm and shows the form again at the top: exactly what was asked, with the refusal and the
+    confirmation it named (the ones already given carried along), or for a busy port the port and address to change.
+    Only what the user changed is sent: the Change form carries each value it shows as a *Was field, and the transition
+    leaves out one left as it was, since a setting sent at its value is still written where it is held or kept
+    elsewhere. Every response opens Home's dialog again (_openDialog=ServicesPorts), a no-op here. The
+    answer's message and notes (where each setting is kept, when it applies, what waits for a restart) are messages. A
+    user without the permission sees the lists read only: the controls are conditioned on it, and so is the transition. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
+        default-menu-title="Services and ports" default-menu-index="5">
+
+    <!-- no transaction: set#Listener keeps conf settings, not rows, and a guard's refusal it answers is turned into the
+        form again here, which a transaction marked for rollback by that refusal would not allow -->
+    <transition name="setListener" begin-transaction="false">
+        <condition><expression>ec.user.hasPermission('LISTENER_CONTROL')</expression></condition>
+        <actions><script><![CDATA[
+            const yes = value => value === true || value === 'true' || value === 'Y'
+            const text = value => value === null || value === undefined ? '' : String(value).trim()
+            const asked = {name: text(name), enabled: yes(enabled), port: text(port), host: text(host), access: text(access),
+                reason: text(reason), persist: yes(persist), endNow: yes(endNow), confirmLockout: yes(confirmLockout),
+                confirmPublicHttp: yes(confirmPublicHttp), confirmDependents: yes(confirmDependents)}
+            // a field left at the value the form showed (its *Was) is not asked: sent at the value it has, it would still be
+            // written where it is held or kept elsewhere, pinning it in runtime/.env
+            for (const [key, was] of [['port', portWas], ['host', hostWas], ['access', accessWas]])
+                if (was != null && asked[key] === text(was)) asked[key] = ''
+            const parameters = Object.fromEntries(Object.entries(asked).filter(([key, value]) => value !== ''))
+            const answer = ec.service.sync().name('org.moqui.admin.ListenerServices.set#Listener').parameters(parameters).call() || {}
+            listenerDialog = ''
+            if (answer.confirm || answer.reasonCode === 'portBusy') {
+                // a guard's refusal or a busy port: the form again, with the confirmation the answer named (or the port)
+                const refusal = ec.message.getErrorsString()
+                ec.message.clearErrors()
+                if (ec.web) ec.web.sessionAttributes.listenerConfirm = JSON.stringify(Object.assign({}, asked,
+                    {confirm: answer.confirm || '', reasonCode: answer.reasonCode || '', message: refusal}))
+                ec.message.addMessage(ec.l10n.localize('Not changed yet:') + ' ' + refusal, 'warning')
+                listenerDialog = 'ServicesPorts'
+            } else if (!ec.message.hasError()) {
+                const failed = answer.applied === 'failed' || Array.from(answer.outcomeList || [])
+                    .some(outcome => outcome.name === answer.name && outcome.action === 'failed')
+                ec.message.addMessage(String(answer.message || ''), failed ? 'warning' : 'success')
+                for (const setting of Array.from(answer.settingList || []))
+                    ec.message.addMessage(setting.selector + ' ' + (setting.value ?? '') + ': ' + setting.note, 'info')
+                for (const note of Array.from(answer.noteList || [])) ec.message.addMessage(String(note), 'info')
+            }
+        ]]></script></actions>
+        <default-response url="." parameter-map="{_openDialog: listenerDialog}"/>
+        <error-response url="." parameter-map="{_openDialog: 'ServicesPorts'}"/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = text => ec.l10n.localize(text)
+        const DASH = '—'
+        servicesAllowed = ec.user.hasPermission('LISTENER_CONTROL')
+        let found = null
+        try {
+            found = ec.service.sync().name('org.moqui.admin.ListenerServices.get#Listeners').call() || null
+        } catch (error) {
+            ec.logger.error('Services and ports: the listeners could not be read: ' + String(error))
+        }
+        const refused = ec.message.hasError()
+        if (refused) ec.message.clearErrors()
+        servicesAvailable = !refused && !!found && found.listenerList != null
+        servicesRunning = !!(found && found.running)
+        const listed = servicesAvailable ? Array.from(found.listenerList) : []
+        const time = value => {
+            const at = value ? Date.parse(String(value)) : NaN
+            return Number.isFinite(at) ? ec.l10n.format(new Date(at), 'yyyy-MM-dd HH:mm:ss') : ''
+        }
+        const sourceOf = setting => String(setting.source || '') +
+            (setting.fileLabel ? ': ' + setting.fileLabel + (setting.line ? ' ' + L('line') + ' ' + setting.line : '') : '')
+        const shown = value => value === null || value === undefined || value === '' ? L('empty') : String(value)
+        const STATES = {on: {text: L('On'), color: 'positive'}, off: {text: L('Off'), color: 'grey-6'},
+            failed: {text: L('Failed'), color: 'negative'}, skipped: {text: L('Skipped'), color: 'warning'}}
+        servicesAccessOptions = [{value: 'open', label: L('Open: anyone reaches the sign-in dialog')},
+            {value: 'login', label: L('Login: an account\'s password or key')}, {value: 'key', label: L('Key: a registered key only')}]
+
+        // ---- the listeners, each with what a holder of LISTENER_CONTROL may do to it ----
+        servicesRows = listed.map(row => {
+            const name = String(row.name)
+            const enabled = row.enabled === true
+            const state = row.state === 'not-running'
+                ? {text: enabled ? L('On in the conf') : L('Off in the conf'), color: 'grey-6'}
+                : STATES[row.state] || {text: String(row.state || DASH), color: 'grey-6'}
+            const port = row.port == null ? '' : String(row.port)
+            const host = row.host == null ? '' : String(row.host)
+            const own = Array.from(row.ownSettingList || [])
+            const access = own.find(setting => setting.name === 'access') || null
+            const switchable = row.switchable === true
+            // a listener with a port setting and no port written cannot be turned on without one
+            const needsMore = !!row.portSelector && !port
+            const movable = !!row.portSelector || !!row.hostSelector || own.length > 0
+            const problems = [row.lastError ? L('Last error') + ': ' + row.lastError : '',
+                row.pending ? L('Waits for a restart') + ': ' + row.pending : '']
+            return {
+                name, key: name.replace(/\W/g, '_'), enabled, switchable,
+                ownText: row.ownRequest ? L('You are connected through it') : '',
+                stateText: state.text, stateColor: state.color,
+                addressText: row.address || (port ? (host ? host + ' ' : '') + L('port') + ' ' + port : DASH),
+                sinceText: [row.since ? L('since') + ' ' + time(row.since) : '', row.cause || ''].filter(part => part).join(' · '),
+                connectionsText: row.connections != null ? String(row.connections) : DASH,
+                detail: String(row.detail || ''),
+                problemText: problems.filter(part => part).join(' · '),
+                dependentsText: Array.from(row.dependents || []).join('; '),
+                port, host, hasPort: !!row.portSelector, hasHost: !!row.hostSelector,
+                hostTooltip: String(row.hostSelector || '').endsWith('@http-bind') ? L('An IP address, 0.0.0.0 for every address: HTTP and HTTPS both bind it')
+                    : L('An IP address, 0.0.0.0 for every address'),
+                hasAccess: !!access, accessValue: access ? String(access.value || '') : '',
+                canTurnOff: servicesAllowed && switchable && enabled,
+                canTurnOn: servicesAllowed && switchable && !enabled && !needsMore,
+                canChange: servicesAllowed && switchable && (enabled ? movable : needsMore),
+                turnOffTitle: L('Turn off') + ' ' + name,
+                changeButton: enabled ? L('Change…') : L('Turn on…'),
+                changeTitle: (enabled ? L('Change') : L('Turn on')) + ' ' + name,
+                changeSubmit: enabled ? L('Change') : L('Turn on')
+            }
+        })
+
+        // ---- the settings behind them, and the services carried on one ----
+        const subSelectors = new Set(listed.flatMap(row => Array.from(row.subServiceList || []).map(service => String(service.selector))))
+        servicesSettingRows = listed.flatMap(row => Array.from(row.settingList || [])
+            .filter(setting => !subSelectors.has(String(setting.selector)))
+            .map(setting => ({listener: String(row.name), selector: String(setting.selector), valueText: shown(setting.value),
+                sourceText: sourceOf(setting), envName: String(setting.envName || '')})))
+        servicesSubRows = listed.flatMap(row => Array.from(row.subServiceList || []).map(service => ({
+            listener: String(row.name), title: L(String(service.title)), stateText: service.on ? L('On') : L('Off'),
+            stateColor: service.on ? 'positive' : 'grey-6', selector: String(service.selector), sourceText: sourceOf(service)})))
+
+        // ---- the changes people made since the server started ----
+        servicesChangeRows = Array.from((found && found.recentChanges) || []).map(change => ({
+            timeText: time(change.time), name: String(change.name), whoText: String(change.who || ''),
+            changeText: String(change.from || '') + ' → ' + String(change.to || ''), reasonText: change.reason ? String(change.reason) : DASH,
+            outcomeText: [String(change.outcome || ''), change.endNow ? L('connections ended at once') : '',
+                change.persist ? '' : L('not kept past a restart')].filter(part => part).join(' · ')}))
+
+        // ---- a change refused by a guard or a busy port: its form again, once, with what it needs ----
+        servicesConfirm = null
+        if (servicesAllowed && ec.web) {
+            let pending = null
+            try { pending = JSON.parse(ec.web.sessionAttributes.remove('listenerConfirm') || 'null') } catch (error) { pending = null }
+            const row = pending ? servicesRows.find(candidate => candidate.name === pending.name) : null
+            if (row) {
+                const CONFIRMS = {confirmLockout: L('Make the change though it leaves no way in over the network'),
+                    confirmPublicHttp: L('Turn plain HTTP on at a public address anyway'),
+                    confirmDependents: L('Turn SSH off though something depends on it')}
+                const flag = value => value ? 'Y' : ''
+                const portBusy = pending.reasonCode === 'portBusy'
+                // exactly what was asked, with the confirmation the answer named; a busy port shows the port and address to
+                // change, at the request's or the running ones, a field left at a running value (its *Was) not sent again
+                servicesConfirm = {name: row.name, enabled: pending.enabled ? 'true' : 'false',
+                    port: pending.port || (portBusy ? row.port : ''), portWas: pending.port ? '' : row.port,
+                    host: pending.host || (portBusy ? row.host : ''), hostWas: pending.host ? '' : row.host,
+                    access: pending.access || '', accessWas: '', reason: pending.reason || '',
+                    showPort: row.hasPort && (portBusy || !!pending.port), showHost: row.hasHost && (portBusy || !!pending.host),
+                    showAccess: row.hasAccess && !!pending.access,
+                    persist: flag(pending.persist), endNow: flag(pending.endNow),
+                    confirmLockout: flag(pending.confirmLockout), confirmPublicHttp: flag(pending.confirmPublicHttp),
+                    confirmDependents: flag(pending.confirmDependents), confirm: CONFIRMS[pending.confirm] ? pending.confirm : '',
+                    confirmText: CONFIRMS[pending.confirm] || '', message: String(pending.message || ''),
+                    portBusy, turningOff: !pending.enabled,
+                    summary: (pending.enabled ? L('Turn on or change') : L('Turn off')) + ': ' + row.name}
+            }
+        }
+    ]]></script></actions>
+
+    <widgets>
+        <container id="ServicesHeader" style="q-mb-sm">
+            <label text="Services and ports" type="h5"/>
+            <label text="Each listener of this server, the address it binds and the settings behind it, with where each value comes from. A change sets the same settings as the conf and runtime/.env. Turned off, a listener's port closes until someone turns it on." type="p" style="text-caption m-muted q-mb-none"/>
+        </container>
+        <label type="p" style="text-negative" condition="!servicesAvailable" text="The listeners are not available to you: reading them needs the ADMIN group."/>
+        <section name="ServicesReadOnly" condition="servicesAvailable &amp;&amp; !servicesAllowed"><widgets>
+            <label text="Turning a listener on or off needs the LISTENER_CONTROL permission." type="p"/>
+        </widgets></section>
+        <section name="ServicesNotRunning" condition="servicesAvailable &amp;&amp; !servicesRunning"><widgets>
+            <label text="This process runs no listeners: the rows come from the conf, and a change is kept for their start." type="p" style="m-muted"/>
+        </widgets></section>
+
+        <!-- a change a guard refused, or whose port is busy: shown again with the refusal and what it needs -->
+        <section name="ServicesConfirm" condition="servicesConfirm"><widgets>
+            <container-box id="ServicesConfirmBox"><box-header title="Confirm the change"/><box-body>
+                <label text="${servicesConfirm.summary}" type="strong"/>
+                <label text="${servicesConfirm.message}" type="p" style="text-warning"/>
+                <form-single name="ConfirmListenerChange" transition="setListener" map="servicesConfirm">
+                    <field name="name"><default-field><hidden/></default-field></field>
+                    <field name="enabled"><default-field><hidden/></default-field></field>
+                    <field name="port">
+                        <conditional-field condition="servicesConfirm.showPort" title="Port"><text-line size="8"/></conditional-field>
+                        <default-field><ignored/></default-field>
+                    </field>
+                    <field name="portWas"><default-field><hidden/></default-field></field>
+                    <field name="host">
+                        <conditional-field condition="servicesConfirm.showHost" title="Address"><text-line size="30"/></conditional-field>
+                        <default-field><ignored/></default-field>
+                    </field>
+                    <field name="hostWas"><default-field><hidden/></default-field></field>
+                    <field name="access">
+                        <conditional-field condition="servicesConfirm.showAccess" title="Access"><drop-down>
+                            <list-options list="servicesAccessOptions" key="${value}" text="${label}"/></drop-down></conditional-field>
+                        <default-field><ignored/></default-field>
+                    </field>
+                    <field name="reason">
+                        <conditional-field condition="servicesConfirm.turningOff" title="Reason" required="true"><text-line size="60"/></conditional-field>
+                        <default-field title="Reason"><text-line size="60"/></default-field>
+                    </field>
+                    <field name="endNow">
+                        <conditional-field condition="servicesConfirm.turningOff" title=""><check><option key="Y" text="End connections now"/></check></conditional-field>
+                        <default-field><ignored/></default-field>
+                    </field>
+                    <field name="persist"><default-field title=""><check><option key="Y" text="Keep it after a restart (runtime/.env)"/></check></default-field></field>
+                    <field name="confirmLockout">
+                        <conditional-field condition="servicesConfirm.confirm == 'confirmLockout'" title=""><check><option key="Y" text="${servicesConfirm.confirmText}"/></check></conditional-field>
+                        <conditional-field condition="servicesConfirm.confirmLockout"><hidden/></conditional-field>
+                        <default-field><ignored/></default-field>
+                    </field>
+                    <field name="confirmPublicHttp">
+                        <conditional-field condition="servicesConfirm.confirm == 'confirmPublicHttp'" title=""><check><option key="Y" text="${servicesConfirm.confirmText}"/></check></conditional-field>
+                        <conditional-field condition="servicesConfirm.confirmPublicHttp"><hidden/></conditional-field>
+                        <default-field><ignored/></default-field>
+                    </field>
+                    <field name="confirmDependents">
+                        <conditional-field condition="servicesConfirm.confirm == 'confirmDependents'" title=""><check><option key="Y" text="${servicesConfirm.confirmText}"/></check></conditional-field>
+                        <conditional-field condition="servicesConfirm.confirmDependents"><hidden/></conditional-field>
+                        <default-field><ignored/></default-field>
+                    </field>
+                    <field name="submitButton">
+                        <conditional-field condition="servicesConfirm.portBusy" title="Try again"><submit/></conditional-field>
+                        <default-field title="Make the change"><submit type="danger"/></default-field>
+                    </field>
+                </form-single>
+            </box-body></container-box>
+        </widgets></section>
+
+        <section name="ServicesListeners" condition="servicesAvailable"><widgets>
+            <container-box id="ServicesListenerBox"><box-header title="Listeners"/><box-body-nopad>
+                <form-list name="ServicesListenerList" list="servicesRows" skip-form="true" paginate="false">
+                    <field name="name"><default-field title="Listener">
+                        <label text="${name}" type="strong"/>
+                        <label text="${ownText}" type="div" style="text-caption text-primary" condition="ownText"/>
+                    </default-field></field>
+                    <field name="stateText"><default-field title="State"><render-mode>
+                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${stateText}</q-chip>]]></text>
+                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                        <text type="html"><![CDATA[<span data-level>${stateText}</span>]]></text>
+                    </render-mode></default-field></field>
+                    <field name="addressText"><default-field title="Address"><display/></default-field></field>
+                    <field name="sinceText"><default-field title="Since and why"><display/></default-field></field>
+                    <field name="connectionsText"><default-field title="Connections"><display/></default-field></field>
+                    <field name="detail"><default-field title="Detail">
+                        <label text="${detail}"/>
+                        <label text="${problemText}" type="div" style="text-negative" condition="problemText"/>
+                        <label text="Depends on it: ${dependentsText}" type="div" style="text-caption m-muted" condition="dependentsText"/>
+                    </default-field></field>
+                    <field name="actions"><default-field title="">
+                        <link url="setListener" text="Turn on" link-type="hidden-form" icon="sym_o_power_settings_new" condition="canTurnOn"
+                                parameter-map="{name: name, enabled: 'true', persist: 'Y'}" confirmation="Turn ${name} on?"/>
+                        <container-dialog id="TurnOff_${key}" button-text="Turn off…" icon="sym_o_power_off" width="600"
+                                title="${turnOffTitle}" condition="canTurnOff">
+                            <label type="p" text="Its port closes, and its connections end after 5 seconds, or at once with End connections now. It stays off until someone turns it on."/>
+                            <label type="p" style="text-warning" condition="ownText" text="You are connected through ${name}: the change applies a second after its answer, and this page does not load again over it."/>
+                            <label type="p" style="text-warning" condition="dependentsText" text="It ends what depends on it: ${dependentsText}"/>
+                            <form-single name="TurnOffListener" transition="setListener" map="{name: name, enabled: 'false', persist: 'Y'}">
+                                <field name="name"><default-field><hidden/></default-field></field>
+                                <field name="enabled"><default-field><hidden/></default-field></field>
+                                <field name="reason"><default-field title="Reason" required="true" tooltip="Required: it goes on the audit log and the listener's row">
+                                    <text-line size="60"/></default-field></field>
+                                <field name="endNow"><default-field title=""><check><option key="Y" text="End connections now"/></check></default-field></field>
+                                <field name="persist"><default-field title=""><check><option key="Y" text="Keep it off after a restart (runtime/.env)"/></check></default-field></field>
+                                <field name="submitButton"><default-field title="Turn off"><submit type="danger"/></default-field></field>
+                            </form-single>
+                        </container-dialog>
+                        <container-dialog id="Change_${key}" button-text="${changeButton}" icon="sym_o_edit" width="600"
+                                title="${changeTitle}" condition="canChange">
+                            <label type="p" condition="enabled" text="It binds the new port or address before it closes the old one; a new access mode applies to new connections."/>
+                            <label type="p" condition="!enabled" text="It has no port: give it one to turn it on."/>
+                            <!-- each value shown is carried as its *Was too: one left as it was is not sent, so it is not kept again -->
+                            <form-single name="ChangeListener" transition="setListener" map="{name: name, enabled: 'true', port: port, host: host,
+                                    access: accessValue, portWas: port, hostWas: host, accessWas: accessValue, persist: 'Y'}">
+                                <field name="name"><default-field><hidden/></default-field></field>
+                                <field name="enabled"><default-field><hidden/></default-field></field>
+                                <field name="portWas"><default-field><hidden/></default-field></field>
+                                <field name="hostWas"><default-field><hidden/></default-field></field>
+                                <field name="accessWas"><default-field><hidden/></default-field></field>
+                                <field name="port">
+                                    <conditional-field condition="hasPort" title="Port"><text-line size="8"/></conditional-field>
+                                    <default-field><ignored/></default-field>
+                                </field>
+                                <field name="host">
+                                    <conditional-field condition="hasHost" title="Address" tooltip="${hostTooltip}"><text-line size="30"/></conditional-field>
+                                    <default-field><ignored/></default-field>
+                                </field>
+                                <field name="access">
+                                    <conditional-field condition="hasAccess" title="Access"><drop-down>
+                                        <list-options list="servicesAccessOptions" key="${value}" text="${label}"/></drop-down></conditional-field>
+                                    <default-field><ignored/></default-field>
+                                </field>
+                                <field name="reason"><default-field title="Reason" tooltip="Optional: it goes on the audit log"><text-line size="60"/></default-field></field>
+                                <field name="persist"><default-field title=""><check><option key="Y" text="Keep it after a restart (runtime/.env)"/></check></default-field></field>
+                                <field name="submitButton"><default-field title="${changeSubmit}"><submit/></default-field></field>
+                            </form-single>
+                        </container-dialog>
+                    </default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="name"/><field-ref name="addressText"/></column>
+                        <column><field-ref name="stateText"/><field-ref name="actions"/></column>
+                    </columns>
+                </form-list>
+            </box-body-nopad></container-box>
+
+            <section name="ServicesSubServices" condition="servicesSubRows.length &gt; 0"><widgets>
+                <container-box id="ServicesSubBox"><box-header title="Services carried on a listener"/><box-body-nopad>
+                    <label text="Each is turned off for everyone by its own switch, changed in the conf or runtime/.env, and applies while the server runs; the SSH permissions still decide per user." type="p" style="m-muted q-pa-sm"/>
+                    <form-list name="ServicesSubList" list="servicesSubRows" skip-form="true" paginate="false">
+                        <field name="listener"><default-field title="Listener"><display/></default-field></field>
+                        <field name="title"><default-field title="Service"><display/></default-field></field>
+                        <field name="stateText"><default-field title="State"><render-mode>
+                            <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${stateText}</q-chip>]]></text>
+                            <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                            <text type="html"><![CDATA[<span data-level>${stateText}</span>]]></text>
+                        </render-mode></default-field></field>
+                        <field name="selector"><default-field title="Setting"><display/></default-field></field>
+                        <field name="sourceText"><default-field title="From"><display/></default-field></field>
+                        <columns type="mobile">
+                            <column><field-ref name="title"/><field-ref name="selector"/></column>
+                            <column><field-ref name="stateText"/></column>
+                        </columns>
+                    </form-list>
+                </box-body-nopad></container-box>
+            </widgets></section>
+
+            <container-box id="ServicesSettingBox"><box-header title="Settings and where each comes from"/><box-body-nopad>
+                <form-list name="ServicesSettingList" list="servicesSettingRows" skip-form="true" paginate="false">
+                    <field name="listener"><default-field title="Listener"><display/></default-field></field>
+                    <field name="selector"><default-field title="Setting"><display/></default-field></field>
+                    <field name="valueText"><default-field title="Value"><display/></default-field></field>
+                    <field name="sourceText"><default-field title="From"><display/></default-field></field>
+                    <field name="envName"><default-field title="Environment name"><display/></default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="selector"/><field-ref name="sourceText"/></column>
+                        <column><field-ref name="valueText"/></column>
+                    </columns>
+                </form-list>
+            </box-body-nopad></container-box>
+
+            <container-box id="ServicesChangeBox"><box-header title="Recent changes"/><box-body-nopad>
+                <section name="ServicesChanges" condition="servicesChangeRows.length &gt; 0"><widgets>
+                    <form-list name="ServicesChangeList" list="servicesChangeRows" skip-form="true" paginate="false">
+                        <field name="timeText"><default-field title="When"><display/></default-field></field>
+                        <field name="name"><default-field title="Listener"><display/></default-field></field>
+                        <field name="changeText"><default-field title="Change"><display/></default-field></field>
+                        <field name="whoText"><default-field title="By"><display/></default-field></field>
+                        <field name="reasonText"><default-field title="Reason"><display/></default-field></field>
+                        <field name="outcomeText"><default-field title="What it did"><display/></default-field></field>
+                        <columns type="mobile">
+                            <column><field-ref name="name"/><field-ref name="changeText"/></column>
+                            <column><field-ref name="timeText"/><field-ref name="whoText"/></column>
+                        </columns>
+                    </form-list>
+                </widgets><fail-widgets>
+                    <label text="No listener was changed here since the server started. The audit log keeps every change and refusal." type="p" style="m-muted q-pa-sm"/>
+                </fail-widgets></section>
+            </box-body-nopad></container-box>
+        </widgets></section>
+    </widgets>
+</screen>

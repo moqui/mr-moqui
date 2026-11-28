@@ -502,7 +502,9 @@ along with this software (see the LICENSE.md file). If not, see
             it out, or no build has it), disabled (built, and the conf does not turn it on), failing (turned on and it did
             not start, with the reason the server recorded, or its last check did not pass), untrusted (running while what
             it trusts does not hold), notStarted (turned on, in a process that opened no listeners) and ready. Each also:
-            built and the build feature, enabled, the reason, where its listener is bound, where the answer comes from
+            built and the build feature, enabled, the reason, where its listener is bound, listenerName (the listener with
+            a switch it runs on, which System › Conf › Services and ports turns on and off; null for one on the web
+            address or on none), where the answer comes from
             (Build, Startup or Configuration), the settings group get#EffectiveSettings shows its configuration under,
             the owner its links open (ownerKey) and its checks with their last results (checkList, also flat as
             checkList of the answer). SMTP reception answers its trust: trusted only while it listens,

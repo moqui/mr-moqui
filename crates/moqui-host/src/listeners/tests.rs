@@ -731,6 +731,7 @@ fn ending_now_cuts_short_a_stop_already_draining() {
             cause: Cause::Request {
                 user: "operator".to_string(),
                 reason: "a download that does not finish".to_string(),
+                selectors: Vec::new(),
             },
             end_now: vec!["A".to_string()],
         },
@@ -1305,6 +1306,31 @@ fn a_request_queued_from_inside_a_pass_runs_after_it() {
     registry.close();
 }
 
+/// The services' port check (plans/Runtime-Config.md §3.6): busy where the listener would bind, the host given or else
+/// its conf's (SSH's 127.0.0.1 when empty), with the start check's explanation; free once let go.
+#[test]
+fn the_control_checks_a_port_where_the_listener_would_bind() {
+    let registry = registry(&[]);
+    let factory = Arc::clone(&registry.0.factory);
+    control::install_control(&factory, &registry);
+    let control = moqui_core::listeners::control(&factory).expect("installed");
+    let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = held.local_addr().unwrap().port();
+    let busy = control.check_port("SSH", Some("127.0.0.1"), port).unwrap_err();
+    assert!(
+        busy.contains(&format!("{port} (ssh-server@port) on 127.0.0.1")),
+        "{busy}"
+    );
+    assert!(control.check_port("SSH", None, port).is_err(), "SSH's conf host");
+    assert!(control
+        .check_port("FTP", None, port)
+        .unwrap_err()
+        .contains("no listener is named FTP"));
+    drop(held);
+    assert_eq!(control.check_port("SSH", Some("127.0.0.1"), port), Ok(()));
+    registry.close();
+}
+
 #[test]
 fn the_control_reconciles_through_the_worker_and_a_deferred_request_waits() {
     let log = log();
@@ -1320,6 +1346,7 @@ fn the_control_reconciles_through_the_worker_and_a_deferred_request_waits() {
             ReconcileRequest::new(Cause::Request {
                 user: "admin".to_string(),
                 reason: "setup".to_string(),
+                selectors: Vec::new(),
             }),
             Duration::from_secs(5),
         )

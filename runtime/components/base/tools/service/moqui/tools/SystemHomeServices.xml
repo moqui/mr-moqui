@@ -21,7 +21,13 @@ along with this software (see the LICENSE.md file). If not, see
             percent), link a route under /apps with its parameters. The resource readings whose level is not ok come
             first (the status map's Resources: disk space and inodes of each filesystem, memory, CPU load, open files,
             the certificates the HTTPS listener serves, a name set up with ACME whose last order failed, swap), the most
-            severe first; then the listeners and integrations that failed or were skipped, a draining
+            severe first; then the listeners and integrations that failed or were skipped at the start, a
+            listener that failed after a change while running (its row's cause is not boot), plain HTTP on at a
+            public address with no proxy believed in front, and no way in a client can reach left on after a change
+            while running (HTTPS and HTTP off or on loopback with no proxy on this machine believed, and SSH off or on
+            loopback; a server that started so is not listed), each linked to Conf › Services and ports (the last two
+            from org.moqui.admin.ListenerServices.get#Listeners, whose reachable and plainPublic are the listener
+            guards' rules, for a user who may call it, while listeners run in this process), a draining
             instance, saturated workers or database pool, the readiness checks that are not ready, system messages
             in error, open incidents, firing alerts, failing checks and scrape targets, new error groups and agent
             approvals waiting. The readiness checks are those of org.moqui.admin.ReadinessServices.get#Readiness, the
@@ -46,6 +52,9 @@ along with this software (see the LICENSE.md file). If not, see
             const DAY = 24 * 60 * 60 * 1000
             const OPEN_INCIDENT = ['Open', 'Mitigating', 'Monitoring', 'Reopened']
             const READINESS = 'org.moqui.admin.ReadinessServices.get#Readiness'
+            const LISTENERS = 'org.moqui.admin.ListenerServices.get#Listeners'
+            // where a listener is switched and its settings shown
+            const SERVICES_PORTS = '/apps/system/Conf/ServicesPorts'
             const READINESS_SHOWN = 10
             const now = Date.now()
 
@@ -153,17 +162,49 @@ along with this software (see the LICENSE.md file). If not, see
             })
 
             // ---- saturation and state ----
+            // a listener's row records what changed it last: boot, or a change while running (a person, a reload, a signal)
+            const changedLive = (entry) => entry.cause != null && String(entry.cause) !== '' && String(entry.cause) !== 'boot'
             check('startup', () => {
                 for (const [kind, entries] of [['Listener', report.listeners], ['Integration', report.integrations]]) {
                     for (const entry of Array.from(entries || [])) {
                         if (entry.state !== 'failed' && entry.state !== 'skipped') continue
+                        // a listener that failed after a change is its own item, below
+                        if (kind === 'Listener' && entry.state === 'failed' && changedLive(entry)) continue
                         const values = {name: entry.name, detail: entry.detail}
-                        item(others, {key: 'startup', severity: entry.state === 'failed' ? 'critical' : 'warning', link: '/apps/system/Conf',
+                        item(others, {key: 'startup', severity: entry.state === 'failed' ? 'critical' : 'warning',
+                            link: kind === 'Listener' ? SERVICES_PORTS : '/apps/system/Conf',
                             text: kind === 'Listener'
                                 ? (entry.state === 'failed' ? say('Listener ${name} failed to start: ${detail}', values) : say('Listener ${name} was skipped: ${detail}', values))
                                 : (entry.state === 'failed' ? say('${name} failed to start: ${detail}', values) : say('${name} was skipped: ${detail}', values))})
                     }
                 }
+            })
+            // a listener that failed after a change while the server runs: the change applied, the listener did not take it
+            check('listenerFailed', () => {
+                for (const entry of Array.from(report.listeners || [])) {
+                    if (entry.state !== 'failed' || !changedLive(entry)) continue
+                    item(others, {key: 'listenerFailed', severity: 'critical', link: SERVICES_PORTS,
+                        text: say('Listener ${name} failed after a change (${cause}): ${detail}', {name: entry.name, cause: entry.cause, detail: entry.detail})})
+                }
+            })
+            // where the listeners reach, as the listener guards count it (get#Listeners' reachable and plainPublic, from the
+            // Rust rules): plain HTTP in public; and no way in left over the network only when a change while running left
+            // it so (a way in whose row a change made), not a server that started with none on purpose (the desktop node,
+            // a dev instance on loopback, a node reached through its edge link)
+            check('listeners', () => {
+                // a process that reported no listeners (a command, the spec runner) is not asked
+                if (!Array.from(report.listeners || []).length || !mayCall(LISTENERS, 'view')) return
+                const found = call(LISTENERS)
+                if (found.running !== true) return
+                const rows = Array.from(found.listenerList || [])
+                const http = rows.find((row) => row.name === 'HTTP')
+                if (http && http.plainPublic === true)
+                    item(others, {key: 'publicHttp', severity: 'warning', link: SERVICES_PORTS,
+                        text: say('HTTP serves plain HTTP at ${address} with no proxy believed in front: sign-ins and data cross the network unencrypted', {address: http.address})})
+                const ways = rows.filter((row) => row.wayIn === true)
+                if (ways.length && !ways.some((row) => row.reachable === true) && ways.some(changedLive))
+                    item(others, {key: 'noWayIn', severity: 'critical', link: SERVICES_PORTS,
+                        text: say('No way in reaches this server over the network: HTTPS and HTTP are off or on this machine only, and so is SSH. The operator socket on the server is the way back (moqui operator listener HTTPS on)')})
             })
             check('draining', () => {
                 if (status.Draining === true) item(others, {key: 'draining', severity: 'warning', link: '/apps/system/Monitor/Recovery',

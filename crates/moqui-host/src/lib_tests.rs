@@ -515,3 +515,22 @@ fn save_db_and_load_save_take_their_backup_key_option() {
         "a missing file"
     );
 }
+
+/// The `Listening on` line names the address clients use: HTTP's while it is bound, as before (`moqui serve`, the desktop
+/// app's node and the restart test parse it as a socket address); with HTTP off (port 0), HTTPS's as a URL; else none.
+#[test]
+fn the_listening_line_names_http_then_https_then_none() {
+    let at = |text: &str| text.parse::<std::net::SocketAddr>().unwrap();
+    assert_eq!(
+        super::listening_text(at("127.0.0.1:8080"), Some(at("0.0.0.0:8443"))),
+        "127.0.0.1:8080"
+    );
+    assert_eq!(
+        super::listening_text(at("127.0.0.1:0"), Some(at("0.0.0.0:8443"))),
+        "https://0.0.0.0:8443"
+    );
+    assert_eq!(
+        super::listening_text(at("127.0.0.1:0"), None),
+        "no web address: HTTP is off and HTTPS is not bound"
+    );
+}

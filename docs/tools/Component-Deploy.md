@@ -8,7 +8,10 @@ restart. The design and status are in [plans/archive/Component-Deploy.md](../../
 The code: `crates/moqui-core/src/context/conf_reload/` (the catalog, the diff, the apply and the view),
 `crates/moqui-devkit/src/deploy/` (the component load and the services), and `crates/moqui-host/src/http.rs` (SIGHUP
 and the web protection hook). Services: `org.moqui.dev.ComponentServices`. Screens: System › Conf (its Settings,
-Edit and Changes tabs) and System › Components.
+Edit and Changes tabs) and System › Components. The switches, ports and addresses of HTTP, HTTPS, gRPC and SSH apply
+while the server runs (class apply), so Changes applies them and does not list them as waiting for a restart; Conf ›
+Services and ports switches them
+([Run-Deploy](../Run-Deploy.md#settings-and-the-environment)).
 
 ## Reloading the conf
 

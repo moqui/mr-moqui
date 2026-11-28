@@ -38,6 +38,10 @@ impl ListenerControl for Stub {
     fn reconcile_later(&self, request: ReconcileRequest, delay: Duration) {
         moqui_lib::sync::lock(&self.requests).push((request, delay));
     }
+
+    fn check_port(&self, _name: &str, _host: Option<&str>, _port: u16) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 fn info() -> ListenerInfo {
@@ -71,6 +75,7 @@ fn the_control_is_per_factory_and_none_until_installed() {
         cause: Cause::Request {
             user: "admin".to_string(),
             reason: "incident".to_string(),
+            selectors: Vec::new(),
         },
         end_now: vec!["SSH".to_string()],
     };
@@ -95,10 +100,12 @@ fn a_cause_says_what_ran_the_reconcile() {
         Cause::Request {
             user: "admin".to_string(),
             reason: "incident 12".to_string(),
+            selectors: Vec::new(),
         },
         Cause::Request {
             user: "admin".to_string(),
             reason: " ".to_string(),
+            selectors: Vec::new(),
         },
     ]
     .iter()

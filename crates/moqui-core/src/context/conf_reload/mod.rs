@@ -248,6 +248,22 @@ impl SetOutcome {
     /// Where the value is kept, what outranks it, and when it applies, as a sentence for an answer.
     #[must_use]
     pub fn note(&self) -> String {
+        let applies = match self.class {
+            _ if !self.problems.is_empty() => format!("; applying it failed: {}", self.problems.join("; ")),
+            Class::Restart(reason) => format!("; it applies at the next start ({reason})"),
+            Class::Apply(group) if self.queued => format!(
+                "; it applies when the run of the {} hooks in progress ends",
+                group.name()
+            ),
+            Class::Live | Class::Apply(_) => "; it applies now".to_string(),
+        };
+        format!("{}{applies}", self.kept_note())
+    }
+
+    /// Where the value is kept and what outranks it, without when it applies: for a caller that applies the change
+    /// itself and says when (the listener services, plans/Runtime-Config.md §3.6).
+    #[must_use]
+    pub fn kept_note(&self) -> String {
         let kept = match self.kept {
             Kept::DotEnv => "kept in runtime/.env".to_string(),
             Kept::SealStore => "kept in the seal's store".to_string(),
@@ -266,16 +282,7 @@ impl SetOutcome {
             }
             (Some(Source::DotEnv) | None, _) => String::new(),
         };
-        let applies = match self.class {
-            _ if !self.problems.is_empty() => format!("; applying it failed: {}", self.problems.join("; ")),
-            Class::Restart(reason) => format!("; it applies at the next start ({reason})"),
-            Class::Apply(group) if self.queued => format!(
-                "; it applies when the run of the {} hooks in progress ends",
-                group.name()
-            ),
-            Class::Live | Class::Apply(_) => "; it applies now".to_string(),
-        };
-        format!("{kept}{next_start}{applies}")
+        format!("{kept}{next_start}")
     }
 }
 
@@ -385,7 +392,7 @@ pub fn set_many(
 
 /// [`set_many`], with the hooks of `held` not run: the caller applies that group's change itself, at once and as one,
 /// as the listener services and the operator socket do, which then ask the listener registry for one pass that carries
-/// their cause ([`crate::listeners::Cause::SetValue`]) and the listeners whose connections end now
+/// their cause ([`crate::listeners::Cause::Request`], with the selectors set) and the listeners whose connections end now
 /// (plans/Runtime-Config.md §3.6). The hooks of the other groups the settings reach run as [`set_many`] runs them.
 ///
 /// # Errors
@@ -616,15 +623,7 @@ fn plan(
     let secret = conf_env::attribute_secret(&target.path);
     let boot = conf_env::boot_sources(factory, &target.path);
     let environment_names = (inputs.environment)(&name).is_some() || boot.contains(&Source::Environment);
-    let kept = if !persist {
-        Kept::Property
-    } else if to_store {
-        Kept::SealStore
-    } else if environment_names {
-        Kept::UntilRestart
-    } else {
-        Kept::DotEnv
-    };
+    let kept = kept_for(persist, to_store, environment_names);
     let before_kept = match kept {
         Kept::SealStore => None,
         // the last line of the name, as loading the file takes it
@@ -660,6 +659,40 @@ fn plan(
         outranked_by,
         target,
     })
+}
+
+/// Where a value is kept ([`Kept`]): as asked when not `persist`; else in the seal's store for a secret it keeps
+/// (`to_store`), until the restart when the OS environment names the attribute (`environment_names`), which `.env`
+/// does not outrank, else in `.env`.
+fn kept_for(persist: bool, to_store: bool, environment_names: bool) -> Kept {
+    if !persist {
+        Kept::Property
+    } else if to_store {
+        Kept::SealStore
+    } else if environment_names {
+        Kept::UntilRestart
+    } else {
+        Kept::DotEnv
+    }
+}
+
+/// Where [`set`] would keep a value of the attribute at `selector` with `persist`, decided as it decides it, before
+/// anything is set: what a caller says about undoing a change it is about to make (the listener services' ways back,
+/// plans/Runtime-Config.md §3.6).
+///
+/// # Errors
+///
+/// When `selector` does not name an attribute that has an environment name.
+pub fn keeps(factory: &ExecutionContextFactory, selector: &str, persist: bool) -> Result<Kept, Error> {
+    let path = AttrPath::parse(selector).map_err(|err| Error::new(format!("{selector}: {err}")))?;
+    let Some(name) = path.env_name() else {
+        return Err(Error::new(format!("{selector}: it has no environment name")));
+    };
+    let inputs = Inputs::of(factory);
+    let to_store = persist && conf_env::attribute_secret(&path) && !inputs.secrets_in_env;
+    let environment_names =
+        (inputs.environment)(&name).is_some() || conf_env::boot_sources(factory, &path).contains(&Source::Environment);
+    Ok(kept_for(persist, to_store, environment_names))
 }
 
 /// The class of setting `attr` at `path` (the element names) as a reload's diff takes the change, when the set makes

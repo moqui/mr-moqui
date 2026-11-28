@@ -421,6 +421,14 @@ along with this software (see the LICENSE.md file). If not, see
         ADMIN_OPERATION_MANAGE. -->
     <moqui.security.ArtifactGroupMember artifactGroupId="AdminOperationServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
             artifactName="org\.moqui\.admin\.OperationServices\.(get#WebProtection|lift#WebBan)"/>
+    <!-- The listeners (plans/Runtime-Config.md 3.6, org.moqui.admin.ListenerServices), for the ADMIN group: get#Listeners
+        checks ADMIN again, set#Listener ADMIN, the sealed LISTENER_CONTROL and a recent sign-in, each in Rust. Not
+        inheritable: neither calls anything that needs a grant. -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminListenerServices" description="Admin listener services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminListenerServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.ListenerServices\.(get#Listeners|set#Listener)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminListenerServicesADMIN" userGroupId="ADMIN" artifactGroupId="AdminListenerServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
     <!-- An owner's registered service (describe, recover and items services, the mail queue's owners) is reached only
         through call#OwnerService, whose ALLOW is not inheritable (AdminOperationCall), so it is authorized for the caller
         as a direct call is: an owner's service carries a grant of its own besides its own permission check (SEC-ADM-10),

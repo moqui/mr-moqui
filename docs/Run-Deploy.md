@@ -490,6 +490,53 @@ and the admin shell off for everyone, each checked when a channel asks for it; t
 user. `ssh-server@login-dialog` is retired: a conf that sets it is
 refused at boot, naming `access` (`true` was `open`, `false` was `login`).
 
+**Listeners switched from a screen** ([plan](../plans/Runtime-Config.md), §3.7). System › Conf › Services and ports,
+also a dialog on System Home's Listeners and integrations box, is the first way: it lists each listener with its state,
+address, connections and the settings behind it with where each comes from, SSH's services and their switches, and the
+changes people made since the start. A holder of `LISTENER_CONTROL` turns one on or off there (turning one off asks a
+reason and offers "End connections now"), moves it, or sets SSH's access, after "Confirm it is you" when the last sign-in
+is older than five minutes. A change a guard refuses (the last way in, plain HTTP in public, what depends on SSH) comes
+back as its form with the refusal and the confirmation it needs, and a busy port as its form to choose another. System
+Home's Needs attention lists a listener that failed after a change, plain HTTP on a public address with no proxy, and no
+way in over the network left by a change while running (a server started with none, such as the desktop node, is not
+listed), each linked there. The screen calls the service below.
+
+**Listeners switched from a service** ([plan](../plans/Runtime-Config.md), §3.6). `org.moqui.admin.ListenerServices`
+changes the same settings as the conf, `runtime/.env` and SIGHUP, and the listener registry applies them.
+`get#Listeners` (the `ADMIN` group) lists each listener with its state, address, connections, what depends on it,
+whether the caller's own request came over it, and the settings behind it with where each value comes from: a conf file
+and line, `runtime/.env`, the environment, a `-D`, or set while running and not kept; and the last 20 changes people
+made on this server since it started (from the services and the operator socket; the audit log keeps them all). `set#Listener` turns one on or off
+and can move it (`port`, `host`) or set SSH's `access`. It needs the `ADMIN` group, the sealed `LISTENER_CONTROL`
+permission (seeded on `ADMIN_ADV`; apart from `CONF_EDIT`, so an incident responder switches services without editing
+the conf) and a sign-in within the last five minutes ("Confirm it is you"). Turning a listener off needs a reason (one
+line, at most 500 characters). Only
+the settings whose value changes are written: in `runtime/.env`, or with `persist` false as process properties until
+the process ends; a setting the OS environment names cannot be kept in `.env`, so this process holds it until a restart
+and the answer says so. A port a listener it affects would bind must be free. Unless confirmed, it refuses a change
+that leaves no way in over the network: none of HTTPS, HTTP and SSH on at an address clients reach (SSH on loopback is
+none, nor is HTTP or HTTPS on loopback unless `trusted-proxies` names a loopback address for a proxy on this machine), so turning off the last one,
+or moving it to loopback, is refused (`confirmLockout`); turning plain HTTP on at a public address (`http-bind` empty or
+not loopback) while `trusted-proxies` is empty (`confirmPublicHttp`); and turning SSH off while the edge node's SSH
+tunnel or the cluster's SSH transport uses it (`confirmDependents`). `http-bind` is HTTP's and HTTPS's both, so moving
+one moves the other. `endNow` ends a listener's connections at once instead of after 5 seconds, except those of the
+listener the request came over. A change that affects that listener is answered first and applied a second later. A
+switch has no timer: a listener turned off stays off until someone turns it on. Each change is logged on
+`moqui.monitor.audit` (who, the listener, from, to, the reason, `endNow`, `persist`), and so is each refusal, and the
+change as a `config` annotation on the Monitor charts.
+
+**The ways back** to a server with no way in over the network. First the operator socket, on the server itself, which
+needs no listener: `moqui operator listeners` lists them (`surface` is the same), and `moqui operator listener <name>
+on|off [--reason TEXT] [--now] [--port N] [--host H] [--access open|login|key] [--no-persist]` switches one as
+`set#Listener` does, for root and the socket's group, with no lockout guard (the socket is itself a way back) and the
+public HTTP and dependents confirmations as `--confirm-public-http` and `--confirm-dependents`; turning one off needs
+`--reason`, and the audit log names the socket's peer. Then the files: a listener turned off from a service with
+`persist` keeps `enabled=false` in `runtime/.env`, which outranks the conf files, so edit or remove its line there
+(`moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled`, `moqui_conf__ssh_server__enabled`) and run
+`systemctl reload moqui` (SIGHUP), or restart; editing the conf alone does not bring it back. A change kept as a process
+property (`persist` false, or a switch the OS environment names) outranks `.env` and the conf files in a reload too, so
+only the operator socket or a restart undoes it. The refusal of a lockout says which applies.
+
 The settings most deployments set or should know. Their defaults are in `MoquiDefaultConf.xml`.
 
 | Setting | Default | What it does |
@@ -1215,6 +1262,8 @@ moqui operator init --from FILE          # restore a bundle on a clean runtime, 
 moqui operator secret put NAME           # keep a secret (echo off, stdin, or --file PATH); never printed
 moqui operator secret list               # the kept secrets' names, kinds and generations
 moqui operator secret rm NAME
+moqui operator listeners                 # each listener: state, address, since when and why, connections
+moqui operator listener HTTPS on         # the way back to a server with every listener off (--reason to turn one off)
 ```
 
 **Methods** (`seal@method`, or `init --method`):

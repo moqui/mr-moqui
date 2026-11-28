@@ -269,6 +269,14 @@ pub fn compare_key(path: &AttrPath) -> String {
     out
 }
 
+/// Whether two selectors name one attribute, however each is spelled ([`compare_key`]); text that is no selector names
+/// only itself.
+#[must_use]
+pub fn same_selector(first: &str, second: &str) -> bool {
+    let key = |selector: &str| AttrPath::parse(selector).ok().map(|path| compare_key(&path));
+    first == second || key(first).is_some_and(|first| key(second) == Some(first))
+}
+
 /// The `webroot` webapp's path, for a selector of one of its settings (`{WEBROOT}@http-port`).
 pub const WEBROOT: &str = "webapp-list/webapp[webroot]";
 /// The instance's purpose (production, dev, test): what much of the server's behavior turns on.

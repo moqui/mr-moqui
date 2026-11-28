@@ -244,6 +244,10 @@ pub struct InProcess {
     /// attributes are not carried. Requests run at once (an options load beside a screen) each apply only what they
     /// changed, so one does not drop or bring back what another set or removed.
     attributes: Arc<Mutex<BTreeMap<String, serde_json::Value>>>,
+    /// The listener the link's calls came over, which each call's context says: `SSH` for the SSH server's terminal
+    /// client, the page's for a browser terminal, so the listener services know the caller's own
+    /// (plans/Runtime-Config.md §3.6). Read at each call: a kept session's changes as pages attach to it.
+    listener: crate::term::Origin,
 }
 
 impl<T: Transport> Link<T> {
@@ -391,7 +395,16 @@ impl HostLink {
             })),
             held: Arc::new(Mutex::new(None)),
             attributes: Arc::new(Mutex::new(BTreeMap::new())),
+            listener: crate::term::Origin::default(),
         })
+    }
+
+    /// The link with its calls marked as come over `listener` (`SSH`), which each call's context says
+    /// ([`moqui_core::listeners::origin`]).
+    #[must_use]
+    pub(crate) fn over_listener(mut self, listener: crate::term::Origin) -> Self {
+        self.transport.listener = listener;
+        self
     }
 
     /// The write the transition gate held on the last request, if it held one: the 409 body, `heldWrite` with its
@@ -451,6 +464,13 @@ impl HostLink {
     }
 }
 
+/// Mark the request worker's context with the listener a link's call came over, when it came over one.
+fn mark_listener(listener: Option<&'static str>) {
+    if let Some(listener) = listener {
+        ExecutionContext::with_current(|ec| ec.set_listener_origin(Some(listener.to_string())));
+    }
+}
+
 impl InProcess {
     /// The factory, or [`LinkError::Remote`] once the server stopped.
     fn factory(&self) -> Result<Arc<ExecutionContextFactory>, LinkError> {
@@ -467,9 +487,11 @@ impl InProcess {
     {
         let factory = self.factory()?;
         let client_ip = lock(&self.client_ip).clone();
+        let listener = self.listener.get();
         let rx = factory
             .request_pool()
             .try_submit(Arc::clone(&factory), move || {
+                mark_listener(listener);
                 moqui_core::user::with_client_ip(&client_ip, work)
             })
             .map_err(link_error)?;
@@ -492,9 +514,11 @@ impl InProcess {
         };
         let factory = self.factory()?;
         let user_id = Arc::clone(&self.user_id);
+        let listener = self.listener.get();
         let rx = factory
             .request_pool()
             .try_submit(Arc::clone(&factory), move || {
+                mark_listener(listener);
                 moqui_core::user::internal_login_user(&username)?;
                 let id = moqui_core::user::current_user_id()?;
                 *lock(&user_id) = id;

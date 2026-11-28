@@ -251,3 +251,14 @@ fn usage_server_invocation_is_options_not_commands() {
     assert!(!is_server_invocation(&owned(&["load", "types=seed"])));
     assert!(!is_server_invocation(&owned(&["load", "--conf", "x"])));
 }
+
+/// The operator socket's listener commands are the way back to a server with every listener off
+/// (plans/Runtime-Config.md §3.6): its help and its synopsis name them.
+#[test]
+fn usage_operator_names_the_listener_commands() {
+    let help = super::command_help("operator").unwrap();
+    assert!(help.contains("    listeners  ") && help.contains("listener NAME on|off [--reason TEXT] [--now]"));
+    assert!(help.contains("moqui operator listener HTTPS on"));
+    let synopsis = super::command_usage("operator").message().to_string();
+    assert!(synopsis.contains("listeners | listener NAME on|off"), "{synopsis}");
+}
