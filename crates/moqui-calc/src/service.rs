@@ -776,13 +776,55 @@ fn open_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
     open_document_with(parameters, facade, access)
 }
 
+/// The data sheet of a new document over the call's `source`, with its `columns`, `sort` and `filter`, named for the
+/// source; None without a source.
+fn new_data_sheet(parameters: &BTreeMap<String, Value>) -> Option<DataSheet> {
+    if !parameters.get("source").is_some_and(|source| !is_empty(source)) {
+        return None;
+    }
+    let mut spec = json!({});
+    for key in ["source", "columns", "sort", "filter"] {
+        if let Some(value) = parameters.get(key).filter(|value| !is_empty(value)) {
+            spec[key] = to_json(value);
+        }
+    }
+    let name = source_sheet_name(&spec);
+    spec["name"] = Json::String(name.clone());
+    Some(DataSheet { name, spec })
+}
+
+/// An uploaded workbook's file name as a title may take it: its last part, no control character, at most 200.
+fn workbook_name(given: &str) -> String {
+    let name: String = given
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .collect();
+    let name = name.trim();
+    let skip = name.chars().count().saturating_sub(200);
+    let name: String = name.chars().skip(skip).collect();
+    if name.is_empty() || name == "." || name == ".." {
+        "Workbook".to_string()
+    } else {
+        name
+    }
+}
+
 /// [`open_calc_document`] under an access already decided.
 fn open_document_with(parameters: &BTreeMap<String, Value>, facade: &EntityFacade, access: Access) -> Out {
     let Some(user_id) = moqui_core::user::current_user_id().ok().flatten() else {
         return refused("Not signed in");
     };
+    // a workbook uploaded with a source, prepared over its data sheet once the sheet's columns are read
+    let mut uploaded = false;
     let definition_id = text(parameters, "definitionId");
     let workbook_location = text(parameters, "workbookLocation");
+    let workbook_bytes = match parameters.get("workbookBytes") {
+        Some(Value::Bytes(bytes)) if !bytes.is_empty() => Some(bytes.as_slice()),
+        _ => None,
+    };
     let (base, sheets, charts, title, version) = if !definition_id.is_empty() {
         let definition = match read_definition(&definition_id) {
             Ok(definition) => definition,
@@ -803,6 +845,48 @@ fn open_document_with(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
         let charts = crate::charts::saved_ids(body["charts"].as_array().cloned().unwrap_or_default());
         let title = definition["title"].as_str().unwrap_or(&definition_id).to_string();
         (base, data_sheets(body), charts, title, definition["version"].as_i64())
+    } else if let Some(bytes) = workbook_bytes {
+        // an uploaded workbook: alone, the Tools app's file; with a source, the overlay of a new document whose data sheet
+        // is the source, read as the caller (plans/IronCalc-DB2.md CG4.4)
+        let sheet = new_data_sheet(parameters);
+        if let Access::Profile(_) = access {
+            if !profile::may_author() {
+                return refused("Not available");
+            }
+            if sheet.is_none() {
+                return refused("Under an access profile a workbook is opened over the data it is for: choose it");
+            }
+        }
+        if bytes.len() > MAX_WORKBOOK_BYTES {
+            return refused(format!(
+                "A workbook to open has at most {} MB",
+                MAX_WORKBOOK_BYTES / 1024 / 1024
+            ));
+        }
+        let name = workbook_name(&text(parameters, "workbookName"));
+        let model = match workbook_model(bytes, &name) {
+            Ok((model, left_out)) => {
+                if !left_out.is_empty() {
+                    let message = format!("Not opened, as they could not be read: {}", left_out.join(", "));
+                    ExecutionContext::with_current(|ec| ec.message().add_message_typed(message, "warning"));
+                }
+                model
+            }
+            Err(err) => return refused(err.message()),
+        };
+        let names: Vec<String> = sheet.iter().map(|sheet| sheet.name.clone()).collect();
+        if let Some(refusal) = crate::upload::overlay_refusal(&model, &names) {
+            return refused(refusal);
+        }
+        let title = Some(text(parameters, "title"))
+            .filter(|title| !title.is_empty())
+            .unwrap_or_else(|| {
+                name.rsplit_once('.')
+                    .map_or(name.as_str(), |(stem, _)| stem)
+                    .to_string()
+            });
+        uploaded = true;
+        (Ok(model), sheet.into_iter().collect(), Vec::new(), title, None)
     } else if matches!(access, Access::Profile(_)) && (!workbook_location.is_empty() || !profile::may_author()) {
         // under a profile a new document is over an entity the profile offers, and is its author's to make
         return refused("Not available");
@@ -828,20 +912,9 @@ fn open_document_with(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
             model
         });
         (model, Vec::new(), Vec::new(), name, None)
-    } else if parameters.get("source").is_some_and(|source| !is_empty(source)) {
-        let mut spec = json!({});
-        for key in ["source", "columns", "sort", "filter"] {
-            if let Some(value) = parameters.get(key).filter(|value| !is_empty(value)) {
-                spec[key] = to_json(value);
-            }
-        }
-        let name = source_sheet_name(&spec);
-        spec["name"] = Json::String(name.clone());
+    } else if let Some(sheet) = new_data_sheet(parameters) {
+        let name = sheet.name.clone();
         let title = text(parameters, "title");
-        let sheet = DataSheet {
-            name: name.clone(),
-            spec,
-        };
         // the data sheet is the workbook's first; the author adds sheets beside it
         (
             fill::new_model(&name),
@@ -881,6 +954,25 @@ fn open_document_with(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
     let rows = match read_sheets(facade, &sheets, &access, !definition_id.is_empty()) {
         Ok(rows) => rows,
         Err(message) => return refused(message),
+    };
+    // an uploaded workbook over a source takes its data sheet's stub, its formulas over the data typed again, and is
+    // held to what a document stores
+    let base = if uploaded {
+        let prepared = match crate::upload::prepare(base, &rows) {
+            Ok(prepared) => prepared,
+            Err(err) => return refused(err.message()),
+        };
+        let size = prepared.to_bytes().len();
+        if size > MAX_OVERLAY_BYTES {
+            return refused(format!(
+                "The workbook without its data is {} MB; a document stores at most {} MB",
+                size / 1024 / 1024,
+                MAX_OVERLAY_BYTES / 1024 / 1024
+            ));
+        }
+        prepared
+    } else {
+        base
     };
     let opening = Opening {
         user_id: user_id.clone(),

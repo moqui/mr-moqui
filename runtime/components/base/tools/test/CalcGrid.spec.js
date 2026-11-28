@@ -55,7 +55,7 @@ spec({
     },
     cleanupSpec() {
         // a document a failed feature left shared with the group goes first
-        for (const definitionId of ["spec-calcgrid-revoke", "spec-calcgrid-revoke-board", "spec-calcgrid-params-board", "spec-calcgrid-ds", "spec-calcgrid-params", "spec-calcgrid-charts-board", "spec-calcgrid-charts"])
+        for (const definitionId of ["spec-calcgrid-revoke", "spec-calcgrid-revoke-board", "spec-calcgrid-params-board", "spec-calcgrid-ds", "spec-calcgrid-params", "spec-calcgrid-charts-board", "spec-calcgrid-charts", "spec-calcgrid-upload"])
             ec.service.sync().name("org.moqui.report.ReportServices.delete#Definition").parameters({definitionId}).disableAuthz().call()
         ec.message.clearErrors()
         ec.artifactExecution.disableAuthz()
@@ -661,6 +661,86 @@ feature("a document's chart is a dashboard panel by its stable id: its labels an
         byPlace.out.chartTitle == "Upright"
         byPlace.out.chartType == "column"
         byIndex.out.chartTitle == "Upright"
+    },
+})
+
+// A workbook uploaded under a profile (plans/IronCalc-DB2.md CG4.4): the workbook its sheets and formulas, an entity the
+// profile offers its data sheet, filled as the author reads it; its formulas over the data (a table it did not have, a
+// sheet it did not have) read those rows, and so does the saved document opened again. A workbook with a sheet of the data
+// sheet's name is refused (its rows would stand below the data), and under a profile a workbook comes with a source.
+feature("a workbook uploaded under a profile is the overlay of a new document over an offered entity, its formulas over the data sheet", {
+    when() {
+        const CALC = "org.moqui.calc.CalcServices."
+        const ask = (verbNoun, parameters) => {
+            const out = ec.service.sync().name(CALC + verbNoun).parameters(parameters).call() || {}
+            const errors = ec.message.hasError() ? ec.message.getErrorsString() : ""
+            ec.message.clearErrors()
+            return {out, errors}
+        }
+        // an author's workbook made elsewhere: a Summary sheet whose formulas name the Enumeration data before it is there,
+        // beside a sheet of other data, written as an xlsx
+        const workbook = (entityName, formulas) => {
+            const room = ask("open#CalcDocument", {source: {type: "entity", entityName}}).out.roomId
+            ask("edit#CalcDocument", {roomId: room, ops: [{op: "addSheet"}, {op: "renameSheet", sheet: 1, name: "Summary"}]
+                .concat(formulas.map((value, at) => ({op: "input", sheet: 1, row: at + 1, column: 1, value})))})
+            const bytes = ask("export#CalcDocument", {roomId: room}).out.contentBytes
+            ask("close#CalcDocument", {roomId: room})
+            return bytes
+        }
+        const own = workbook("moqui.basic.EnumerationType", ["=COUNTA(Enumeration[enumId])", "=COUNTA(Enumeration!A:A)-1"])
+        const source = {type: "entity", entityName: "moqui.basic.Enumeration", conditions: {enumTypeId: "ArtifactType"}}
+        const expected = ask("open#CalcDocument", {source})
+        ask("close#CalcDocument", {roomId: expected.out.roomId})
+        // through the screen's template, as calcUpload calls it: the file, the entity and the profile
+        let binary = ""
+        for (const byte of own) binary += String.fromCharCode(byte)
+        const template = ec.resource.script("component://tools/template/CalcGrid.js")
+        for (const [name, value] of [["file", uploadedFile("Summary book.xlsx", binary, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", true)],
+            ["entityName", "moqui.basic.Enumeration"], ["conditionsJson", JSON.stringify({enumTypeId: "ArtifactType"})], ["profileId", PROFILE]])
+            ec.context.put(name, value)
+        const uploaded = template.upload()
+        for (const name of ["file", "entityName", "conditionsJson", "profileId"]) ec.context.remove(name)
+        const summary = room => {
+            const sheet = Array.from(room.sheets || []).find(one => one.name == "Summary") || {index: -1}
+            const block = ask("get#CalcCells", {roomId: room.roomId, profileId: PROFILE, sheet: sheet.index, row: 1, column: 1, width: 1, height: 2})
+            const texts = block.errors ? [] : Array.from(JSON.parse(String(block.out.blockJson)).texts || [])
+            return [1, 2].map(row => (texts.find(text => text.row === row) || {}).text || "")
+        }
+        const sheetNames = Array.from(uploaded.sheets || []).map(sheet => sheet.name + (sheet.data ? "*" : ""))
+        const read = summary(uploaded)
+        // saved, closed and opened again under the profile: the formulas still read the data
+        const saved = ask("save#CalcDocument", {roomId: uploaded.roomId, profileId: PROFILE, definitionId: "spec-calcgrid-upload", title: "Uploaded summary"})
+        ask("close#CalcDocument", {roomId: saved.out.roomId})
+        const again = ask("open#CalcDocument", {definitionId: "spec-calcgrid-upload", profileId: PROFILE})
+        const readAgain = summary(again.out)
+        ask("close#CalcDocument", {roomId: again.out.roomId})
+        ec.service.sync().name(REPORT + "delete#Definition").parameters({definitionId: "spec-calcgrid-upload"}).call()
+        ec.message.clearErrors()
+        // refused: a sheet of the data sheet's name, no source under a profile, a file that is not a workbook
+        const named = ask("open#CalcDocument", {profileId: PROFILE, source, workbookBytes: workbook("moqui.basic.Enumeration", ["=1"]), workbookName: "named.xlsx"})
+        const alone = ask("open#CalcDocument", {profileId: PROFILE, workbookBytes: own, workbookName: "alone.xlsx"})
+        const garbage = ask("open#CalcDocument", {profileId: PROFILE, source, workbookBytes: new Uint8Array([80, 75, 3, 4, 1, 2, 3]), workbookName: "bad.xlsx"})
+        ec.context.put("file", uploadedFile("none.xlsx", ""))
+        const empty = template.upload()
+        ec.context.remove("file")
+        ec.message.clearErrors()
+        return {expectedRows: (expected.out.sheets || [])[0].dataRows, uploaded, sheetNames, read, saved, readAgain, named, alone, garbage, empty}
+    },
+    then({expectedRows, uploaded, sheetNames, read, saved, readAgain, named, alone, garbage, empty}) {
+        !uploaded.errors
+        uploaded.title == "Summary book"
+        sheetNames.join(",") == "EnumerationType,Summary,Enumeration*"
+        expectedRows > 1
+        read[0] == String(expectedRows)
+        read[1] == String(expectedRows)
+        saved.errors == ""
+        readAgain[0] == String(expectedRows)
+        named.errors.includes("sheet named Enumeration")
+        !named.out.roomId
+        alone.errors.includes("opened over the data")
+        !!garbage.errors
+        !garbage.out.roomId
+        !!empty.errors
     },
 })
 

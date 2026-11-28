@@ -200,7 +200,7 @@ workbook on the server's spreadsheet engine (IronCalc; plan [IronCalc-DB](../../
 Dashboards › CalcGrid (`Dashboards/CalcGrid.xml`, `CalcGrid.qvue`, `template/CalcGrid.js`) is the same workbook for
 people who are not administrators: a list of the documents the viewer reads, one opened as a sheet, refreshed and
 exported, and for an author a new document over an entity or view, saved, shared with a group of their own and
-deleted. Its sources are entities and views only: no SQL, no file. Another app shows the screen under its own root
+deleted. Its sources are entities and views only: no SQL, no file as a source. Another app shows the screen under its own root
 ([Mounting the report screens](Monitoring.md#mounting-the-report-screens)); BOSS shows it under Insights.
 
 What a person reads there is set in the authorization data, not in a document. A call is made one of two ways:
@@ -230,6 +230,15 @@ What a person reads there is set in the authorization data, not in a document. A
   `org.moqui.calc.document`) is making, editing and saving documents. A holder of a profile without it opens the
   documents shared with them, refreshes and exports, and sees the authors' edits as they are made. An author edits a
   document they read, with the others who have it open; it is its owner's to save and delete.
+- **A workbook to start from.** New takes a workbook file (Start from a workbook: xlsx, xls, xlsb or ods, at most
+  32 MB, inflated within 64 MiB) beside the entity: the workbook's sheets, formulas and styles are the new document's,
+  and the entity is its data sheet, added after them and read as the author (`calcUpload`, `open#CalcDocument`
+  `workbookBytes`). A formula of the workbook names the data as one typed in CalcGrid does, by the entity's table
+  (`OrderPart[partTotal]`) or its sheet (`OrderPart!B:B`), though the workbook was made without it. Under a profile it is
+  an author's, and always over an entity; with the Tools app's own access a workbook alone opens as a file does. A
+  workbook with a sheet named as the data sheet, or a table or name of the data sheet's table name, is refused (rename it
+  first): the data sheet holds only the rows its reader may read. Without its data it is at most 8 MB, as a saved
+  document is.
 - **Add to dashboard** puts the cells selected (or the sheet's used area) of a saved document on one of the viewer's
   own dashboards, as a table, bars, a pie or a number: a panel over the dataset `calcgrid` (below). For a document
   with charts it also offers a chart of this document: the panel names the chart by its id and is drawn as the chart
@@ -276,10 +285,12 @@ application that owns its entities: the group, its offers, and a grant with its 
 
 Specs: `mr-mantle/test/order/CalcGridSales.spec.js` (the profile's rules: own organization only, an entity not
 offered, one no filter applies to, no organization, an author and a viewer, a shared document, the scope a scheduled
-export may go to, two organizations editing one document), `tools/test/CalcGrid.spec.js` (the Dashboards screen, the
-edit log, undo and discard, a scheduled export), `mr-boss/test/Insights/InsightsCalcGrid.spec.js` (the BOSS grant and
+export may go to, two organizations editing one document, an author's uploaded workbook), `tools/test/CalcGrid.spec.js`
+(the Dashboards screen, the edit log, undo and discard, a scheduled export, the dataset's parameters, a chart panel, an
+upload and its refusals), `mr-boss/test/Insights/InsightsCalcGrid.spec.js` (the BOSS grant and
 mount), `crates/moqui-core/src/user/filter_tests.rs` (a profile frame gives its filters to the finds below),
-`cargo test -p moqui-calc` (rooms of two scopes following one log, every edit taken back) and the terminal's in
+`cargo test -p moqui-calc` (rooms of two scopes following one log, every edit taken back, chart ids and frames, an
+uploaded workbook's formulas and refusals) and the terminal's in
 `crates/moqui-tui` (`components/calc_tests.rs`) and `crates/moqui-host/tests/it/monitor_tui.rs`.
 
 **Saved views** (`moqui.database.GridView`).

@@ -118,6 +118,23 @@ function open() {
         title: text(ec.context.get("title")) || null
     })
 }
+// A new document from an uploaded workbook (the request's file) over an entity the viewer chose: the workbook its sheets
+// and formulas, the entity its data sheet (plans/IronCalc-DB2.md CG4.4). The file is held to 32 MB before it is read; the
+// engine checks the rest (an author only under a profile, the inflated size, the data sheet's names, the stored size).
+const MAX_UPLOAD_BYTES = 32 * 1024 * 1024
+function upload() {
+    const file = ec.context.get("file")
+    if (!file || typeof file.getSize !== "function") return {errors: ec.l10n.localize("Choose a workbook file")}
+    if (Number(file.getSize()) > MAX_UPLOAD_BYTES) return {errors: ec.l10n.localize("A workbook to open has at most 32 MB")}
+    const entityName = text(ec.context.get("entityName"))
+    return ask(CALC + ".open#CalcDocument", {
+        profileId: profileId(),
+        workbookBytes: file.getInputStream().readAllBytes(),
+        workbookName: String(file.getName() || ""),
+        source: entityName ? {type: "entity", entityName, conditions: parse("conditionsJson", {})} : null,
+        title: text(ec.context.get("title")) || null
+    })
+}
 const cells = () =>
     ask(CALC + ".get#CalcCells", {
         profileId: profileId(),
@@ -239,4 +256,4 @@ function shareGroups() {
     }
 }
 
-;({access, choose, entities, documents, dashboards, addPanel, open, cells, edit, content, refresh, revert, state, save, exported, close, remove, shareGroups, profileId})
+;({access, choose, entities, documents, dashboards, addPanel, open, upload, cells, edit, content, refresh, revert, state, save, exported, close, remove, shareGroups, profileId})

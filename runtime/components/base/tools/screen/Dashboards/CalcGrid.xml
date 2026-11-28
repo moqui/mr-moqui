@@ -4,7 +4,8 @@
     relational database for people who are not administrators, beside the report tools here that read the search indexes.
     A document is a workbook on the server's spreadsheet engine: data sheets filled from entities and views, and the sheets
     of formulas and the charts its author put beside them. The screen lists the documents the viewer reads, opens one (its
-    data read as the viewer), refreshes and exports it, and for an author makes one over an entity, saves it, shares it
+    data read as the viewer), refreshes and exports it, and for an author makes one over an entity (from a workbook of
+    theirs, calcUpload, or none), saves it, shares it
     with a group of their own and deletes it. CalcGrid.qvue draws it (the sheet is moqui.calc.sheet, js/WebrootCalc.js);
     what the transitions answer is template/CalcGrid.js, over org.moqui.calc.CalcServices as the viewer.
 
@@ -59,6 +60,13 @@
     <!-- open a saved document (definitionId) or a new one over an entity (entityName), into a room of the viewer's -->
     <transition name="calcOpen" method="post" begin-transaction="false">
         <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').open())</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- a new document from an uploaded workbook (file, multipart, at most 32 MB) over an entity (entityName): the workbook its
+        formulas and sheets, the entity its data sheet read as the viewer; under a profile an author's only, and the
+        workbook's sheets, tables and names may not be the data sheet's (open#CalcDocument workbookBytes) -->
+    <transition name="calcUpload" method="post" begin-transaction="false">
+        <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/CalcGrid.js').upload())</script></actions>
         <default-response type="none"/>
     </transition>
     <!-- a rectangle of a sheet's cells: the engine's block, sent as the JSON text the service gives -->
