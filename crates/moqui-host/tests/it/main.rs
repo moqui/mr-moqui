@@ -43,6 +43,7 @@ mod assist;
 mod authz_revocation;
 mod backup;
 mod cluster_notify;
+mod cluster_port;
 mod collab;
 mod component_deploy;
 mod component_load;

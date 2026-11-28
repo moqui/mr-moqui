@@ -310,12 +310,13 @@ impl Node {
     }
 }
 
-/// The listeners of a node that only this computer reaches: HTTP on 127.0.0.1 at `port`, no public HTTPS, the cluster
-/// listener on loopback at a port of the kernel's choosing, and no OpenSearch (search runs on Postgres). The edge link
-/// dials out, so nothing listens for it. The node in process sets them as process properties; the sidecar gets them
-/// as `-D name=value`. The HTTP listener answers only for its own loopback names, so a page of another site that
-/// rebinds its name to 127.0.0.1 is refused (the webroot webapp's `allowed-hosts`, SEC-CLI-01). The webapp's are
-/// conf attributes by their environment names (plans/archive/Conf-Paths.md §1).
+/// The listeners of a node that only this computer reaches: HTTP on 127.0.0.1 at `port`, no public HTTPS, no cluster
+/// port (`cluster-member@listen` off, plans/Runtime-Config.md §3.5; turned on, it would be on loopback at a port of
+/// the kernel's choosing), and no OpenSearch (search runs on Postgres). The edge link dials out, so nothing listens for
+/// it. The node in process sets them as process properties; the sidecar gets them as `-D name=value`. The HTTP
+/// listener answers only for its own loopback names, so a page of another site that rebinds its name to 127.0.0.1 is
+/// refused (the webroot webapp's `allowed-hosts`, SEC-CLI-01). The webapp's are conf attributes by their environment
+/// names (plans/archive/Conf-Paths.md §1).
 pub(crate) fn listen_properties(port: u16) -> Vec<(&'static str, String)> {
     vec![
         (
@@ -344,6 +345,7 @@ pub(crate) fn listen_properties(port: u16) -> Vec<(&'static str, String)> {
             "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled",
             "false".to_string(),
         ),
+        ("moqui_conf__cluster_member__listen", "off".to_string()),
         ("moqui_conf__cluster_member__bind_address", "127.0.0.1".to_string()),
         ("moqui_conf__cluster_member__https_port", "0".to_string()),
         ("moqui_conf__search_facade__cluster__run", "false".to_string()),

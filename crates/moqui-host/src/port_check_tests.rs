@@ -250,3 +250,41 @@ fn http_listens_on_its_own_port_when_its_switch_is_on() {
         assert!(err.to_string().contains("http-listen-port"), "{err}");
     }
 }
+
+/// The cluster port is optional and tried anyway when it opens, as HTTP is (plans/Runtime-Config.md §3.5, §6): checked
+/// only under `on`, which opens it at every start, not under `auto` (which opens it once another member is live, so a
+/// lone server is not warned of a busy port it does not open) nor `off`, nor on a node reached in process only; a port
+/// or address that is not one is left to its row.
+#[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
+#[test]
+fn the_cluster_port_is_an_optional_target_only_when_it_is_on() {
+    let runtime = std::env::temp_dir().join(format!("moqui-port-check-{}", std::process::id()));
+    let cluster = |attributes: &str, bind: &ListenBind| -> Vec<Target> {
+        let text = format!("<moqui-conf><cluster-member {attributes}/></moqui-conf>");
+        let conf = MNode::parse_text("conf", &text).unwrap();
+        targets(bind, &runtime, &conf)
+            .unwrap()
+            .into_iter()
+            .filter(|target| target.listener == "Cluster")
+            .collect()
+    };
+    let property = ListenBind::Property;
+    let on = cluster(r#"listen="on" https-port="9444" bind-address="127.0.0.1""#, &property);
+    let [target] = on.as_slice() else {
+        panic!("one cluster target: {on:?}");
+    };
+    assert!(!target.required);
+    assert_eq!((target.host.as_str(), target.port), ("127.0.0.1", 9444));
+    assert!(TRIED_ANYWAY.contains(&target.listener));
+    let default = cluster(r#"listen="on" https-port="""#, &property);
+    let ports: Vec<(&str, u16)> = default
+        .iter()
+        .map(|target| (target.host.as_str(), target.port))
+        .collect();
+    assert_eq!(ports, [("0.0.0.0", 8444)]);
+    assert!(cluster(r#"listen="auto" https-port="9444""#, &property).is_empty());
+    assert!(cluster(r#"listen="off" https-port="9444""#, &property).is_empty());
+    assert!(cluster(r#"listen="on""#, &ListenBind::None).is_empty());
+    assert!(cluster(r#"listen="on" https-port="nope""#, &property).is_empty());
+    assert!(cluster(r#"listen="on" bind-address="here""#, &property).is_empty());
+}

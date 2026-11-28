@@ -150,11 +150,9 @@ fn notws_push_and_one_cluster_invalidation() {
     )
     .unwrap();
     let http = server.address();
-    assert_ne!(
-        server.cluster_address().port(),
-        0,
-        "ephemeral cluster port was not recorded"
-    );
+    // the cluster port is on in the tests' servers (tests/common TEST_CLUSTER_LISTEN), not only once a peer is live
+    let cluster_port = server.cluster_address().expect("the cluster port is open").port();
+    assert_ne!(cluster_port, 0, "ephemeral cluster port was not recorded");
 
     // Two logins, two sessions. A second socket on the first session (another tab) gets the notifications too.
     let cookie_all = login(http);
@@ -201,8 +199,7 @@ fn notws_push_and_one_cluster_invalidation() {
     let closed = Instant::now();
 
     let (session_fp, cert_fp) = member_fingerprints(&factory);
-    let port = server.cluster_address().port();
-    insert_peer(&factory, &session_fp, &cert_fp, port);
+    insert_peer(&factory, &session_fp, &cert_fp, cluster_port);
     // A member that joins is seen on the next heartbeat, which reads the member list again.
     moqui_core::cluster::heartbeat(&factory);
     let before = server.cluster_posts().len();

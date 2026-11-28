@@ -50,7 +50,7 @@ use moqui_lib::sync::lock;
 use crate::port_check::Target;
 use crate::ListenBind;
 
-pub(crate) use cluster::NAME as CLUSTER;
+pub(crate) use cluster::follow_membership as follow_cluster_membership;
 use entry::{Entry, Slot, Stopping};
 pub(crate) use web::{HTTP, HTTPS};
 
@@ -154,7 +154,8 @@ pub(crate) trait Listener: Send + 'static {
     fn live(&self) -> bool {
         false
     }
-    /// Whether its failed start at boot stops the boot (the cluster port until RC6).
+    /// Whether its failed start at boot stops the boot: HTTP on an address its caller named; none of the others since
+    /// the cluster port became optional (plans/Runtime-Config.md §6, RC6).
     fn fatal_at_boot(&self) -> bool {
         false
     }
