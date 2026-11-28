@@ -130,8 +130,10 @@ workbook on the server's spreadsheet engine (IronCalc; plan [IronCalc-DB](../../
   workbook one at a time; an xlsx or xlsb sheet is also read from the file only then, while an xls or ods file is
   parsed whole when it opens.
 - **The view** (`js/WebrootCalc.js`) holds no data: the server answers the cells in view and a margin
-  (`get#CalcCells`, at most 20,000 cells a request), so a jump to a far row loads nothing between. Sheet tabs are
-  below the sheet, a data sheet marked; the document's charts are below those.
+  (`get#CalcCells`, at most 20,000 cells a request, with the merged cells that meet them), so a jump to a far row loads
+  nothing between. Sheet tabs are below the sheet, a data sheet marked; the document's charts are below those. A cell
+  is drawn with its style, its borders and its conditional formats (a fill, a font, a data bar, an icon or a rating),
+  and its text as text, never as HTML; a row with a height of its own is drawn at it, and a merged cell as one box.
 - **A room** is the open workbook in the server's memory. A saved document has a room for each scope of its readers:
   the people who read the same rows (the same access, and the same entity filters with the same values: `get#CalcScope`,
   `crates/moqui-calc/src/scope.rs`) share one, and the others get their own, filled as themselves. A workbook not saved
@@ -142,12 +144,24 @@ workbook on the server's spreadsheet engine (IronCalc; plan [IronCalc-DB](../../
 - **Editing.** Sheets are added beside the data sheet (the + by the tabs; a right click renames or deletes one), and
   their cells are edited: a double click opens a cell, the formula bar shows what was typed into the cell selected and
   takes its new content on Enter, Delete clears the selection, and rows of cells are pasted from the clipboard. The
-  bar completes function names and the data sheets' table names (`Enumeration[`). The toolbar has undo and redo
-  (Ctrl+Z, Ctrl+Y), bold, italic, underline, text and fill colour, alignment, number formats, rows and columns
-  (insert, delete, freeze, fill down), and Chart, which adds a chart of the cells selected (labels and one or more
-  series, as ranges) below the sheet. Each edit goes to the server (`edit#CalcDocument`, a list of edits applied in
+  bar completes function names and the data sheets' table names (`Enumeration[`), and while a formula is typed a click
+  or a drag on the grid (after its `=`, an operator, a parenthesis, a comma or a colon) puts the reference into it, on
+  any sheet: a data sheet's as its table's columns (`Enumeration[enumId]`, `Enumeration[[enumId]:[description]]`), never
+  as its cells, since the log replays the formula in rooms whose data has other row counts. The fill handle at the
+  selection's corner, dragged down, up or across, fills as the engine's autofill does (series, copies, formulas). A
+  column's or a row's edge is dragged to its width or height. The toolbar has undo and redo (Ctrl+Z, Ctrl+Y), bold,
+  italic, underline, text and fill colour, borders (all, outside, inside, one side or none, in a line and a colour),
+  alignment, number formats, rows and columns (insert, delete, freeze, fill down, merge and unmerge), conditional
+  formats, and Chart, which adds a chart of the cells selected (labels and one or more series, as ranges) below the
+  sheet. The conditional formats dialog lists the sheet's rules, the one that wins first, each moved, changed or
+  deleted, and adds one over the selection: a cell's value against a number, text that contains, the top or bottom n
+  (or percent), a two-colour scale or a data bar, with a fill, a text colour and bold; a workbook's own rules of other
+  kinds are drawn, moved and deleted. Each edit goes to the server (`edit#CalcDocument`, a list of edits applied in
   order and calculated once), which answers the cells again. A data sheet's cells, rows, columns and name are not
-  edited; its column widths and frozen panes are.
+  edited, nor its borders and merges; its column widths, row heights and frozen panes are. It takes no conditional
+  formats either: a rule's range is cells, which other scopes' rooms and a refresh with another row count would not
+  follow, so a rule goes on a sheet beside it, over formulas that read it. A sheet has at most 500 rules, each over at
+  most 100,000 cells.
 - **Editing together.** Everyone who has a saved document open edits the same workbook. An edit is the next row of
   the document's edit log (`moqui.calc.CalcDocumentEdit`), written under a lock of its head row, so the edits of every
   room and server are one order; every room of the document applies them in it, each over its own data (a formula
@@ -157,7 +171,9 @@ workbook on the server's spreadsheet engine (IronCalc; plan [IronCalc-DB](../../
   [Qvt-Client](../ui/Qvt-Client.md#calcgrid-rooms)). An author edits a document they read; its owner saves it.
 - **Undo is each person's own** (Ctrl+Z, Ctrl+Y): it takes back the person's own last edit since the document was
   saved, whoever edited after it, with what the room took of the cells before the edit (their contents as typed and
-  their styles, the widths, the sheet).
+  their own styles, the widths and heights, the sheet; for a border, the ring of cells around it too, whose facing
+  sides it changes; the merged cells a merge, an unmerge, a fill or a deletion of rows, columns or a sheet met; the
+  sheet's conditional formats as they were).
 - **Unsaved edits are kept** in the log until the document is saved: they outlast a restart and everyone leaving, and
   the status line says how many there are. Save document makes a version of everything up to then; Discard takes
   every unsaved edit back, everyone's. A version saved outside CalcGrid (a definition restored, a git pull) begins the
@@ -267,7 +283,10 @@ offered, one no filter applies to, no organization, an author and a viewer, a sh
 export may go to, two organizations editing one document), `tools/test/CalcGrid.spec.js` (the Dashboards screen, the
 edit log, undo and discard, a scheduled export), `mr-boss/test/Insights/InsightsCalcGrid.spec.js` (the BOSS grant and
 mount), `crates/moqui-core/src/user/filter_tests.rs` (a profile frame gives its filters to the finds below),
-`cargo test -p moqui-calc` (rooms of two scopes following one log, every edit taken back) and the terminal's in
+`cargo test -p moqui-calc` (rooms of two scopes following one log, every edit taken back, borders, merges and
+conditional formats among them), `webroot/test/client/WebrootCalc.spec.js` (the sheet's helpers and the Tabulator
+internals it takes over), the CalcGrid acceptance walk (`tools/test/acceptance/client/CalcGrid.spec.js`: the fill
+handle, pointing, a merge, a border and a rule in a browser) and the terminal's in
 `crates/moqui-tui` (`components/calc_tests.rs`) and `crates/moqui-host/tests/it/monitor_tui.rs`.
 
 **Saved views** (`moqui.database.GridView`).
