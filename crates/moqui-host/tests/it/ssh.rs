@@ -16,7 +16,9 @@
 //! `dbresource://` root, the SFTP client logs in with a password and with a `UserSshKey`, the `moqui-sftp` services send
 //! a SystemMessage and poll it back, the host key is trusted on first use and a changed key is refused, and the admin
 //! shell runs for a user with `SSH_SHELL`, refuses one without, and checks artifact authorization for the user. Every
-//! user gets the terminal client (`apps`), and a client with no key gets its login dialog.
+//! user gets the terminal client (`apps`), and a client with no key gets its login dialog. While the server runs SSH is
+//! switched off and on and moved to another port, each access mode offers and takes its methods, and a dialog ends when
+//! the mode leaves `open` (plans/Runtime-Config.md §3.4).
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum", feature = "ssh"))]
 
@@ -1564,4 +1566,403 @@ fn attach_at_the_ssh_prompt_takes_a_kept_session() {
     let closed = crate::termws::read_messages_until(&mut browser, "never").unwrap_err();
     assert!(closed.contains("opened elsewhere"), "{closed}");
     page.call("close", Some(serde_json::json!({"sessionId": id})));
+}
+
+/// The SSH server switched while it runs (plans/Runtime-Config.md §3.4, §8.4, RC3): each change set as a spec's
+/// `setConf` sets it (`set_conf_value`, whose `listeners` hook asks the registry for a pass), or with the hook held and
+/// one pass that ends the connections now, as the listener services will.
+mod switched {
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    use moqui_core::context::ExecutionContextFactory;
+    use moqui_core::listeners::{Cause, Outcome, ReconcileRequest};
+    use russh::client::{AuthResult, Handle};
+    use russh::keys::PrivateKey;
+    use russh::MethodKind;
+
+    pub struct Accept;
+
+    impl russh::client::Handler for Accept {
+        type Error = russh::Error;
+        async fn check_server_key(&mut self, _key: &russh::keys::PublicKeyOrCertificate) -> Result<bool, Self::Error> {
+            Ok(true)
+        }
+    }
+
+    /// A connection to `address`, not logged in.
+    async fn connect(address: SocketAddr) -> Handle<Accept> {
+        let config = Arc::new(russh::client::Config::default());
+        russh::client::connect(config, address, Accept).await.unwrap()
+    }
+
+    /// A session logged in by password, kept open; none when the login is refused.
+    pub fn by_password(address: SocketAddr, username: &str, password: &str) -> Option<Handle<Accept>> {
+        let (username, password) = (username.to_string(), password.to_string());
+        moqui_host::edge::block_on(async move {
+            let mut handle = connect(address).await;
+            let auth = handle.authenticate_password(username, password).await.ok()?;
+            auth.success().then_some(handle)
+        })
+        .unwrap()
+    }
+
+    /// Whether a login by `key` as `username` is taken.
+    pub fn by_key(address: SocketAddr, username: &str, key: &PrivateKey) -> bool {
+        let (username, key) = (username.to_string(), Arc::new(key.clone()));
+        moqui_host::edge::block_on(async move {
+            let mut handle = connect(address).await;
+            let key = russh::keys::PrivateKeyWithHashAlg::new(key, None);
+            handle
+                .authenticate_publickey(username, key)
+                .await
+                .is_ok_and(|auth| auth.success())
+        })
+        .unwrap()
+    }
+
+    /// A session logged in by `key` as `username`, kept open; none when the login is refused.
+    pub fn by_key_kept(address: SocketAddr, username: &str, key: &PrivateKey) -> Option<Handle<Accept>> {
+        let (username, key) = (username.to_string(), Arc::new(key.clone()));
+        moqui_host::edge::block_on(async move {
+            let mut handle = connect(address).await;
+            let key = russh::keys::PrivateKeyWithHashAlg::new(key, None);
+            let auth = handle.authenticate_publickey(username, key).await.ok()?;
+            auth.success().then_some(handle)
+        })
+        .unwrap()
+    }
+
+    /// Whether `username`, logged in by `password`, is served the `sftp` subsystem: the server's answer to the request,
+    /// which a client library's own wait would only time out on when it is refused.
+    pub fn sftp_served(address: SocketAddr, username: &str, password: &str) -> bool {
+        let handle = by_password(address, username, password).expect("the login");
+        moqui_host::edge::block_on(async move {
+            let mut channel = handle.channel_open_session().await.unwrap();
+            channel.request_subsystem(true, "sftp").await.unwrap();
+            loop {
+                match tokio::time::timeout(Duration::from_secs(5), channel.wait()).await {
+                    Ok(Some(russh::ChannelMsg::Success)) => return true,
+                    Ok(Some(russh::ChannelMsg::Failure) | None) | Err(_) => return false,
+                    Ok(Some(_)) => {}
+                }
+            }
+        })
+        .unwrap()
+    }
+
+    /// The methods a client asking to log in with nothing ("none") is told to go on with.
+    pub fn offered(address: SocketAddr) -> Vec<MethodKind> {
+        moqui_host::edge::block_on(async move {
+            let mut handle = connect(address).await;
+            match handle.authenticate_none("john.doe").await.unwrap() {
+                AuthResult::Failure { remaining_methods, .. } => remaining_methods.to_vec(),
+                AuthResult::Success => panic!("a login with nothing was taken"),
+            }
+        })
+        .unwrap()
+    }
+
+    /// Whether `handle`'s session is ended by the server within `limit`.
+    pub fn closed_within<H: russh::client::Handler>(handle: &Handle<H>, limit: Duration) -> bool {
+        let deadline = Instant::now() + limit;
+        while Instant::now() < deadline {
+            if handle.is_closed() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        handle.is_closed()
+    }
+
+    /// Whether `handle`'s session still opens a channel.
+    pub fn still_open(handle: Handle<Accept>) -> bool {
+        moqui_host::edge::block_on(async move { handle.channel_open_session().await.is_ok() }).unwrap()
+    }
+
+    pub fn wait_until(limit: Duration, what: &str, check: impl Fn() -> bool) {
+        let started = Instant::now();
+        while !check() {
+            assert!(started.elapsed() < limit, "{what} within {limit:?}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// Set `selector` for this process's server: its `listeners` hook asks for a pass.
+    pub fn set(factory: &ExecutionContextFactory, selector: &str, value: &str) {
+        factory.set_conf_value(selector, Some(value), false).unwrap();
+    }
+
+    /// Set `selector` with the `listeners` hook held, then one pass that ends SSH's connections now; SSH's outcome.
+    pub fn set_ending_now(factory: &ExecutionContextFactory, selector: &str, value: &str) -> Outcome {
+        moqui_core::context::conf_reload::set_many_holding(
+            factory,
+            &[(selector, Some(value))],
+            false,
+            moqui_core::context::conf_schema::Group::Listeners,
+        )
+        .unwrap();
+        let control = moqui_core::listeners::control(factory).expect("the server's listener control");
+        let request = ReconcileRequest {
+            cause: Cause::SetValue(selector.to_string()),
+            end_now: vec!["SSH".to_string()],
+        };
+        let outcomes = control.reconcile(request, Duration::from_secs(10)).unwrap();
+        outcomes
+            .into_iter()
+            .find(|outcome| outcome.name == "SSH")
+            .expect("SSH's outcome")
+    }
+
+    /// SSH's row as the registry last published it.
+    pub fn info(factory: &ExecutionContextFactory) -> moqui_core::listeners::ListenerInfo {
+        moqui_core::listeners::control(factory)
+            .expect("the server's listener control")
+            .listeners()
+            .into_iter()
+            .find(|info| info.name == "SSH")
+            .expect("SSH's row")
+    }
+}
+
+/// Whether the admin shell at `address` answers john.doe, logged in by password.
+fn shell_answers(address: std::net::SocketAddr) -> bool {
+    matches!(exec(address, "john.doe", "moqui", "js 6 * 7"), Ok((out, 0)) if out.trim() == "42")
+}
+
+/// The properties of a server with SSH on, on a port of the kernel's choosing, and its host key.
+fn ssh_on(seed: &str) -> [(&'static str, &str); 3] {
+    [
+        ("moqui_conf__ssh_server__port", "0"),
+        ("moqui_conf__ssh_server__enabled", "true"),
+        ("moqui_conf__ssh_server__host_key", seed),
+    ]
+}
+
+/// SSH turned off on a running server ends its sessions (at once here, as "end connections now" asks) and lets its port
+/// go; turned on again it listens and logs in; a new port binds there and lets the old one go. Each change is applied
+/// with the `listeners` hook held and one pass of its own, as the listener services will, so the test waits on no
+/// pass it did not ask for; the hook's own passes are the other tests'.
+#[test]
+fn ssh_is_switched_off_and_on_and_moves_its_port_while_the_server_runs() {
+    use moqui_core::listeners::Action;
+    use switched::{by_password, closed_within, info, set_ending_now};
+    if !crate::common::own_process() {
+        return;
+    }
+    let seed = base64::engine::general_purpose::STANDARD.encode(HOST_SEED);
+    let gate = crate::common::start_with_properties("ssh_switched", Some(&data(&key(USER_SEED))), &ssh_on(&seed));
+    let factory = gate.server.factory();
+    let first = gate.server.ssh_address().expect("the SSH server listens");
+    let session = by_password(first, "john.doe", "moqui").expect("john.doe logs in");
+    // the row counts the bind's sessions as of the last pass
+    let control = moqui_core::listeners::control(factory).unwrap();
+    let request = moqui_core::listeners::ReconcileRequest::new(moqui_core::listeners::Cause::ConfReload);
+    control.reconcile(request, Duration::from_secs(10)).unwrap();
+    assert_eq!(info(factory).connections, Some(1));
+
+    let outcome = set_ending_now(factory, "ssh-server@enabled", "false");
+    assert_eq!(outcome.action, Action::Stopped, "{}", outcome.detail);
+    assert!(
+        closed_within(&session, Duration::from_secs(2)),
+        "the session ended at once"
+    );
+    assert!(std::net::TcpStream::connect(first).is_err(), "the port is let go");
+    assert_eq!(gate.server.ssh_address(), None);
+    let off = info(factory);
+    assert_eq!(off.state.word(), Some("off"), "{:?}", off.state);
+    assert!(
+        off.state.detail().contains("ssh-server@enabled is false"),
+        "{:?}",
+        off.state
+    );
+
+    let outcome = set_ending_now(factory, "ssh-server@enabled", "true");
+    assert_eq!(outcome.action, Action::Started, "{}", outcome.detail);
+    let second = gate.server.ssh_address().expect("the SSH server listens again");
+    assert!(shell_answers(second));
+    let on = info(factory);
+    assert!(
+        on.state.detail().starts_with(&format!("tcp {second}, access open")),
+        "{:?}",
+        on.state
+    );
+
+    let port = crate::common::free_port();
+    let outcome = set_ending_now(factory, "ssh-server@port", &port.to_string());
+    assert_eq!(outcome.action, Action::Rebound, "{}", outcome.detail);
+    let moved = gate
+        .server
+        .ssh_address()
+        .expect("the SSH server listens on its new port");
+    assert_eq!(moved.port(), port);
+    assert!(shell_answers(moved));
+    assert!(std::net::TcpStream::connect(second).is_err(), "the old port is let go");
+}
+
+/// Each access mode offers its methods to a client that asks with nothing, and a password is refused under `key`,
+/// whatever the client tries, while a registered key still logs in; the change applies in place, on the same port.
+#[test]
+fn each_access_mode_offers_its_methods_and_key_refuses_a_password() {
+    use moqui_core::listeners::Action;
+    use russh::MethodKind::{KeyboardInteractive, Password, PublicKey};
+    use switched::{by_key, by_key_kept, by_password, info, offered, set, still_open, wait_until};
+    if !crate::common::own_process() {
+        return;
+    }
+    let user_key = key(USER_SEED);
+    let seed = base64::engine::general_purpose::STANDARD.encode(HOST_SEED);
+    let gate = crate::common::start_with_properties("ssh_access", Some(&data(&user_key)), &ssh_on(&seed));
+    let factory = gate.server.factory();
+    let address = gate.server.ssh_address().expect("the SSH server listens");
+    let open = if cfg!(feature = "tui") {
+        vec![PublicKey, KeyboardInteractive, Password]
+    } else {
+        vec![PublicKey, Password]
+    };
+    assert_eq!(offered(address), open);
+
+    set(factory, "ssh-server@access", "login");
+    wait_until(Duration::from_secs(10), "login's methods", || {
+        offered(address) == [PublicKey, Password]
+    });
+    let by_password_before = by_password(address, "john.doe", "moqui").expect("a password under login");
+    let by_key_before = by_key_kept(address, "john.doe", &user_key).expect("a key under login");
+
+    set(factory, "ssh-server@access", "key");
+    wait_until(Duration::from_secs(10), "key's methods", || {
+        offered(address) == [PublicKey]
+    });
+    assert!(
+        by_password(address, "john.doe", "moqui").is_none(),
+        "no password under key"
+    );
+    // signed in by a password before: it stays, and opens no new channel; one signed in by a key goes on
+    assert!(!by_password_before.is_closed(), "the session stays");
+    assert!(
+        !still_open(by_password_before),
+        "no new channel for a password session under key"
+    );
+    assert!(still_open(by_key_before), "a key session opens its channels");
+    assert!(exec(address, "john.doe", "moqui", "status").is_err());
+    assert!(by_key(address, "john.doe", &user_key), "a registered key under key");
+    assert_eq!(
+        gate.server.ssh_address(),
+        Some(address),
+        "applied in place, on the same port"
+    );
+    let row = info(factory);
+    assert!(row.state.detail().contains("access key"), "{:?}", row.state);
+    let control = moqui_core::listeners::control(factory).unwrap();
+    let outcomes = control
+        .reconcile(
+            moqui_core::listeners::ReconcileRequest::new(moqui_core::listeners::Cause::ConfReload),
+            Duration::from_secs(10),
+        )
+        .unwrap();
+    let ssh = outcomes.iter().find(|outcome| outcome.name == "SSH").unwrap();
+    assert_eq!(ssh.action, Action::Same, "{}", ssh.detail);
+}
+
+/// A connection still at the sign-in dialog ends when the access mode leaves `open`, and a new one is not let in;
+/// a session signed in by password stays.
+#[cfg(feature = "tui")]
+#[test]
+fn a_dialog_ends_when_access_leaves_open_and_a_signed_in_session_stays() {
+    use switched::{by_password, closed_within, set, still_open};
+    if !crate::common::own_process() {
+        return;
+    }
+    let seed = base64::engine::general_purpose::STANDARD.encode(HOST_SEED);
+    let gate = crate::common::start_with_properties("ssh_dialog_off", Some(APPS_DATA), &ssh_on(&seed));
+    let factory = gate.server.factory();
+    let address = gate.server.ssh_address().expect("the SSH server listens");
+    let dialog = moqui_host::edge::block_on(async move { apps::connect_for_dialog(address, "john.doe").await })
+        .unwrap()
+        .expect("keyboard-interactive lets the client in");
+    let signed_in = by_password(address, "john.doe", "moqui").expect("john.doe logs in");
+
+    set(factory, "ssh-server@access", "login");
+    assert!(closed_within(&dialog, Duration::from_secs(5)), "the dialog ended");
+    assert!(!signed_in.is_closed(), "the signed-in session stays");
+    assert!(still_open(signed_in), "and opens a channel");
+    let again = moqui_host::edge::block_on(async move { apps::connect_for_dialog(address, "john.doe").await }).unwrap();
+    assert!(again.is_none(), "no dialog under login");
+}
+
+/// Each sub-service flag turned off refuses its own channel for everyone, while the others serve; and under
+/// `access="key"` an app password opens no SFTP, while the cluster's own key and a user's registered key log in
+/// (plans/Runtime-Config.md §3.4).
+#[test]
+fn each_flag_refuses_its_channel_and_key_takes_keys_alone() {
+    use switched::{by_key, offered, set, sftp_served, wait_until};
+    if !crate::common::own_process() {
+        return;
+    }
+    let user_key = key(USER_SEED);
+    let seed = base64::engine::general_purpose::STANDARD.encode(HOST_SEED);
+    let mut properties = ssh_on(&seed).to_vec();
+    // the cluster's key logs in from a member on the SSH transport: this server's own row
+    properties.push(("moqui_conf__cluster_member__transport", "ssh"));
+    let gate = crate::common::start_with_properties("ssh_flags", Some(&data(&user_key)), &properties);
+    let factory = Arc::clone(gate.server.factory());
+    let address = gate.server.ssh_address().expect("the SSH server listens");
+    let host = format!("127.0.0.1:{}", address.port());
+    // the SFTP client is the factory's, so a context stays entered
+    let context = factory.new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user("john.doe").unwrap();
+    let john_app = {
+        let _authz = context.disable_authz();
+        let (out, errors) = sync(
+            "org.moqui.impl.UserServices.create#UserAppPassword",
+            &[("name", Value::string("Flags")), ("scope", Value::string("ssh"))],
+        );
+        assert!(errors.is_empty(), "{errors}");
+        to_plain_string(out.get("password").unwrap())
+    };
+    let sftp = |password: &str| {
+        SftpClient::new(&host, "john.doe", None)
+            .unwrap()
+            .password(password)
+            .connect()
+            .map(|client| client.close())
+    };
+    assert!(sftp(&john_app).is_ok(), "an app password opens the drives under open");
+
+    for flag in ["tui-enabled", "sftp-enabled", "git-enabled", "shell-enabled"] {
+        set(&factory, &format!("ssh-server@{flag}"), "false");
+    }
+    wait_until(Duration::from_secs(10), "the flags applied", || {
+        exec(address, "john.doe", "moqui", "status") == Err("channel request refused".to_string())
+    });
+    let (out, status) = exec(address, "john.doe", "moqui", "apps").unwrap();
+    assert!(
+        status != 0 && out.contains("terminal client is turned off"),
+        "{status}: {out}"
+    );
+    assert!(!sftp_served(address, "john.doe", "moqui"), "no SFTP");
+    #[cfg(feature = "git")]
+    assert_eq!(
+        exec(address, "john.doe", "moqui", "git-upload-pack 'nothing.git'"),
+        Err("channel request refused".to_string())
+    );
+    set(&factory, "ssh-server@shell-enabled", "true");
+    wait_until(Duration::from_secs(10), "the shell on again", || shell_answers(address));
+    for flag in ["tui-enabled", "sftp-enabled", "git-enabled"] {
+        set(&factory, &format!("ssh-server@{flag}"), "true");
+    }
+
+    set(&factory, "ssh-server@access", "key");
+    wait_until(Duration::from_secs(10), "key's methods", || {
+        offered(address) == [russh::MethodKind::PublicKey]
+    });
+    assert!(sftp(&john_app).is_err(), "no app password under key");
+    assert!(by_key(address, "john.doe", &user_key), "a registered key under key");
+    let cluster_key = moqui_host::ssh::cluster::cluster_login_key().unwrap();
+    assert!(
+        by_key(address, "moqui-cluster", &cluster_key),
+        "the cluster's key under key"
+    );
 }

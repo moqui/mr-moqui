@@ -655,6 +655,55 @@ fn a_failed_overlapping_bind_binds_the_old_again() {
     assert!(matches!(row(&registry, "A").state, State::Failed(_)));
 }
 
+/// A change of the bind and of the in-place settings together whose bind fails still applies the in-place settings to
+/// what keeps running, on either path: applied to the old run when the new address bound beside it, and the old bind
+/// started again with them when the two overlap. So a stricter in-place setting (SSH's access mode) does not wait for
+/// a port that stays busy: the retried pass finds them applied.
+#[test]
+fn a_failed_new_bind_still_applies_the_in_place_settings() {
+    for overlap in [false, true] {
+        let log = log();
+        let fake = Fake {
+            overlap,
+            ..Fake::new("A", &log)
+        };
+        fake.on(1, 0);
+        let registry = registry(&[&fake]);
+        boot(&registry);
+        taken(&log);
+        fake.on(2, 3);
+        fake.busy(&[2]);
+        let outcomes = reload(&registry);
+        assert_eq!(actions(&outcomes), [("A", Action::Failed)], "overlap {overlap}");
+        assert!(outcomes[0].detail.starts_with("kept on 127.0.0.1:1"), "{outcomes:?}");
+        let expected: &[&str] = if overlap {
+            &[
+                "stop A 1 Grace(5s)",
+                "released A 1",
+                "start A 2",
+                "start A 1",
+                "finish A 1 7s",
+                "drop A 1",
+            ]
+        } else {
+            &["start A 2", "apply A 3"]
+        };
+        assert_eq!(taken(&log), expected, "overlap {overlap}");
+        assert_eq!(registry.address("A"), address(1));
+        // the retried pass: the in-place settings are those that run, so nothing is applied again
+        let outcomes = reload(&registry);
+        assert_eq!(actions(&outcomes), [("A", Action::Failed)], "overlap {overlap}");
+        assert!(
+            !taken(&log).iter().any(|event| event.starts_with("apply")),
+            "overlap {overlap}"
+        );
+        // the bind back at what runs, the settings in place as the change set them: nothing to apply
+        fake.on(1, 3);
+        assert_eq!(actions(&reload(&registry)), [("A", Action::Same)], "overlap {overlap}");
+        assert!(taken(&log).is_empty(), "overlap {overlap}");
+    }
+}
+
 /// "End connections now" asked while a listener drains its grace after a pass turned it off ends them at once, not
 /// after the pass, whose lock it does not wait for (plans/Runtime-Config.md §3.1).
 #[test]
@@ -1519,7 +1568,7 @@ fn a_registry_dropped_unclosed_drops_what_runs_last_added_first() {
 
 /// A boot entry changes in a pass exactly when the conf reload applies its settings there (plans/Runtime-Config.md §8.1,
 /// §8.2): every selector of a live entry is `Apply(Group::Listeners)` in the conf schema, and none of one that waits for a
-/// restart is. Today none is live and none applies; a phase that makes one live changes both together.
+/// restart is. A phase that makes one live changes both together (the web listeners in RC2, SSH in RC3).
 #[test]
 fn live_matches_the_conf_schema() {
     use moqui_core::context::conf_schema::{attribute_class, Class, Group};

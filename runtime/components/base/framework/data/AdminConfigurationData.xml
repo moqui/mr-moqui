@@ -245,18 +245,41 @@ along with this software (see the LICENSE.md file). If not, see
             description="The certificate the listener offers for STARTTLS" valueTypeEnumId="IsvText"
             propertyName="smtp-server@tls-cert-file" restartRequired="Y" sequenceNum="3070"
             operatorNote="Set moqui_conf__smtp_server__tls_cert_file in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
+    <!-- The SSH server's switch, port, address, access and sub-service flags apply while the server runs
+        (plans/Runtime-Config.md 3.4): a conf reload or a set starts, stops or binds it again, or applies them to the next
+        connection, login or channel, so their rows say no restart. -->
     <moqui.server.InstanceSetting settingKey="protocol.ssh.enabled" title="SSH server" settingGroup="Protocols: SSH and Git"
             description="Whether the built-in SSH server (SFTP, the terminal client, git over SSH) runs; off by default" valueTypeEnumId="IsvText"
-            propertyName="ssh-server@enabled" restartRequired="Y" sequenceNum="3075"
-            operatorNote="Set moqui_conf__ssh_server__enabled=true (or false) in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
+            propertyName="ssh-server@enabled" sequenceNum="3075"
+            operatorNote="Set moqui_conf__ssh_server__enabled=true (or false) in the environment or runtime/.env, or the attribute in the runtime conf, and reload the conf; it starts or stops at once, and turned off it ends its sessions after 5 seconds"/>
     <moqui.server.InstanceSetting settingKey="protocol.ssh.port" title="SSH port" settingGroup="Protocols: SSH and Git"
             description="The port of the built-in SSH server while it is on, 2222 by default" valueTypeEnumId="IsvText"
-            propertyName="ssh-server@port" restartRequired="Y" sequenceNum="3080"
-            operatorNote="Set moqui_conf__ssh_server__port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
+            propertyName="ssh-server@port" sequenceNum="3080"
+            operatorNote="Set moqui_conf__ssh_server__port in the environment or runtime/.env, or the attribute in the runtime conf, and reload the conf; it binds the new port at once"/>
     <moqui.server.InstanceSetting settingKey="protocol.ssh.host" title="SSH address" settingGroup="Protocols: SSH and Git"
             description="The address the SSH server binds" valueTypeEnumId="IsvText"
-            propertyName="ssh-server@host" restartRequired="Y" sequenceNum="3090"
-            operatorNote="Set moqui_conf__ssh_server__host in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
+            propertyName="ssh-server@host" sequenceNum="3090"
+            operatorNote="Set moqui_conf__ssh_server__host in the environment or runtime/.env, or the attribute in the runtime conf, and reload the conf; it binds the new address at once"/>
+    <moqui.server.InstanceSetting settingKey="protocol.ssh.access" title="SSH access" settingGroup="Protocols: SSH and Git"
+            description="Who may connect: open, anyone, a client with no key or password getting the terminal's sign-in dialog; login, an account's password or key; key, a registered key alone" valueTypeEnumId="IsvText"
+            propertyName="ssh-server@access" sequenceNum="3092"
+            operatorNote="Set moqui_conf__ssh_server__access (open, login or key) in the environment or runtime/.env, or the attribute in the runtime conf, and reload the conf; it applies to new connections, the ones at the sign-in dialog end when it leaves open, and one signed in by a password opens no new channel under key"/>
+    <moqui.server.InstanceSetting settingKey="protocol.ssh.tuiEnabled" title="Terminal client over SSH" settingGroup="Protocols: SSH and Git"
+            description="Whether the SSH server serves the terminal client (apps, agent-apps and the sign-in dialog) to anyone" valueTypeEnumId="IsvText"
+            propertyName="ssh-server@tui-enabled" sequenceNum="3093"
+            operatorNote="Set moqui_conf__ssh_server__tui_enabled=true (or false) in the environment or runtime/.env, or the attribute in the runtime conf, and reload the conf; each new request reads it, and turned off the sessions at the sign-in dialog end"/>
+    <moqui.server.InstanceSetting settingKey="protocol.ssh.sftpEnabled" title="SFTP" settingGroup="Protocols: SSH and Git"
+            description="Whether the SSH server serves SFTP to anyone (SSH_SFTP and the drives still decide per user)" valueTypeEnumId="IsvText"
+            propertyName="ssh-server@sftp-enabled" sequenceNum="3094"
+            operatorNote="Set moqui_conf__ssh_server__sftp_enabled=true (or false) in the environment or runtime/.env, or the attribute in the runtime conf, and reload the conf; each new request reads it"/>
+    <moqui.server.InstanceSetting settingKey="protocol.ssh.gitEnabled" title="Git over SSH" settingGroup="Protocols: SSH and Git"
+            description="Whether the SSH server serves git to anyone (SSH_GIT still decides per user)" valueTypeEnumId="IsvText"
+            propertyName="ssh-server@git-enabled" sequenceNum="3095"
+            operatorNote="Set moqui_conf__ssh_server__git_enabled=true (or false) in the environment or runtime/.env, or the attribute in the runtime conf, and reload the conf; each new request reads it"/>
+    <moqui.server.InstanceSetting settingKey="protocol.ssh.shellEnabled" title="SSH admin shell" settingGroup="Protocols: SSH and Git"
+            description="Whether the SSH server serves the admin shell to anyone (SSH_SHELL still decides per user)" valueTypeEnumId="IsvText"
+            propertyName="ssh-server@shell-enabled" sequenceNum="3096"
+            operatorNote="Set moqui_conf__ssh_server__shell_enabled=true (or false) in the environment or runtime/.env, or the attribute in the runtime conf, and reload the conf; each new request reads it"/>
     <moqui.server.InstanceSetting settingKey="protocol.ssh.publicHost" title="SSH public host" settingGroup="Protocols: SSH and Git"
             description="The host clone URLs show; the public host name when empty" valueTypeEnumId="IsvText"
             propertyName="ssh-server@public-host" restartRequired="Y" sequenceNum="3100"

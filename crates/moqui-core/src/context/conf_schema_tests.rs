@@ -130,7 +130,8 @@ fn attribute_class_walks_the_catalog_as_the_diff_does() {
         attribute_class(&["webapp-list", "webapp", "no-unit", "deeper"], "https-listen-port"),
         Class::Live
     );
-    assert_eq!(attribute_class(&["ssh-server"], "port"), LISTENER);
+    assert_eq!(attribute_class(&["ssh-server"], "port"), LISTENERS);
+    assert_eq!(attribute_class(&["ssh-server"], "sftp-root"), LISTENER);
     // a top-level element no unit names is a component's settings
     assert_eq!(attribute_class(&["pass"], "backend-url"), COMPONENT);
     assert_eq!(attribute_class(&["pass", "inner"], "backend-url"), COMPONENT);

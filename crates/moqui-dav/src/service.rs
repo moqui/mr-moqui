@@ -113,8 +113,11 @@ fn get_sync_addresses(
     let ssh_port = Some(ssh_setting("public-port"))
         .filter(|port| !port.is_empty())
         .unwrap_or_else(|| ssh_setting("port"));
-    // the SSH server is on by its switch (plans/Runtime-Config.md §3.2)
+    // the SSH server is on by its switch (plans/Runtime-Config.md §3.2), and serves SFTP while its flag is not false
+    // (§3.4: one that is neither true nor false is off, as the server reads it)
+    let sftp_enabled = ssh_setting("sftp-enabled");
     let sftp = (moqui_core::context::conf_env::switch_on(&ssh_setting("enabled"))
+        && (sftp_enabled.is_empty() || moqui_core::context::conf_env::switch_on(&sftp_enabled))
         && !ssh_port.is_empty()
         && ssh_port != "0"
         && factory.conf_flag("dav-server", "sftp-drives", true))

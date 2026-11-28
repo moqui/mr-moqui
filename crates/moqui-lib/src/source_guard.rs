@@ -30,6 +30,7 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv6Addr};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 /// How many failures block a source, and for how long.
@@ -355,15 +356,16 @@ impl RequestGate {
 /// A listener's connection slots with a share per source (plans/archive/High-Level-Review.md HL-032): at most `total` held at
 /// once, and at most `per_source` by one source ([`source_key`]), so one host cannot hold every slot of a pool that
 /// connections wait in before they authenticate. Only sources holding a slot are in the table, so it is bounded by
-/// `total` and nothing is scanned per call. Cheap to clone; the clones share the slots.
+/// `total` and nothing is scanned per call. Cheap to clone; the clones share the slots. The two limits may change while
+/// slots are held ([`SourceSlots::set_limits`], a listener's settings applied while it runs).
 #[derive(Clone)]
 pub struct SourceSlots {
     inner: std::sync::Arc<SlotsInner>,
 }
 
 struct SlotsInner {
-    total: usize,
-    per_source: usize,
+    total: AtomicUsize,
+    per_source: AtomicUsize,
     state: std::sync::Mutex<SlotsState>,
 }
 
@@ -393,11 +395,20 @@ impl SourceSlots {
     pub fn new(total: usize, per_source: usize) -> Self {
         SourceSlots {
             inner: std::sync::Arc::new(SlotsInner {
-                total,
-                per_source,
+                total: AtomicUsize::new(total),
+                per_source: AtomicUsize::new(per_source),
                 state: std::sync::Mutex::default(),
             }),
         }
+    }
+
+    /// Take `total` and `per_source` from now on, as [`SourceSlots::new`] reads them: a slot is refused by the new
+    /// limits, and the slots held past a lowered one stay until they are given back.
+    pub fn set_limits(&self, total: usize, per_source: usize) {
+        // under the lock, so a take sees both of one change or neither
+        let _state = crate::sync::lock(&self.inner.state);
+        self.inner.total.store(total, Ordering::SeqCst);
+        self.inner.per_source.store(per_source, Ordering::SeqCst);
     }
 
     /// A slot for a connection from `source`.
@@ -408,11 +419,12 @@ impl SourceSlots {
     pub fn take(&self, source: IpAddr) -> Result<SourceSlot, SlotRefused> {
         let key = key_of(source);
         let mut state = crate::sync::lock(&self.inner.state);
-        if state.held >= self.inner.total {
+        if state.held >= self.inner.total.load(Ordering::SeqCst) {
             return Err(SlotRefused::Full);
         }
         let from_source = state.by_source.get(&key).copied().unwrap_or(0);
-        if self.inner.per_source > 0 && from_source >= self.inner.per_source {
+        let per_source = self.inner.per_source.load(Ordering::SeqCst);
+        if per_source > 0 && from_source >= per_source {
             return Err(SlotRefused::Source);
         }
         state.held += 1;
@@ -438,11 +450,11 @@ impl SourceSlots {
     }
 
     pub fn total(&self) -> usize {
-        self.inner.total
+        self.inner.total.load(Ordering::SeqCst)
     }
 
     pub fn per_source(&self) -> usize {
-        self.inner.per_source
+        self.inner.per_source.load(Ordering::SeqCst)
     }
 }
 

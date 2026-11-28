@@ -882,6 +882,62 @@ pub fn set_edge_member_key(factory: &ExecutionContextFactory, fingerprint: &str)
     }
 }
 
+/// Write this member's row again with its base URL and SSH host key as they are now: the host calls it after its SSH
+/// server starts or binds again while the server runs (plans/Runtime-Config.md §3.4), since with `transport="ssh"` the
+/// base URL defaults to that server's address ([`SSH_ADDRESS_PROPERTY`]) and peers pin its host key
+/// ([`SSH_FINGERPRINT_PROPERTY`]). Nothing before [`start`] has written the row, which reads them itself; nothing when
+/// neither changed. A base URL that cannot be made, or a row that cannot be written, is logged and the row keeps what
+/// it had.
+pub fn refresh_member(factory: &ExecutionContextFactory) {
+    let state = ClusterState::of(factory);
+    let Some(facade) = factory.entity() else {
+        return;
+    };
+    let base_url = cluster_base_url();
+    let ssh_fp = env::get_prop_or_env(SSH_FINGERPRINT_PROPERTY);
+    let mut member = {
+        let mut kept = lock(&state.member);
+        let Some(member) = kept.as_mut() else {
+            return;
+        };
+        let base_url = match base_url {
+            Ok(base_url) => base_url,
+            Err(err) => {
+                tracing::warn!(
+                    "cluster member {}: its row keeps the base URL {}: {err}",
+                    member.instance_id,
+                    member.base_url
+                );
+                member.base_url.clone()
+            }
+        };
+        if member.base_url == base_url && member.ssh_fp == ssh_fp {
+            return;
+        }
+        member.base_url = base_url;
+        member.ssh_fp = ssh_fp;
+        member.clone()
+    };
+    // the database's clock, as the heartbeat writes it; the database is not read under the lock
+    member.heartbeat = millis_value(db_now(&facade));
+    match write_member(&facade, &member) {
+        Ok(()) => tracing::info!(
+            "cluster member {}: its row now names {} and its SSH host key {}",
+            member.instance_id,
+            member.base_url,
+            if member.ssh_fp.is_empty() {
+                "(none)"
+            } else {
+                member.ssh_fp.as_str()
+            }
+        ),
+        Err(err) => tracing::error!(
+            "cluster member {}: its new base URL or SSH host key was not written: {err}",
+            member.instance_id
+        ),
+    }
+}
+
 /// The conf's `instance` `id` when it is set, else the id in `runtime/db/instance_id`, else a new one written there. It is not
 /// written to `runtime/.env`, which `plans/archive/Cluster.md` says to copy between members: two members with one id would
 /// each take the other's member row for its own.

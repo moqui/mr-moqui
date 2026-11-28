@@ -2006,8 +2006,19 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="git-password-auth" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Git over SSH on a connection that logged in by password; by key only when false.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="git-any-account" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Git over SSH for any account that logs in by key, without the SSH_GIT permission
                 (a public site's accounts); each repository's own check still decides. A password login still needs SSH_GIT and git-password-auth. SFTP and the shell are not opened by it.</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="login-dialog" type="boolean-expandable" default="true"><xs:annotation><xs:documentation>A client with no key is let in with no user and gets the terminal client's
-                login dialog; when false, such a client logs in by password at the SSH level or not at all.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="access" default="open"><xs:annotation><xs:documentation>Who may connect (plans/Runtime-Config.md 3.4): open, anyone, a client with no key or
+                password let in with no user for the terminal client's login dialog (within max-dialog-sessions); login, an account's password or one of its
+                keys; key, a registered key (UserSshKey) alone, so no password or app password logs in. The cluster's own key logs in under each. Applies to new
+                connections; those still at the login dialog end when it leaves open, and one signed in by a password opens no new channel under key. Replaces login-dialog (true is open, false is login).</xs:documentation></xs:annotation>
+                <xs:simpleType><xs:restriction base="xs:token"><xs:enumeration value="open"/><xs:enumeration value="login"/><xs:enumeration value="key"/></xs:restriction></xs:simpleType></xs:attribute>
+            <xs:attribute name="tui-enabled" type="boolean" default="true"><xs:annotation><xs:documentation>The terminal client (apps, agent-apps and the login dialog); false turns it off
+                for everyone, checked when a channel asks for it, and ends the connections still at the login dialog.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="sftp-enabled" type="boolean" default="true"><xs:annotation><xs:documentation>The sftp subsystem, the SFTP root and the drives; false turns it off for everyone,
+                checked when a channel asks for it (SSH_SFTP and dav-server sftp-drives still decide per user).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="git-enabled" type="boolean" default="true"><xs:annotation><xs:documentation>Git over SSH; false turns it off for everyone, checked when a channel asks for it
+                (SSH_GIT or git-any-account still decide per user).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="shell-enabled" type="boolean" default="true"><xs:annotation><xs:documentation>The admin shell and the commands at its prompt; false turns it off for everyone,
+                checked when a channel asks for it, and apps is then the whole session (SSH_SHELL still decides per user).</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

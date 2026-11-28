@@ -766,7 +766,8 @@ fn get_blob(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Res
 }
 
 /// `get#GitCloneUrls`: how to clone a repository. Out: `httpsUrl` (`<base>/git/<path>.git`, the path the repository's
-/// `repositoryPath`, else its id), `sshUrl` when the SSH server is on (`ssh-server` `enabled` true, on its `port`),
+/// `repositoryPath`, else its id), `sshUrl` when the SSH server is on and serves git (`ssh-server` `enabled` true, on
+/// its `port`, and `git-enabled` not false),
 /// with the current user's username, as the SSH server logs in Moqui users, and `repositoryPath`. The SSH host and
 /// port are `public-host` and `public-port` when either is set; else, on a node paired with an edge node whose offer
 /// names an SSH tunnel to it, that tunnel's host and port (`moqui_core::edge::setup::ssh_address`); else
@@ -799,7 +800,7 @@ fn get_clone_urls(
 }
 
 /// The host and port SSH clone URLs name, from the `ssh-server` settings and an edge node's tunnel; none while the SSH
-/// server is off ([`get_clone_urls`], the hosting offer).
+/// server is off or serves no git ([`get_clone_urls`], the hosting offer).
 pub(crate) fn ssh_host_port() -> Option<(String, String)> {
     let ssh_setting = |name: &str| moqui_core::context::conf_env::setting(&format!("ssh-server@{name}"));
     let public_host = ssh_setting("public-host");
@@ -808,14 +809,18 @@ pub(crate) fn ssh_host_port() -> Option<(String, String)> {
     let edge = (public_host.is_empty() && public_port.is_empty())
         .then(|| ExecutionContext::with_current(|ec| moqui_core::edge::setup::ssh_address(ec.factory())).flatten())
         .flatten();
+    // the server's switch (plans/Runtime-Config.md §3.2) and its git flag (§3.4: one that is neither true nor false is
+    // off, as the server reads it), by the current factory's conf when there is one
+    let setting_now = |name: &str| {
+        ExecutionContext::with_current(|ec| {
+            moqui_core::context::conf_env::setting_on(ec.factory(), &format!("ssh-server@{name}"))
+        })
+        .unwrap_or_else(|| ssh_setting(name))
+    };
+    let git_flag = setting_now("git-enabled");
+    let git_on = git_flag.is_empty() || moqui_core::context::conf_env::switch_on(&git_flag);
     SshAddress {
-        // the server's switch (plans/Runtime-Config.md §3.2), by the current factory's conf when there is one
-        enabled: moqui_core::context::conf_env::switch_on(
-            &ExecutionContext::with_current(|ec| {
-                moqui_core::context::conf_env::setting_on(ec.factory(), "ssh-server@enabled")
-            })
-            .unwrap_or_else(|| ssh_setting("enabled")),
-        ),
+        enabled: moqui_core::context::conf_env::switch_on(&setting_now("enabled")) && git_on,
         public_host,
         public_port,
         edge,

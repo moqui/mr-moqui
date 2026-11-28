@@ -430,7 +430,29 @@ pub static CATALOG: &[Unit] = &[
     single("email-client", Class::Live)
         .attrs(&[("idle-enabled", LISTENER)])
         .children(&[keyed("oauth-provider", &["id"], Class::Live).secrets(&[("client-secret", Secret::Kept)])]),
-    single("ssh-server", LISTENER).secrets(&[("host-key", Secret::Generated)]),
+    // the SSH server's switch, address, access, limits and sub-service flags, which the listener registry applies
+    // while the server runs (plans/Runtime-Config.md §3.4, RC3); the host key is read again at each bind, the SFTP root
+    // at the first start
+    single("ssh-server", LISTENER)
+        .attrs(&[
+            ("enabled", LISTENERS),
+            ("port", LISTENERS),
+            ("host", LISTENERS),
+            ("access", LISTENERS),
+            ("max-sessions", LISTENERS),
+            ("max-sessions-per-user", LISTENERS),
+            ("max-sessions-per-source", LISTENERS),
+            ("max-dialog-sessions", LISTENERS),
+            ("max-dialog-sessions-per-source", LISTENERS),
+            ("sftp-max-file", LISTENERS),
+            ("git-password-auth", LISTENERS),
+            ("git-any-account", LISTENERS),
+            ("tui-enabled", LISTENERS),
+            ("sftp-enabled", LISTENERS),
+            ("git-enabled", LISTENERS),
+            ("shell-enabled", LISTENERS),
+        ])
+        .secrets(&[("host-key", Secret::Generated)]),
     single("terminal", Class::Live).children(&[keyed("host-profile", &["name"], Class::Live)]),
     single("git-server", Class::Live)
         .attrs(&[("max-concurrent", LISTENER), ("max-queued", LISTENER)])
@@ -439,7 +461,8 @@ pub static CATALOG: &[Unit] = &[
             ("lfs-token-key-previous", Secret::Kept),
         ]),
     single("git-ci", Class::Live),
-    single("dav-server", Class::Live).attrs(&[("sftp-drives", LISTENER)]),
+    // SFTP to the drives is the SSH server's to apply (plans/Runtime-Config.md §3.4)
+    single("dav-server", Class::Live).attrs(&[("sftp-drives", LISTENERS)]),
     single("smtp-server", LISTENER),
     // the MTA's loop starts at boot; the rest is read at each delivery, the DKIM key at each signature
     single("mail-delivery", Class::Live)

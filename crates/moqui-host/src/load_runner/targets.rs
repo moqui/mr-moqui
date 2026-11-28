@@ -184,7 +184,7 @@ pub(crate) fn parse_ssh_targets(text: &str) -> Vec<(String, u16)> {
 pub(crate) fn own_ssh(factory: &ExecutionContextFactory) -> Option<std::net::SocketAddr> {
     #[cfg(feature = "ssh")]
     {
-        *moqui_lib::sync::lock(&factory.extension(|_| crate::ssh::server::SshAddress::default()).0)
+        *moqui_lib::sync::lock(&factory.extension(|_| crate::ssh::intake::SshAddress::default()).0)
     }
     #[cfg(not(feature = "ssh"))]
     {

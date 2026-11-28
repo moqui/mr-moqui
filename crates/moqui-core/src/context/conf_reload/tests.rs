@@ -485,7 +485,7 @@ fn a_conf_snapshot_keeps_the_settings_of_when_it_was_taken() {
 }
 
 /// Several settings set together run each group's hook once, at the end; one refused (a retired value, an attribute
-/// named twice) refuses the whole list before anything is written.
+/// named twice, a renamed attribute) refuses the whole list before anything is written.
 #[test]
 fn set_many_runs_the_hook_once_and_one_refused_value_refuses_the_list() {
     const RETIRED: &[RetiredValue] = &[("sip-server@rc1-port", &["", "off"], "sip-server@rc1-enabled", "")];
@@ -530,6 +530,19 @@ fn set_many_runs_the_hook_once_and_one_refused_value_refuses_the_list() {
     .unwrap_err()
     .to_string();
     assert!(err.contains("given twice"), "{err}");
+    // a renamed attribute is refused as the boot refuses it, naming what replaced it (plans/Runtime-Config.md §3.4)
+    let err = set_with(
+        &factory,
+        &[(limit.as_str(), Some("9")), ("ssh-server@login-dialog", Some("false"))],
+        true,
+        &given,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("ssh-server@access") && err.contains("access=\"login\""),
+        "{err}"
+    );
     assert_eq!(factory.conf_generation(), generation, "nothing applied");
     assert_eq!(dotenv(&runtime), kept, "nothing kept");
     assert_eq!(value(&factory, &limit).as_deref(), Some("5"));

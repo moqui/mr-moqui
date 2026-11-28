@@ -154,7 +154,7 @@ pub(crate) trait Listener: Send + 'static {
     fn live(&self) -> bool {
         false
     }
-    /// Whether its failed start at boot stops the boot (SSH and the cluster port until RC3 and RC6).
+    /// Whether its failed start at boot stops the boot (the cluster port until RC6).
     fn fatal_at_boot(&self) -> bool {
         false
     }
@@ -181,7 +181,8 @@ pub(crate) trait Listener: Send + 'static {
     /// Whether `new` would collide with `old` while both are bound (the same port, a wildcard and a specific address),
     /// so the old must stop before the new binds.
     fn overlaps(&self, old: &Self::Bind, new: &Self::Bind) -> bool;
-    /// What depends on it while it runs (the edge SSH tunnel, the cluster's SSH transport).
+    /// What depends on it while it runs (the edge SSH tunnel, the cluster's SSH transport): turned off, it ends them
+    /// too, which a pass after the start logs.
     fn dependents(&self, _ctx: &Ctx) -> Vec<String> {
         Vec::new()
     }

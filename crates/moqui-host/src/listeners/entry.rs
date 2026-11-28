@@ -22,7 +22,8 @@
 //! | Bind settings differ | Start the new, then stop the old; when they overlap, stop the old, then bind again |
 //! | In-place settings differ | Apply them to what runs |
 //!
-//! A failed new bind keeps the old one running, or binds its settings again, and the outcome says "kept on …". A stop
+//! A failed new bind keeps the old one running, or binds its settings again, and the outcome says "kept on …"; the
+//! change's in-place settings apply to it either way, so a stricter one does not wait for the bind. A stop
 //! a pass makes only begins here ([`Stopping`]): the pass waits for all of them together once each has begun, so their
 //! graces overlap. Only an overlapping rebind waits for the old one inline, since the new one binds its port.
 //!
@@ -322,6 +323,19 @@ impl<L: Listener> Slot<L> {
         let detail = state.detail().to_string();
         match self.running.take() {
             Some(current) => {
+                // a conf reload goes ahead whatever uses the listener (the services and the operator socket refuse
+                // first, plans/Runtime-Config.md §3.4), and says what it ends with it
+                let dependents = self
+                    .guard("dependents", || self.listener.dependents(ctx))
+                    .unwrap_or_default();
+                if !pass.boot && !dependents.is_empty() {
+                    tracing::warn!(
+                        "The {} listener is turned off ({}) while these use it, which stop with it: {}",
+                        self.name(),
+                        pass.cause,
+                        dependents.join("; ")
+                    );
+                }
                 stopping.push(self.begin(ctx, current.run, self.live_stop(pass)));
                 self.record_stopped(ctx, pass, state);
                 self.outcome(Action::Stopped, detail)
@@ -424,14 +438,14 @@ impl<L: Listener> Slot<L> {
         self.outcome(Action::Failed, err)
     }
 
-    /// A new bind failed and `current`, the old settings, runs again or still: recorded on with the failure, which
-    /// the outcome reports as "kept on …". Logged in a boot pass or when the error is new, as a failed start is, so a
+    /// A new bind failed and `current`, on the old bind, runs again or still: recorded on with the failure, which the
+    /// outcome reports as "kept on …". Logged in a boot pass or when the error is new, as a failed start is, so a
     /// retried pass does not log it again.
     fn kept(&mut self, ctx: &Ctx, pass: &Pass, current: Current<L>, err: Error) -> Outcome {
         let err = err.to_string();
         if pass.boot || self.last_error.as_deref() != Some(err.as_str()) {
             tracing::error!(
-                "The {} listener kept its old settings, the new ones did not bind: {err}",
+                "The {} listener stays on its old bind, the new one did not bind: {err}",
                 self.name()
             );
         }
@@ -448,6 +462,23 @@ impl<L: Listener> Slot<L> {
         self.last_error = Some(err.clone());
         self.record(ctx, pass, state);
         self.outcome(Action::Failed, format!("kept on {at}: {err}"))
+    }
+
+    /// A new bind failed and `current` keeps running on its old bind: the change's in-place settings still apply to it,
+    /// so a stricter one (SSH's access mode) does not wait for a port that may stay busy. One that does not apply is
+    /// logged, and asked again at the next pass.
+    fn apply_to_kept(&self, mut current: Current<L>, in_place: L::InPlace) -> Current<L> {
+        if current.in_place == in_place {
+            return current;
+        }
+        match self.guard("apply", || current.run.apply(&in_place)) {
+            Ok(()) => current.in_place = in_place,
+            Err(err) => tracing::error!(
+                "The {} listener did not take its new settings in place on its old bind: {err}",
+                self.name()
+            ),
+        }
+        current
     }
 
     /// The same bind: apply `in_place` when it differs. When the conf wants exactly what runs, a past failure is
@@ -506,14 +537,18 @@ impl<L: Listener> Slot<L> {
                     self.found_off(ctx, pass, bind, in_place);
                     self.outcome(Action::Stopped, self.row_detail(ctx))
                 }
-                Err(err) => self.kept(ctx, pass, old, err),
+                Err(err) => {
+                    let old = self.apply_to_kept(old, in_place);
+                    self.kept(ctx, pass, old, err)
+                }
             };
         }
         // the new bind would collide with the old: the old stops first and lets its port go, waited for here since the
-        // new one takes it, then drains with the pass's other stops; it binds again when the new one fails
+        // new one takes it, then drains with the pass's other stops; it binds again when the new one fails, with the
+        // change's in-place settings, which need no new bind
         let Current {
             bind: old_bind,
-            in_place: old_in_place,
+            in_place: _,
             run: old_run,
         } = old;
         let mut old_stop = self.begin(ctx, old_run, how);
@@ -534,11 +569,11 @@ impl<L: Listener> Slot<L> {
                 self.found_off(ctx, pass, bind, in_place);
                 self.outcome(Action::Stopped, self.row_detail(ctx))
             }
-            Err(err) => match self.call_start(ctx, &old_bind, &old_in_place) {
+            Err(err) => match self.call_start(ctx, &old_bind, &in_place) {
                 Ok(Some(run)) => {
                     let current = Current {
                         bind: old_bind,
-                        in_place: old_in_place,
+                        in_place,
                         run,
                     };
                     self.kept(ctx, pass, current, err)

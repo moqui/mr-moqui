@@ -2,7 +2,7 @@
 
 Status 2026-11-27: reviewed against the code and being built, RC0 to RC10 in one run. Its open points were decided
 with the user the same day (§6). The review's corrections are in place below, and the implementation design is §8.
-Built so far: RC0, RC1, RC2.
+Built so far: RC0, RC1, RC2, RC3.
 
 Goal: an administrator turns services and ports on and off while the server runs, from a dialog on System Home, from
 the terminal, or by editing the conf, and no listener setting waits for a restart. It serves two tasks: setting a
@@ -543,6 +543,20 @@ handlers check it too (the cluster's key works in every mode). A `dialog_off` wa
 sign-in dialog when access leaves `open`. Each accept loop has its own `ended` signal; edge tunnel streams use the
 intake's. A start or rebind sets `SSH_FINGERPRINT_PROPERTY` and `SSH_ADDRESS_PROPERTY` and calls a new
 `moqui_core::cluster::refresh_member(factory)`.
+
+As built (RC3): the configs are made at each bind rather than once at start, since the host key is read at each bind;
+the intake keeps the newest bind's for tunnel streams. `open` with the terminal client off is served `login`'s config.
+The tunnels' stop is opened and closed from the entry's `published` (a bind running, or not), so a rebind keeps them,
+and follows the last bind's stop (grace or at once). An auth handler takes a method only when both the access mode at
+accept and the mode now take it. An `access` that is no mode reads as `key`, and a flag that is neither true nor false
+as off, each named on the row and in the log. `SourceSlots` (moqui-lib) takes new limits while held, for the
+per-source shares. `set` refuses a renamed attribute as the boot does, and `RETIRED_ATTRIBUTES` carries a hint.
+`dialog_off` follows whether the dialog is offered (`access` and `tui-enabled`). A connection signed in by a password,
+an app password included, is given no new channel or request once the mode takes no password, and a password login is
+checked against the mode again after its hash; System › Terminal Sessions ends terminal, command and host sessions, not
+SSH connections, which end with their client, the 10 minute idle timeout or SSH's stop. A failed new bind applies the
+change's in-place settings to what keeps running (registry-wide, `entry.rs`). The member row is rewritten on a thread
+of its own, one rewrite at a time, off the pass. The intake, binds and tunnels are `ssh/intake.rs`.
 
 ### 8.5 How it is built
 

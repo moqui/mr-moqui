@@ -246,3 +246,23 @@ fn slots_keep_a_share_per_source() {
     assert!(slots.take(a).is_ok());
     assert_eq!(slots.held(), 3, "the slot taken above was dropped again");
 }
+
+/// Limits set while slots are held refuse the next take by the new limits, and the slots held past a lowered one stay
+/// until they are given back (a listener's settings applied while it runs, plans/Runtime-Config.md §3.4).
+#[test]
+fn slots_take_new_limits_while_held() {
+    let slots = SourceSlots::new(4, 2);
+    let a: IpAddr = "198.51.100.1".parse().unwrap();
+    let b: IpAddr = "198.51.100.2".parse().unwrap();
+    let held = [slots.take(a).unwrap(), slots.take(a).unwrap(), slots.take(b).unwrap()];
+    slots.set_limits(2, 1);
+    assert_eq!((slots.total(), slots.per_source()), (2, 1));
+    assert_eq!(slots.take(b).err(), Some(SlotRefused::Full), "past the lowered total");
+    assert_eq!(slots.held(), 3, "the slots held past it stay");
+    drop(held);
+    let first = slots.take(a).unwrap();
+    assert_eq!(slots.take(a).err(), Some(SlotRefused::Source), "the lowered share");
+    slots.set_limits(8, 0);
+    let _more = [slots.take(a).unwrap(), slots.take(a).unwrap()];
+    drop(first);
+}

@@ -335,6 +335,59 @@ fn a_member_publishes_its_edge_key_from_the_rows_first_write() {
     moqui_lib::env::set_property(super::EDGE_MEMBER_KEY_PROPERTY, "");
 }
 
+/// The SSH transport's properties a test set, cleared however it ends.
+struct CleanSsh;
+
+impl Drop for CleanSsh {
+    fn drop(&mut self) {
+        for name in [
+            "moqui_conf__cluster_member__transport",
+            super::SSH_ADDRESS_PROPERTY,
+            super::SSH_FINGERPRINT_PROPERTY,
+        ] {
+            env::clear_property(name);
+        }
+    }
+}
+
+/// An SSH server that binds again while the server runs has this member's row rewritten with its new address, the
+/// base URL of `transport="ssh"`, and its host key (plans/Runtime-Config.md §3.4, RC3); nothing is written before the
+/// start, which writes the row itself.
+#[test]
+fn a_refreshed_member_names_its_new_ssh_address_and_host_key() {
+    let _lock = lock();
+    let _clean = Clean;
+    let _clean_ssh = CleanSsh;
+    preset("inst-ssh-refresh");
+    env::set_property("moqui_conf__cluster_member__transport", "ssh");
+    env::set_property(super::SSH_ADDRESS_PROPERTY, "127.0.0.1:2222");
+    env::set_property(super::SSH_FINGERPRINT_PROPERTY, "SHA256:first");
+    let (ctx, facade) = open_facade();
+    let _recording = install_recording(ctx.factory());
+    let _entered = ctx.enter();
+    let row = || {
+        super::load_members(&facade)
+            .unwrap()
+            .into_iter()
+            .find(|member| member.instance_id == "inst-ssh-refresh")
+            .map(|member| (member.base_url, member.ssh_fp))
+    };
+    super::refresh_member(ctx.factory());
+    assert_eq!(row(), None, "no row before the start");
+    super::start(ctx.factory()).unwrap();
+    let first = ("ssh://127.0.0.1:2222".to_string(), "SHA256:first".to_string());
+    assert_eq!(row(), Some(first));
+    env::set_property(super::SSH_ADDRESS_PROPERTY, "127.0.0.1:2223");
+    env::set_property(super::SSH_FINGERPRINT_PROPERTY, "SHA256:second");
+    super::refresh_member(ctx.factory());
+    let second = ("ssh://127.0.0.1:2223".to_string(), "SHA256:second".to_string());
+    assert_eq!(row(), Some(second.clone()));
+    // the SSH server off: no base URL can be made, so the row keeps the one it has
+    env::set_property(super::SSH_ADDRESS_PROPERTY, "");
+    super::refresh_member(ctx.factory());
+    assert_eq!(row(), Some(second));
+}
+
 #[test]
 fn first_start_upserts_one_member_and_does_not_post() {
     let _lock = lock();
