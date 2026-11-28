@@ -38,6 +38,9 @@ use super::{engine, Room, MAX_EDIT_CELLS, SHEET_COLUMNS, SHEET_ROWS};
 
 /// The most rules of one sheet's conditional formats: each is evaluated over its cells at every evaluation.
 pub const MAX_SHEET_RULES: usize = 500;
+/// The most cells the rules of one sheet cover in all, each counted once for each rule over it: what an evaluation
+/// walks for them.
+pub const MAX_SHEET_RULE_CELLS: i64 = 10 * MAX_EDIT_CELLS;
 /// The most merged cells a view is sent of a sheet ([`Room::merges_of`]).
 pub const MAX_VIEW_MERGES: usize = 2_000;
 /// The edits of a sheet's conditional formats.
@@ -88,6 +91,17 @@ fn area_of(op: &Json, sheet: u32) -> Area {
         width: small("width", 1).max(1),
         height: small("height", 1).max(1),
     }
+}
+
+/// Refuse an area of an edit that is not inside the sheet (an `unmerge`, which the engine does not walk cell by cell, so
+/// it is not held to [`MAX_EDIT_CELLS`] as the other area edits are).
+fn inside_sheet(area: &Area) -> Result<(), String> {
+    let (row, column) = (i64::from(area.row), i64::from(area.column));
+    let (last_row, last_column) = (row + i64::from(area.height) - 1, column + i64::from(area.width) - 1);
+    if row < 1 || column < 1 || last_row > SHEET_ROWS || last_column > SHEET_COLUMNS {
+        return Err("An edit's area is outside the sheet".to_string());
+    }
+    Ok(())
 }
 
 fn merge_json(sheet: u32, merged: &MergedCell) -> Json {
@@ -236,6 +250,7 @@ impl Room {
     /// The edits that take back an `unmerge`: the merges it takes off, put back.
     pub(super) fn unmerge_inverse(&self, op: &Json, sheet: u32) -> Result<Vec<Json>, Error> {
         let area = area_of(op, sheet);
+        inside_sheet(&area).map_err(Error::new)?;
         self.merges_back(
             sheet,
             area.row,
@@ -250,6 +265,7 @@ impl Room {
         if merge {
             self.model.merge_cells(&area)
         } else {
+            inside_sheet(&area)?;
             self.model.unmerge_cells(&area)
         }
     }
@@ -352,6 +368,7 @@ impl Room {
                     Vec::new()
                 })
             }
+            "rules" => Err(Error::new("A sheet's rules are set back only by an undo")),
             _ => self.rules_back(sheet, true),
         }
     }
@@ -362,10 +379,12 @@ impl Room {
     /// - `deleteRule` (`index`);
     /// - `moveRule` (`index`, `up`): applied one later (up, so it wins over the next) or one earlier;
     /// - `rules` (`rules`: each `range`, `rule`, `priority`): the sheet's rules set to these, in this order, applied in
-    ///   the order of their priorities, which is how an edit of them is taken back.
+    ///   the order of their priorities, which is how an edit of them is taken back; an undo's alone, refused as an
+    ///   edit of a call ([`Room::rule_inverse`]).
     ///
     /// A `rule` is the engine's: `type` (CellIs, Text, Top10, Bottom10, ColorScale, DataBar, IconSet, ...) and its
-    /// fields, with `format` (font, fill) for those that format; a range is held to [`MAX_EDIT_CELLS`] cells.
+    /// fields, with `format` (font, fill) for those that format; a range is held to [`MAX_EDIT_CELLS`] cells, and the
+    /// sheet's rules to [`MAX_SHEET_RULE_CELLS`] in all.
     pub(super) fn apply_rule(&mut self, op: &Json, kind: &str, sheet: u32) -> Result<(), String> {
         let rule = |value: &Json| -> Result<CfRuleInput, String> {
             serde_json::from_value(value.clone()).map_err(|err| format!("Not a conditional format: {err}"))
@@ -384,22 +403,46 @@ impl Room {
                 .and_then(|at| u32::try_from(at).ok())
                 .ok_or_else(|| "A rule is named by its index".to_string())
         };
-        let count = self
+        let ranges: Vec<i64> = self
             .model()
             .workbook
             .worksheets
             .get(sheet as usize)
-            .map_or(0, |worksheet| worksheet.conditional_formatting.len());
+            .map(|worksheet| {
+                worksheet
+                    .conditional_formatting
+                    .iter()
+                    .map(|rule| range_cells(&rule.range).unwrap_or(0))
+                    .collect()
+            })
+            .unwrap_or_default();
+        // the cells the sheet's rules cover with this range in place of the rule at `replacing`
+        let total = |text: &str, replacing: Option<usize>| -> Result<(), String> {
+            let others: i64 = ranges
+                .iter()
+                .enumerate()
+                .filter(|(at, _)| Some(*at) != replacing)
+                .map(|(_, cells)| *cells)
+                .sum();
+            if others.saturating_add(range_cells(text).unwrap_or(0)) > MAX_SHEET_RULE_CELLS {
+                return Err(format!(
+                    "The conditional formats of a sheet cover at most {MAX_SHEET_RULE_CELLS} cells in all"
+                ));
+            }
+            Ok(())
+        };
         match kind {
             "addRule" => {
-                if count >= MAX_SHEET_RULES {
+                if ranges.len() >= MAX_SHEET_RULES {
                     return Err(format!("A sheet has at most {MAX_SHEET_RULES} conditional formats"));
                 }
                 let (range, rule) = (range(&op["range"])?, rule(&op["rule"])?);
+                total(&range, None)?;
                 self.model.add_conditional_formatting(sheet, &range, rule)
             }
             "changeRule" => {
                 let (index, range, rule) = (index()?, range(&op["range"])?, rule(&op["rule"])?);
+                total(&range, usize::try_from(index).ok())?;
                 self.model.update_conditional_formatting(sheet, index, &range, rule)
             }
             "deleteRule" => self.model.delete_conditional_formatting(sheet, index()?),

@@ -409,6 +409,31 @@ fn conditional_formats_are_added_changed_moved_and_deleted_each_taken_back_in_ev
             .contains("Not a conditional format")
     );
     assert!(refusal(&pair.writer, json!({"op": "deleteRule", "sheet": 1, "index": 9})).contains("out of bounds"));
+    let restore = json!({"op": "rules", "sheet": 1, "rules": []});
+    assert!(
+        refusal(&pair.writer, restore).contains("only by an undo"),
+        "an undo's edit, not a call's"
+    );
+    // the sheet's rules in all: ten of 100,000 cells, then no more
+    let wide = |rows: i64| {
+        rule_op(
+            "addRule",
+            &format!("A1:J{rows}"),
+            cell_is("GreaterThan", "1", "#FFC7CE"),
+        )
+    };
+    for _ in 0..9 {
+        lock(&pair.writer)
+            .edit("ann", std::slice::from_ref(&wide(10_000)))
+            .unwrap();
+    }
+    assert!(refusal(&pair.writer, wide(10_000)).contains("in all"));
+    lock(&pair.writer)
+        .edit("ann", std::slice::from_ref(&wide(9_000)))
+        .unwrap();
+    // an unmerge outside the sheet
+    let outside = json!({"op": "unmerge", "sheet": 1, "row": 1_048_576, "column": 1, "width": 1, "height": 2});
+    assert!(refusal(&pair.writer, outside).contains("outside the sheet"));
 }
 
 #[test]

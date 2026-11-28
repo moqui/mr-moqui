@@ -161,7 +161,7 @@ workbook on the server's spreadsheet engine (IronCalc; plan [IronCalc-DB](../../
   edited, nor its borders and merges; its column widths, row heights and frozen panes are. It takes no conditional
   formats either: a rule's range is cells, which other scopes' rooms and a refresh with another row count would not
   follow, so a rule goes on a sheet beside it, over formulas that read it. A sheet has at most 500 rules, each over at
-  most 100,000 cells.
+  most 100,000 cells and a million in all, since every calculation walks them.
 - **Editing together.** Everyone who has a saved document open edits the same workbook. An edit is the next row of
   the document's edit log (`moqui.calc.CalcDocumentEdit`), written under a lock of its head row, so the edits of every
   room and server are one order; every room of the document applies them in it, each over its own data (a formula
