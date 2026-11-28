@@ -321,3 +321,41 @@ fn a_frozen_column_past_the_width_scrolls_into_view() {
         "{header}"
     );
 }
+
+/// CG3.1: a cell's font colour, fill and italic are kept from the engine's block and drawn, the fill over the gap to a
+/// neighbour of the same fill; the active cell is drawn in the theme's roles alone.
+#[test]
+fn a_cells_colours_and_italic_are_drawn_but_not_on_the_cursor() {
+    let (props, mut state) = loaded(true);
+    let main = json!({"row": 2, "column": 1, "width": 40, "height": 20, "seq": 3,
+        "styles": [{"style": {"font": {}}}, {"style": {"font": {"color": "#C00000", "i": true}}}],
+        "style_indices": [0, 1], "texts": [{"row": 2, "column": 2, "text": "110", "cell_type": 1}],
+        "fills": [{"row": 2, "column": 1, "width": 2, "color": "#FFFF00"}, {"row": 2, "column": 3, "width": 38, "color": ""},
+            {"row": 3, "column": 1, "width": 40, "color": ""}]});
+    CalcGrid.receive(&props, &mut state, main);
+    let found = cells(&View::of(&props, &state).block);
+    let red = found[&(2, 2)].clone();
+    assert_eq!(
+        (red.color, red.fill, red.italic),
+        (Some(Rgb(0xC0, 0, 0)), Some(Rgb(255, 255, 0)), true)
+    );
+    assert_eq!(found[&(2, 1)].fill, Some(Rgb(255, 255, 0)));
+    assert!(!found.contains_key(&(3, 1)), "a run of no colour is no cell");
+    let grid = CalcGrid.lines(&props, &state, 60, false);
+    let row = &grid[3];
+    let span = row.iter().find(|span| span.text.contains("110")).unwrap();
+    assert_eq!(
+        (span.color, span.fill, span.italic),
+        (Some(Rgb(0xC0, 0, 0)), Some(Rgb(255, 255, 0)), true)
+    );
+    // A2 and B2 share the fill, so the gap between them has it; the gap after B2 does not
+    let gaps: Vec<&Span> = row.iter().filter(|span| span.text == " ").collect();
+    assert_eq!((gaps[0].fill, gaps[1].fill), (Some(Rgb(255, 255, 0)), None));
+    // on the active cell the theme's roles alone show where it is
+    CalcGrid.key(&props, &mut state, &KeyPress::plain(Key::Down), false);
+    CalcGrid.key(&props, &mut state, &KeyPress::plain(Key::Right), false);
+    let grid = CalcGrid.lines(&props, &state, 60, false);
+    let cursor = grid[3].iter().find(|span| span.reverse).unwrap();
+    assert!(cursor.text.contains("110"));
+    assert_eq!((cursor.color, cursor.fill), (None, None));
+}

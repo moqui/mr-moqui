@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::Value;
 
 use crate::keys::KeyPress;
-use crate::theme::Role;
+use crate::theme::{Rgb, Role};
 
 /// A run of text in one look.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,6 +52,11 @@ pub struct Span {
     pub bold: bool,
     pub reverse: bool,
     pub underline: bool,
+    pub italic: bool,
+    /// A document's own text color and fill (a sheet's cell), drawn in place of the role's where the theme finds them
+    /// readable ([`crate::theme::Theme::readable`]).
+    pub color: Option<Rgb>,
+    pub fill: Option<Rgb>,
 }
 
 impl Span {
@@ -62,7 +67,22 @@ impl Span {
             bold: false,
             reverse: false,
             underline: false,
+            italic: false,
+            color: None,
+            fill: None,
         }
+    }
+
+    pub fn italic(mut self) -> Self {
+        self.italic = true;
+        self
+    }
+
+    /// A document's own colors: its text color and its fill, each None for the theme's.
+    pub fn colors(mut self, color: Option<Rgb>, fill: Option<Rgb>) -> Self {
+        self.color = color;
+        self.fill = fill;
+        self
     }
 
     pub fn bold(mut self) -> Self {

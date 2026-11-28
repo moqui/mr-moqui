@@ -585,7 +585,7 @@ The framework's components, with their props documented at the top of each file 
 | `artifact-browser` | A reference graph as Miller columns: what uses the center, the center (its lines and its links, each with its key), what it uses, each side in sections by kind; `source` answers `{center, usedBy, uses, kinds, filter}` and is asked again (`Act::Call`) for each new center or filter. A row on the trail is marked `↺`. Narrower than 100 columns the panes stack and one shows at a time. Dev AIDE's Browser twin (`Artifacts/BrowseTui`) | Up/Down, PgUp/PgDn, Home/End in a column; Left/Right the column (or pane); Enter makes the row the center; Backspace and `]` back and forward on the trail; `k` the next kind; `h` hide framework; `x` hide observed-only; each link's own key (`t` Text, `y` Try, `d` Data, `p` Preview, `r` Refs, `D` Doc) |
 | `board` | Cards in columns by group from lg, else grouped under headings; `source` answers `{groups, rows}`, or the props hold them (a list's board view) | Up/Down, Left/Right (wide), `m` moves a card through `move`, Enter opens `open` |
 | `calendar` | An agenda by day, with the month grid from lg; `source` answers `{month, events}`, or the props hold the events; an event's `_open` is its screen | Up/Down, PgUp/PgDn months, `t` today |
-| `calcgrid` | A CalcGrid workbook's sheet ([Database](../tools/Database.md#calc-mode)): the formula bar, the column letters, the cells that fit (frozen rows and columns kept, numbers right, a text running on into empty cells, bold and underline), the sheet tabs, and who else has it open and where; `room` is what `open#CalcDocument` answered when the screen drew, and the screen's `calc*` transitions answer the rest | Arrows, PgUp/PgDn, Home/End, Shift to select; Enter or `e` edits a cell, `=` or a digit starts one (Tab takes a completion); Delete; `u`/`U` undo and redo; `b` `i` `_`; `[` `]` sheets; `<` `>` width; `F` freeze; `d` fill down; `c` charts; `z` kiosk; `R` refresh; `m` the rest |
+| `calcgrid` | A CalcGrid workbook's sheet ([Database](../tools/Database.md#calc-mode)): the formula bar, the column letters, the cells that fit (frozen rows and columns kept, numbers right, a text running on into empty cells, bold, italic and underline, and the font colours and fills where they read: [Sheet colours](#sheet-colours)), the sheet tabs, and who else has it open and where; `room` is what `open#CalcDocument` answered when the screen drew, and the screen's `calc*` transitions answer the rest | Arrows, PgUp/PgDn, Home/End, Shift to select; Enter or `e` edits a cell, `=` or a digit starts one (Tab takes a completion); Delete; `u`/`U` undo and redo; `b` `i` `_`; `[` `]` sheets; `<` `>` width; `F` freeze; `d` fill down; `c` charts; `z` kiosk; `R` refresh; `m` the rest |
 | `chart` | A table of the datasets (`labels`, `series`) with a bar for the first series | `r` reads again |
 | `code` | An editor for one text: line numbers with problem marks (`!` an error, `·` a warning), light highlighting, long lines scrolled sideways, and a status line (Ln/Col, the language, `●` when changed, the problem at the cursor); below. Dev AIDE's twins, System › Conf's Edit (`Conf/EditTui`) and Tools › SQL (`SqlTui`) | Arrows, Home/End, PgUp/PgDn, Ctrl+Home/End; Ctrl+Left/Right by word; Shift to select; Ctrl+C/X/V; Tab/Shift+Tab indent and outdent; Esc lets go; Ctrl+Z/Y; Ctrl+G; Ctrl+F, F3/Shift+F3; Ctrl+Space; F8/Shift+F8 |
 | `map` | The `map-view` element's form: the places as a list over a braille land mask, each its label, latitude and longitude, precision and source, then the attribution; with `pick` a point chosen by typing its latitude and longitude. Its props are the element's; `source` (Maps › Browse's `terminalMap`) answers the same keys, with `notes` shown above the places, its own `attribution`, `overlays` (the user's own and shared overlays, listed after the places; the saved places, a shared one marked read-only, are among the places) and `postalSearch`; with a source `s` types a postal code and its country (`US 02134`), sent as the source's `postal` parameter, whose approximate places from the local Geo data come first | Up/Down, `c` copies the place's coordinates, `p` types a point, `s` a postal search, Enter chooses or searches, Esc stops typing |
@@ -642,6 +642,21 @@ fits on screen; `Act::Call` posts to a transition that answers JSON and gives th
 typing stops); and a `receive` that sets the state's
 `reload_pending` asks for its source again at once (the next read of a component whose `source` changes with what it
 received).
+
+#### Sheet colours
+
+A `calcgrid` cell's font colour and fill are drawn where the terminal has colours (none with `NO_COLOR`), at its
+depth, through one rule against the theme's background (`Theme::readable` in `theme.rs`; the background is taken as a
+near black or white, since the terminal says only whether it is dark):
+
+- A fill is drawn, unless its contrast with the background is under 1.1:1: there it would show nothing.
+- The text colour (the cell's, else the theme's text colour) is drawn when its contrast with what is behind it (the
+  fill, else the background) is at least 3:1, WCAG 2's least for large text. Else the theme's text colour is, when it
+  reaches that; else black or white, whichever has more contrast with the fill.
+
+So a sheet's dark text is drawn in the theme's text colour on a dark terminal, and a pale fill gets black text. The
+contrast is judged on the colours as the terminal shows them (the nearest of its 16 or 256). The active cell, the
+selection and the others' places are drawn in the theme's roles alone, and borders are not drawn.
 
 ## Assist
 

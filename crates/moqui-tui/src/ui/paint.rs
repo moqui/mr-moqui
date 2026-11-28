@@ -25,7 +25,7 @@ use revue::widget::{Border, RenderContext, View};
 pub use crate::keys::Target;
 use crate::layout::{char_width, display_width};
 use crate::model::clean_text;
-use crate::theme::{Role, Theme};
+use crate::theme::{Rgb, Role, Theme};
 
 /// How a run of text looks.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -37,6 +37,9 @@ pub struct Look {
     pub underline: bool,
     pub reverse: bool,
     pub italic: bool,
+    /// A document's own text color and fill, drawn in place of the roles' as [`Theme::readable`] decides.
+    pub color: Option<Rgb>,
+    pub fill: Option<Rgb>,
 }
 
 impl Look {
@@ -74,6 +77,13 @@ impl Look {
 
     pub fn on(mut self, bg: Role) -> Self {
         self.bg = Some(bg);
+        self
+    }
+
+    /// A document's own colors, each None for the role's.
+    pub fn colors(mut self, color: Option<Rgb>, fill: Option<Rgb>) -> Self {
+        self.color = color;
+        self.fill = fill;
         self
     }
 
@@ -141,8 +151,14 @@ impl Painter<'_, '_> {
 
     fn cell(&self, ch: char, look: Look) -> Cell {
         let mut cell = Cell::new(ch);
-        cell.fg = self.color(look.role);
-        cell.bg = self.color(look.bg);
+        let rgb = |rgb: Rgb| Color::rgb(rgb.0, rgb.1, rgb.2);
+        let (color, fill) = if look.color.is_some() || look.fill.is_some() {
+            self.theme.readable(look.color, look.fill, look.role)
+        } else {
+            (None, None)
+        };
+        cell.fg = color.map(rgb).or_else(|| self.color(look.role));
+        cell.bg = fill.map(rgb).or_else(|| self.color(look.bg));
         let mut modifier = Modifier::empty();
         if look.bold {
             modifier |= Modifier::BOLD;
@@ -218,11 +234,12 @@ impl Painter<'_, '_> {
             let Ok(cx) = u16::try_from(col) else {
                 break;
             };
+            let bg = cell.bg;
             self.ctx.set(cx, row, cell);
             self.cover(Rect::new(cx, row, u16::try_from(width).unwrap_or(1), 1));
             if width == 2 {
                 let mut spacer = Cell::continuation();
-                spacer.bg = self.color(look.bg);
+                spacer.bg = bg;
                 if let Ok(next) = u16::try_from(col + 1) {
                     self.ctx.set(next, row, spacer);
                 }

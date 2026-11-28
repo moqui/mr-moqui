@@ -23,8 +23,11 @@
 //! are the menu's. A saved document's room is read again every second and a half for the others' edits and places:
 //! the reads ask `since` the view's last edit, and a room that did not change answers only who is where.
 //!
-//! The data sheets are read only. Colours of the workbook are not drawn (the theme's roles are); bold and underline
-//! are, numbers stand right, and a text runs on into empty cells beside it.
+//! The data sheets are read only. A cell's font colour and fill are drawn where the terminal has colours, through the
+//! theme's contrast rule ([`crate::theme::Theme::readable`]: a dark text on a dark terminal is drawn in the theme's
+//! text colour, and a text on a fill in black or white when its own does not read there); the active cell, the
+//! selection and the others' places are drawn in the theme's roles. Bold, italic and underline are drawn, numbers
+//! stand right, and a text runs on into empty cells beside it. Borders are not drawn.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -34,7 +37,7 @@ use serde_json::{json, Value};
 use super::{Act, Component, ComponentState, Line, Span};
 use crate::keys::{Key, KeyPress};
 use crate::layout::{display_width, truncate_width};
-use crate::theme::Role;
+use crate::theme::{parse_color, Rgb, Role};
 
 pub struct CalcGrid;
 
@@ -145,6 +148,9 @@ struct Cell {
     underline: bool,
     /// `left`, `center` or `right` when the cell's style says so.
     align: String,
+    /// The font's colour and the fill, when the cell has them.
+    color: Option<Rgb>,
+    fill: Option<Rgb>,
 }
 
 const MENU: &[&str] = &[
@@ -246,8 +252,10 @@ fn cells(block: &Value) -> HashMap<(i32, i32), Cell> {
         let style = &style["style"];
         let font = &style["font"];
         let (bold, italic, underline) = (font["b"] == true, font["i"] == true, font["u"] == true);
+        let color = font["color"].as_str().and_then(parse_color);
         let align = style["alignment"]["horizontal"].as_str().unwrap_or("").to_string();
-        if !(bold || italic || underline || matches!(align.as_str(), "left" | "center" | "right")) || width < 1 {
+        let aligned = matches!(align.as_str(), "left" | "center" | "right");
+        if !(bold || italic || underline || aligned || color.is_some()) || width < 1 {
             continue;
         }
         let at = i32::try_from(at).unwrap_or(i32::MAX);
@@ -258,9 +266,20 @@ fn cells(block: &Value) -> HashMap<(i32, i32), Cell> {
                 italic,
                 underline,
                 align,
+                color,
                 ..Cell::default()
             },
         );
+    }
+    // the fills, as runs along the rows; a run of no colour is the cells without one
+    for run in block["fills"].as_array().map(Vec::as_slice).unwrap_or_default() {
+        let Some(fill) = run["color"].as_str().and_then(parse_color) else {
+            continue;
+        };
+        let (row, first) = (number(&run["row"]), number(&run["column"]));
+        for at in first..first.saturating_add(number(&run["width"]).clamp(0, width.max(0))) {
+            out.entry((row, at)).or_default().fill = Some(fill);
+        }
     }
     for text in block["texts"].as_array().map(Vec::as_slice).unwrap_or_default() {
         let cell = out.entry((number(&text["row"]), number(&text["column"]))).or_default();
@@ -1259,11 +1278,13 @@ fn grid_lines(view: &View, terminal_rows: u16, width: usize, lines: &mut Vec<Lin
         } else {
             Span::new(label, Role::Muted)
         }];
-        // a text runs on into the empty cells to its right
+        // a text runs on into the empty cells to its right, in its own colour
         let mut carry = String::new();
-        for column in &columns {
+        let mut carry_color = None;
+        for (index, column) in columns.iter().enumerate() {
             let w = view.width_of(*column);
             let cell = source.get(&(row, *column)).cloned().unwrap_or_default();
+            let mut color = cell.color;
             let at_cursor = (row, *column) == (view.row, view.column);
             let selected = (top..=bottom).contains(&row) && (left..=right).contains(column);
             let text = if !cell.text.is_empty() {
@@ -1283,11 +1304,13 @@ fn grid_lines(view: &View, terminal_rows: u16, width: usize, lines: &mut Vec<Lin
                 } else {
                     let shown = truncate_width(&cell.text, w);
                     carry = cell.text.chars().skip(shown.chars().count()).collect();
+                    carry_color = cell.color;
                     format!("{shown:<w$}")
                 }
             } else if !carry.is_empty() && !at_cursor && !selected {
                 let shown = truncate_width(&carry, w);
                 carry = carry.chars().skip(shown.chars().count()).collect();
+                color = carry_color;
                 format!("{shown:<w$}")
             } else {
                 carry.clear();
@@ -1309,14 +1332,32 @@ fn grid_lines(view: &View, terminal_rows: u16, width: usize, lines: &mut Vec<Lin
             if at_cursor {
                 span = span.reverse();
             }
+            // the place of the cursor, the selection and the others is the theme's to show
+            let own_colors = !at_cursor && !selected && peer.is_none();
+            if own_colors {
+                span = span.colors(color, cell.fill);
+            }
             if cell.bold {
                 span = span.bold();
+            }
+            if cell.italic {
+                span = span.italic();
             }
             if cell.underline || peer.is_some() {
                 span = span.underline();
             }
             line.push(span);
-            line.push(Span::new(" ", Role::Text));
+            // the gap between two cells of one fill is filled too, so a run of them is one band
+            let next_fill = columns
+                .get(index + 1)
+                .and_then(|next| source.get(&(row, *next)))
+                .and_then(|next| next.fill);
+            let gap = Span::new(" ", Role::Text);
+            line.push(if own_colors && cell.fill.is_some() && next_fill == cell.fill {
+                gap.colors(None, cell.fill)
+            } else {
+                gap
+            });
         }
         lines.push(line);
     }
