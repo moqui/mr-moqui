@@ -28,6 +28,7 @@ pub struct SheetData {
     pub sheet_name: String,
     pub rows: Vec<Vec<Value>>,
     pub row_numbers: Vec<u32>,
+    pub first_column: u32,
 }
 
 /// The first rows of one sheet, for a preview.
@@ -44,6 +45,31 @@ pub struct SheetPreview {
 /// Always: spreadsheets are not built in.
 pub fn read_sheet_bytes(_bytes: &[u8], _sheet_name: &str, _sheet_index: usize) -> Result<SheetData, LibError> {
     Err(LibError::new(NOT_BUILT))
+}
+
+/// # Errors
+///
+/// Always: spreadsheets are not built in.
+pub fn read_book_bytes(_bytes: &[u8]) -> Result<BookSheets, LibError> {
+    Err(LibError::new(NOT_BUILT))
+}
+
+/// The sheets of an open spreadsheet; see the `xlsx` build's. None here.
+pub struct BookSheets;
+
+impl BookSheets {
+    #[must_use]
+    pub fn names(&self) -> &[String] {
+        &[]
+    }
+}
+
+impl Iterator for BookSheets {
+    type Item = (String, Result<SheetData, LibError>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        None
+    }
 }
 
 /// # Errors

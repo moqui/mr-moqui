@@ -679,6 +679,8 @@ fn room_out(facade: &EntityFacade, room: &Room, user_id: &str) -> BTreeMap<Strin
         "evaluateMs".to_string(),
         Value::F64((room.evaluate_ms * 10.0).round() / 10.0),
     );
+    // past it an author is shown the time as a warning (calc@slow-ms)
+    out.insert("slowMs".to_string(), Value::F64(crate::room::slow_ms()));
     out.insert(
         "memoryBytes".to_string(),
         Value::I64(i64::try_from(room.memory_bytes()).unwrap_or(i64::MAX)),
@@ -698,30 +700,48 @@ fn room_out(facade: &EntityFacade, room: &Room, user_id: &str) -> BTreeMap<Strin
 }
 
 /// A workbook file as a model: the engine's reader for an xlsx it takes, else the cells of each sheet as values
-/// (`read#Spreadsheet`'s reader: xls, xlsb, ods, and an xlsx without the parts the engine needs).
-fn workbook_model(bytes: &[u8], name: &str) -> Result<moqui_core::workbook::ironcalc::base::Model<'static>, Error> {
+/// (`read#Spreadsheet`'s reader: xls, xlsb, ods, and an xlsx without the parts the engine needs), read from the file
+/// once and written a sheet at a time (an xlsx or xlsb sheet is also parsed only then; calamine parses an xls or ods
+/// book whole when it opens), each value in its own cell: a sheet's rows start at its used area's first column, which
+/// is not always A. A sheet that cannot be read, or is over the cell cap, is logged and left out, and its name is in
+/// the answer's second part; the workbook is refused only when no sheet could be read.
+fn workbook_model(
+    bytes: &[u8],
+    name: &str,
+) -> Result<(moqui_core::workbook::ironcalc::base::Model<'static>, Vec<String>), Error> {
     // refused before either reader parses it (SEC-TLS-114)
     moqui_core::service::spreadsheet::check_expanded_size(bytes, moqui_core::service::spreadsheet::MAX_EXPANDED_BYTES)
         .map_err(|err| Error::new(err.to_string()))?;
     match workbook::open_xlsx(bytes, name) {
-        Ok(model) => Ok(model),
+        Ok(model) => Ok((model, Vec::new())),
         Err(engine_error) => {
-            let first = moqui_core::service::spreadsheet::read_sheet_bytes(bytes, "", 0).map_err(|_| engine_error)?;
+            let sheets = moqui_core::service::spreadsheet::read_book_bytes(bytes).map_err(|_| engine_error)?;
             let mut writer = workbook::WorkbookWriter::new()?;
             let plain = writer.style(&workbook::CellStyle::default());
             let zone = moqui_core::l10n::time_zone();
-            for (index, sheet_name) in first.sheet_names.iter().enumerate() {
-                let data = if index == 0 {
-                    first.clone()
-                } else {
-                    moqui_core::service::spreadsheet::read_sheet_bytes(bytes, sheet_name, index)
-                        .map_err(|err| Error::new(err.to_string()))?
+            let mut left_out = Vec::new();
+            let mut first_refusal = None;
+            let mut written = 0_usize;
+            for (sheet_name, read) in sheets {
+                let data = match read {
+                    Ok(data) => data,
+                    Err(err) => {
+                        // one sheet is not the workbook: the others open (AGENTS.md failure tolerance)
+                        tracing::error!(workbook = name, sheet = %sheet_name, error = %err, "A sheet of a workbook could not be read; it is left out");
+                        first_refusal.get_or_insert_with(|| err.to_string());
+                        left_out.push(sheet_name);
+                        continue;
+                    }
                 };
-                let sheet = writer.add_sheet(sheet_name)?;
+                written += 1;
+                let sheet = writer.add_sheet(&data.sheet_name)?;
+                let first_column =
+                    usize::try_from(data.first_column.max(1)).map_err(|_| Error::new("Too many columns"))?;
                 for (row, number) in data.rows.iter().zip(&data.row_numbers) {
                     let row_number = i32::try_from(*number).map_err(|_| Error::new("Too many rows for a sheet"))?;
                     for (column, value) in row.iter().enumerate() {
-                        let column = i32::try_from(column + 1).map_err(|_| Error::new("Too many columns"))?;
+                        let column =
+                            i32::try_from(first_column + column).map_err(|_| Error::new("Too many columns"))?;
                         match cell_data(value, &zone) {
                             CellData::Empty => {}
                             CellData::Text(found) => writer.text(sheet, row_number, column, &found, plain)?,
@@ -737,7 +757,12 @@ fn workbook_model(bytes: &[u8], name: &str) -> Result<moqui_core::workbook::iron
                 }
                 writer.fit_columns(sheet)?;
             }
-            writer.into_model()
+            if written == 0 {
+                if let Some(refusal) = first_refusal {
+                    return Err(Error::new(refusal));
+                }
+            }
+            Ok((writer.into_model()?, left_out))
         }
     }
 }
@@ -793,7 +818,15 @@ fn open_document_with(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
             ));
         }
         let name = workbook_location.rsplit('/').next().unwrap_or("Workbook").to_string();
-        (workbook_model(&bytes, &name), Vec::new(), Vec::new(), name, None)
+        let model = workbook_model(&bytes, &name).map(|(model, left_out)| {
+            // the opener is told which sheets are not there (the response's messages)
+            if !left_out.is_empty() {
+                let message = format!("Not opened, as they could not be read: {}", left_out.join(", "));
+                ExecutionContext::with_current(|ec| ec.message().add_message_typed(message, "warning"));
+            }
+            model
+        });
+        (model, Vec::new(), Vec::new(), name, None)
     } else if parameters.get("source").is_some_and(|source| !is_empty(source)) {
         let mut spec = json!({});
         for key in ["source", "columns", "sort", "filter"] {
