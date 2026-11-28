@@ -137,3 +137,123 @@ test("a floating terminal's window holds the whole view, its menu and banners, o
     assert.equal(session.el.isConnected, false, "taken out with the window")
     store.end(key)
 })
+
+test("a watching window keeps the session's size, sends nothing it is typed, says whose it watches, and takes the typing back", async () => {
+    const sockets = []
+    const openSocket = moqui.openSocket
+    moqui.openSocket = url => {
+        const socket = {
+            url,
+            readyState: 1,
+            sent: [],
+            send(message) {
+                this.sent.push(message)
+            },
+            close() {
+                this.readyState = 3
+            }
+        }
+        sockets.push(socket)
+        return socket
+    }
+    const key = "watch-1"
+    try {
+        store.create(key, {kind: "host", connect: false})
+        store.state.sessions[key] = {
+            id: key,
+            kind: "host",
+            title: "shared",
+            shared: true,
+            write: true,
+            owner: "ann.lee",
+            viewers: []
+        }
+        vm.shown = key
+        await settle()
+        store.connect(key, {observe: true})
+        const socket = sockets[0]
+        assert.ok(socket.url.includes("&observe=1"), socket.url)
+        socket.onopen()
+        socket.onmessage({
+            data: JSON.stringify({
+                type: "attached",
+                kind: "host",
+                from: 0,
+                reset: true,
+                viewer: true,
+                owner: "ann.lee",
+                cols: 50,
+                rows: 12
+            })
+        })
+        await settle()
+        const session = store.session(key)
+        assert.deepEqual([session.term.cols, session.term.rows], [50, 12], "the session's size, not the box's")
+        const banner = document.querySelector("#TerminalWatching")
+        assert.ok(banner && banner.textContent.includes("Watching ann.lee's session"), banner && banner.textContent)
+        const before = socket.sent.length
+        session.out("ls\r")
+        assert.equal(socket.sent.length, before, "nothing typed is sent")
+        // Take it back: a new socket that types
+        banner.querySelector(".q-btn").click()
+        await settle()
+        assert.ok(!sockets[1].url.includes("observe"), sockets[1].url)
+        sockets[1].onopen()
+        sockets[1].onmessage({
+            data: JSON.stringify({type: "attached", kind: "host", from: 0, reset: true, viewer: false, owner: "ann.lee"})
+        })
+        // another window takes it: this one watches on, told so
+        sockets[1].onmessage({data: JSON.stringify({type: "role", viewer: true})})
+        await settle()
+        assert.ok(store.state.views[key].takenAway && session.viewer)
+    } finally {
+        moqui.openSocket = openSocket
+        vm.shown = ""
+        store.end(key)
+        await settle()
+    }
+})
+
+test("a recording plays at its times, seeks by feeding again from the start, and offers its download", async () => {
+    const cast = [
+        '{"version":2,"width":40,"height":6}',
+        '[0.0,"o","first line\\r\\n"]',
+        '[0.2,"r","50x8"]',
+        '[0.4,"o","second line\\r\\n"]'
+    ].join("\n")
+    const fetching = window.fetch
+    window.fetch = url =>
+        String(url).includes("/apps/Terminal/recording?recordingId=rec-1")
+            ? Promise.resolve(new Response(cast, {status: 200}))
+            : fetching(url)
+    const box = document.createElement("div")
+    document.body.appendChild(box)
+    const player = Vue.createApp({template: '<m-terminal-player recording-id="rec-1"></m-terminal-player>'})
+    player.use(Quasar)
+    Object.keys(moqui.qvtComponents).forEach(name => player.component(name, moqui.qvtComponents[name]))
+    const vm = player.mount(box).$.subTree.component.proxy
+    try {
+        await until(() => vm.loaded)
+        const text = () =>
+            vm.term.buffer.active.getLine(0).translateToString(true) +
+            "|" +
+            vm.term.buffer.active.getLine(1).translateToString(true)
+        await new Promise(resolve => vm.term.write("", resolve))
+        assert.equal(text(), "first line|", "the start, before the first second")
+        assert.equal(vm.duration, 0.4)
+        vm.seek(0.5)
+        await new Promise(resolve => vm.term.write("", resolve))
+        assert.equal(text(), "first line|second line")
+        assert.deepEqual([vm.term.cols, vm.term.rows], [50, 8], "its resize")
+        vm.seek(0)
+        vm.play()
+        await until(() => !vm.playing)
+        await new Promise(resolve => vm.term.write("", resolve))
+        assert.equal(text(), "first line|second line", "played to its end")
+        assert.ok(box.querySelector('a[href*="download=true"]'), "Download")
+    } finally {
+        window.fetch = fetching
+        player.unmount()
+        box.remove()
+    }
+})

@@ -104,7 +104,7 @@ fn caller(registry: &Registry) -> Result<Caller, Out> {
 
 /// The session `id` the caller may drive: its own command line or shell, checked as an attach is (the kind's
 /// permission and switch, the place, a recent sign-in from another machine), or one its token reaches.
-fn target(registry: &Registry, caller: &Caller, id: &str, ticket: &str) -> Result<Arc<Session>, Out> {
+fn target(registry: &Registry, caller: &Caller, id: &str, ticket: &str, write: bool) -> Result<Arc<Session>, Out> {
     let not_found = || refuse("notFound", "No such terminal session");
     let session = match caller {
         Caller::Token { from } => registry
@@ -112,15 +112,23 @@ fn target(registry: &Registry, caller: &Caller, id: &str, ticket: &str) -> Resul
             .filter(|to| super::token::reaches(from, to))
             .ok_or_else(not_found)?,
         Caller::User { username, facts } => {
-            let session = registry.find(id, username).ok_or_else(not_found)?;
+            let (session, may_type) = registry.find_for(id, username).ok_or_else(not_found)?;
             if session.kind == Kind::Apps {
                 return Err(not_found());
+            }
+            if write && !may_type {
+                return Err(refuse(
+                    "notAllowed",
+                    "That session is shared with you to watch, not to type in",
+                ));
             }
             let factory = factory().map_err(Err)?;
             let recent =
                 |millis: i64| moqui_core::user::recent_auth(millis) || registry.ticket_holds(ticket, username, millis);
-            if let Err(refusal) =
-                access::check(access::Switches::of(&factory), session.kind, facts, &permitted, &recent)
+            // another's session shared to read needs the place's rules alone; typing needs the kind's permission (D3)
+            let watching = !write && session.username != *username;
+            let allowed = |permission: &str| watching || permitted(permission);
+            if let Err(refusal) = access::check(access::Switches::of(&factory), session.kind, facts, &allowed, &recent)
             {
                 tracing::info!("terminal session {id}: driving refused for {username}: {refusal:?}");
                 return Err(refuse(refusal.code(), refusal.message()));
@@ -135,7 +143,7 @@ fn target(registry: &Registry, caller: &Caller, id: &str, ticket: &str) -> Resul
 }
 
 /// The caller and its session from the parameters, or the refusal.
-fn caller_and_target(parameters: &BTreeMap<String, Value>) -> Result<(Arc<Registry>, Arc<Session>), Out> {
+fn caller_and_target(parameters: &BTreeMap<String, Value>, write: bool) -> Result<(Arc<Registry>, Arc<Session>), Out> {
     let factory = factory().map_err(Err)?;
     super::services::adopt_held(&factory);
     let registry = Registry::of(&factory);
@@ -145,6 +153,7 @@ fn caller_and_target(parameters: &BTreeMap<String, Value>) -> Result<(Arc<Regist
         &caller,
         &text(parameters, "sessionId"),
         &text(parameters, "ticket"),
+        write,
     )?;
     Ok((registry, session))
 }
@@ -197,7 +206,7 @@ fn out(value: serde_json::Value) -> Out {
 /// `get#TerminalScreen`: the session's screen as text (§4.2): `scope` visible (the default), scrollback, or last with
 /// its `lines`; `format` ansi adds the screen as escape sequences.
 pub fn get_terminal_screen(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
-    let (_registry, session) = match caller_and_target(parameters) {
+    let (_registry, session) = match caller_and_target(parameters, false) {
         Ok(found) => found,
         Err(refused) => return refused,
     };
@@ -223,7 +232,7 @@ pub fn get_terminal_screen(parameters: &BTreeMap<String, Value>, _facade: &Entit
 pub fn send_terminal_input(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
     // input runs code: never under an agent's fence or in a sim, as opening a session is not
     moqui_core::entity::fence::check_effect(moqui_core::entity::fence::Effect::Process, "send#TerminalInput")?;
-    let (_registry, session) = match caller_and_target(parameters) {
+    let (_registry, session) = match caller_and_target(parameters, true) {
         Ok(found) => found,
         Err(refused) => return refused,
     };
@@ -262,7 +271,7 @@ fn key_names(keys: Option<&Value>) -> Vec<String> {
 
 /// `find#TerminalEvents`: the session's events after number `after` (0 for all it keeps).
 pub fn find_terminal_events(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
-    let (_registry, session) = match caller_and_target(parameters) {
+    let (_registry, session) = match caller_and_target(parameters, false) {
         Ok(found) => found,
         Err(refused) => return refused,
     };
@@ -401,7 +410,7 @@ impl Drop for WaitSlot {
 /// marks a `prompt`, its output is quiet for `quietMs`, or it `ended`; at most `timeoutSeconds` (300). Answers what
 /// matched (`matched`, empty on a timeout) and the screen's last lines.
 pub fn wait_terminal_session(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
-    let (_registry, session) = match caller_and_target(parameters) {
+    let (_registry, session) = match caller_and_target(parameters, false) {
         Ok(found) => found,
         Err(refused) => return refused,
     };

@@ -164,6 +164,24 @@ pub(crate) async fn run<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>
             return 1;
         }
     };
+    // as the user's own OS account, when the conf says so (plans/Terminal-Fancy2.md §4.6)
+    let username = access.username.clone();
+    let run_as = crate::worker::on_pool(&access.factory, move |factory| Ok(host::run_as_for(factory, &username))).await;
+    let run_as = match run_as {
+        Ok(Ok(run_as)) => run_as,
+        Ok(Err(_)) => {
+            let _ = stream
+                .write_all(
+                    refused("no operating system account is set up for you on this server".to_string()).as_bytes(),
+                )
+                .await;
+            return 1;
+        }
+        Err(err) => {
+            let _ = stream.write_all(refused(err.message().to_string()).as_bytes()).await;
+            return 1;
+        }
+    };
     let size = *access.size.borrow_and_update();
     let launch = Launch::of(
         &factory,
@@ -173,6 +191,7 @@ pub(crate) async fn run<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>
         None,
         false,
         size,
+        run_as,
     );
     let program = match launch.start() {
         Ok(program) => program,

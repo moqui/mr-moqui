@@ -76,9 +76,28 @@ pub fn term_exec() -> i32 {
         eprintln!("{message}");
         127
     };
+    let args: Vec<String> = std::env::args().skip_while(|arg| arg != "term-exec").skip(1).collect();
+    if args.iter().any(|arg| arg == "--print-setup") {
+        let exe = std::env::current_exe()
+            .map(|exe| exe.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let user = std::env::var("USER").unwrap_or_else(|_| "moqui".to_string());
+        print!("{}", super::runas::setup_text(&user, &exe));
+        return 0;
+    }
     let stdin = io::stdin();
     if !rustix::termios::isatty(stdin.as_fd()) {
         return fail("term-exec runs a program on a terminal; its stdin is not one".to_string());
+    }
+    // as root through sudo: check the account, and start and supervise the program as it (plans/Terminal-Fancy2.md §4.6)
+    if args.iter().any(|arg| arg == "--run-as") {
+        return super::runas::supervise(&args);
+    }
+    // the child the root parent started: the account first, then the program
+    if let Some(drop) = std::env::var_os(super::runas::DROP_ENV) {
+        if let Err(err) = super::runas::drop_privileges(&drop.to_string_lossy()) {
+            return fail(format!("term-exec: the account was not taken: {err}"));
+        }
     }
     let Some(spec) = std::env::var_os(EXEC_ENV) else {
         return fail(format!("term-exec needs {EXEC_ENV}"));
@@ -97,7 +116,10 @@ pub fn term_exec() -> i32 {
         return fail(format!("term-exec: the terminal did not become this session's: {err}"));
     }
     let mut command = std::process::Command::new(program);
-    command.args(args).env_remove(EXEC_ENV);
+    command
+        .args(args)
+        .env_remove(EXEC_ENV)
+        .env_remove(super::runas::DROP_ENV);
     if let Some(arg0) = &spec.arg0 {
         command.arg0(arg0);
     }
@@ -219,11 +241,17 @@ pub(crate) fn resize(master: &AsyncFd<OwnedFd>, cols: u16, rows: u16) {
     }
 }
 
-/// A signal to the program's process group (it is its session's leader, so its group is its pid).
+/// A signal to the program's process group (it is its session's leader, so its group is its pid). A program started as
+/// another account (plans/Terminal-Fancy2.md §4.6) is `sudo`'s pid, with no group of its own: it is signalled itself,
+/// and sudo relays the signal to the root supervisor; a SIGKILL there is a SIGTERM, which sudo can relay (it cannot a
+/// SIGKILL), and the supervisor kills the program itself 5 seconds after.
 pub(crate) fn signal(pid: Option<Pid>, signal: Signal) {
     if let Some(pid) = pid {
         if let Err(err) = rustix::process::kill_process_group(pid, signal) {
-            tracing::debug!("a terminal program's group was not signalled: {err}");
+            let to = if signal == Signal::KILL { Signal::TERM } else { signal };
+            if let Err(again) = rustix::process::kill_process(pid, to) {
+                tracing::debug!("a terminal program was not signalled: {err}; {again}");
+            }
         }
     }
 }

@@ -38,9 +38,13 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="open" noun="TerminalSession" type="rust" location="moqui_host::term::services::open_terminal_session"
             allow-remote="false" transaction="ignore">
-        <description>Open a session at cols by rows (20 by 10 to 500 by 500) and answer its sessionId and the session as
-            find#TerminalSessions lists it. kind is apps (the default), command or host; profileName and directory are a
-            host session's.</description>
+        <description>Open a session at cols by rows (20 by 10 to 1000 by 500) and answer its sessionId and the session
+            as find#TerminalSessions lists it. kind is apps (the default), command, host or thread; profileName and
+            directory are a host session's. A thread terminal (plans/Terminal-Fancy2.md §4.7) is an agent conversation's:
+            conversationId and clientTerminalId (1 to 128 characters each) name it, and an open of a live one of the
+            same user, conversation and client id answers it; label, workRootId, providerInstanceId and stopOnSettle are
+            kept for its component; directory is checked by the policy a crate gives (none given: notAvailable); env is a
+            map of at most 128 names to values of at most 8192 characters, the Moqui conf's names left out.</description>
         <in-parameters>
             <parameter name="kind" default-value="apps"/>
             <parameter name="profileName"/>
@@ -50,6 +54,13 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="rows" type="Integer"/>
             <parameter name="resume"><description>true: a host session started again, with its profile's resume-args.</description></parameter>
             <parameter name="ticket"><description>A ticket of confirm#TerminalUser, for a recent sign-in.</description></parameter>
+            <parameter name="conversationId"/>
+            <parameter name="clientTerminalId"/>
+            <parameter name="label"/>
+            <parameter name="workRootId"/>
+            <parameter name="providerInstanceId"/>
+            <parameter name="stopOnSettle"/>
+            <parameter name="env"><description>A thread terminal's variables: a map of names to text.</description></parameter>
             <parameter name="input"><description>A host session's first input, as if typed: the Dev AIDE's
                 Run locally types the command of its script (sh [script]) into the shell. Nothing a user with a host
                 session could not type.</description></parameter>
@@ -63,16 +74,32 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="update" noun="TerminalSession" type="rust" location="moqui_host::term::services::update_terminal_session"
             allow-remote="false" transaction="ignore">
         <description>Name a session: title, the user's own name for it; empty gives the title back to its program (OSC 0
-            and 2). notify: whether it notifies, default (the user's settings), all or off.</description>
+            and 2). notify: whether it notifies, default (the user's settings), all or off. record: Y starts recording
+            what it shows (where terminal@recording is offer), N stops it (not a recording the conf forced).</description>
         <in-parameters>
             <parameter name="sessionId" required="true"/>
             <parameter name="title"/>
             <parameter name="notify"/>
+            <parameter name="record"/>
         </in-parameters>
         <out-parameters>
             <parameter name="session" type="Map"/>
             <parameter name="reasonCode"/>
         </out-parameters>
+    </service>
+    <service verb="clear" noun="TerminalSession" type="rust" location="moqui_host::term::services::clear_terminal_session"
+            allow-remote="false" transaction="ignore">
+        <description>Empty one of the caller's own thread terminals' kept output and history (plans/Terminal-Fancy2.md
+            §4.7); its windows are sent cleared and clear theirs.</description>
+        <in-parameters><parameter name="sessionId" required="true"/></in-parameters>
+        <out-parameters><parameter name="session" type="Map"/><parameter name="reasonCode"/></out-parameters>
+    </service>
+    <service verb="restart" noun="TerminalSession" type="rust" location="moqui_host::term::services::restart_terminal_session"
+            allow-remote="false" transaction="ignore">
+        <description>Start one of the caller's own thread terminals again after its program ended, under the same id and
+            with its history first; a running one is answered as it is. A socket's attach with restart true does the same.</description>
+        <in-parameters><parameter name="sessionId" required="true"/><parameter name="ticket"/></in-parameters>
+        <out-parameters><parameter name="sessionId"/><parameter name="session" type="Map"/><parameter name="reasonCode"/></out-parameters>
     </service>
     <service verb="close" noun="TerminalSession" type="rust" location="moqui_host::term::services::close_terminal_session"
             allow-remote="false" transaction="ignore">
@@ -216,15 +243,104 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="lastEvent" type="Long"/><parameter name="reasonCode"/>
         </out-parameters>
     </service>
+    <!-- Sharing (plans/Terminal-Fancy2.md §4.4): the owner of a command line or a shell lets another user watch it
+        (/termws?session=<id>&observe=1, get#TerminalScreen and the other reads), or type in it too when that user holds
+        the kind's permission (SSH_SHELL for a command line, TERMINAL_HOST for a shell). Each share is a
+        moqui.terminal.TerminalSessionShare row; revoked, the user's windows on it are let go; the session's end closes
+        its shares. -->
+    <!-- Recordings (plans/Terminal-Fancy2.md §4.5): update#TerminalSession's record starts and stops one; these list,
+        locate, delete and expire them. Only a recording's owner plays it; an administrator lists and deletes. -->
+    <service verb="find" noun="TerminalRecordings" type="rust" location="moqui_host::term::recording::find_terminal_recordings"
+            allow-remote="false" transaction="ignore">
+        <description>The caller's own recordings, newest first: recordingId, sessionId, title, fromDate, thruDate, bytes,
+            forced.</description>
+        <out-parameters><parameter name="recordings" type="List"/><parameter name="reasonCode"/></out-parameters>
+    </service>
+    <service verb="get" noun="TerminalRecording" type="rust" location="moqui_host::term::recording::get_terminal_recording"
+            allow-remote="false" transaction="ignore">
+        <description>Where one of the caller's own recordings is (location, a file: resource), for the Terminal's player
+            and Download; nobody else's.</description>
+        <in-parameters><parameter name="recordingId" required="true"/></in-parameters>
+        <out-parameters><parameter name="location"/><parameter name="recording" type="Map"/><parameter name="reasonCode"/></out-parameters>
+    </service>
+    <service verb="find" noun="AllTerminalRecordings" type="rust" location="moqui_host::term::recording::find_all_terminal_recordings"
+            allow-remote="false" transaction="ignore">
+        <description>Every user's recordings (System › Terminal sessions), never their contents. Needs view
+            authorization on the System app.</description>
+        <out-parameters><parameter name="recordings" type="List"/><parameter name="reasonCode"/></out-parameters>
+    </service>
+    <service verb="delete" noun="TerminalRecording" type="rust" location="moqui_host::term::recording::delete_terminal_recording"
+            allow-remote="false" transaction="ignore">
+        <description>Remove a recording, file and row. Needs update authorization on the System app.</description>
+        <in-parameters><parameter name="recordingId" required="true"/></in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+    </service>
+    <service verb="clean" noun="TerminalRecordings" type="rust" location="moqui_host::term::recording::clean_terminal_recordings"
+            authenticate="anonymous-all" allow-remote="false" transaction="ignore">
+        <description>Remove the recordings older than terminal@recording-days, file and row; called by
+            clean#TerminalSessions each day.</description>
+        <out-parameters><parameter name="removed" type="Integer"/></out-parameters>
+    </service>
+    <!-- OS accounts (plans/Terminal-Fancy2.md §4.6): where terminal@run-as is person, the account each user's host
+        sessions run as. Kept by an administrator (the System app) who holds TERMINAL_HOST. -->
+    <service verb="find" noun="TerminalOsAccounts" type="rust" location="moqui_host::term::accounts::find_terminal_os_accounts"
+            allow-remote="false" transaction="ignore">
+        <description>The users' OS accounts in force: username, osUsername, fromDate.</description>
+        <out-parameters><parameter name="accounts" type="List"/><parameter name="reasonCode"/></out-parameters>
+    </service>
+    <service verb="store" noun="TerminalOsAccount" type="rust" location="moqui_host::term::accounts::store_terminal_os_account"
+            allow-remote="false" transaction="ignore">
+        <description>username's host sessions run as osUsername from now on (never root). Whether the server may is the
+            root-owned /etc/moqui/run-as.conf's to say.</description>
+        <in-parameters><parameter name="username" required="true"/><parameter name="osUsername" required="true"/></in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+    </service>
+    <service verb="expire" noun="TerminalOsAccount" type="rust" location="moqui_host::term::accounts::expire_terminal_os_account"
+            allow-remote="false" transaction="ignore">
+        <description>username has no OS account from now on.</description>
+        <in-parameters><parameter name="username" required="true"/></in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+    </service>
+    <service verb="share" noun="TerminalSession" type="rust" location="moqui_host::term::share::share_terminal_session"
+            allow-remote="false" transaction="ignore">
+        <description>Share one of the caller's own command lines or shells with username: to watch it, or with write Y
+            to type in it too, refused (noPermission) when that user lacks the kind's permission. Sharing again changes
+            the share. Answers the session as find#TerminalSessions lists it, with its shares.</description>
+        <in-parameters>
+            <parameter name="sessionId" required="true"/>
+            <parameter name="username" required="true"/>
+            <parameter name="write" default-value="N"/>
+        </in-parameters>
+        <out-parameters><parameter name="session" type="Map"/><parameter name="reasonCode"/></out-parameters>
+    </service>
+    <service verb="revoke" noun="TerminalSessionShare" type="rust" location="moqui_host::term::share::revoke_terminal_session_share"
+            allow-remote="false" transaction="ignore">
+        <description>Take username's share of one of the caller's own sessions back: their windows on it are let go
+            ("the share was revoked").</description>
+        <in-parameters>
+            <parameter name="sessionId" required="true"/>
+            <parameter name="username" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="session" type="Map"/><parameter name="reasonCode"/></out-parameters>
+    </service>
     <service verb="clean" noun="TerminalSessions" authenticate="anonymous-all">
         <description>The job clean_TerminalSessions_daily: deletes the audit rows (moqui.terminal.TerminalSession) of
-            sessions opened more than daysToKeep days ago.</description>
+            sessions opened more than daysToKeep days ago, and the shares (moqui.terminal.TerminalSessionShare) made as long
+            ago.</description>
         <in-parameters><parameter name="daysToKeep" type="Integer" default-value="90"/></in-parameters>
         <out-parameters><parameter name="deleted" type="Integer"/></out-parameters>
         <actions><script><![CDATA[
             const days = Math.max(1, Number(daysToKeep) || 90)
             const cutoff = new Date(Date.now() - days * 86400000)
             deleted = ec.entity.find('moqui.terminal.TerminalSession').condition('fromDate', '<', cutoff).disableAuthz().deleteAll()
+            ec.entity.find('moqui.terminal.TerminalSessionShare').condition('fromDate', '<', cutoff).disableAuthz().deleteAll()
+            // the recordings past terminal@recording-days, file and row; a build without host sessions has no such service
+            try {
+                ec.service.sync().name('org.moqui.terminal.TerminalServices.clean#TerminalRecordings').disableAuthz().call()
+            } catch (e) {
+                ec.logger.info('Terminal recordings not cleaned: ' + e)
+            }
+            ec.message.clearErrors()
         ]]></script></actions>
     </service>
 </services>

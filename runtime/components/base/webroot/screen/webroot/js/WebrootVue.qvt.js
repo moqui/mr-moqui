@@ -8527,7 +8527,20 @@
         props: { id: String, recordEntity: [String, Number], recordId: [String, Number], defaultTab: String, hide: String },
         data() { recordPanelCount += 1; return { containerId: this.id || "m-" + kind + "-" + recordPanelCount }; },
         provide() { return { mRecordPanel: root.Vue ? root.Vue.computed(() => this.panel) : null }; },
-        template: '<div v-if="loadUrl" :class="\'m-record-panel m-record-panel-\' + kind"><m-dynamic-container ref="container" :id="containerId" :url="loadUrl"></m-dynamic-container></div>',
+        // Open in a window (Terminal-Fancy2 §4.8): the panel's screen in a window of its own, with the record's provide; the
+        // panel in the page stays
+        template: '<div v-if="loadUrl" :class="\'m-record-panel m-record-panel-\' + kind">' +
+            '<div v-if="canFloat" class="row justify-end"><q-btn flat dense round size="sm" icon="sym_o_open_in_new" class="m-record-panel-float"' +
+            ' :aria-label="$root.labels.openInWindow" @click="float"><q-tooltip>{{$root.labels.openInWindow}}</q-tooltip></q-btn></div>' +
+            '<m-dynamic-container ref="container" :id="containerId" :url="loadUrl"></m-dynamic-container></div>',
+        methods: {
+            float() {
+                const title = (this.$root.headerTitle ? this.$root.headerTitle + " · " : "") + (kind === "chatter" ? moqui.l10n.localize("Chatter") : moqui.l10n.localize("Files"));
+                const panel = Object.assign({}, this.panel);
+                delete panel.containerId;
+                moqui.floats.openScreen(this.loadUrl, title, { icon: kind === "chatter" ? "sym_o_forum" : "sym_o_folder", recordPanel: panel });
+            }
+        },
         computed: {
             kind() { return kind; },
             record() {
@@ -8537,6 +8550,7 @@
             appName() { return this.$root.currentAppName || ""; },
             target() { return moqui.recordPanelUrl(this.$root.shellData, this.appName, kind, this.record, this.$root.basePath, this.$root.linkBasePath); },
             loadUrl() { return this.target.url || null; },
+            canFloat() { return !!(moqui.floats && moqui.floats.canFloat()); },
             panel() { return Object.assign({ kind, appRoot: this.appName, containerId: this.containerId }, this.record); }
         },
         watch: {
@@ -8572,7 +8586,7 @@
         template:'<div v-if="boards.length" class="row items-center q-gutter-xs m-record-boards"><q-btn v-for="b in boards" :key="b.wikiPageId" flat dense icon="sym_o_draw" :label="b.title" @click="open(b.wikiPageId)"/></div>'
     });
     const chatterPanel=recordPanel("chatter", "mChatter");
-    chatterPanel.template=chatterPanel.template.replace("</div>", '<m-record-boards :record="record"></m-record-boards></div>');
+    chatterPanel.template=chatterPanel.template.replace("</m-dynamic-container></div>", '</m-dynamic-container><m-record-boards :record="record"></m-record-boards></div>');
     component("m-chatter", chatterPanel);
     component("m-record-files", recordPanel("recordFiles", "mRecordFiles"));
 
@@ -9984,6 +9998,10 @@
         "                    </q-item-section>\n" +
         "                    <q-item-section>{{subscreen.title}}</q-item-section>\n" +
         "                </q-item>\n" +
+        // this screen in a window of its own, beside the page (Terminal-Fancy2 §4.8)
+        "                <template v-if=\"canFloatScreen\"><q-separator></q-separator>\n" +
+        "                <q-item clickable v-close-popup id=\"m-screen-float\" @click=\"openScreenWindow()\"><q-item-section avatar><q-icon name=\"sym_o_open_in_new\" size=\"xs\"></q-icon></q-item-section>\n" +
+        "                    <q-item-section>{{labels.openInWindow}}</q-item-section></q-item></template>\n" +
         "            </q-list></q-menu>\n" +
         "        </q-btn>\n" +
         "        <q-toolbar-title v-else-if=\"headerTitle\" shrink class=\"text-subtitle1 text-weight-medium q-pr-sm\" :class=\"handheld ? '' : 'gt-xs'\">{{headerTitle}}</q-toolbar-title>\n" +
@@ -10170,6 +10188,8 @@
         // the layout, below the dialogs, menus and notices; what floats is its owner's content, moved into a window's
         // body
         "<m-float-layer v-if=\"floatsOn\"></m-float-layer>\n" +
+        // the screens in windows (WebrootFloats.js m-float-screens, Terminal-Fancy2 §4.8): each in its window's body
+        "<m-float-screens v-if=\"floatsOn\"></m-float-screens>\n" +
         // the copy a terminal's program made that the browser refused, to copy by hand (WebrootTerminal.js)
         "<m-terminal-copy v-if=\"terminalOn\"></m-terminal-copy>\n" +
         // the floating terminals' views, each teleported into its window (WebrootTerminal.js, Terminal-Fancy2 §4.1)
@@ -10207,7 +10227,7 @@
 
     // The text of the suite shell when the page's labels (qapps.xml, localized there) do not have it.
     qvt.shellLabels = { terminal: "Terminal UI", menu: "Menu", applications: "Applications", allApplications: "All applications", search: "Search", quickCreate: "Create",
-        quickCreateFirst: "Create in this app", today: "Today", chat: "Chat", mail: "Mail", messages: "Messages", notifications: "Notifications", dialer: "Dialer", trayNotifications: "Alerts", trayDialer: "Call", missedCalls: "Missed calls", close: "Close", closeTray: "Close tray", undockTab: "Undock this tab",
+        quickCreateFirst: "Create in this app", today: "Today", chat: "Chat", mail: "Mail", messages: "Messages", notifications: "Notifications", dialer: "Dialer", trayNotifications: "Alerts", trayDialer: "Call", missedCalls: "Missed calls", close: "Close", closeTray: "Close tray", undockTab: "Undock this tab", openInWindow: "Open in a window",
         closeTopmost: "Close the dialog, menu or panel", keyboardShortcuts: "Keyboard shortcuts", keysEverywhere: "Everywhere", recent: "Recent",
         screens: "Screens", savedFinds: "Saved finds", actions: "Actions", more: "More", noResults: "Nothing found",
         paletteHint: "Search screens, records and actions", paletteEmpty: "Type to search screens, records, people and actions",
@@ -10631,6 +10651,10 @@
                 else this.trayTab = saved.tab;
             },
 
+            // This screen in a window of its own (Terminal-Fancy2 §4.8): it loads anew there, and its links open in the page.
+            openScreenWindow() {
+                if (moqui.floats) moqui.floats.openScreen(this.currentLinkUrl, this.headerTitle || "");
+            },
             // A + menu kind: its screen in the quick-create dialog, with the record of the screen context as parameters.
             openQuickCreate(item) {
                 if (!item || !item.url) return;
@@ -11089,8 +11113,12 @@
                     seen[action.url] = true;
                     out.push({ title: action.label, subtitle: app.title, icon: action.icon || "sym_o_bolt", url: action.url });
                 }));
+                if (this.canFloatScreen)
+                    out.push({ title: this.labels.openInWindow, subtitle: this.headerTitle || "", icon: "sym_o_open_in_new", run: () => this.openScreenWindow() });
                 return out.concat(palette.clientActions());
             },
+            // the screen may open in a window of its own (Terminal-Fancy2 §4.8): where windows float
+            canFloatScreen() { return !!(moqui.floats && moqui.floats.canFloat() && this.currentLinkPath); },
             // the saved finds of the screens on the current path, from its menu data
             paletteSavedFinds() {
                 const seen = {};

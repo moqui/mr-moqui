@@ -36,6 +36,8 @@ use tokio::sync::watch;
 pub(crate) mod access;
 mod apps;
 mod attention;
+#[cfg(all(feature = "devtools", unix))]
+mod accounts;
 #[cfg(feature = "devtools")]
 pub(crate) mod audit;
 #[cfg(feature = "devtools")]
@@ -55,10 +57,20 @@ mod keys;
 mod notice;
 pub(crate) mod registry;
 mod ring;
+#[cfg(all(feature = "devtools", unix))]
+pub(crate) mod record;
+#[cfg(all(feature = "devtools", unix))]
+mod recording;
+#[cfg(all(feature = "devtools", unix))]
+pub(crate) mod runas;
 #[cfg(feature = "devtools")]
 pub(crate) mod screen;
+#[cfg(feature = "devtools")]
+mod share;
 mod services;
 pub(crate) mod session;
+#[cfg(all(feature = "devtools", unix))]
+pub(crate) mod thread;
 #[cfg(feature = "devtools")]
 pub(crate) mod token;
 mod track;

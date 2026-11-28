@@ -93,7 +93,9 @@
         //     window dragged to that edge of the area (left, right, top or bottom; outside the corners), or with no edge onto
         //     the rect, shows the rect as a Dock outline and docks at the drop, in place of that edge's snap (§15);
         //   overModal(): true while the kind's window is to be used over a modal dialog (Assist beside a page's dialog): the layer
-        //     goes over the dialogs and the other windows are hidden until it answers false (overKind).
+        //     goes over the dialogs and the other windows are hidden until it answers false (overKind);
+        //   close(key, float): Close asked; true keeps the window, minimized, instead of ending it (a call goes on, Terminal-Fancy2
+        //     §4.8).
         // Registering again replaces the definition. A kind asks wasFloated(kind, key) and opens itself when it was.
         register(kind, def) {
             floats.load();
@@ -177,7 +179,10 @@
             const s = floats.state;
             const place = opts.rect || floats.saved.places[pk] || floats.defaultRect(def);
             const rect = floats.clampRect(place, s.area, def.minSize);
-            const f = { id: idOf(kind, k), kind, key: k, title: String(opts.title || ""), x: rect.x, y: rect.y, w: rect.w, h: rect.h,
+            // a window's title and data (a screen's, a record panel's) come back after a load with the window
+            const title = String(opts.title || (was && was.title) || "");
+            const data = opts.data !== undefined ? opts.data : was ? was.data : undefined;
+            const f = { id: idOf(kind, k), kind, key: k, title, data, x: rect.x, y: rect.y, w: rect.w, h: rect.h,
                 z: floats.topZ() + 1, minimized: !!(was && was.minimized), maximized: !!(was && was.maximized), hidden: !!(was && was.hidden), restoreRect: null };
             if (was && num(was.z)) f.z = was.z;
             s.floats.push(f);
@@ -185,7 +190,12 @@
             return f.id;
         },
         // Close: the content docks closed (§10.2: closing a float ends nothing). Dock: it docks and shows where it lives.
-        close(id) { return floats.end(id, false); },
+        close(id) {
+            const f = floats.get(id);
+            const def = f && floats.kinds[f.kind];
+            if (def && typeof def.close === "function" && def.close(f.key, f)) return floats.minimize(id);
+            return floats.end(id, false);
+        },
         dock(id) { return floats.end(id, true); },
         // The window goes first and then the kind docks its content, so a dock that opens the content where it lives (the tray
         // on a tab) finds it no longer floating.
@@ -543,7 +553,8 @@
             const store = storage();
             if (!store) return;
             const s = floats.state;
-            const out = { floats: s.floats.map((f) => Object.assign({ kind: f.kind, key: f.key, z: f.z, minimized: f.minimized, maximized: f.maximized, hidden: f.hidden },
+            const out = { floats: s.floats.map((f) => Object.assign({ kind: f.kind, key: f.key, z: f.z, minimized: f.minimized, maximized: f.maximized, hidden: f.hidden,
+                title: f.title || undefined, data: f.data },
                 rectOf(f.restoreRect || f))), places: floats.saved.places };
             s.floats.forEach((f) => { out.places[placeKey(f.kind, f.key)] = rectOf(f.restoreRect || f); });
             try { store.setItem(storeKey(), JSON.stringify(out)); } catch (err) { /* full or off */ }
@@ -566,7 +577,8 @@
             (Array.isArray(kept.floats) ? kept.floats : []).forEach((f) => {
                 if (!f || typeof f.kind !== "string") return;
                 const pk = placeKey(f.kind, f.key);
-                floats.restoring[pk] = { z: num(f.z) ? f.z : 0, minimized: !!f.minimized, maximized: !!f.maximized, hidden: !!f.hidden };
+                floats.restoring[pk] = { z: num(f.z) ? f.z : 0, minimized: !!f.minimized, maximized: !!f.maximized, hidden: !!f.hidden,
+                    title: typeof f.title === "string" ? f.title : "", data: f.data && typeof f.data === "object" ? f.data : undefined };
                 if (num(f.x) && num(f.y) && num(f.w) && num(f.h)) floats.saved.places[pk] = rectOf(f);
             });
         }
@@ -734,6 +746,62 @@
                 '<div class="m-float-body" :id="bodyId" data-float-body></div>' +
                 '<div v-for="edge in edges" :key="edge" class="m-float-grip" :class="\'m-float-grip--\' + edge" :data-float-grip="edge" aria-hidden="true" @pointerdown="startResize(edge, $event)"></div>' +
             '</section>'
+    };
+
+    // ---- screens in windows (Terminal-Fancy2 §4.8, D11) ----
+    // A screen floats by its URL: a window of kind "screen" whose body holds a dynamic container of its own, so the screen
+    // loads anew there (the one exception to moving content into a window: a screen has no other place to be moved from).
+    // Its links open in the page, as a tray tab's do. It comes back at a load, and Dock opens it in the page. A record
+    // panel (Chatter, Files) floats the same way with its panel's provide (data.recordPanel).
+    const SCREEN = "screen";
+    floats.register(SCREEN, {
+        title: (key, f) => (f && f.title) || key,
+        icon: (key, f) => (f && f.data && f.data.icon) || "sym_o_web_asset",
+        defaultSize: { w: 560, h: 520 },
+        minSize: { w: 320, h: 240 },
+        place: "right",
+        inReach: true,
+        dock: (shown, key) => {
+            const shell = moqui.webrootVue;
+            if (shown && shell && typeof shell.setUrl === "function") shell.setUrl(key);
+        }
+    });
+    // Open `url` in a window titled `title` (data: what the window keeps, such as a record panel's provide); the window's id, or
+    // false where nothing floats.
+    floats.openScreen = (url, title, data) => (url ? floats.open(SCREEN, String(url), { title: title || "", data }) : false);
+    // the screens floating when the page was last left, opened again
+    floats.restoreScreens = () => {
+        floats.load();
+        Object.keys(floats.restoring)
+            .filter((pk) => pk.startsWith(SCREEN + "|"))
+            .forEach((pk) => floats.open(SCREEN, pk.slice(SCREEN.length + 1), { restore: true }));
+    };
+
+    // One screen in its window: its own container (a unique id), and a record panel's provide when it is one.
+    let screenIds = 0;
+    components["m-float-screen"] = {
+        name: "mFloatScreen",
+        props: { url: { type: String, required: true }, panel: { type: Object, default: null } },
+        data() { return { containerId: "m-float-screen-" + (++screenIds) }; },
+        provide() {
+            // mr-boss's Chatter and Files screens read the record they are of from it, as in the page
+            return { mRecordPanel: moqui.isPlainObject(this.panel) ? Object.assign({}, this.panel, { containerId: this.containerId }) : undefined };
+        },
+        template: '<div class="m-float-screen col scroll q-pa-sm" :data-float-screen="url"><m-dynamic-container :id="containerId" :url="url"></m-dynamic-container></div>'
+    };
+
+    // The floating screens, each teleported into its window's body; mounted with the layer.
+    components["m-float-screens"] = {
+        name: "mFloatScreens",
+        data() { return { s: floats.state }; },
+        computed: {
+            shown() { return this.s.floats.filter((f) => f.kind === SCREEN && floats.target(SCREEN, f.key)); }
+        },
+        mounted() { floats.restoreScreens(); },
+        template:
+            '<template v-for="f in shown" :key="f.id"><teleport :to="s.ready[f.id] ? \'#\' + bodyIdOf(f.id) : \'body\'" :disabled="!s.ready[f.id]">' +
+            '<m-float-screen :url="f.key" :panel="f.data && f.data.recordPanel ? f.data.recordPanel : null"></m-float-screen></teleport></template>',
+        methods: { bodyIdOf(id) { return floats.bodyId(id); } }
     };
 
     // Before WebrootVue.qvt.js its registry takes them; after it they are registered late on the running application.

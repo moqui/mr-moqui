@@ -1,7 +1,10 @@
 # Terminal 2: the screen as text, driven sessions, viewers, recording, OS accounts, threads and more floats
 
-Status 2026-11-27: plan, not built; checked against the code the same day, and the parts that assumed what is not
-there corrected (D13 to D17 and the notes in each phase). It follows [Terminal-Fancy](archive/Terminal-Fancy.md), built Nov 11, 2026 (P0 to
+Status 2026-11-28: built, TF1 to TF8 (TF2 and TF3 in one commit), with the notes marked "As built" in §4. Not done:
+the dev tools' `terminal` tool has no test of its approval asked once per session per run; TF6 ran live on no Linux
+server here (its opt-in test `a_host_session_runs_as_another_account` is the check); a moved call video playing on is a
+hand check. Checked against the code on Nov 27, 2026, and the parts that assumed what is not there corrected (D13 to
+D17 and the notes in each phase). It follows [Terminal-Fancy](archive/Terminal-Fancy.md), built Nov 11, 2026 (P0 to
 P9 and a second round) and archived the same day as this plan was written. The guide is
 [Terminal](../docs/ui/Terminal.md). This plan takes the items of Terminal-Fancy §13.1 and §15 that the user chose on
 Nov 27, 2026, and the framework part of [Agent Code](agent-code/06-Terminal-Preview-Devices.md)'s thread terminals, so
@@ -209,8 +212,9 @@ iOS the copy from a timer is refused, so the "did not allow the copy" dialog ope
 
 **In the pump** (`term/session.rs`):
 
-- `client` stays the one writer; beside it `observers`, each with its own sent and acknowledged counts. A frame is
-  made once and shared (`Out::Bytes` holds `bytes::Bytes`).
+- `client` stays the one writer; beside it `observers`, each with its own sent and acknowledged counts. A frame goes to
+  each window (a copy each: watchers are few). An apps session, with no ring, keeps one window: a second still closes
+  the first.
 - A viewer never pauses the program and never resizes it, and what it types is dropped. A viewer more than 500,000
   bytes behind is let go with "behind", and its page comes back by its `have`.
 - A second writer's attach makes the first a viewer, told by `{"type":"role","role":"viewer"}` rather than a close,
@@ -262,8 +266,9 @@ are listed apart. SSH gets `attach --view <id>` (`command/attach.rs`).
   `moqui.terminal.TerminalRecording`: the session, the user, the location, from and thru, the bytes, and whether it
   was forced. A new Rust service, `clean#TerminalRecordings`, removes recordings past `recording-days`, file and row;
   `clean#TerminalSessions`, a script, calls it.
-- **Shown.** A REC mark on the pane, the float, the tab and the session list (`state.recording`), and a line in the
-  session's output when recording starts or stops.
+- **Shown.** A REC mark on the pane, the float's title and the session list (`state.recording`), and a `recording`
+  event when it starts or stops. No line is written into the session's output: it would break a full-screen program's
+  screen.
 - **Played.** The Terminal's Recordings list, the owner's alone: a player (xterm.js fed by the events' times, with
   play, pause, speed and seek by feeding again from the start) and Download `.cast`, which asciinema plays too. System
   › Terminal Sessions lists every recording's row and deletes them; it does not play them (D2).
@@ -309,8 +314,10 @@ are listed apart. SSH gets `attach --view <id>` (`command/attach.rs`).
 - **No new `unsafe`** (Practices-Rust §7). The child is one thread, so rustix's thread-level credential calls drop it
   whole; the supervisor's signals are tokio's. TF6 proves this first. Linux only: rustix has these calls on Linux
   alone.
-- **The holder** starts the helper with the spec as an argument for such a session, since sudo clears the
-  environment that carries it now: with the account in `open`, `PROTOCOL` becomes 3.
+- **The holder** needs no change: the server builds the whole helper line (`sudo -n -- <moqui> term-exec --run-as
+  <account> --spec <b64>`, the spec in the arguments since sudo clears the environment) and the holder runs it as it
+  runs any helper. `exec::signal` signals the pid itself when the program has no group of its own (sudo's), and a
+  SIGKILL there is a SIGTERM, so a held session's kill needs no new request either. `PROTOCOL` stays 2.
 - **The environment** is not the server's: `HOME`, `USER`, `LOGNAME`, `SHELL` and a `PATH` from the account's passwd
   entry, `TERM` and the others of Terminal-Fancy §7.3, and the profile's env; a login shell, so the account's profile
   does the rest.
@@ -347,6 +354,12 @@ are listed apart. SSH gets `attach --view <id>` (`command/attach.rs`).
   `restart#TerminalSession`.
 - **The entity.** `TerminalSession` gains `conversationId` (indexed), `clientTerminalId`, `label`, `workRootId`,
   `providerInstanceId`, `stopOnSettle` and `historyLocation`.
+- **As built (Nov 28, 2026).** A thread terminal's history is its recording (D10): `terminal@recording` does not add
+  another to it. A restart takes the opening kept in the server's memory, so a thread terminal is started again by
+  the server that opened it (or after its own restart, by opening it anew with the same ids). Clear empties the
+  server's ring and the history; a held session's ring in the holder keeps its old output until the holder lets it
+  go, so a window after a server restart may see it again. A policy is a run-time registration as well as an
+  `Extension` field (`moqui_core::terminal::register_policy`), which the tests use.
 
 ### 4.8 TF8: more kinds of float
 
@@ -368,6 +381,12 @@ title menu (`#m-app-screens`) and in the palette.
 `mRecordPanel`, so mr-boss's `Shared/Chatter.qvue` and `RecordFiles.qvue` work unchanged. The panel in the page stays.
 
 The shell's precompiled render file (`WebrootVue.qvt.render.js`) is rebuilt with TF8.
+
+**As built (Nov 28, 2026).** A float keeps its `title` and `data` in `localStorage`, which a screen window needs to come
+back titled and a record panel's to keep its provide. The call window's `m-call` is made inside the window rather than
+moved there, so its `<video>` elements start there; `playVideos` plays any paused one after the window's body changes.
+That a moved video plays on was not proven with real media in a browser (no camera in the specs): it is a hand check of
+[Mobile-Desktop-Exit-Checks](Mobile-Desktop-Exit-Checks.md).
 
 ---
 

@@ -54,6 +54,16 @@ fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<
     moqui_core::rust_service!(map, end_terminal_session_of)?;
     #[cfg(feature = "devtools")]
     super::drive::register(map)?;
+    #[cfg(feature = "devtools")]
+    super::share::register(map)?;
+    #[cfg(all(feature = "devtools", unix))]
+    super::recording::register(map)?;
+    #[cfg(all(feature = "devtools", unix))]
+    super::accounts::register(map)?;
+    #[cfg(all(feature = "devtools", unix))]
+    moqui_core::rust_service!(map, clear_terminal_session)?;
+    #[cfg(all(feature = "devtools", unix))]
+    moqui_core::rust_service!(map, restart_terminal_session)?;
     Ok(())
 }
 
@@ -102,15 +112,16 @@ pub(super) fn text(parameters: &BTreeMap<String, Value>, key: &str) -> String {
         .unwrap_or_default()
 }
 
-/// A size from the parameters, within 20 by 10 and 500 by 500.
+/// A size from the parameters, within 20 by 10 and 1000 by 500 (plans/Terminal-Fancy2.md §4.7).
 fn dimension(parameters: &BTreeMap<String, Value>, key: &str, least: u16, default: u16) -> u16 {
+    let most = if key == "cols" { 1000.0 } else { 500.0 };
     // a page's JSON numbers may come as decimals
     text(parameters, key)
         .parse::<f64>()
         .ok()
         .filter(|value| value.is_finite())
         .map_or(default, |value| {
-            let whole = value.round().clamp(f64::from(least), 500.0);
+            let whole = value.round().clamp(f64::from(least), most);
             u16::try_from(whole as i64).unwrap_or(default)
         })
 }
@@ -177,8 +188,19 @@ fn get_terminal_options(_parameters: &BTreeMap<String, Value>, _facade: &EntityF
         "detachSeconds": registry.detach.as_secs(),
         // a host session outlives the server while the holder keeps it (§7.5)
         "hostSessionsOutliveServer": host_outlives(&factory),
+        // recording what a session shows: offer, always or off (plans/Terminal-Fancy2.md §4.5)
+        "recording": recording_mode(&factory),
     });
     answer("options", &options)
+}
+
+#[cfg(all(feature = "devtools", unix))]
+fn recording_mode(factory: &ExecutionContextFactory) -> &'static str {
+    super::recording::mode(factory)
+}
+#[cfg(not(all(feature = "devtools", unix)))]
+fn recording_mode(_factory: &ExecutionContextFactory) -> &'static str {
+    "off"
 }
 
 /// The host sessions the holder kept from the server before, listed again on the first look after a start (§7.5).
@@ -205,11 +227,20 @@ fn find_terminal_sessions(_parameters: &BTreeMap<String, Value>, _facade: &Entit
     };
     let factory = factory()?;
     adopt_held(&factory);
-    let sessions: Vec<serde_json::Value> = Registry::of(&factory)
+    let registry = Registry::of(&factory);
+    let mut sessions: Vec<serde_json::Value> = registry
         .list(&username)
         .iter()
         .map(|session| session.to_json())
         .collect();
+    // and those others shared with this user, with their owner and whether this user may type (§4.4)
+    sessions.extend(registry.shared_with(&username).iter().map(|session| {
+        let mut listed = session.to_json();
+        listed["shared"] = serde_json::Value::Bool(true);
+        listed["write"] = serde_json::Value::Bool(session.share_of(&username) == Some(true));
+        listed["shares"] = serde_json::Value::Array(Vec::new());
+        listed
+    }));
     answer("sessions", &serde_json::Value::Array(sessions))
 }
 
@@ -254,7 +285,29 @@ fn open_terminal_session(parameters: &BTreeMap<String, Value>, _facade: &EntityF
             match open_host(&factory, &registry, &username, &opening, &facts) {
                 Ok(session) => Ok(session),
                 Err(HostRefusal::NoProfile) => return refuse(NOT_AVAILABLE, "No such terminal profile"),
+                Err(HostRefusal::NoOsAccount) => {
+                    return refuse(
+                        "noOsAccount",
+                        "No operating system account is set up for you on this server",
+                    )
+                }
                 Err(HostRefusal::Refused(reason)) => Err(reason),
+            }
+        }
+        // a thread terminal of an agent conversation (§4.7): an open of a live one answers it
+        #[cfg(all(feature = "devtools", unix))]
+        Kind::Thread => {
+            let ask = match super::thread::ThreadAsk::of(parameters, cols, rows) {
+                Ok(ask) => ask,
+                Err(why) => return refuse("badThread", &why),
+            };
+            match super::thread::find_open(&registry, &username, &ask) {
+                Some(open) => Ok(open),
+                None => match super::thread::open(&factory, &registry, &username, &ask, &facts, None, Vec::new()) {
+                    Ok(session) => Ok(session),
+                    Err((code, why)) if code != "limit" => return refuse(code, &why),
+                    Err((_, why)) => Err(why),
+                },
             }
         }
         #[allow(unreachable_patterns)]
@@ -352,6 +405,8 @@ struct HostOpening<'a> {
 #[cfg(all(feature = "devtools", unix))]
 enum HostRefusal {
     NoProfile,
+    /// `terminal@run-as` is `person` and the user has no OS account mapped.
+    NoOsAccount,
     Refused(String),
 }
 
@@ -378,6 +433,8 @@ fn open_host(
     else {
         return Err(HostRefusal::NoProfile);
     };
+    // as the user's own OS account, when the conf says so and they have one (plans/Terminal-Fancy2.md §4.6)
+    let run_as = super::host::run_as_for(factory, username).map_err(|_| HostRefusal::NoOsAccount)?;
     let id = super::registry::new_id().map_err(HostRefusal::Refused)?;
     let directory = Some(opening.directory).filter(|directory| !directory.is_empty());
     let launch = super::host::Launch::of(
@@ -388,6 +445,7 @@ fn open_host(
         directory,
         opening.resume,
         opening.size,
+        run_as,
     );
     let command_line = launch.command_line();
     let directory = launch.directory.to_string_lossy().into_owned();
@@ -398,8 +456,13 @@ fn open_host(
         profile: profile.clone(),
         launch,
         on_end: Some(super::audit::on_end(Arc::downgrade(factory), id.clone())),
+        kind: Kind::Host,
+        record: None,
+        prelude: Vec::new(),
+        thread: None,
     };
     let session = registry.open_host(factory, spec).map_err(HostRefusal::Refused)?;
+    super::recording::at_open(factory, &session, profile.record);
     super::audit::record_open(&super::audit::Opened {
         id: &id,
         username,
@@ -567,6 +630,21 @@ fn update_terminal_session(parameters: &BTreeMap<String, Value>, _facade: &Entit
     if !notify.is_empty() {
         session.set_notify(&notify);
     }
+    // its recording started or stopped (plans/Terminal-Fancy2.md §4.5)
+    #[cfg(all(feature = "devtools", unix))]
+    match text(parameters, "record").as_str() {
+        "Y" | "true" => {
+            if let Err(why) = super::recording::start(&factory, &session, false) {
+                return refuse("notRecorded", &why);
+            }
+        }
+        "N" | "false" => {
+            if let Err(why) = super::recording::stop(&factory, &session) {
+                return refuse("notStopped", &why);
+            }
+        }
+        _ => {}
+    }
     answer("session", &session.to_json())
 }
 
@@ -581,7 +659,66 @@ fn close_terminal_session(parameters: &BTreeMap<String, Value>, _facade: &Entity
         return refuse("notFound", "No such terminal session");
     };
     session.end("the session was ended");
+    // a thread terminal closed is not started again, and its history goes (§4.7)
+    #[cfg(all(feature = "devtools", unix))]
+    if session.kind == Kind::Thread {
+        super::thread::forget(&factory, &session);
+    }
     Ok(BTreeMap::new())
+}
+
+/// `clear#TerminalSession`: empty one of the user's own thread terminals' kept output and history (§4.7); its windows
+/// clear theirs.
+#[cfg(all(feature = "devtools", unix))]
+fn clear_terminal_session(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+    let username = match username() {
+        Ok(username) => username,
+        Err(refused) => return refused,
+    };
+    let factory = factory()?;
+    let Some(session) = Registry::of(&factory)
+        .find(&text(parameters, "sessionId"), &username)
+        .filter(|session| session.kind == Kind::Thread)
+    else {
+        return refuse("notFound", "No such thread terminal");
+    };
+    if let Err(why) = super::thread::clear(&factory, &session) {
+        return refuse("notCleared", &why);
+    }
+    answer("session", &session.to_json())
+}
+
+/// `restart#TerminalSession`: start one of the user's own thread terminals again after its program ended, under the
+/// same id, its history first (§4.7); a running one is answered as it is.
+#[cfg(all(feature = "devtools", unix))]
+fn restart_terminal_session(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+    let username = match username() {
+        Ok(username) => username,
+        Err(refused) => return refused,
+    };
+    let factory = factory()?;
+    let registry = Registry::of(&factory);
+    let facts = Facts::of_current_request();
+    let ticket = text(parameters, "ticket");
+    let recent =
+        |millis: i64| moqui_core::user::recent_auth(millis) || registry.ticket_holds(&ticket, &username, millis);
+    if let Err(refusal) = access::check(
+        access::Switches::of(&factory),
+        Kind::Thread,
+        &facts,
+        &permitted,
+        &recent,
+    ) {
+        return refuse(refusal.code(), refusal.message());
+    }
+    match super::thread::restart(&factory, &registry, &username, &text(parameters, "sessionId"), &facts) {
+        Ok(session) => {
+            let mut out = BTreeMap::from([("sessionId".to_string(), Value::string(&session.id))]);
+            out.insert("session".to_string(), from_json(&session.to_json()));
+            Ok(out)
+        }
+        Err((code, why)) => refuse(code, &why),
+    }
 }
 
 #[cfg(test)]

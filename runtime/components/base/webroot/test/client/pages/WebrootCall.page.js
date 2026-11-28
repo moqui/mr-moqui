@@ -90,6 +90,42 @@ test("a call shows in the side panel on a desktop's width and on the call screen
     }
 });
 
+test("off its screen and its panel a call is a window where windows float: Close minimizes it, Leave is on its title bar, Dock shows it, and it goes with the call", () => {
+    reset();
+    const floats = moqui.floats;
+    floats.viewport = () => ({ w: 1200, h: 850, top: 50 });
+    floats.measure();
+    const dock = moqui.qvtComponents["m-call-dock"];
+    let left = 0;
+    const self = { call: state, current: view("C1"), leave: () => (left += 1) };
+    const sync = (on) => dock.methods.syncFloat.call(self, on);
+    const width = window.innerWidth;
+    call.vm = { currentPathList: ["qapps", "BasicComms", "Chat"], currentParameters: {}, setUrl: () => {} };
+    try {
+        Object.defineProperty(window, "innerWidth", { value: 1440, configurable: true });
+        Object.assign(state, { current: "C1", legId: "L1", phase: "connected" });
+        sync(true);
+        const f = floats.find("call", "C1");
+        assert.ok(f, "the call's window");
+        assert.equal(floats.kinds.call.inReach, false, "never in Assist's reach");
+        assert.equal(floats.titleOf(f), "Bob");
+        floats.close(f.id);
+        assert.ok(floats.get(f.id).minimized, "Close minimizes: the call goes on");
+        floats.actionsOf(f).find((action) => action.id === "leave").run();
+        assert.equal(left, 1, "Leave");
+        floats.dock(f.id);
+        assert.equal(state.panel, "C1", "Dock: the side panel at a desktop's width");
+        sync(true);
+        assert.ok(floats.find("call", "C1"));
+        state.current = null;
+        sync(false);
+        assert.equal(floats.find("call", "C1"), null, "it goes with the call");
+    } finally {
+        Object.defineProperty(window, "innerWidth", { value: width, configurable: true });
+        floats.dockAll(false);
+    }
+});
+
 test("Move to this device: offered for a call the user is in on another device; the push stops this page's moved leg", () => {
     reset();
     assert.equal(call.legElsewhere(view("C1")), true, "answered, its socket open elsewhere");

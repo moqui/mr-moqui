@@ -6,7 +6,7 @@
 (function (moqui) {
     "use strict";
     moqui.qvtRenders = Object.assign(moqui.qvtRenders || {}, {
-        "m-call": { hash: "7e37d92", make: function (Vue) {
+        "m-call": { hash: "ced5fdc5", make: function (Vue) {
             const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, normalizeClass: _normalizeClass, createElementBlock: _createElementBlock, renderList: _renderList, Fragment: _Fragment, normalizeStyle: _normalizeStyle, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
 
             return function render(_ctx, _cache) {
@@ -482,9 +482,10 @@
                   ? (_openBlock(), _createBlock(_component_m_call_compact, {
                       key: 15,
                       view: _ctx.known,
-                      panel: _ctx.panel,
+                      panel: _ctx.panel || _ctx.float,
+                      float: _ctx.float,
                       label: _ctx.label
-                    }, null, 8, ["view", "panel", "label"]))
+                    }, null, 8, ["view", "panel", "float", "label"]))
                   : _createCommentVNode("", true),
                 (_ctx.inThis && !_ctx.compactLayout && _ctx.mainTile && !(_ctx.call.stage.kind === 'screen' && _ctx.call.stage.callLegId !== _ctx.call.legId))
                   ? (_openBlock(), _createElementBlock("div", {
@@ -1472,7 +1473,7 @@
               }, null, 512))
             }
         } },
-        "m-call-compact": { hash: "15bde4b7", make: function (Vue) {
+        "m-call-compact": { hash: "288f9e58", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, createElementVNode: _createElementVNode, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, vShow: _vShow, withDirectives: _withDirectives, normalizeClass: _normalizeClass, normalizeStyle: _normalizeStyle, createElementBlock: _createElementBlock, renderList: _renderList, Fragment: _Fragment, resolveDirective: _resolveDirective } = Vue
 
             return function render(_ctx, _cache) {
@@ -1494,7 +1495,7 @@
 
               return (_openBlock(), _createElementBlock("div", {
                 class: "m-call-compact column no-wrap",
-                style: _normalizeStyle(_ctx.panel ? 'min-height:calc(100vh - 140px)' : 'min-height:calc(100vh - 16px)')
+                style: _normalizeStyle(_ctx.float ? 'min-height:100%' : _ctx.panel ? 'min-height:calc(100vh - 140px)' : 'min-height:calc(100vh - 16px)')
               }, [
                 _withDirectives(_createElementVNode("div", { class: "row items-center no-wrap q-mb-xs" }, [
                   _createVNode(_component_q_btn, {
@@ -2169,10 +2170,11 @@
                 : _createCommentVNode("", true)
             }
         } },
-        "m-call-dock": { hash: "915a7160", make: function (Vue) {
-            const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createBlock: _createBlock, createVNode: _createVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, createCommentVNode: _createCommentVNode, withCtx: _withCtx, resolveDirective: _resolveDirective, withDirectives: _withDirectives, withKeys: _withKeys, normalizeClass: _normalizeClass } = Vue
+        "m-call-dock": { hash: "45bd7a99", make: function (Vue) {
+            const { resolveComponent: _resolveComponent, createVNode: _createVNode, Teleport: _Teleport, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, renderList: _renderList, Fragment: _Fragment, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, withCtx: _withCtx, resolveDirective: _resolveDirective, withDirectives: _withDirectives, withKeys: _withKeys, normalizeClass: _normalizeClass } = Vue
 
             return function render(_ctx, _cache) {
+              const _component_m_call = _resolveComponent("m-call")
               const _component_m_call_audio = _resolveComponent("m-call-audio")
               const _component_q_icon = _resolveComponent("q-icon")
               const _component_m_call_context = _resolveComponent("m-call-context")
@@ -2190,13 +2192,23 @@
               const _component_q_input = _resolveComponent("q-input")
               const _component_q_dialog = _resolveComponent("q-dialog")
               const _component_q_banner = _resolveComponent("q-banner")
-              const _component_m_call = _resolveComponent("m-call")
               const _component_m_call_video = _resolveComponent("m-call-video")
               const _component_m_call_presentation = _resolveComponent("m-call-presentation")
               const _component_q_space = _resolveComponent("q-space")
               const _directive_close_popup = _resolveDirective("close-popup")
 
               return (_openBlock(), _createElementBlock("div", { class: "m-call-dock" }, [
+                (_ctx.floatTarget)
+                  ? (_openBlock(), _createBlock(_Teleport, {
+                      key: 0,
+                      to: _ctx.floatTarget
+                    }, [
+                      _createVNode(_component_m_call, {
+                        "call-session-id": _ctx.call.current,
+                        float: ""
+                      }, null, 8, ["call-session-id"])
+                    ], 8, ["to"]))
+                  : _createCommentVNode("", true),
                 (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.remotes, (r) => {
                   return (_openBlock(), _createBlock(_component_m_call_audio, {
                     key: 'a' + r.legId,
@@ -2213,7 +2225,7 @@
                 }), 128)),
                 (_ctx.ringingCalls.length)
                   ? (_openBlock(), _createBlock(_component_q_page_sticky, {
-                      key: 0,
+                      key: 1,
                       position: "top",
                       offset: [0, 8],
                       style: {"z-index":"2600"}
@@ -2492,7 +2504,7 @@
                 }, 8, ["model-value", "onUpdate:modelValue"]),
                 (_ctx.call.held && !_ctx.ringingCalls.length)
                   ? (_openBlock(), _createBlock(_component_q_page_sticky, {
-                      key: 1,
+                      key: 2,
                       position: "top",
                       offset: [0, 8],
                       style: {"z-index":"2070"}
@@ -2536,7 +2548,7 @@
                   : _createCommentVNode("", true),
                 (_ctx.elsewhere.length && !_ctx.ringingCalls.length && !_ctx.onCallScreen)
                   ? (_openBlock(), _createBlock(_component_q_page_sticky, {
-                      key: 2,
+                      key: 3,
                       position: "top",
                       offset: [0, _ctx.call.held ? 64 : 8],
                       style: {"z-index":"2050"}
@@ -2593,7 +2605,7 @@
                   : _createCommentVNode("", true),
                 (_ctx.call.lobbyNotice && !_ctx.onCallScreen && !_ctx.ringingCalls.length)
                   ? (_openBlock(), _createBlock(_component_q_page_sticky, {
-                      key: 3,
+                      key: 4,
                       position: "top",
                       offset: [0, 8],
                       style: {"z-index":"2060"}
@@ -2634,7 +2646,7 @@
                   : _createCommentVNode("", true),
                 (_ctx.panelShown)
                   ? (_openBlock(), _createBlock(_component_q_page_sticky, {
-                      key: 4,
+                      key: 5,
                       position: "right",
                       expand: "",
                       style: {"z-index":"2000"}
@@ -2653,9 +2665,9 @@
                       _: 1
                     }))
                   : _createCommentVNode("", true),
-                (_ctx.call.current && !_ctx.onCallScreen && !_ctx.panelShown && _ctx.call.pip !== 'window')
+                (_ctx.call.current && !_ctx.onCallScreen && !_ctx.panelShown && _ctx.call.pip !== 'window' && !_ctx.floating)
                   ? (_openBlock(), _createBlock(_component_q_page_sticky, {
-                      key: 5,
+                      key: 6,
                       position: "bottom-right",
                       offset: [16, 16],
                       style: {"z-index":"2000"}
