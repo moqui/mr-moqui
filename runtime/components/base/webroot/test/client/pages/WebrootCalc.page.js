@@ -315,3 +315,28 @@ test("a merged cell is selected whole and each of its cells draws its slice of t
     assert.equal(calc.sliceNode(null, { x: 0, y: 0, width: 10, height: 10, right: true, below: false }).firstChild.textContent, "", "an anchor not loaded yet");
 });
 
+test("a data sheet's column is escaped in its reference, a rating's icons are held to ten, and a rule is named by what it is", () => {
+    assert.equal(calc.columnReference("total[usd]#1 @x 'y'"), "total'[usd']'#1 '@x ''y''");
+    const odd = { index: 0, name: "Orders", data: true, headers: ["a[b", "c#d"] };
+    assert.equal(calc.referenceText({ row: 2, column: 1, lastRow: 2, lastColumn: 1 }, odd, 1), "Orders[a'[b]");
+    assert.equal(calc.referenceText({ row: 2, column: 1, lastRow: 2, lastColumn: 2 }, odd, 1), "Orders[[a'[b]:[c'#d]]");
+    const rating = calc.decoration({ rating: { icon: "Star", count: 1e6, max: 1e6, color: "#FFC000" } }).rating;
+    assert.deepEqual([rating.count, rating.max], [calc.MAX_RATING, calc.MAX_RATING]);
+    assert.equal(calc.cellNode({ text: "", decor: { rating } }).textContent.length, calc.MAX_RATING);
+    const one = { index: 2, range: "B1:B5", priority: 3, rule: { type: "Top10", rank: 1 } };
+    assert.deepEqual(calc.ruleExpect(one), { range: "B1:B5", rule: { type: "Top10", rank: 1 } });
+});
+
+test("a fill handle not taken over is taken away", async () => {
+    const { table, done } = await sheetTable({ selectableRangeFill: true });
+    try {
+        const ranges = table.modules.selectRange, element = ranges.fillHandle.element;
+        calc.dropFillHandle(table);
+        assert.equal(ranges.fillHandle, null);
+        assert.equal(element.parentNode, null);
+        table.addRange(table.getRow(2).getCell("c1"), table.getRow(2).getCell("c1"));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.equal(document.querySelector(".tabulator-range-fill-handle"), null);
+    } finally { done(); }
+});
+

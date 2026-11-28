@@ -1522,7 +1522,8 @@ holds, and polls every 15 seconds as a fallback; a link that cannot push (an age
 
 The sheet takes over three parts of Tabulator 6.7 (the vendored full build), pinned by `webroot/test/client/WebrootCalc.spec.js`
 (plans/IronCalc-DB2.md CG2): the fill handle's drop (`selectRange.fillHandle.handleMouseUp`, replaced so that it sends
-the `fill` edit and selects the range reached, in place of setting the cells' data), a cell's click taking the focus
+the `fill` edit and selects the range reached, in place of setting the cells' data; a handle of another shape is taken
+away, with a warning in the console), a cell's click taking the focus
 (`selectRange.initializeFocus`, held while a reference is pointed at, so the formula bar keeps it; the sheet takes the
 grid's mousedown in the capture phase and prevents its default), and a row's height (`setHeight` of its row, in a
 `rowFormatter`, as the row resize does). A merged cell (the layout's `merges`, and a block's) is drawn by each of its

@@ -116,12 +116,16 @@
         }
         const rating = extended.rating;
         if (rating && Number(rating.max) > 0) {
-            out.rating = { glyph: calc.ICONS[rating.icon] || calc.ICONS.Star, count: Math.min(Number(rating.count) || 0, Number(rating.max)), max: Number(rating.max),
+            // a rating is drawn as its icons, each cell: held to the ten a rule has at most
+            const max = Math.min(calc.MAX_RATING, Math.floor(Number(rating.max)));
+            out.rating = { glyph: calc.ICONS[rating.icon] || calc.ICONS.Star, count: Math.max(0, Math.min(Math.floor(Number(rating.count) || 0), max)), max,
                 color: color(rating.color) };
             if (rating.show_value === false) out.hide = true;
         }
         return Object.keys(out).length ? out : null;
     };
+    /** The most icons of a rating (the server holds a rule to nine thresholds). */
+    calc.MAX_RATING = 10;
     /** The characters a conditional format's icons are drawn with, by the engine's names. */
     calc.ICONS = { ArrowUp: "\u2B06", ArrowRight: "\u27A1", ArrowDown: "\u2B07", ArrowAngleUp: "\u2B08", ArrowAngleDown: "\u2B0A", Circle: "\u25CF",
         TriangleUp: "\u25B2", TriangleDown: "\u25BC", TriangleUpFilled: "\u25B2", TriangleDownFilled: "\u25BC", FlatRectangle: "\u25AC", Rhombus: "\u25C6",
@@ -247,6 +251,8 @@
         if (rule.type === "DataBar") return Object.assign(form, { kind: "bar", bar: color(rule.positive_color) || form.bar });
         return null;
     };
+    /** What an edit of a rule of the layout names it by, beside its place: its range and rule as the layout gave them. */
+    calc.ruleExpect = (one) => ({ range: one.range, rule: one.rule });
     /** A rule as the dialog lists it. */
     calc.ruleLabel = (rule) => {
         const operator = calc.RULE_OPERATORS.find((one) => one.value === rule.operator);
@@ -374,11 +380,14 @@
         if (target && target.data) {
             const headers = target.headers || [], first = headers[range.column - 1], last = headers[range.lastColumn - 1];
             if (!first) return null;
-            const table = calc.tableName(target.name);
-            return range.lastColumn > range.column && last ? table + "[[" + first + "]:[" + last + "]]" : table + "[" + first + "]";
+            const table = calc.tableName(target.name), column = calc.columnReference;
+            return range.lastColumn > range.column && last ? table + "[[" + column(first) + "]:[" + column(last) + "]]" : table + "[" + column(first) + "]";
         }
         return calc.rangeName(range, target && target.index !== from ? target.name : "");
     };
+    /** A table column's name as a structured reference writes it between its brackets: [, ], #, @ and ' each after an
+     * apostrophe, as the engine's lexer reads them back (a column of a SQL source may be named with any of them). */
+    calc.columnReference = (name) => String(name).replace(/[[\]#@']/g, "'$&");
     /** `text` with `reference` in place of its characters `from` to `to`: the text, and the caret after the reference. */
     calc.putReference = (text, from, to, reference) => ({ text: text.slice(0, from) + reference + text.slice(to), caret: from + reference.length });
     /**
@@ -476,6 +485,13 @@
      * the range it reached (the rects of calc.fillOp), and the range reached is selected. The handle's own mousedown and
      * moves draw the preview as before. False when the table has no fill handle of that shape (another Tabulator).
      */
+    /** Take a table's fill handle away (when calc.takeFillHandle could not take it over). */
+    calc.dropFillHandle = (table) => {
+        const ranges = table && table.modules && table.modules.selectRange, handle = ranges && ranges.fillHandle;
+        if (!handle) return;
+        try { handle.attach = () => null; if (handle.element) handle.element.remove(); } catch (_) { /* not of that shape */ }
+        ranges.fillHandle = null;
+    };
     calc.takeFillHandle = (table, onFill) => {
         const ranges = table && table.modules && table.modules.selectRange, handle = ranges && ranges.fillHandle;
         const extend = handle && handle.constructor && handle.constructor.extendAlongAxis;
@@ -601,10 +617,10 @@
             + '<q-list dense separator class="q-mx-md">'
             + '<q-item v-for="(one, at) in sheetRules" :key="one.index"><q-item-section><q-item-label>{{ruleLabel(one.rule)}}</q-item-label><q-item-label caption>{{one.range}}</q-item-label></q-item-section>'
             + '<q-item-section side><div class="row no-wrap">'
-            + '<q-btn flat dense round size="sm" icon="arrow_upward" :disable="at === 0" :aria-label="\'Move up rule \' + (at + 1)" @click="ruleEdit({op: \'moveRule\', index: one.index, up: true})"></q-btn>'
-            + '<q-btn flat dense round size="sm" icon="arrow_downward" :disable="at === sheetRules.length - 1" :aria-label="\'Move down rule \' + (at + 1)" @click="ruleEdit({op: \'moveRule\', index: one.index, up: false})"></q-btn>'
+            + '<q-btn flat dense round size="sm" icon="arrow_upward" :disable="at === 0" :aria-label="\'Move up rule \' + (at + 1)" @click="ruleEdit({op: \'moveRule\', index: one.index, up: true}, one)"></q-btn>'
+            + '<q-btn flat dense round size="sm" icon="arrow_downward" :disable="at === sheetRules.length - 1" :aria-label="\'Move down rule \' + (at + 1)" @click="ruleEdit({op: \'moveRule\', index: one.index, up: false}, one)"></q-btn>'
             + '<q-btn flat dense round size="sm" icon="edit" :disable="!formOf(one)" :aria-label="\'Change rule \' + (at + 1)" @click="changeRule(one)"></q-btn>'
-            + '<q-btn flat dense round size="sm" icon="delete" :aria-label="\'Delete rule \' + (at + 1)" @click="ruleEdit({op: \'deleteRule\', index: one.index})"></q-btn>'
+            + '<q-btn flat dense round size="sm" icon="delete" :aria-label="\'Delete rule \' + (at + 1)" @click="ruleEdit({op: \'deleteRule\', index: one.index}, one)"></q-btn>'
             + '</div></q-item-section></q-item>'
             + '<q-item v-if="!sheetRules.length"><q-item-section :class="mutedClass">No conditional formats on this sheet</q-item-section></q-item>'
             + '</q-list>'
@@ -681,7 +697,7 @@
             this.seq = Number((this.room && this.room.seq) || 0); this.socket = null; this.peerMap = new Map(); this.editingCell = false; this.rereadWaiting = false;
             // a reference being pointed at into the formula bar: the cell typed into (sheet, row, column), and where in the
             // bar's text the reference goes (from, to); armed once the grid of the sheet shown is pressed
-            this.pointing = null; this.reselect = null; this.boxes = []; this.boxKeys = new Set(); this.widthsBuilt = []; this.rowDrawn = 0;
+            this.pointing = null; this.reselect = null; this.ruleShown = null; this.boxes = []; this.boxKeys = new Set(); this.widthsBuilt = []; this.rowDrawn = 0;
             this.clientId = "calc-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
         },
         mounted() {
@@ -858,7 +874,12 @@
                     // the height a row is drawn at, for the merged cells over rows not drawn yet
                     try { const first = vm.table.getRows()[0]; vm.rowDrawn = (first && first._row && first._row.getHeight()) || vm.rowDrawn; } catch (_) { /* no rows */ }
                     // the fill handle's drop is the engine's autofill, as Fill down is
-                    if (cellEdits) calc.takeFillHandle(vm.table, (source, target) => vm.fillTo(source, target));
+                    if (cellEdits && !calc.takeFillHandle(vm.table, (source, target) => vm.fillTo(source, target))) {
+                        // a Tabulator whose fill handle is not the one taken over: no handle, rather than one that sets
+                        // the cells' data in the browser
+                        calc.dropFillHandle(vm.table);
+                        if (root.console) root.console.warn("CalcGrid: the table's fill handle is not Tabulator 6.7's; it is left out");
+                    }
                     if (topRow && topRow > 1) vm.table.scrollToRow(Math.min(topRow, rowCount), "top", false).then(() => vm.load(), () => vm.load()); else vm.load();
                 });
             },
@@ -1204,14 +1225,19 @@
             formOf(one) { return calc.formOf(one.range, one.rule || {}); },
             // the sheet's rules, and a new one for the selection
             openRules() { this.newRule(); this.rulesOpen = true; },
-            newRule() { this.rule = calc.ruleForm(calc.rangeName(this.active)); this.ruleIndex = null; },
-            changeRule(one) { const form = this.formOf(one); if (form) { this.rule = form; this.ruleIndex = one.index; } },
-            ruleEdit(op) { return this.edit([Object.assign({ sheet: this.sheetIndex }, op)]).then((state) => { if (op.op === "deleteRule" && op.index === this.ruleIndex) this.newRule(); return state; }); },
+            newRule() { this.rule = calc.ruleForm(calc.rangeName(this.active)); this.ruleIndex = null; this.ruleShown = null; },
+            changeRule(one) { const form = this.formOf(one); if (form) { this.rule = form; this.ruleIndex = one.index; this.ruleShown = one; } },
+            // an edit of a rule names it by its place and by what it is (calc.ruleExpect), so the server finds it after
+            // another's edits of the sheet's rules, or refuses
+            ruleEdit(op, one) {
+                const sent = Object.assign({ sheet: this.sheetIndex }, op, one ? { expect: calc.ruleExpect(one) } : {});
+                return this.edit([sent]).then((state) => { if (op.op === "deleteRule" && op.index === this.ruleIndex) this.newRule(); return state; });
+            },
             saveRule() {
                 const rule = calc.ruleOf(this.rule), range = String(this.rule.range || "").trim();
                 if (!rule || !range) return null;
                 const op = this.ruleIndex == null ? { op: "addRule", range, rule } : { op: "changeRule", index: this.ruleIndex, range, rule };
-                return this.ruleEdit(op).then((state) => { if (state && !state.errors) this.newRule(); return state; });
+                return this.ruleEdit(op, this.ruleIndex == null ? null : this.ruleShown).then((state) => { if (state && !state.errors) this.newRule(); return state; });
             },
             // a chart of the selection: its first column the labels and each other column a series, when it has more than one
             openChart() {
