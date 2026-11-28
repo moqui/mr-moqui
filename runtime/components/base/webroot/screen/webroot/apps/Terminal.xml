@@ -47,6 +47,15 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'update#TerminalSession', names: ['sessionId', 'title', 'notify']})</script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- sharing a session with another user (plans/Terminal-Fancy2.md §4.4) -->
+    <transition name="share" method="post" begin-transaction="false" authz-action="view">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'share#TerminalSession', names: ['sessionId', 'username', 'write']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="revoke" method="post" begin-transaction="false" authz-action="view">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'revoke#TerminalSessionShare', names: ['sessionId', 'username']})</script></actions>
+        <default-response type="none"/>
+    </transition>
     <transition name="close" method="post" begin-transaction="false" authz-action="view">
         <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'close#TerminalSession', names: ['sessionId']})</script></actions>
         <default-response type="none"/>

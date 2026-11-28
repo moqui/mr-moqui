@@ -12438,13 +12438,19 @@
               ]))
             }
         } },
-        "m-terminal-node": { hash: "57e2058d", make: function (Vue) {
-            const { normalizeClass: _normalizeClass, createElementVNode: _createElementVNode, toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, createTextVNode: _createTextVNode, withCtx: _withCtx, withModifiers: _withModifiers, createBlock: _createBlock, normalizeStyle: _normalizeStyle } = Vue
+        "m-terminal-node": { hash: "2e42ce16", make: function (Vue) {
+            const { normalizeClass: _normalizeClass, createElementVNode: _createElementVNode, toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, createTextVNode: _createTextVNode, withCtx: _withCtx, renderList: _renderList, Fragment: _Fragment, createBlock: _createBlock, withModifiers: _withModifiers, normalizeStyle: _normalizeStyle } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_space = _resolveComponent("q-space")
               const _component_q_tooltip = _resolveComponent("q-tooltip")
+              const _component_q_item_section = _resolveComponent("q-item-section")
+              const _component_q_item = _resolveComponent("q-item")
+              const _component_q_separator = _resolveComponent("q-separator")
+              const _component_q_item_label = _resolveComponent("q-item-label")
               const _component_q_btn = _resolveComponent("q-btn")
+              const _component_q_list = _resolveComponent("q-list")
+              const _component_q_menu = _resolveComponent("q-menu")
               const _component_m_terminal_view = _resolveComponent("m-terminal-view")
               const _component_m_terminal_node = _resolveComponent("m-terminal-node")
 
@@ -12470,9 +12476,98 @@
                           }, _toDisplayString(_ctx.info.cwd), 1))
                         : _createCommentVNode("", true),
                       _createVNode(_component_q_space),
-                      (!_ctx.workspace.narrow)
+                      (_ctx.watchers.length || _ctx.shares.length)
                         ? (_openBlock(), _createBlock(_component_q_btn, {
                             key: 1,
+                            flat: "",
+                            dense: "",
+                            "no-caps": "",
+                            size: "sm",
+                            icon: "sym_o_visibility",
+                            label: String(_ctx.watchers.length),
+                            "aria-label": _ctx.labels.watchers,
+                            onClick: _withModifiers(() => {}, ["stop"])
+                          }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_tooltip, null, {
+                                default: _withCtx(() => [
+                                  _createTextVNode(_toDisplayString(_ctx.labels.watchers), 1)
+                                ]),
+                                _: 1
+                              }),
+                              _createVNode(_component_q_menu, null, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_list, {
+                                    dense: "",
+                                    style: {"min-width":"200px"}
+                                  }, {
+                                    default: _withCtx(() => [
+                                      (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.watchers, (name, at) => {
+                                        return (_openBlock(), _createBlock(_component_q_item, {
+                                          key: 'w' + at
+                                        }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_item_section, null, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(name), 1)
+                                              ]),
+                                              _: 2
+                                            }, 1024)
+                                          ]),
+                                          _: 2
+                                        }, 1024))
+                                      }), 128)),
+                                      (_ctx.watchers.length && _ctx.shares.length)
+                                        ? (_openBlock(), _createBlock(_component_q_separator, { key: 0 }))
+                                        : _createCommentVNode("", true),
+                                      (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.shares, (share) => {
+                                        return (_openBlock(), _createBlock(_component_q_item, {
+                                          key: share.username
+                                        }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_item_section, null, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(share.username), 1),
+                                                _createVNode(_component_q_item_label, { caption: "" }, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(share.write ? _ctx.labels.mayType : _ctx.labels.mayWatch), 1)
+                                                  ]),
+                                                  _: 2
+                                                }, 1024)
+                                              ]),
+                                              _: 2
+                                            }, 1024),
+                                            _createVNode(_component_q_item_section, { side: "" }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_btn, {
+                                                  flat: "",
+                                                  dense: "",
+                                                  "no-caps": "",
+                                                  size: "sm",
+                                                  color: "negative",
+                                                  label: _ctx.labels.revoke,
+                                                  onClick: $event => (_ctx.revoke(share.username))
+                                                }, null, 8, ["label", "onClick"])
+                                              ]),
+                                              _: 2
+                                            }, 1024)
+                                          ]),
+                                          _: 2
+                                        }, 1024))
+                                      }), 128))
+                                    ]),
+                                    _: 1
+                                  })
+                                ]),
+                                _: 1
+                              })
+                            ]),
+                            _: 1
+                          }, 8, ["label", "aria-label", "onClick"]))
+                        : _createCommentVNode("", true),
+                      (!_ctx.workspace.narrow)
+                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                            key: 2,
                             flat: "",
                             dense: "",
                             round: "",
@@ -12494,7 +12589,7 @@
                         : _createCommentVNode("", true),
                       (!_ctx.workspace.narrow)
                         ? (_openBlock(), _createBlock(_component_q_btn, {
-                            key: 2,
+                            key: 3,
                             flat: "",
                             dense: "",
                             round: "",
@@ -12535,7 +12630,7 @@
                       }, 8, ["icon", "aria-label", "onClick"]),
                       (_ctx.workspace.canFloat)
                         ? (_openBlock(), _createBlock(_component_q_btn, {
-                            key: 3,
+                            key: 4,
                             flat: "",
                             dense: "",
                             round: "",
@@ -12651,7 +12746,7 @@
                   ], 2))
             }
         } },
-        "m-terminal-view": { hash: "e8fcacc9", make: function (Vue) {
+        "m-terminal-view": { hash: "313bb927", make: function (Vue) {
             const { resolveComponent: _resolveComponent, withModifiers: _withModifiers, withKeys: _withKeys, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createElementVNode: _createElementVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, createBlock: _createBlock } = Vue
 
             return function render(_ctx, _cache) {
@@ -12869,10 +12964,30 @@
                           key: 3,
                           class: "m-terminal-closed q-pa-sm text-negative"
                         }, _toDisplayString(_ctx.shown.failed), 1))
-                      : _createCommentVNode("", true),
+                      : (_ctx.shown.watching)
+                        ? (_openBlock(), _createElementBlock("div", {
+                            key: 4,
+                            class: "m-terminal-closed row items-center no-wrap q-pa-xs q-gutter-sm text-caption",
+                            id: "TerminalWatching"
+                          }, [
+                            _createVNode(_component_q_icon, { name: "sym_o_visibility" }),
+                            _createElementVNode("span", { class: "col" }, _toDisplayString(_ctx.watchingText), 1),
+                            (_ctx.mayType)
+                              ? (_openBlock(), _createBlock(_component_q_btn, {
+                                  key: 0,
+                                  dense: "",
+                                  flat: "",
+                                  "no-caps": "",
+                                  color: "primary",
+                                  label: _ctx.labels.takeBack,
+                                  onClick: _ctx.takeBack
+                                }, null, 8, ["label", "onClick"]))
+                              : _createCommentVNode("", true)
+                          ]))
+                        : _createCommentVNode("", true),
                 (_ctx.touch)
                   ? (_openBlock(), _createBlock(_component_m_terminal_keys, {
-                      key: 4,
+                      key: 5,
                       "session-key": _ctx.sessionKey
                     }, null, 8, ["session-key"]))
                   : _createCommentVNode("", true)

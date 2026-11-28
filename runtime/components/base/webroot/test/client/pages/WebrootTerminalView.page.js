@@ -137,3 +137,79 @@ test("a floating terminal's window holds the whole view, its menu and banners, o
     assert.equal(session.el.isConnected, false, "taken out with the window")
     store.end(key)
 })
+
+test("a watching window keeps the session's size, sends nothing it is typed, says whose it watches, and takes the typing back", async () => {
+    const sockets = []
+    const openSocket = moqui.openSocket
+    moqui.openSocket = url => {
+        const socket = {
+            url,
+            readyState: 1,
+            sent: [],
+            send(message) {
+                this.sent.push(message)
+            },
+            close() {
+                this.readyState = 3
+            }
+        }
+        sockets.push(socket)
+        return socket
+    }
+    const key = "watch-1"
+    try {
+        store.create(key, {kind: "host", connect: false})
+        store.state.sessions[key] = {
+            id: key,
+            kind: "host",
+            title: "shared",
+            shared: true,
+            write: true,
+            owner: "ann.lee",
+            viewers: []
+        }
+        vm.shown = key
+        await settle()
+        store.connect(key, {observe: true})
+        const socket = sockets[0]
+        assert.ok(socket.url.includes("&observe=1"), socket.url)
+        socket.onopen()
+        socket.onmessage({
+            data: JSON.stringify({
+                type: "attached",
+                kind: "host",
+                from: 0,
+                reset: true,
+                viewer: true,
+                owner: "ann.lee",
+                cols: 50,
+                rows: 12
+            })
+        })
+        await settle()
+        const session = store.session(key)
+        assert.deepEqual([session.term.cols, session.term.rows], [50, 12], "the session's size, not the box's")
+        const banner = document.querySelector("#TerminalWatching")
+        assert.ok(banner && banner.textContent.includes("Watching ann.lee's session"), banner && banner.textContent)
+        const before = socket.sent.length
+        session.out("ls\r")
+        assert.equal(socket.sent.length, before, "nothing typed is sent")
+        // Take it back: a new socket that types
+        banner.querySelector(".q-btn").click()
+        await settle()
+        assert.ok(!sockets[1].url.includes("observe"), sockets[1].url)
+        sockets[1].onopen()
+        sockets[1].onmessage({
+            data: JSON.stringify({type: "attached", kind: "host", from: 0, reset: true, viewer: false, owner: "ann.lee"})
+        })
+        // another window takes it: this one watches on, told so
+        sockets[1].onmessage({data: JSON.stringify({type: "role", viewer: true})})
+        await settle()
+        assert.ok(store.state.views[key].takenAway && session.viewer)
+    } finally {
+        moqui.openSocket = openSocket
+        vm.shown = ""
+        store.end(key)
+        await settle()
+    }
+})

@@ -102,6 +102,8 @@ pub(crate) fn record_open(opened: &Opened<'_>) {
 /// What writes the ending of session `id` when it ends: its exit status and the reason, on the request pool.
 pub(crate) fn on_end(factory: Weak<ExecutionContextFactory>, id: String) -> Box<dyn FnOnce(u32, String) + Send> {
     Box::new(move |status, reason| {
+        // its shares end with it (plans/Terminal-Fancy2.md §4.4)
+        super::share::close_on_end(factory.clone(), id.clone());
         crate::edge::handle().spawn(async move {
             let row_id = id.clone();
             let written = crate::worker::on_pool_without_authz(&factory, move |factory| {

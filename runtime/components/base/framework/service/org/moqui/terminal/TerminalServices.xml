@@ -216,15 +216,44 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="lastEvent" type="Long"/><parameter name="reasonCode"/>
         </out-parameters>
     </service>
+    <!-- Sharing (plans/Terminal-Fancy2.md §4.4): the owner of a command line or a shell lets another user watch it
+        (/termws?session=<id>&observe=1, get#TerminalScreen and the other reads), or type in it too when that user holds
+        the kind's permission (SSH_SHELL for a command line, TERMINAL_HOST for a shell). Each share is a
+        moqui.terminal.TerminalSessionShare row; revoked, the user's windows on it are let go; the session's end closes
+        its shares. -->
+    <service verb="share" noun="TerminalSession" type="rust" location="moqui_host::term::share::share_terminal_session"
+            allow-remote="false" transaction="ignore">
+        <description>Share one of the caller's own command lines or shells with username: to watch it, or with write Y
+            to type in it too, refused (noPermission) when that user lacks the kind's permission. Sharing again changes
+            the share. Answers the session as find#TerminalSessions lists it, with its shares.</description>
+        <in-parameters>
+            <parameter name="sessionId" required="true"/>
+            <parameter name="username" required="true"/>
+            <parameter name="write" default-value="N"/>
+        </in-parameters>
+        <out-parameters><parameter name="session" type="Map"/><parameter name="reasonCode"/></out-parameters>
+    </service>
+    <service verb="revoke" noun="TerminalSessionShare" type="rust" location="moqui_host::term::share::revoke_terminal_session_share"
+            allow-remote="false" transaction="ignore">
+        <description>Take username's share of one of the caller's own sessions back: their windows on it are let go
+            ("the share was revoked").</description>
+        <in-parameters>
+            <parameter name="sessionId" required="true"/>
+            <parameter name="username" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="session" type="Map"/><parameter name="reasonCode"/></out-parameters>
+    </service>
     <service verb="clean" noun="TerminalSessions" authenticate="anonymous-all">
         <description>The job clean_TerminalSessions_daily: deletes the audit rows (moqui.terminal.TerminalSession) of
-            sessions opened more than daysToKeep days ago.</description>
+            sessions opened more than daysToKeep days ago, and the shares (moqui.terminal.TerminalSessionShare) made as long
+            ago.</description>
         <in-parameters><parameter name="daysToKeep" type="Integer" default-value="90"/></in-parameters>
         <out-parameters><parameter name="deleted" type="Integer"/></out-parameters>
         <actions><script><![CDATA[
             const days = Math.max(1, Number(daysToKeep) || 90)
             const cutoff = new Date(Date.now() - days * 86400000)
             deleted = ec.entity.find('moqui.terminal.TerminalSession').condition('fromDate', '<', cutoff).disableAuthz().deleteAll()
+            ec.entity.find('moqui.terminal.TerminalSessionShare').condition('fromDate', '<', cutoff).disableAuthz().deleteAll()
         ]]></script></actions>
     </service>
 </services>

@@ -209,8 +209,9 @@ iOS the copy from a timer is refused, so the "did not allow the copy" dialog ope
 
 **In the pump** (`term/session.rs`):
 
-- `client` stays the one writer; beside it `observers`, each with its own sent and acknowledged counts. A frame is
-  made once and shared (`Out::Bytes` holds `bytes::Bytes`).
+- `client` stays the one writer; beside it `observers`, each with its own sent and acknowledged counts. A frame goes to
+  each window (a copy each: watchers are few). An apps session, with no ring, keeps one window: a second still closes
+  the first.
 - A viewer never pauses the program and never resizes it, and what it types is dropped. A viewer more than 500,000
   bytes behind is let go with "behind", and its page comes back by its `have`.
 - A second writer's attach makes the first a viewer, told by `{"type":"role","role":"viewer"}` rather than a close,

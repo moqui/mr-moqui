@@ -80,8 +80,8 @@ Leaving the page, a reload, a dropped connection or another device leaves it run
 with no window (`detach-seconds`), a command or host session until it ends or has had no window for three days
 (`host-detach-hours`). Coming back, a window that says how far it got goes on with nothing repeated, and one that does
 not gets the session's last output again (`replay-kb`, 2 MiB) with the modes in force; an apps session draws itself
-again. A second window takes a session, and the first offers Take it back. A logout closes the windows and leaves the
-sessions. Typing in a terminal keeps your HTTP session from timing out.
+again. A second window of yours takes the typing of a command line or a shell, and the first watches on with Take it
+back (an apps session's first window is let go). A logout closes the windows and leaves the sessions. Typing in a terminal keeps your HTTP session from timing out.
 
 Host sessions are held by `moqui term-hold`, a process the server starts beside itself, so they outlive a restart of
 the server (`./moq run` again, Restart Now, a rebuild): the restarted server lists them again. The holder ends a minute
@@ -165,6 +165,23 @@ Claude Code's lines were run against Claude Code 2.1 in a host session on Nov 11
 (permission) at a tool's permission request, done at the end of a turn. A `claude` started with the environment of
 another Claude Code session (a server started from one passes it on) runs as that session's child and does not run its
 permission hooks: start the server outside it, or `claude` with those variables cleared. Codex's line was not run.
+
+## Watching and sharing
+
+Any number of windows may watch a command line or a shell beside the one that types (plans/Terminal-Fancy2.md §4.4):
+your other windows and devices, and the users you share it with. A watching window shows the session at the session's
+own size, scrolled in its box; it never pauses the program or changes its size, and what is typed in it is dropped. One
+far behind is let go and comes back by what it drew. Only your own watching windows keep a session from its
+`host-detach-hours` timeout.
+
+- **Share** in the session list shares one of your command lines or shells with a user, to watch it, or to type in it
+  too when that user holds the kind's own permission (`SSH_SHELL`, `TERMINAL_HOST`). Sessions shared with you are
+  listed apart, with their owner; a session shared to watch only opens watching.
+- The pane's header shows an eye with the count of watching windows, and the shares, each with Revoke; revoked, the
+  user's windows on it close. A session's end ends its shares; they outlive a restart of the server.
+- A user with a share passes the same rules for the place as you do (a remote client needs `terminal@remote` and a
+  recent sign-in), and the driving services read a shared session too, typing only where the share lets them.
+- `/termws?session=<id>&observe=1` watches; over SSH, `attach --view <id>`.
 
 ## Driving a session
 

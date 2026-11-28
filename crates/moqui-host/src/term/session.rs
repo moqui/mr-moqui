@@ -117,12 +117,26 @@ pub(crate) enum Out {
     Text(String),
     /// Close the socket with this reason.
     Close(String),
+    /// The client now only watches (true), its place taken by another window, or writes again (plans/Terminal-Fancy2.md
+    /// §4.4, D7): what it types is dropped while it watches.
+    Viewer(bool),
 }
 
 /// A client's place on a session, from [`Session::attach`].
 pub(crate) struct Attached {
     pub client: u64,
     pub out: mpsc::Receiver<Out>,
+    /// It watches only: it never pauses or resizes the program, and what it types is dropped.
+    pub viewer: bool,
+}
+
+/// How a client joins a session (plans/Terminal-Fancy2.md §4.4).
+#[derive(Clone, Debug)]
+pub(crate) struct Joining {
+    /// To watch only.
+    pub observe: bool,
+    /// Its user: the owner, or a user the owner shared the session with.
+    pub username: String,
 }
 
 enum Command {
@@ -130,7 +144,12 @@ enum Command {
         have: Option<u64>,
         cols: u16,
         rows: u16,
+        joining: Joining,
         reply: oneshot::Sender<Attached>,
+    },
+    /// Let go of every client of `username`: their share was revoked.
+    Revoke {
+        username: String,
     },
     Detach {
         client: u64,
@@ -195,6 +214,8 @@ pub(crate) struct Info {
     pub unseen: bool,
     /// Whether this session notifies: default (the user's settings), all, or off.
     pub notify: String,
+    /// The users watching it now, one for each window that watches (plans/Terminal-Fancy2.md §4.4).
+    pub viewers: Vec<String>,
 }
 
 /// A kept session: found in the [`Registry`] by its id, only by its own user.
@@ -216,6 +237,8 @@ pub(crate) struct Session {
     typed: std::sync::atomic::AtomicBool,
     /// Its last events, numbered (plans/Terminal-Fancy2.md §4.3).
     events: Mutex<Events>,
+    /// The users the owner shared it with, and whether each may type (§4.4, D3).
+    shares: Mutex<std::collections::BTreeMap<String, bool>>,
 }
 
 /// What a session that wants its user while nobody looks tells (§11.1): the notification's sender.
@@ -285,20 +308,60 @@ impl Session {
         }
     }
 
-    /// Attach a client that has drawn `have` of the session's bytes (`None` for none): the one attached before is let
-    /// go with "opened elsewhere". `None` when the session's task is gone.
+    /// Attach the owner's window that has drawn `have` of the session's bytes (`None` for none) as the one that types:
+    /// the one that typed before watches from then on, told so (D7). `None` when the session's task is gone.
+    #[cfg(test)]
     pub async fn attach(&self, have: Option<u64>, cols: u16, rows: u16) -> Option<Attached> {
+        let joining = Joining {
+            observe: false,
+            username: self.username.clone(),
+        };
+        self.attach_as(have, cols, rows, joining).await
+    }
+
+    /// Attach a window as `joining` says: one that types, or one that watches (§4.4).
+    pub async fn attach_as(&self, have: Option<u64>, cols: u16, rows: u16, joining: Joining) -> Option<Attached> {
         let (reply, answer) = oneshot::channel();
         self.commands
             .send(Command::Attach {
                 have,
                 cols,
                 rows,
+                joining,
                 reply,
             })
             .await
             .ok()?;
         answer.await.ok()
+    }
+
+    /// Share the session with `username`, who may type in it when `write` (§4.4, D3).
+    pub fn share(&self, username: &str, write: bool) {
+        lock(&self.shares).insert(username.to_string(), write);
+    }
+
+    /// Take `username`'s share back: their windows on it are let go. Whether they had one.
+    pub fn unshare(&self, username: &str) -> bool {
+        let had = lock(&self.shares).remove(username).is_some();
+        if had {
+            let _ = self.commands.try_send(Command::Revoke {
+                username: username.to_string(),
+            });
+        }
+        had
+    }
+
+    /// Whether `username` holds a share, and whether it lets them type; `None` with none.
+    pub fn share_of(&self, username: &str) -> Option<bool> {
+        lock(&self.shares).get(username).copied()
+    }
+
+    /// The users it is shared with, and whether each may type.
+    pub fn shares(&self) -> Vec<(String, bool)> {
+        lock(&self.shares)
+            .iter()
+            .map(|(user, write)| (user.clone(), *write))
+            .collect()
     }
 
     pub async fn detach(&self, client: u64) {
@@ -414,6 +477,9 @@ impl Session {
             "notify": info.notify,
             "started": self.started,
             "lastOutput": info.last_output,
+            "owner": self.username,
+            "viewers": info.viewers,
+            "shares": self.shares().iter().map(|(user, write)| serde_json::json!({"username": user, "write": write})).collect::<Vec<_>>(),
         })
     }
 }
@@ -442,6 +508,7 @@ pub(crate) fn spawn(registry: &Arc<Registry>, spec: Spec, program: Program) -> A
         next_client: AtomicU64::new(1),
         typed: std::sync::atomic::AtomicBool::new(false),
         events: Mutex::new(Events::default()),
+        shares: Mutex::new(std::collections::BTreeMap::new()),
     });
     registry.insert(Arc::clone(&session));
     let pump = Pump {
@@ -461,15 +528,19 @@ pub(crate) fn spawn(registry: &Arc<Registry>, spec: Spec, program: Program) -> A
         #[cfg(feature = "devtools")]
         screen: None,
         resized: spec.adopted,
+        observers: Vec::new(),
     };
     crate::edge::handle().spawn(pump.run(program, commands_in, input_in));
     session
 }
 
-/// The one client attached.
+/// A window attached: the one that types, or one that watches.
 struct Client {
     id: u64,
     out: mpsc::Sender<Out>,
+    /// Its user, and whether that is the session's owner.
+    username: String,
+    owner: bool,
     /// The session's count when its last frame was sent.
     sent: u64,
     /// The count it acknowledged it drew.
@@ -494,8 +565,11 @@ struct Pump {
     tracker: Tracker,
     /// Every byte the program wrote.
     count: u64,
+    /// The window that types.
     client: Option<Client>,
-    /// Output gathered for the client since its last frame: the bytes from `client.sent` to `count`.
+    /// The windows that watch (plans/Terminal-Fancy2.md §4.4): they never pause or resize the program.
+    observers: Vec<Client>,
+    /// Output gathered for the windows since their last frame: the bytes from their `sent` to `count`.
     pending: Vec<u8>,
     detached_since: Option<Instant>,
     detached_for: Duration,
@@ -571,7 +645,7 @@ impl Pump {
                     Ok(0) | Err(_) => break,
                     Ok(read) => {
                         self.output(&buffer[..read]);
-                        if self.client.is_some() && flush_at.is_none() {
+                        if self.any_client() && flush_at.is_none() {
                             flush_at = Some(Instant::now() + GATHER);
                         }
                         if self.pending.len() >= GATHER_MAX {
@@ -599,13 +673,13 @@ impl Pump {
                     }
                     Some(command) => {
                         self.command(command, &mut program);
-                        if self.client.is_none() {
+                        if !self.any_client() {
                             flush_at = None;
                         }
                     }
                     None => break,
                 },
-                () = tokio::time::sleep_until(detach_deadline), if self.client.is_none() && hung_up.is_none() => {
+                () = tokio::time::sleep_until(detach_deadline), if self.detached_since.is_some() && hung_up.is_none() => {
                     let hours = self.detached_for.as_secs() / 3600;
                     let note = if hours > 0 {
                         format!("closed after {hours} hours with no window")
@@ -634,7 +708,7 @@ impl Pump {
         if released {
             // the holder keeps the program; this server only lets go of it
             tracing::info!("{label}: let go to the terminal holder");
-            if let Some(client) = self.client.take() {
+            for client in self.client.take().into_iter().chain(self.observers.drain(..)) {
                 let _ = client.out.try_send(Out::Close("the server is stopping".to_string()));
             }
             if let Some(registry) = self.registry.upgrade() {
@@ -660,7 +734,7 @@ impl Pump {
         if let Some(on_end) = self.on_end.take() {
             on_end(ended.status, reason.clone());
         }
-        if let Some(client) = self.client.take() {
+        for client in self.client.take().into_iter().chain(self.observers.drain(..)) {
             let _ = client.out.try_send(Out::Text(ended_message(ended.status, &reason)));
             let _ = client.out.try_send(Out::Close(reason.clone()));
         }
@@ -711,15 +785,42 @@ impl Pump {
         if changes.any() || status_changed {
             self.send_state();
         }
-        if self.client.is_some() {
+        if self.any_client() {
             self.pending.extend_from_slice(bytes);
         }
     }
 
     fn send_state(&self) {
-        if let Some(client) = &self.client {
-            let _ = client.out.try_send(Out::Text(self.state_message()));
+        let message = self.state_message();
+        for client in self.client.iter().chain(&self.observers) {
+            let _ = client.out.try_send(Out::Text(message.clone()));
         }
+    }
+
+    fn any_client(&self) -> bool {
+        self.client.is_some() || !self.observers.is_empty()
+    }
+
+    /// After a window came or went: the owner has none (the detach timeout runs) or has one (it does not), and the
+    /// list says who types and who watches. Another user watching keeps nothing alive.
+    fn settle(&mut self) {
+        let owner_here = self.client.is_some() || self.observers.iter().any(|client| client.owner);
+        if owner_here {
+            self.detached_since = None;
+        } else if self.detached_since.is_none() {
+            self.detached_since = Some(Instant::now());
+        }
+        let (attached, viewers) = (
+            self.client.is_some(),
+            self.observers
+                .iter()
+                .map(|client| client.username.clone())
+                .collect::<Vec<_>>(),
+        );
+        self.session.update_info(|info| {
+            info.attached = attached;
+            info.viewers = viewers;
+        });
     }
 
     fn publish_status(&self) {
@@ -733,6 +834,7 @@ impl Pump {
     /// Whether the user looks at the session now.
     fn looking(&self) -> bool {
         self.client.as_ref().is_some_and(|client| client.visible)
+            || self.observers.iter().any(|client| client.owner && client.visible)
     }
 
     /// The session wants its user: unseen, and told when nobody looks.
@@ -785,34 +887,70 @@ impl Pump {
     }
 
     /// The gathered output, as one frame to the client.
+    /// The gathered output, as one frame to each window. A watching window far behind is let go ("behind"); its page
+    /// comes back by what it drew. Only the window that types holds the program up.
     fn flush(&mut self) {
-        let Some(client) = self.client.as_mut() else {
+        if !self.any_client() || self.pending.is_empty() {
             self.pending.clear();
-            return;
-        };
-        if self.pending.is_empty() {
             return;
         }
         let frame = std::mem::take(&mut self.pending);
+        let count = self.count;
+        let before = self.observers.len();
+        self.observers.retain_mut(|client| {
+            let why = if client.out.try_send(Out::Bytes(frame.clone())).is_err() {
+                "the window fell behind"
+            } else {
+                client.sent = count;
+                if client.behind() <= HIGH_WATER {
+                    return true;
+                }
+                "behind"
+            };
+            let _ = client.out.try_send(Out::Close(why.to_string()));
+            false
+        });
+        if self.observers.len() != before {
+            self.settle();
+        }
+        let Some(client) = self.client.as_mut() else {
+            return;
+        };
         if client.out.try_send(Out::Bytes(frame)).is_err() {
             self.let_go("the window fell behind");
             return;
         }
-        client.sent = self.count;
+        client.sent = count;
         if client.behind() > HIGH_WATER {
             client.paused = true;
         }
     }
 
-    /// Let the client go, with `reason` as its socket's close reason.
+    /// Let the window that types go, with `reason` as its socket's close reason.
     fn let_go(&mut self, reason: &str) {
         if let Some(client) = self.client.take() {
             let _ = client.out.try_send(Out::Close(reason.to_string()));
             self.session.event("detach", reason, None);
         }
-        self.pending.clear();
-        self.detached_since = Some(Instant::now());
-        self.session.update_info(|info| info.attached = false);
+        if self.observers.is_empty() {
+            self.pending.clear();
+        }
+        self.settle();
+    }
+
+    /// Let every window of `username` go: their share was taken back.
+    fn revoke(&mut self, username: &str) {
+        if self.client.as_ref().is_some_and(|client| client.username == username) {
+            self.let_go("the share was revoked");
+        }
+        self.observers.retain(|client| {
+            let keep = client.username != username;
+            if !keep {
+                let _ = client.out.try_send(Out::Close("the share was revoked".to_string()));
+            }
+            keep
+        });
+        self.settle();
     }
 
     fn hang_up(&mut self, program: &mut Program, stop_input: &mut Option<oneshot::Sender<()>>) {
@@ -830,19 +968,27 @@ impl Pump {
                 have,
                 cols,
                 rows,
+                joining,
                 reply,
             } => {
-                if let Some(attached) = self.attach(have, cols, rows, program) {
+                if let Some(attached) = self.attach(have, cols, rows, &joining, program) {
                     let _ = reply.send(attached);
                 }
             }
+            Command::Revoke { username } => self.revoke(&username),
             Command::Detach { client } => {
                 if self.client.as_ref().is_some_and(|current| current.id == client) {
                     self.client = None;
                     self.session.event("detach", "", None);
-                    self.pending.clear();
-                    self.detached_since = Some(Instant::now());
-                    self.session.update_info(|info| info.attached = false);
+                    if self.observers.is_empty() {
+                        self.pending.clear();
+                    }
+                    self.settle();
+                } else if let Some(at) = self.observers.iter().position(|current| current.id == client) {
+                    let gone = self.observers.remove(at);
+                    self.session
+                        .event("detach", format!("{} stopped watching", gone.username), None);
+                    self.settle();
                 }
             }
             Command::Resize { client, cols, rows } => {
@@ -852,7 +998,11 @@ impl Pump {
                 }
             }
             Command::Ack { client, count } => {
-                if let Some(current) = self.client.as_mut().filter(|current| current.id == client) {
+                let watching = self.observers.iter_mut().find(|current| current.id == client);
+                if let Some(current) = watching {
+                    current.acked = current.acked.max(count.min(current.sent));
+                    current.last_ack = Instant::now();
+                } else if let Some(current) = self.client.as_mut().filter(|current| current.id == client) {
                     current.acked = current.acked.max(count.min(current.sent));
                     current.last_ack = Instant::now();
                     if current.paused && current.behind() < LOW_WATER {
@@ -861,7 +1011,15 @@ impl Pump {
                 }
             }
             Command::View { client, visible } => {
-                if let Some(current) = self.client.as_mut().filter(|current| current.id == client) {
+                let owner_watching = self
+                    .observers
+                    .iter_mut()
+                    .find(|current| current.id == client && current.owner);
+                let current = match owner_watching {
+                    Some(current) => Some(current),
+                    None => self.client.as_mut().filter(|current| current.id == client),
+                };
+                if let Some(current) = current {
                     current.visible = visible;
                     if visible && self.session.info().unseen {
                         self.session.update_info(|info| info.unseen = false);
@@ -929,45 +1087,82 @@ impl Pump {
         })
     }
 
-    fn attach(&mut self, have: Option<u64>, cols: u16, rows: u16, program: &mut Program) -> Option<Attached> {
-        if let Some(before) = self.client.take() {
-            let _ = before.out.try_send(Out::Close("opened elsewhere".to_string()));
+    /// A window joins: one that watches (§4.4) gets the replay and what follows, and changes nothing of the program;
+    /// one that types takes the place of the one before, which watches from then on (D7). An apps session, with no ring
+    /// to come back by, has no watchers.
+    fn attach(
+        &mut self,
+        have: Option<u64>,
+        cols: u16,
+        rows: u16,
+        joining: &Joining,
+        program: &mut Program,
+    ) -> Option<Attached> {
+        if joining.observe && self.ring.is_none() {
+            return None;
         }
-        self.pending.clear();
+        // what is gathered goes to the windows there now; the new one starts after it
+        self.flush();
         let id = self.session.next_client.fetch_add(1, Ordering::Relaxed);
         let (out, receiver) = mpsc::channel(CLIENT_QUEUE);
         let (from, reset, replay) = self.replay(have);
         let info = self.session.info();
+        let owner = joining.username == self.session.username;
         let attached = serde_json::json!({
             "type": "attached",
             "kind": self.session.kind.as_str(),
             "title": info.title,
             "cwd": info.cwd,
-            "cols": cols,
-            "rows": rows,
+            "cols": if joining.observe { info.cols } else { cols },
+            "rows": if joining.observe { info.rows } else { rows },
             "from": from,
             "reset": reset,
+            "viewer": joining.observe,
+            "owner": self.session.username,
         });
         out.try_send(Out::Text(attached.to_string())).ok()?;
         if !replay.is_empty() {
             out.try_send(Out::Bytes(replay)).ok()?;
         }
         out.try_send(Out::Text(self.state_message())).ok()?;
-        self.client = Some(Client {
+        let client = Client {
             id,
             out,
+            username: joining.username.clone(),
+            owner,
             sent: self.count,
             acked: from,
             last_ack: Instant::now(),
             paused: false,
             visible: true,
-        });
+        };
+        if joining.observe {
+            self.observers.push(client);
+            self.session
+                .event("attach", format!("{} watches", joining.username), None);
+            self.settle();
+            return Some(Attached {
+                client: id,
+                out: receiver,
+                viewer: true,
+            });
+        }
+        if let Some(mut before) = self.client.take() {
+            if self.ring.is_some() {
+                before.paused = false;
+                let _ = before.out.try_send(Out::Viewer(true));
+                self.observers.push(before);
+            } else {
+                // an apps session draws itself for one window: the one before is let go
+                let _ = before.out.try_send(Out::Close("opened elsewhere".to_string()));
+            }
+        }
+        self.client = Some(client);
         if let Some(client) = self.client.as_mut() {
             client.paused = client.behind() > HIGH_WATER;
         }
-        self.detached_since = None;
-        self.session.update_info(|info| info.attached = true);
         self.session.event("attach", "", None);
+        self.settle();
         self.sized(cols, rows);
         let alternate = self.tracker.alternate_screen();
         if reset && alternate && self.session.kind == Kind::Host {
@@ -981,6 +1176,7 @@ impl Pump {
         Some(Attached {
             client: id,
             out: receiver,
+            viewer: false,
         })
     }
 
@@ -1010,6 +1206,9 @@ impl Pump {
             "statusText": info.status_text,
             "progress": info.progress,
             "unseen": info.unseen,
+            "cols": info.cols,
+            "rows": info.rows,
+            "viewers": info.viewers,
         })
         .to_string()
     }
@@ -1022,7 +1221,7 @@ impl Pump {
             tokio::select! {
                 () = tokio::time::sleep_until(until) => return,
                 command = commands.recv() => match command {
-                    Some(Command::Attach { cols, rows, reply, .. }) => {
+                    Some(Command::Attach { cols, rows, joining, reply, .. }) => {
                         let (out, receiver) = mpsc::channel(4);
                         let (from, _, replay) = self.replay(None);
                         let info = self.session.info();
@@ -1034,7 +1233,7 @@ impl Pump {
                         let _ = out.try_send(Out::Bytes(replay));
                         let _ = out.try_send(Out::Text(ended_message(status, reason)));
                         let _ = out.try_send(Out::Close(reason.to_string()));
-                        let _ = reply.send(Attached { client: 0, out: receiver });
+                        let _ = reply.send(Attached { client: 0, out: receiver, viewer: joining.observe });
                     }
                     Some(Command::End { .. }) | None => return,
                     Some(_) => {}

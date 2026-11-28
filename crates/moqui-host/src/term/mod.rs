@@ -57,6 +57,8 @@ pub(crate) mod registry;
 mod ring;
 #[cfg(feature = "devtools")]
 pub(crate) mod screen;
+#[cfg(feature = "devtools")]
+mod share;
 mod services;
 pub(crate) mod session;
 #[cfg(feature = "devtools")]

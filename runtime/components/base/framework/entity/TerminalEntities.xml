@@ -39,4 +39,16 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="TERM_SESS_FROM"><index-field name="fromDate"/></index>
         <relationship type="one" related="moqui.security.UserAccount"/>
     </entity>
+    <!-- A session its owner shared with another user (plans/Terminal-Fancy2.md §4.4): to watch it, or with writeAllowed Y
+        (only for a user who holds the kind's own permission) to type in it too. Revoked or ended, thruDate is set; a
+        held session taken back after a restart reads its open rows again. -->
+    <entity entity-name="TerminalSessionShare" package="moqui.terminal" use="transactional" cache="never">
+        <field name="terminalSessionId" type="id" is-pk="true"/>
+        <field name="username" type="text-medium" is-pk="true"/>
+        <field name="fromDate" type="date-time" is-pk="true"/>
+        <field name="thruDate" type="date-time"/>
+        <field name="sharedByUsername" type="text-medium"/>
+        <field name="writeAllowed" type="text-indicator"/>
+        <index name="TERM_SHARE_USER"><index-field name="username"/></index>
+    </entity>
 </entities>

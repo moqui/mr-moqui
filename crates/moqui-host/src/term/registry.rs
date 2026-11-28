@@ -116,6 +116,28 @@ impl Registry {
             .cloned()
     }
 
+    /// The session `id` when `username` owns it or holds a share of it (plans/Terminal-Fancy2.md §4.4), with whether
+    /// they may type in it: the owner may; a share holder when the share says so.
+    pub fn find_for(&self, id: &str, username: &str) -> Option<(Arc<Session>, bool)> {
+        let session = lock(&self.live).get(id).cloned()?;
+        if session.username == username {
+            return Some((session, true));
+        }
+        let write = session.share_of(username)?;
+        Some((session, write))
+    }
+
+    /// The sessions others shared with `username`, oldest first.
+    pub fn shared_with(&self, username: &str) -> Vec<Arc<Session>> {
+        let mut sessions: Vec<Arc<Session>> = lock(&self.live)
+            .values()
+            .filter(|session| session.username != username && session.share_of(username).is_some())
+            .cloned()
+            .collect();
+        sessions.sort_by_key(|session| session.started);
+        sessions
+    }
+
     /// The sessions of `username`, oldest first.
     pub fn list(&self, username: &str) -> Vec<Arc<Session>> {
         let mut sessions: Vec<Arc<Session>> = lock(&self.live)
@@ -423,7 +445,9 @@ impl Registry {
             attend: Some(super::notice::hook(factory)),
             adopted: true,
         };
-        session::spawn(self, spec, adopted.program);
+        let session = session::spawn(self, spec, adopted.program);
+        // its shares outlive the restart in their rows (D15)
+        super::share::reload(Arc::downgrade(factory), session);
     }
 
     pub fn contains(&self, id: &str) -> bool {

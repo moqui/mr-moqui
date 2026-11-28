@@ -311,7 +311,16 @@ impl Page {
 
     /// Attach a socket to the kept session `id`, as a page that drew `have` of its bytes.
     pub(crate) fn attach(&self, id: &str, have: Option<u64>) -> Ws {
-        let uri: tungstenite::http::Uri = format!("ws://{}/termws?session={id}", self.address).parse().unwrap();
+        self.attach_query(&format!("session={id}"), have)
+    }
+
+    /// Attach a window that only watches the session `id` (`observe=1`).
+    pub(crate) fn observe(&self, id: &str) -> Ws {
+        self.attach_query(&format!("session={id}&observe=1"), None)
+    }
+
+    fn attach_query(&self, query: &str, have: Option<u64>) -> Ws {
+        let uri: tungstenite::http::Uri = format!("ws://{}/termws?{query}", self.address).parse().unwrap();
         let request = ClientRequestBuilder::new(uri)
             .with_header("Cookie", &self.cookie)
             .with_header("Origin", format!("http://{}", self.address));
@@ -831,6 +840,114 @@ fn a_shell_is_driven_through_the_services_and_by_its_token() {
         "send",
         Some(serde_json::json!({"sessionId": id, "text": "exit", "keys": "Enter"})),
     );
+}
+
+/// Viewers and sharing (plans/Terminal-Fancy2.md §4.4): another user sees a shell only once its owner shares it, then
+/// watches it beside the window that types, and what they type is dropped; typing in it is refused to a user without
+/// TERMINAL_HOST; the owner's own second window may only watch; and a revoked share closes the user's window.
+#[test]
+fn a_shared_shell_is_watched_beside_its_writer_and_its_share_revoked() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let helper = helper_property();
+    let gate = crate::common::start_with_conf_files(
+        "termws-share",
+        Some(PLAIN_USER),
+        r#"<terminal><host-profile name="plain" title="Plain sh" command="sh"/></terminal>"#,
+        &[("moqui_conf__instance__purpose", "dev"), (helper.0, &helper.1)],
+        &[],
+    );
+    let address = gate.server.address();
+    let page = Page::signed_in(address, "john.doe");
+    let plain = Page::signed_in(address, "plain.user");
+    gate.server.factory().flush_sessions().unwrap();
+    let opened = page.call(
+        "open",
+        Some(serde_json::json!({"kind": "host", "profileName": "plain", "cols": 100, "rows": 30})),
+    );
+    let id = opened["sessionId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{opened}"))
+        .to_string();
+    let mut writer = page.attach(&id, None);
+    writer
+        .send(Message::Binary(b"echo first-$((1+1))\r".to_vec().into()))
+        .unwrap();
+    read_messages_until(&mut writer, "first-2").unwrap();
+
+    // not shared: another user's id is no session at all
+    let mut early = plain.attach(&id, None);
+    assert_eq!(
+        read_messages_until(&mut early, "never").unwrap_err(),
+        "no such terminal session"
+    );
+    // typing needs the kind's permission, which plain.user has not got; watching does not
+    let refused = page.call(
+        "share",
+        Some(serde_json::json!({"sessionId": id, "username": "plain.user", "write": "Y"})),
+    );
+    assert_eq!(refused["reasonCode"], "noPermission", "{refused}");
+    let shared = page.call(
+        "share",
+        Some(serde_json::json!({"sessionId": id, "username": "plain.user"})),
+    );
+    assert_eq!(shared["session"]["shares"][0]["username"], "plain.user", "{shared}");
+    let listed = plain.call("sessions", None);
+    assert!(
+        listed["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|session| session["id"] == id.as_str() && session["shared"] == true),
+        "{listed}"
+    );
+
+    // the user watches: the replay, then what the writer's program prints; what they type is dropped
+    let mut watcher = plain.attach(&id, None);
+    let (texts, _) = read_messages_until(&mut watcher, "first-2").unwrap();
+    assert!(
+        texts[0].contains(r#""viewer":true"#) && texts[0].contains(r#""owner":"john.doe""#),
+        "{texts:?}"
+    );
+    watcher
+        .send(Message::Binary(b"echo leaked-$((3+3))\r".to_vec().into()))
+        .unwrap();
+    writer
+        .send(Message::Binary(b"echo second-$((2+2))\r".to_vec().into()))
+        .unwrap();
+    read_messages_until(&mut watcher, "second-4").unwrap();
+    let (_, seen) = read_messages_until(&mut writer, "second-4").unwrap();
+    assert!(
+        !String::from_utf8_lossy(&seen).contains("leaked-6"),
+        "a watcher typed: {}",
+        String::from_utf8_lossy(&seen)
+    );
+    // the owner's own window that only watches
+    let mut own_view = page.observe(&id);
+    let (texts, _) = read_messages_until(&mut own_view, "second-4").unwrap();
+    assert!(texts[0].contains(r#""viewer":true"#), "{texts:?}");
+    drop(own_view);
+
+    // revoked: the user's window is let go, and the session is theirs no more
+    page.call(
+        "revoke",
+        Some(serde_json::json!({"sessionId": id, "username": "plain.user"})),
+    );
+    assert_eq!(
+        read_messages_until(&mut watcher, "never").unwrap_err(),
+        "the share was revoked"
+    );
+    let listed = plain.call("sessions", None);
+    assert!(
+        !listed["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|session| session["id"] == id.as_str()),
+        "{listed}"
+    );
+    writer.send(Message::Binary(b"exit\r".to_vec().into())).unwrap();
 }
 
 /// The holder (plans/archive/Terminal-Fancy.md §7.5): a host session's program runs on through a restart of the server,

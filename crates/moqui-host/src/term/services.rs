@@ -54,6 +54,8 @@ fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<
     moqui_core::rust_service!(map, end_terminal_session_of)?;
     #[cfg(feature = "devtools")]
     super::drive::register(map)?;
+    #[cfg(feature = "devtools")]
+    super::share::register(map)?;
     Ok(())
 }
 
@@ -205,11 +207,20 @@ fn find_terminal_sessions(_parameters: &BTreeMap<String, Value>, _facade: &Entit
     };
     let factory = factory()?;
     adopt_held(&factory);
-    let sessions: Vec<serde_json::Value> = Registry::of(&factory)
+    let registry = Registry::of(&factory);
+    let mut sessions: Vec<serde_json::Value> = registry
         .list(&username)
         .iter()
         .map(|session| session.to_json())
         .collect();
+    // and those others shared with this user, with their owner and whether this user may type (§4.4)
+    sessions.extend(registry.shared_with(&username).iter().map(|session| {
+        let mut listed = session.to_json();
+        listed["shared"] = serde_json::Value::Bool(true);
+        listed["write"] = serde_json::Value::Bool(session.share_of(&username) == Some(true));
+        listed["shares"] = serde_json::Value::Array(Vec::new());
+        listed
+    }));
     answer("sessions", &serde_json::Value::Array(sessions))
 }
 

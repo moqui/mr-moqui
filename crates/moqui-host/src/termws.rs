@@ -169,6 +169,11 @@ pub(crate) async fn upgrade(
                     .as_deref()
                     .and_then(|query| query_value(query, "ticket"))
                     .unwrap_or_default(),
+                observe: query
+                    .as_deref()
+                    .and_then(|query| query_value(query, "observe"))
+                    .as_deref()
+                    == Some("1"),
             },
             closing,
         )
@@ -235,6 +240,8 @@ struct Opened {
     key_hash: Option<String>,
     /// A ticket of a recent sign-in, from `confirm#TerminalUser`.
     ticket: String,
+    /// `observe=1`: to watch the session, not type in it (plans/Terminal-Fancy2.md §4.4).
+    observe: bool,
 }
 
 /// What a socket's sign-in is rechecked by.
@@ -308,6 +315,8 @@ struct Attach<'a> {
     by_key: bool,
     ticket: &'a str,
     username: &'a str,
+    /// The window only watches (plans/Terminal-Fancy2.md §4.4).
+    viewer: bool,
 }
 
 /// May the user attach to a session of `kind` from where `facts` say: their permission, and from anywhere but this
@@ -319,6 +328,7 @@ async fn may_attach(
     kind: Kind,
     facts: Facts,
 ) -> Result<(), Refusal> {
+    let viewer = attach.viewer;
     let session_id = attach.session_id.to_string();
     let (by_key, ticket, username) = (attach.by_key, attach.ticket.to_string(), attach.username.to_string());
     let https = facts.https;
@@ -332,7 +342,8 @@ async fn may_attach(
         } else {
             Some(moqui_core::user::session::bind_id(&strong, Some(&session_id), https)?)
         };
-        let permitted = |permission: &str| moqui_core::user::has_permission(permission).unwrap_or(false);
+        // a window that only watches needs the place's rules, not the kind's permission, which is for typing (D3)
+        let permitted = |permission: &str| viewer || moqui_core::user::has_permission(permission).unwrap_or(false);
         let recent = |millis: i64| {
             (!by_key && moqui_core::user::recent_auth(millis)) || registry.ticket_holds(&ticket, &username, millis)
         };
@@ -420,6 +431,7 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
         facts,
         key_hash,
         ticket,
+        observe,
     } = opened;
     let by_key = key_hash.is_some();
     let sign_in = SignIn {
@@ -432,15 +444,21 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
     let label = format!("browser terminal {id} of {username}");
     // a session the holder kept from the server before is found once it is taken back
     #[cfg(all(feature = "devtools", unix))]
-    if Registry::of(&factory).find(&id, &username).is_none() {
+    if Registry::of(&factory).find_for(&id, &username).is_none() {
         let holder = crate::term::held::Holder::of(&factory);
         holder.adopt(Arc::downgrade(&factory)).await;
     }
-    // Another user's id answers as one that does not exist.
-    let Some(kept) = Registry::of(&factory).find(&id, &username) else {
+    // Another user's id answers as one that does not exist, unless the owner shared it with this user (§4.4).
+    let Some((kept, may_type)) = Registry::of(&factory).find_for(&id, &username) else {
         close(&mut socket, "no such terminal session").await;
         return;
     };
+    // a share that does not let the user type watches; an apps session, with no ring, cannot be watched
+    let viewer = observe || !may_type;
+    if viewer && kept.kind == Kind::Apps {
+        close(&mut socket, "no such terminal session").await;
+        return;
+    }
     // an attach to a running command line or shell is worth as much as a new one: asked again (§8.2)
     if kept.kind != Kind::Apps {
         let attach = Attach {
@@ -448,6 +466,7 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
             by_key,
             ticket: &ticket,
             username: &username,
+            viewer,
         };
         if let Err(refusal) = may_attach(&factory, &attach, kept.kind, facts).await {
             tracing::info!("{label}: attach refused: {refusal:?}");
@@ -467,11 +486,16 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
         }
     };
     let (cols, rows, have) = first;
-    let Some(attached) = kept.attach(have, cols, rows).await else {
+    let joining = crate::term::session::Joining {
+        observe: viewer,
+        username: username.clone(),
+    };
+    let Some(attached) = kept.attach_as(have, cols, rows, joining).await else {
         close(&mut socket, "the session ended").await;
         return;
     };
     let client = attached.client;
+    let mut viewer = attached.viewer;
     let mut out = attached.out;
     let mut ping = tokio::time::interval(PING_EVERY);
     ping.tick().await;
@@ -503,12 +527,22 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
                     reason = why;
                     break;
                 }
+                // another window took it (D7): this one watches on, and the page offers Take it back
+                Some(Out::Viewer(watching)) => {
+                    viewer = watching;
+                    let role = serde_json::json!({"type": "role", "viewer": watching, "reason": "opened elsewhere"});
+                    if !crate::notws::send_within(&mut socket, Message::Text(role.to_string().into())).await {
+                        break;
+                    }
+                }
                 None => {
                     reason = "the window fell behind".to_string();
                     break;
                 }
             },
             incoming = socket.recv() => match incoming {
+                // what a watching window types is dropped
+                Some(Ok(Message::Binary(_))) if viewer => {}
                 Some(Ok(Message::Binary(bytes))) => {
                     typed = true;
                     if !kept.write(bytes.to_vec()).await {

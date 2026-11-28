@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
 
-use super::{spawn, Attached, Kind, Out, Program, Spec, HIGH_WATER};
+use super::{spawn, Attached, Joining, Kind, Out, Program, Spec, HIGH_WATER};
 use crate::term::registry::Registry;
 use crate::term::Ended;
 
@@ -92,6 +92,7 @@ async fn read_until(attached: &mut Attached, marker: &str) -> (Vec<String>, Vec<
             Ok(Some(Out::Bytes(more))) => bytes.extend(more),
             Ok(Some(Out::Text(text))) => texts.push(text),
             Ok(Some(Out::Close(reason))) => panic!("closed: {reason}"),
+            Ok(Some(Out::Viewer(_))) => {}
             Ok(None) | Err(_) => panic!("no {marker:?} in {:?}", String::from_utf8_lossy(&bytes)),
         }
     }
@@ -239,4 +240,102 @@ async fn the_screen_reads_as_text_after_output_a_resize_and_the_alternate_screen
     // an apps session keeps no ring, and no screen
     let (_registry, apps, _fake) = self::session(Kind::Apps, 0, Duration::from_secs(60));
     assert!(apps.screen(Scope::Visible, false).await.is_none());
+}
+
+fn joining(username: &str, observe: bool) -> Joining {
+    Joining {
+        observe,
+        username: username.to_string(),
+    }
+}
+
+/// The next close of `attached`, passing over what comes before it.
+async fn closed(attached: &mut Attached) -> String {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match tokio::time::timeout_at(deadline, attached.out.recv()).await {
+            Ok(Some(Out::Close(reason))) => return reason,
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => panic!("never closed"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn viewers_watch_beside_the_writer_and_a_second_writer_makes_the_first_a_viewer() {
+    let (_registry, session, mut fake) = session(Kind::Command, 1 << 20, Duration::from_secs(60));
+    let mut writer = session.attach(None, 100, 30).await.unwrap();
+    let mut viewer = session.attach_as(None, 40, 10, joining("bob", true)).await.unwrap();
+    assert!(viewer.viewer && !writer.viewer);
+    fake.program.write_all(b"for both\n").await.unwrap();
+    read_until(&mut writer, "for both").await;
+    let (texts, _) = read_until(&mut viewer, "for both").await;
+    assert!(
+        texts[0].contains(r#""viewer":true"#) && texts[0].contains(r#""cols":100"#),
+        "{texts:?}"
+    );
+    assert_eq!(session.info().viewers, ["bob"]);
+    // a viewer's size is not the session's
+    session.resize(viewer.client, 50, 20).await;
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(fake.sizes.lock().unwrap().last(), Some(&(100, 30)));
+    // the owner's second window types; the first watches on, told so, and still gets the output
+    let mut second = session.attach(None, 90, 25).await.unwrap();
+    let mut told = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while !told {
+        match tokio::time::timeout_at(deadline, writer.out.recv()).await {
+            Ok(Some(Out::Viewer(true))) => told = true,
+            Ok(Some(Out::Close(reason))) => panic!("closed: {reason}"),
+            Ok(Some(_)) => {}
+            _ => panic!("not told"),
+        }
+    }
+    fake.program.write_all(b"after\n").await.unwrap();
+    read_until(&mut writer, "after").await;
+    read_until(&mut second, "after").await;
+    assert_eq!(session.info().viewers.len(), 2);
+    assert!(session.info().attached);
+}
+
+#[tokio::test]
+async fn a_viewer_far_behind_is_let_go_and_a_revoked_share_closes_its_windows() {
+    let (_registry, session, mut fake) = session(Kind::Command, 4 << 20, Duration::from_secs(60));
+    session.share("bob", false);
+    let mut slow = session.attach_as(None, 80, 24, joining("bob", true)).await.unwrap();
+    // it never acknowledges: past the high water it is let go, and the program is never held up for it
+    let chunk = vec![b'x'; 64 * 1024];
+    for _ in 0..12 {
+        fake.program.write_all(&chunk).await.unwrap();
+    }
+    assert_eq!(closed(&mut slow).await, "behind");
+    let mut watching = session.attach_as(None, 80, 24, joining("bob", true)).await.unwrap();
+    assert!(session.unshare("bob"));
+    assert_eq!(closed(&mut watching).await, "the share was revoked");
+    assert_eq!(session.share_of("bob"), None);
+}
+
+#[tokio::test]
+async fn another_users_viewer_keeps_no_session_alive() {
+    let (registry, session, mut fake) = session(Kind::Command, 4096, Duration::from_millis(150));
+    let _viewer = session.attach_as(None, 80, 24, joining("bob", true)).await.unwrap();
+    // the detach timeout closes the program's input, as with no window at all
+    let mut rest = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), fake.program.read_to_end(&mut rest))
+        .await
+        .expect("the input closed with only another user watching")
+        .unwrap();
+    drop(fake);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while session.info().ended.is_none() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "still running with only another user watching"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let _ = registry;
+    // an apps session has nothing to watch
+    let (_registry, apps, _fake) = self::session(Kind::Apps, 0, Duration::from_secs(60));
+    assert!(apps.attach_as(None, 80, 24, joining("dev", true)).await.is_none());
 }
