@@ -71,6 +71,9 @@ pub(crate) enum Kind {
     Command,
     /// A program on the server's operating system, on a pty.
     Host,
+    /// A host session of an agent conversation (plans/Terminal-Fancy2.md §4.7): opened, attached and listed by its
+    /// conversation, under the policy a crate gives ([`moqui_core::terminal`]).
+    Thread,
 }
 
 impl Kind {
@@ -79,6 +82,7 @@ impl Kind {
             Self::Apps => "apps",
             Self::Command => "command",
             Self::Host => "host",
+            Self::Thread => "thread",
         }
     }
 
@@ -87,6 +91,7 @@ impl Kind {
             "apps" | "" => Some(Self::Apps),
             "command" => Some(Self::Command),
             "host" => Some(Self::Host),
+            "thread" => Some(Self::Thread),
             _ => None,
         }
     }
@@ -137,6 +142,8 @@ pub(crate) struct Joining {
     pub observe: bool,
     /// Its user: the owner, or a user the owner shared the session with.
     pub username: String,
+    /// The most kept output it wants replayed when it comes back with nothing (a thread terminal's `maxHistory`).
+    pub max_history: Option<u64>,
 }
 
 enum Command {
@@ -154,6 +161,9 @@ enum Command {
     },
     /// Tell the windows the session's state again (its recording changed).
     State,
+    /// Empty the kept output and the screen; the windows clear theirs.
+    #[cfg_attr(not(all(feature = "devtools", unix)), allow(dead_code))]
+    Clear,
     Detach {
         client: u64,
     },
@@ -250,6 +260,57 @@ pub(crate) struct Session {
     shares: Mutex<std::collections::BTreeMap<String, bool>>,
     /// Its recording now (§4.5).
     recording: Mutex<Option<Recording>>,
+    /// A thread terminal's conversation and the rest (§4.7).
+    thread: std::sync::OnceLock<ThreadMeta>,
+}
+
+/// What a thread terminal is of (plans/Terminal-Fancy2.md §4.7): its conversation, the client's own id of it, and what
+/// its component keeps; set once it opens.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ThreadMeta {
+    pub conversation_id: String,
+    pub client_terminal_id: String,
+    pub label: String,
+    pub work_root_id: String,
+    pub provider_instance_id: String,
+    pub stop_on_settle: bool,
+    /// Where its history is: a directory and the stem of its segments (§4.5's history mode).
+    pub history_dir: String,
+    pub history_stem: String,
+}
+
+impl ThreadMeta {
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "conversationId": self.conversation_id, "clientTerminalId": self.client_terminal_id, "label": self.label,
+            "workRootId": self.work_root_id, "providerInstanceId": self.provider_instance_id,
+            "stopOnSettle": self.stop_on_settle, "historyDir": self.history_dir, "historyStem": self.history_stem,
+        })
+    }
+
+    #[cfg_attr(not(all(feature = "devtools", unix)), allow(dead_code))]
+    pub fn of_json(value: &serde_json::Value) -> Self {
+        let text = |key: &str| {
+            value
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
+        Self {
+            conversation_id: text("conversationId"),
+            client_terminal_id: text("clientTerminalId"),
+            label: text("label"),
+            work_root_id: text("workRootId"),
+            provider_instance_id: text("providerInstanceId"),
+            stop_on_settle: value
+                .get("stopOnSettle")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            history_dir: text("historyDir"),
+            history_stem: text("historyStem"),
+        }
+    }
 }
 
 /// A session's recording: its `TerminalRecording` row, the file, and whether the conf forces it (D2).
@@ -303,6 +364,8 @@ pub(crate) struct Spec {
     pub adopted: bool,
     /// The count of its first byte here: the holder's, for a session taken back (D17); else 0.
     pub count_from: u64,
+    /// Output it starts with, before the program's: a thread terminal started again shows its history first (§4.7).
+    pub prelude: Vec<u8>,
 }
 
 pub(crate) fn now_millis() -> i64 {
@@ -336,6 +399,7 @@ impl Session {
         let joining = Joining {
             observe: false,
             username: self.username.clone(),
+            max_history: None,
         };
         self.attach_as(have, cols, rows, joining).await
     }
@@ -354,6 +418,23 @@ impl Session {
             .await
             .ok()?;
         answer.await.ok()
+    }
+
+    /// A thread terminal's conversation and the rest; none for the other kinds.
+    pub fn thread(&self) -> Option<&ThreadMeta> {
+        self.thread.get()
+    }
+
+    /// Set once, as a thread terminal opens or is taken back.
+    #[cfg_attr(not(all(feature = "devtools", unix)), allow(dead_code))]
+    pub fn set_thread(&self, meta: ThreadMeta) {
+        let _ = self.thread.set(meta);
+    }
+
+    /// Empty its kept output and screen (a thread terminal's Clear, §4.7): the windows are told to clear theirs.
+    #[cfg_attr(not(all(feature = "devtools", unix)), allow(dead_code))]
+    pub fn clear(&self) {
+        let _ = self.commands.try_send(Command::Clear);
     }
 
     /// Its recording now, if any.
@@ -527,6 +608,7 @@ impl Session {
             "viewers": info.viewers,
             "recording": self.recording().is_some(),
             "recordingForced": self.recording().is_some_and(|recording| recording.forced),
+            "thread": self.thread().map(ThreadMeta::to_json),
             "shares": self.shares().iter().map(|(user, write)| serde_json::json!({"username": user, "write": write})).collect::<Vec<_>>(),
         })
     }
@@ -558,9 +640,11 @@ pub(crate) fn spawn(registry: &Arc<Registry>, spec: Spec, program: Program) -> A
         events: Mutex::new(Events::default()),
         shares: Mutex::new(std::collections::BTreeMap::new()),
         recording: Mutex::new(None),
+        thread: std::sync::OnceLock::new(),
     });
     registry.insert(Arc::clone(&session));
-    let pump = Pump {
+    let prelude = spec.prelude;
+    let mut pump = Pump {
         session: Arc::clone(&session),
         registry: Arc::downgrade(registry),
         ring: (spec.replay > 0).then(|| Ring::starting_at(spec.replay, spec.count_from)),
@@ -581,6 +665,9 @@ pub(crate) fn spawn(registry: &Arc<Registry>, spec: Spec, program: Program) -> A
         #[cfg(all(feature = "devtools", unix))]
         recorder: None,
     };
+    if !prelude.is_empty() {
+        pump.output(&prelude);
+    }
     crate::edge::handle().spawn(pump.run(program, commands_in, input_in));
     session
 }
@@ -766,7 +853,7 @@ impl Pump {
                 let _ = client.out.try_send(Out::Close("the server is stopping".to_string()));
             }
             if let Some(registry) = self.registry.upgrade() {
-                registry.remove(&self.session.id);
+                registry.remove(&self.session);
             }
             return;
         }
@@ -796,7 +883,7 @@ impl Pump {
             self.keep_ended(&mut commands, ended.status, &reason).await;
         }
         if let Some(registry) = self.registry.upgrade() {
-            registry.remove(&self.session.id);
+            registry.remove(&self.session);
         }
     }
 
@@ -1045,6 +1132,22 @@ impl Pump {
             }
             Command::Revoke { username } => self.revoke(&username),
             Command::State => self.send_state(),
+            Command::Clear => {
+                let modes = self.tracker.modes();
+                if let Some(ring) = self.ring.as_mut() {
+                    *ring = Ring::starting_at(ring.capacity(), self.count);
+                }
+                let _ = modes;
+                #[cfg(feature = "devtools")]
+                {
+                    self.screen = None;
+                }
+                self.pending.clear();
+                for client in self.client.iter().chain(&self.observers) {
+                    let _ = client.out.try_send(Out::Text(r#"{"type":"cleared"}"#.to_string()));
+                }
+                self.session.event("cleared", "", None);
+            }
             #[cfg(all(feature = "devtools", unix))]
             Command::Record { keep, reply } => {
                 if let Some(mut before) = self.recorder.take() {
@@ -1160,7 +1263,7 @@ impl Pump {
     fn read_screen(&mut self, scope: Scope, ansi: bool) -> Option<Read> {
         self.ring.as_ref()?;
         if self.screen.is_none() {
-            let (from, _, replay) = self.replay(None);
+            let (from, _, replay) = self.replay(None, None);
             let info = self.session.info();
             let scrollback = self
                 .registry
@@ -1199,7 +1302,7 @@ impl Pump {
         self.flush();
         let id = self.session.next_client.fetch_add(1, Ordering::Relaxed);
         let (out, receiver) = mpsc::channel(CLIENT_QUEUE);
-        let (from, reset, replay) = self.replay(have);
+        let (from, reset, replay) = self.replay(have, joining.max_history);
         let info = self.session.info();
         let owner = joining.username == self.session.username;
         let attached = serde_json::json!({
@@ -1280,7 +1383,7 @@ impl Pump {
     }
 
     /// Where a client that drew `have` bytes goes on from: `(from, reset, bytes)`.
-    fn replay(&self, have: Option<u64>) -> (u64, bool, Vec<u8>) {
+    fn replay(&self, have: Option<u64>, max: Option<u64>) -> (u64, bool, Vec<u8>) {
         let Some(ring) = &self.ring else {
             return (self.count, true, Vec::new());
         };
@@ -1289,7 +1392,10 @@ impl Pump {
                 return (have, false, after);
             }
         }
-        let (_, kept, modes) = ring.replay_from_rest(self.count, self.tracker.modes());
+        let (_, kept, modes) = match max {
+            Some(max) => ring.replay_within(self.count, self.tracker.modes(), max),
+            None => ring.replay_from_rest(self.count, self.tracker.modes()),
+        };
         let mut bytes = modes.preamble();
         bytes.extend_from_slice(&without_queries(&kept));
         // the window counts from where its bytes end at the session's count, whatever was left out of them
@@ -1324,7 +1430,7 @@ impl Pump {
                 command = commands.recv() => match command {
                     Some(Command::Attach { cols, rows, joining, reply, .. }) => {
                         let (out, receiver) = mpsc::channel(4);
-                        let (from, _, replay) = self.replay(None);
+                        let (from, _, replay) = self.replay(None, joining.max_history);
                         let info = self.session.info();
                         let attached = serde_json::json!({
                             "type": "attached", "kind": self.session.kind.as_str(), "title": info.title,

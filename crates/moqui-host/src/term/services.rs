@@ -60,6 +60,10 @@ fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<
     super::recording::register(map)?;
     #[cfg(all(feature = "devtools", unix))]
     super::accounts::register(map)?;
+    #[cfg(all(feature = "devtools", unix))]
+    moqui_core::rust_service!(map, clear_terminal_session)?;
+    #[cfg(all(feature = "devtools", unix))]
+    moqui_core::rust_service!(map, restart_terminal_session)?;
     Ok(())
 }
 
@@ -108,15 +112,16 @@ pub(super) fn text(parameters: &BTreeMap<String, Value>, key: &str) -> String {
         .unwrap_or_default()
 }
 
-/// A size from the parameters, within 20 by 10 and 500 by 500.
+/// A size from the parameters, within 20 by 10 and 1000 by 500 (plans/Terminal-Fancy2.md §4.7).
 fn dimension(parameters: &BTreeMap<String, Value>, key: &str, least: u16, default: u16) -> u16 {
+    let most = if key == "cols" { 1000.0 } else { 500.0 };
     // a page's JSON numbers may come as decimals
     text(parameters, key)
         .parse::<f64>()
         .ok()
         .filter(|value| value.is_finite())
         .map_or(default, |value| {
-            let whole = value.round().clamp(f64::from(least), 500.0);
+            let whole = value.round().clamp(f64::from(least), most);
             u16::try_from(whole as i64).unwrap_or(default)
         })
 }
@@ -289,6 +294,22 @@ fn open_terminal_session(parameters: &BTreeMap<String, Value>, _facade: &EntityF
                 Err(HostRefusal::Refused(reason)) => Err(reason),
             }
         }
+        // a thread terminal of an agent conversation (§4.7): an open of a live one answers it
+        #[cfg(all(feature = "devtools", unix))]
+        Kind::Thread => {
+            let ask = match super::thread::ThreadAsk::of(parameters, cols, rows) {
+                Ok(ask) => ask,
+                Err(why) => return refuse("badThread", &why),
+            };
+            match super::thread::find_open(&registry, &username, &ask) {
+                Some(open) => Ok(open),
+                None => match super::thread::open(&factory, &registry, &username, &ask, &facts, None, Vec::new()) {
+                    Ok(session) => Ok(session),
+                    Err((code, why)) if code != "limit" => return refuse(code, &why),
+                    Err((_, why)) => Err(why),
+                },
+            }
+        }
         #[allow(unreachable_patterns)]
         _ => return refuse(NOT_AVAILABLE, "That terminal is not available here"),
     };
@@ -435,6 +456,10 @@ fn open_host(
         profile: profile.clone(),
         launch,
         on_end: Some(super::audit::on_end(Arc::downgrade(factory), id.clone())),
+        kind: Kind::Host,
+        record: None,
+        prelude: Vec::new(),
+        thread: None,
     };
     let session = registry.open_host(factory, spec).map_err(HostRefusal::Refused)?;
     super::recording::at_open(factory, &session, profile.record);
@@ -634,7 +659,66 @@ fn close_terminal_session(parameters: &BTreeMap<String, Value>, _facade: &Entity
         return refuse("notFound", "No such terminal session");
     };
     session.end("the session was ended");
+    // a thread terminal closed is not started again, and its history goes (§4.7)
+    #[cfg(all(feature = "devtools", unix))]
+    if session.kind == Kind::Thread {
+        super::thread::forget(&factory, &session);
+    }
     Ok(BTreeMap::new())
+}
+
+/// `clear#TerminalSession`: empty one of the user's own thread terminals' kept output and history (§4.7); its windows
+/// clear theirs.
+#[cfg(all(feature = "devtools", unix))]
+fn clear_terminal_session(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+    let username = match username() {
+        Ok(username) => username,
+        Err(refused) => return refused,
+    };
+    let factory = factory()?;
+    let Some(session) = Registry::of(&factory)
+        .find(&text(parameters, "sessionId"), &username)
+        .filter(|session| session.kind == Kind::Thread)
+    else {
+        return refuse("notFound", "No such thread terminal");
+    };
+    if let Err(why) = super::thread::clear(&factory, &session) {
+        return refuse("notCleared", &why);
+    }
+    answer("session", &session.to_json())
+}
+
+/// `restart#TerminalSession`: start one of the user's own thread terminals again after its program ended, under the
+/// same id, its history first (§4.7); a running one is answered as it is.
+#[cfg(all(feature = "devtools", unix))]
+fn restart_terminal_session(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+    let username = match username() {
+        Ok(username) => username,
+        Err(refused) => return refused,
+    };
+    let factory = factory()?;
+    let registry = Registry::of(&factory);
+    let facts = Facts::of_current_request();
+    let ticket = text(parameters, "ticket");
+    let recent =
+        |millis: i64| moqui_core::user::recent_auth(millis) || registry.ticket_holds(&ticket, &username, millis);
+    if let Err(refusal) = access::check(
+        access::Switches::of(&factory),
+        Kind::Thread,
+        &facts,
+        &permitted,
+        &recent,
+    ) {
+        return refuse(refusal.code(), refusal.message());
+    }
+    match super::thread::restart(&factory, &registry, &username, &text(parameters, "sessionId"), &facts) {
+        Ok(session) => {
+            let mut out = BTreeMap::from([("sessionId".to_string(), Value::string(&session.id))]);
+            out.insert("session".to_string(), from_json(&session.to_json()));
+            Ok(out)
+        }
+        Err((code, why)) => refuse(code, &why),
+    }
 }
 
 #[cfg(test)]

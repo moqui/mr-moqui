@@ -85,8 +85,13 @@ impl Registry {
         lock(&self.live).insert(session.id.clone(), session);
     }
 
-    pub(super) fn remove(&self, id: &str) {
-        lock(&self.live).remove(id);
+    /// Take `session` out of the list: only that session, not a newer one under its id (a thread terminal started
+    /// again, plans/Terminal-Fancy2.md §4.7).
+    pub(super) fn remove(&self, session: &Arc<Session>) {
+        let mut live = lock(&self.live);
+        if live.get(&session.id).is_some_and(|listed| Arc::ptr_eq(listed, session)) {
+            live.remove(&session.id);
+        }
     }
 
     /// A ticket for `username`, who just confirmed who they are: what a request or a socket with no session of its
@@ -223,6 +228,7 @@ impl Registry {
             attend: None,
             adopted: false,
             count_from: 0,
+            prelude: Vec::new(),
         };
         Ok(session::spawn(self, spec, program))
     }
@@ -335,6 +341,7 @@ impl Registry {
             attend: Some(super::notice::hook(factory)),
             adopted: false,
             count_from: 0,
+            prelude: Vec::new(),
         };
         Ok(session::spawn(self, spec, program))
     }
@@ -349,6 +356,14 @@ pub(crate) struct HostSpec {
     pub launch: super::host::Launch,
     pub title: String,
     pub on_end: Option<Box<dyn FnOnce(u32, String) + Send>>,
+    /// Host, or Thread (plans/Terminal-Fancy2.md §4.7).
+    pub kind: Kind,
+    /// Kept from its first byte: a thread terminal's history (§4.5's history mode).
+    pub record: Option<super::record::Keep>,
+    /// What it shows before its program's output: a thread terminal started again shows its history first.
+    pub prelude: Vec<u8>,
+    /// A thread terminal's conversation and the rest.
+    pub thread: Option<super::session::ThreadMeta>,
 }
 
 #[cfg(all(feature = "devtools", unix))]
@@ -384,13 +399,14 @@ impl Registry {
         };
         let program = if in_holder {
             let meta = serde_json::json!({
-                "username": spec.username, "profile": spec.profile.name, "kind": "host",
+                "username": spec.username, "profile": spec.profile.name, "kind": spec.kind.as_str(),
                 "title": if spec.title.is_empty() { spec.profile.title.clone() } else { spec.title.clone() },
                 "cwd": spec.launch.directory.to_string_lossy(), "cols": spec.launch.cols, "rows": spec.launch.rows,
-                "agent": spec.profile.agent,
+                "agent": spec.profile.agent, "thread": spec.thread.as_ref().map(super::session::ThreadMeta::to_json),
             });
             let (holder, id, launch, replay) = (Arc::clone(&holder), spec.id.clone(), spec.launch.clone(), self.replay);
-            match crate::edge::block_on(async move { holder.open(&id, &launch, replay, meta, None).await }) {
+            let record = spec.record.clone();
+            match crate::edge::block_on(async move { holder.open(&id, &launch, replay, meta, record.as_ref()).await }) {
                 Ok(Ok(program)) => program,
                 Ok(Err(err)) => return Err(err.to_string()),
                 Err(err) => return Err(err.message().to_string()),
@@ -400,10 +416,11 @@ impl Registry {
                 .start()
                 .map_err(|err| format!("{} did not start: {err}", spec.launch.command_line()))?
         };
+        let (record, thread) = (spec.record, spec.thread);
         let spec = Spec {
             id: spec.id,
             username: spec.username,
-            kind: Kind::Host,
+            kind: spec.kind,
             title: if spec.title.is_empty() {
                 spec.profile.title.clone()
             } else {
@@ -422,8 +439,23 @@ impl Registry {
             attend: Some(super::notice::hook(factory)),
             adopted: false,
             count_from: 0,
+            prelude: spec.prelude,
         };
-        Ok(session::spawn(self, spec, program))
+        let session = session::spawn(self, spec, program);
+        if let Some(thread) = thread {
+            session.set_thread(thread);
+        }
+        // a session in process is recorded by its pump; a held one's holder started it with the program
+        if let (Some(keep), false) = (record, in_holder) {
+            let recording = Arc::clone(&session);
+            if let Err(err) = crate::edge::block_on(async move { recording.record(Some(keep)).await })
+                .map_err(|err| err.message().to_string())
+                .and_then(|started| started)
+            {
+                tracing::error!("terminal session {}: its history is not kept: {err}", session.id);
+            }
+        }
+        Ok(session)
     }
 
     /// List again a host session the holder kept from the server before (§7.5), for its user.
@@ -434,7 +466,7 @@ impl Registry {
             on_end: Some(super::audit::on_end(Arc::downgrade(factory), adopted.id.clone())),
             id: adopted.id,
             username: adopted.username,
-            kind: Kind::Host,
+            kind: adopted.kind,
             profile: adopted.profile,
             title: adopted.title,
             cwd: adopted.cwd,
@@ -448,8 +480,13 @@ impl Registry {
             attend: Some(super::notice::hook(factory)),
             adopted: true,
             count_from: adopted.count_from,
+            prelude: Vec::new(),
         };
+        let thread = adopted.thread;
         let session = session::spawn(self, spec, adopted.program);
+        if let Some(thread) = thread {
+            session.set_thread(thread);
+        }
         // its shares and its recording outlive the restart in their rows (D15, §4.5)
         super::share::reload(Arc::downgrade(factory), Arc::clone(&session));
         super::recording::reload(Arc::downgrade(factory), session);
@@ -479,6 +516,9 @@ pub(crate) struct Adopted {
     pub program: Program,
     /// The holder's count where the program's replay starts, less the modes' preamble (D17).
     pub count_from: u64,
+    /// Host or Thread, as the holder's meta says.
+    pub kind: Kind,
+    pub thread: Option<super::session::ThreadMeta>,
 }
 
 /// A new session id: 22 URL-safe characters, 132 random bits.

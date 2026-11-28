@@ -69,6 +69,7 @@ fn session(kind: Kind, replay: usize, detached_for: Duration) -> (Arc<Registry>,
         attend: None,
         adopted: false,
         count_from: 0,
+        prelude: Vec::new(),
     };
     let session = spawn(&registry, spec, program_value);
     (
@@ -247,6 +248,7 @@ fn joining(username: &str, observe: bool) -> Joining {
     Joining {
         observe,
         username: username.to_string(),
+        max_history: None,
     }
 }
 

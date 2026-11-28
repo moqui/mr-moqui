@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="terminalSessionId" type="id" is-pk="true"/>
         <field name="userId" type="id"/>
         <field name="username" type="text-medium"/>
-        <!-- command or host -->
+        <!-- command, host or thread -->
         <field name="kind" type="text-short"/>
         <field name="profileName" type="text-medium"/>
         <!-- the program and its arguments, for a host session -->
@@ -36,7 +36,17 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="thruDate" type="date-time"/>
         <field name="exitStatus" type="number-integer"/>
         <field name="endReason" type="text-long"/>
+        <!-- a thread terminal's (plans/Terminal-Fancy2.md §4.7): its agent conversation, the client's own id of it, what
+            its component keeps, and where its history is -->
+        <field name="conversationId" type="id"/>
+        <field name="clientTerminalId" type="text-medium"/>
+        <field name="label" type="text-medium"/>
+        <field name="workRootId" type="id"/>
+        <field name="providerInstanceId" type="id"/>
+        <field name="stopOnSettle" type="text-indicator"/>
+        <field name="historyLocation" type="text-long"/>
         <index name="TERM_SESS_USER"><index-field name="userId"/></index>
+        <index name="TERM_SESS_CONV"><index-field name="conversationId"/></index>
         <index name="TERM_SESS_FROM"><index-field name="fromDate"/></index>
         <relationship type="one" related="moqui.security.UserAccount"/>
     </entity>

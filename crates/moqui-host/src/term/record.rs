@@ -297,7 +297,6 @@ fn history_segments(dir: &Path, stem: &str) -> VecDeque<(PathBuf, u64)> {
 }
 
 /// The output a history keeps, oldest first, as one stream (a thread terminal started again shows it first).
-#[cfg_attr(not(test), allow(dead_code))] // the thread kind's history (Terminal-Fancy2 TF7)
 pub(crate) fn history_output(dir: &Path, stem: &str) -> Vec<u8> {
     let mut out = Vec::new();
     for (path, _) in history_segments(dir, stem) {
@@ -307,7 +306,6 @@ pub(crate) fn history_output(dir: &Path, stem: &str) -> Vec<u8> {
 }
 
 /// The output of an asciicast file: its `"o"` events' data, in order.
-#[cfg_attr(not(test), allow(dead_code))] // the thread kind's history (Terminal-Fancy2 TF7)
 pub(crate) fn cast_output(path: &Path) -> Vec<u8> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
@@ -330,7 +328,6 @@ pub(crate) fn cast_output(path: &Path) -> Vec<u8> {
 }
 
 /// Remove the history `stem` in `dir`.
-#[cfg_attr(not(test), allow(dead_code))] // the thread kind's history (Terminal-Fancy2 TF7)
 pub(crate) fn remove_history(dir: &Path, stem: &str) {
     for (path, _) in history_segments(dir, stem) {
         let _ = std::fs::remove_file(path);

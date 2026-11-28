@@ -324,6 +324,12 @@
             if (info) Object.assign(info, { title: message.title, cwd: message.cwd, attached: true });
             session.visibleSent = null;
             reportView(session);
+        } else if (message.type === "cleared") {
+            // a thread terminal's Clear (Terminal-Fancy2 §4.7): its kept output is gone, and so is this screen's
+            session.term.reset();
+        } else if (message.type === "restarted") {
+            // a thread terminal started again: its history comes first, then the new program
+            if (info) Object.assign(info, { state: "running", exitStatus: null, reason: "" });
         } else if (message.type === "role") {
             // another window took the typing (D7): this one watches on, and offers Take it back
             session.viewer = !!message.viewer;

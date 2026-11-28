@@ -29,7 +29,7 @@ use tokio::net::UnixStream;
 
 use super::hold::{self, ask, read_line, write_line, PROTOCOL};
 use super::host::Launch;
-use super::session::Program;
+use super::session::{Kind, Program, ThreadMeta};
 use super::Ended;
 
 /// A session of an earlier build's holder: a line that says so, and an end that asks that holder to end it.
@@ -317,6 +317,8 @@ impl Holder {
                     agent: false,
                     program: earlier_program(path.clone(), id),
                     count_from: 0,
+                    kind: Kind::Host,
+                    thread: None,
                 },
             );
         }
@@ -391,6 +393,13 @@ impl Holder {
                             agent: meta.get("agent").and_then(serde_json::Value::as_bool).unwrap_or(false),
                             program,
                             count_from,
+                            kind: Kind::parse(&text("kind"))
+                                .filter(|kind| *kind == Kind::Thread)
+                                .unwrap_or(Kind::Host),
+                            thread: meta
+                                .get("thread")
+                                .filter(|thread| thread.is_object())
+                                .map(ThreadMeta::of_json),
                         },
                     );
                     tracing::info!("terminal session {id} taken back from the holder");

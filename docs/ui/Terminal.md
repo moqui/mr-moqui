@@ -183,6 +183,26 @@ far behind is let go and comes back by what it drew. Only your own watching wind
   recent sign-in), and the driving services read a shared session too, typing only where the share lets them.
 - `/termws?session=<id>&observe=1` watches; over SSH, `attach --view <id>`.
 
+## Thread terminals
+
+The `thread` kind is a host session of an agent conversation (plans/Terminal-Fancy2.md §4.7): Agent Code's terminal
+drawer. It is a host session in every way (a pty, the holder, viewers, sharing, driving, the audit row), and it is
+also opened and listed by its conversation:
+
+- `open#TerminalSession` with `kind="thread"`, `conversationId` and `clientTerminalId` (1 to 128 characters each); an
+  open of a live one of the same user, conversation and client id answers it. `label`, `workRootId`,
+  `providerInstanceId` and `stopOnSettle` are kept for its component, `env` adds at most 128 variables (the Moqui conf's
+  names left out), and `cols` goes to 1000 (for every kind).
+- Who may open one, in which directory, as which OS account and with what environment is the policy a crate gives
+  (`moqui_core::terminal::ThreadTerminalPolicy`, through its `Extension`'s `terminal_policies`). With none, `thread` is
+  not available. It needs a build with the dev tools, not a dev instance.
+- Its output is kept as a history of at most 8 MiB (rolling segments under `runtime/terminal/history/<username>/`).
+  Started again after its program ended (`restart#TerminalSession`, or an attach with `"restart": true`), it runs
+  again under the same id with its history first, and the socket says `restarted`; an attach's `maxHistory` limits
+  the replay. `clear#TerminalSession` empties its kept output and history, and its windows are sent `cleared`.
+  Closing one removes its history.
+- A thread terminal's `MOQUI_TERMINAL_TOKEN` reaches only the thread terminals of its own conversation.
+
 ## OS accounts
 
 A host session runs as the server's OS user (`terminal@run-as="server"`, the default). On a shared Linux dev server,

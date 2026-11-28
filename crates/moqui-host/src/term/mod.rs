@@ -69,6 +69,8 @@ pub(crate) mod screen;
 mod share;
 mod services;
 pub(crate) mod session;
+#[cfg(all(feature = "devtools", unix))]
+pub(crate) mod thread;
 #[cfg(feature = "devtools")]
 pub(crate) mod token;
 mod track;

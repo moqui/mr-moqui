@@ -287,7 +287,7 @@ fn parse_resize(text: &str) -> Option<(u16, u16)> {
     }
     let dimension = |name: &str, least: u16| {
         let number = u16::try_from(value.get(name)?.as_u64()?).ok()?;
-        Some(number.clamp(least, 500))
+        Some(number.clamp(least, if name == "cols" { 1000 } else { 500 }))
     };
     Some((dimension("cols", 20)?, dimension("rows", 10)?))
 }
@@ -361,7 +361,7 @@ async fn may_attach(
 
 /// An attach message: `{"type":"attach","cols","rows","have"}`, or a first `resize`, taken as an attach of a page that
 /// drew nothing.
-fn parse_attach(text: &str) -> Option<(u16, u16, Option<u64>)> {
+fn parse_attach(text: &str) -> Option<AttachAsk> {
     let value: serde_json::Value = serde_json::from_str(text).ok()?;
     let kind = value.get("type")?.as_str()?;
     if kind != "attach" && kind != "resize" {
@@ -369,10 +369,29 @@ fn parse_attach(text: &str) -> Option<(u16, u16, Option<u64>)> {
     }
     let dimension = |name: &str, least: u16| {
         let number = u16::try_from(value.get(name)?.as_u64()?).ok()?;
-        Some(number.clamp(least, 500))
+        Some(number.clamp(least, if name == "cols" { 1000 } else { 500 }))
     };
-    let have = value.get("have").and_then(serde_json::Value::as_u64);
-    Some((dimension("cols", 20)?, dimension("rows", 10)?, have))
+    Some(AttachAsk {
+        cols: dimension("cols", 20)?,
+        rows: dimension("rows", 10)?,
+        have: value.get("have").and_then(serde_json::Value::as_u64),
+        restart: value
+            .get("restart")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        max_history: value.get("maxHistory").and_then(serde_json::Value::as_u64),
+    })
+}
+
+/// An attach: the page's size and what it drew; for a thread terminal (plans/Terminal-Fancy2.md §4.7) whether to start
+/// an ended one again, and the most history it wants replayed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AttachAsk {
+    cols: u16,
+    rows: u16,
+    have: Option<u64>,
+    restart: bool,
+    max_history: Option<u64>,
 }
 
 /// Whether the page looks at the session: `{"type":"view","visible":true}`.
@@ -459,6 +478,8 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
         close(&mut socket, "no such terminal session").await;
         return;
     }
+    #[cfg(all(feature = "devtools", unix))]
+    let facts_for_restart = facts.clone();
     // an attach to a running command line or shell is worth as much as a new one: asked again (§8.2)
     if kept.kind != Kind::Apps {
         let attach = Attach {
@@ -485,10 +506,48 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
             return;
         }
     };
-    let (cols, rows, have) = first;
+    let AttachAsk {
+        cols,
+        rows,
+        have,
+        restart,
+        max_history,
+    } = first;
+    // a thread terminal whose program ended, asked to start again: under the same id, its history first (§4.7)
+    #[cfg(all(feature = "devtools", unix))]
+    let kept = if restart && kept.kind == Kind::Thread && kept.info().ended.is_some() && !viewer {
+        let (id, user, facts) = (id.clone(), username.clone(), facts_for_restart.clone());
+        let restarted = crate::worker::on_pool(&Arc::downgrade(&factory), move |factory| {
+            moqui_core::user::internal_login_user(&user)?;
+            let strong = ExecutionContext::with_current(|ec| Arc::clone(ec.factory()))
+                .ok_or_else(|| CoreError::new("no execution context is entered"))?;
+            let registry = Registry::of(factory);
+            Ok(crate::term::thread::restart(&strong, &registry, &user, &id, &facts))
+        })
+        .await;
+        match restarted {
+            Ok(Ok(session)) => {
+                let _ = crate::notws::send_within(&mut socket, Message::Text(r#"{"type":"restarted"}"#.into())).await;
+                session
+            }
+            Ok(Err((_, why))) => {
+                close(&mut socket, &why).await;
+                return;
+            }
+            Err(err) => {
+                close(&mut socket, err.message()).await;
+                return;
+            }
+        }
+    } else {
+        kept
+    };
+    #[cfg(not(all(feature = "devtools", unix)))]
+    let _ = restart;
     let joining = crate::term::session::Joining {
         observe: viewer,
         username: username.clone(),
+        max_history,
     };
     let Some(attached) = kept.attach_as(have, cols, rows, joining).await else {
         close(&mut socket, "the session ended").await;
@@ -732,17 +791,22 @@ mod tests {
 
     #[test]
     fn an_attach_names_its_size_and_what_it_drew() {
+        let sized = |text: &str| parse_attach(text).map(|ask| (ask.cols, ask.rows, ask.have));
         assert_eq!(
-            parse_attach(r#"{"type":"attach","cols":100,"rows":30,"have":4096}"#),
+            sized(r#"{"type":"attach","cols":100,"rows":30,"have":4096}"#),
             Some((100, 30, Some(4096)))
         );
         assert_eq!(
-            parse_attach(r#"{"type":"attach","cols":100,"rows":30,"have":null}"#),
+            sized(r#"{"type":"attach","cols":100,"rows":30,"have":null}"#),
             Some((100, 30, None))
         );
+        assert_eq!(sized(r#"{"type":"resize","cols":80,"rows":24}"#), Some((80, 24, None)));
+        // a thread terminal's attach: 1000 columns at most, a restart and the history wanted (§4.7)
+        let thread =
+            parse_attach(r#"{"type":"attach","cols":2000,"rows":900,"restart":true,"maxHistory":4096}"#).unwrap();
         assert_eq!(
-            parse_attach(r#"{"type":"resize","cols":80,"rows":24}"#),
-            Some((80, 24, None))
+            (thread.cols, thread.rows, thread.restart, thread.max_history),
+            (1000, 500, true, Some(4096))
         );
         assert_eq!(parse_attach(r#"{"type":"ack","count":1}"#), None);
         assert_eq!(parse_ack(r#"{"type":"ack","count":100000}"#), Some(100_000));

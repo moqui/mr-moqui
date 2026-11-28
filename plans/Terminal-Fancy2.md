@@ -351,6 +351,12 @@ are listed apart. SSH gets `attach --view <id>` (`command/attach.rs`).
   `restart#TerminalSession`.
 - **The entity.** `TerminalSession` gains `conversationId` (indexed), `clientTerminalId`, `label`, `workRootId`,
   `providerInstanceId`, `stopOnSettle` and `historyLocation`.
+- **As built (Nov 28, 2026).** A thread terminal's history is its recording (D10): `terminal@recording` does not add
+  another to it. A restart takes the opening kept in the server's memory, so a thread terminal is started again by
+  the server that opened it (or after its own restart, by opening it anew with the same ids). Clear empties the
+  server's ring and the history; a held session's ring in the holder keeps its old output until the holder lets it
+  go, so a window after a server restart may see it again. A policy is a run-time registration as well as an
+  `Extension` field (`moqui_core::terminal::register_policy`), which the tests use.
 
 ### 4.8 TF8: more kinds of float
 

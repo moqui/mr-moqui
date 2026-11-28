@@ -52,6 +52,20 @@ impl Ring {
         }
     }
 
+    /// The most it keeps.
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// The ring from its first point at rest no more than `max` bytes before `count` (a window that wants at most that
+    /// much history, plans/Terminal-Fancy2.md §4.7); as [`Self::replay_from_rest`] when it holds less.
+    pub fn replay_within(&self, count: u64, current: Modes, max: u64) -> (u64, Vec<u8>, Modes) {
+        match self.rests.iter().find(|(at, _)| count.saturating_sub(*at) <= max) {
+            Some((from, modes)) => (*from, self.since(*from, count).unwrap_or_default(), *modes),
+            None => (count, Vec::new(), current),
+        }
+    }
+
     /// `bytes`, written by the program from count `at`, with the points at rest the tracker found in them (offsets
     /// into `bytes`).
     pub fn push(&mut self, bytes: &[u8], at: u64, rests: &[(usize, Modes)]) {

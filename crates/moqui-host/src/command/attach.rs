@@ -152,6 +152,7 @@ pub(crate) async fn run<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>
     let joining = crate::term::session::Joining {
         observe: viewer,
         username: access.username.clone(),
+        max_history: None,
     };
     let Some(attached) = kept.attach_as(None, cols, rows, joining).await else {
         return format!("attach: {} has ended", kept.id);

@@ -338,6 +338,21 @@ impl Page {
         self.attach_query(&format!("session={id}&observe=1"), None)
     }
 
+    /// Attach to a thread terminal asking to start it again when its program ended (plans/Terminal-Fancy2.md §4.7).
+    pub(crate) fn attach_restart(&self, id: &str) -> Ws {
+        let uri: tungstenite::http::Uri = format!("ws://{}/termws?session={id}", self.address).parse().unwrap();
+        let request = ClientRequestBuilder::new(uri)
+            .with_header("Cookie", &self.cookie)
+            .with_header("Origin", format!("http://{}", self.address));
+        let (mut socket, _) = connect(request).unwrap();
+        if let MaybeTlsStream::Plain(stream) = socket.get_mut() {
+            stream.set_read_timeout(Some(Duration::from_millis(200))).unwrap();
+        }
+        let attach = serde_json::json!({"type": "attach", "cols": 100, "rows": 30, "have": null, "restart": true});
+        socket.send(Message::Text(attach.to_string().into())).unwrap();
+        socket
+    }
+
     fn attach_query(&self, query: &str, have: Option<u64>) -> Ws {
         let uri: tungstenite::http::Uri = format!("ws://{}/termws?{query}", self.address).parse().unwrap();
         let request = ClientRequestBuilder::new(uri)
@@ -1164,6 +1179,151 @@ fn a_host_session_runs_as_another_account() {
     read_messages_until(&mut socket, &format!("as={account} home=")).unwrap();
     page.call("close", Some(serde_json::json!({"sessionId": id})));
     assert!(read_messages_until(&mut socket, "never").is_err(), "it ends when ended");
+}
+
+/// The Terminal screen with the openings and actions of a thread terminal, as Agent Code's wire would call them.
+const THREAD_TRANSITIONS: &str = r#"<screen-extend>
+    <transition name="openThread" method="post" begin-transaction="false" authz-action="view">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'open#TerminalSession', names: ['kind', 'cols', 'rows', 'conversationId', 'clientTerminalId', 'label', 'directory', 'env']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="clearThread" method="post" begin-transaction="false" authz-action="view">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'clear#TerminalSession', names: ['sessionId']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+</screen-extend>
+"#;
+
+/// A test's policy for thread terminals: a conversation whose id starts with `allowed` may open one, a plain sh in a
+/// scratch directory with a variable of its own.
+struct TestThreadPolicy(std::path::PathBuf);
+
+impl moqui_core::terminal::ThreadTerminalPolicy for TestThreadPolicy {
+    fn plan(&self, opening: &moqui_core::terminal::ThreadOpening) -> Result<moqui_core::terminal::ThreadPlan, String> {
+        if !opening.conversation_id.starts_with("allowed") {
+            return Err("not this conversation".to_string());
+        }
+        Ok(moqui_core::terminal::ThreadPlan {
+            directory: self.0.clone(),
+            env: vec![("THREAD_TEST".to_string(), "from-the-policy".to_string())],
+            argv: vec!["sh".to_string()],
+            ..Default::default()
+        })
+    }
+}
+
+/// The thread kind (plans/Terminal-Fancy2.md §4.7): not available with no policy; under one, opened idempotently by its
+/// conversation and client id, refused where the policy says no, started again after its program ended with its
+/// history first, cleared, and 1000 columns wide at most.
+#[test]
+fn a_thread_terminal_opens_by_its_policy_restarts_with_its_history_and_clears() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let helper = helper_property();
+    let gate = crate::common::start_with_conf_files(
+        "termws-thread",
+        None,
+        "<terminal/>",
+        &[("moqui_conf__instance__purpose", "dev"), (helper.0, &helper.1)],
+        &[
+            (
+                "components/addon/term-thread/component.xml",
+                r#"<component name="term-thread"/>"#,
+            ),
+            (
+                "components/addon/term-thread/screen-extend/webroot/screen/webroot/apps/Terminal.xml",
+                THREAD_TRANSITIONS,
+            ),
+        ],
+    );
+    let page = Page::signed_in(gate.server.address(), "john.doe");
+    gate.server.factory().flush_sessions().unwrap();
+    let opening = |conversation: &str, cols: u32| {
+        page.call(
+            "openThread",
+            Some(
+                serde_json::json!({"kind": "thread", "cols": cols, "rows": 30, "conversationId": conversation,
+                "clientTerminalId": "t1", "label": "build", "env": "{\"EXTRA\":\"x\"}"}),
+            ),
+        )
+    };
+    let refused = opening("allowed-1", 100);
+    assert_eq!(
+        refused["reasonCode"], "notAvailable",
+        "no policy, no thread kind: {refused}"
+    );
+
+    let scratch = std::env::temp_dir().join(format!("moqui-thread-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).unwrap();
+    moqui_core::terminal::register_policy(
+        gate.server.factory(),
+        std::sync::Arc::new(TestThreadPolicy(scratch.clone())),
+    );
+    let opened = opening("allowed-1", 2000);
+    let id = opened["sessionId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{opened}"))
+        .to_string();
+    assert_eq!(opened["session"]["kind"], "thread");
+    assert_eq!(opened["session"]["cols"], 1000, "1000 columns at most");
+    assert_eq!(opened["session"]["thread"]["conversationId"], "allowed-1");
+    assert_eq!(
+        opening("allowed-1", 100)["sessionId"],
+        id.as_str(),
+        "an open of a live one answers it"
+    );
+    assert_eq!(opening("denied-1", 100)["reasonCode"], "notAllowed");
+
+    let mut socket = page.attach(&id, None);
+    socket
+        .send(Message::Binary(
+            b"echo \"$THREAD_TEST thread-$((2+3)) $EXTRA\"\r".to_vec().into(),
+        ))
+        .unwrap();
+    read_messages_until(&mut socket, "from-the-policy thread-5 x").unwrap();
+    socket.send(Message::Binary(b"exit 7\r".to_vec().into())).unwrap();
+    assert!(read_messages_until(&mut socket, "never")
+        .unwrap_err()
+        .contains("status 7"));
+
+    // started again: the same id, its history first, and a new shell
+    let mut again = page.attach_restart(&id);
+    let (texts, _) = read_messages_until(&mut again, "from-the-policy thread-5 x").unwrap();
+    assert!(
+        texts.iter().any(|text| text.contains(r#""type":"restarted""#)),
+        "{texts:?}"
+    );
+    again
+        .send(Message::Binary(b"echo second-$((3+4))\r".to_vec().into()))
+        .unwrap();
+    read_messages_until(&mut again, "second-7").unwrap();
+
+    // cleared: the windows are told, and a window that comes back gets none of what was before
+    let cleared = page.call("clearThread", Some(serde_json::json!({"sessionId": id})));
+    assert_eq!(cleared["session"]["id"], id.as_str(), "{cleared}");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut told = false;
+    while !told {
+        assert!(Instant::now() < deadline, "the window was not told it was cleared");
+        if let Ok(Message::Text(text)) = again.read() {
+            told = text.contains(r#""type":"cleared""#);
+        }
+    }
+    again
+        .send(Message::Binary(b"echo after-$((4+5))\r".to_vec().into()))
+        .unwrap();
+    read_messages_until(&mut again, "after-9").unwrap();
+    drop(again);
+    let mut back = page.attach(&id, None);
+    let (_, seen) = read_messages_until(&mut back, "after-9").unwrap();
+    assert!(
+        !String::from_utf8_lossy(&seen).contains("second-7"),
+        "{}",
+        String::from_utf8_lossy(&seen)
+    );
+    page.call("close", Some(serde_json::json!({"sessionId": id})));
+    let _ = std::fs::remove_dir_all(scratch);
 }
 
 /// The holder (plans/archive/Terminal-Fancy.md §7.5): a host session's program runs on through a restart of the server,
