@@ -71,8 +71,9 @@ const AREA_EDITS: [&str; 6] = ["clear", "clearFormatting", "style", "fill", "bor
 const MAX_OWN_LOG: usize = 500;
 /// The most changed areas an evaluation tells the views of; past it they read everything again.
 const MAX_CHANGED_AREAS: usize = 200;
-/// The edits that change values only: after them the views read again the cells that changed.
-const VALUE_EDITS: [&str; 4] = ["input", "paste", "clear", "fill"];
+/// The edits that change values only: after them the views read again the cells that changed. Not `fill`: the engine's
+/// changes leave out the cells its autofill writes (and it copies styles and merges too), so the views read everything.
+const VALUE_EDITS: [&str; 3] = ["input", "paste", "clear"];
 /// The evaluation time past which an evaluation is slow, in milliseconds, when the conf does not say.
 const DEFAULT_SLOW_MS: f64 = 250.0;
 
