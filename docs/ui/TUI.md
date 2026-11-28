@@ -643,8 +643,8 @@ typing stops); `topics` names the push topics it wants (a sheet's `calc:<room>`,
 which the session joins and leaves as the component comes and goes while the loop sends frames (its state's `pushed`;
 SSH, the browser's terminal and `--server` do, an agent's session does not), giving it each frame on the topic
 (`push`) without reading the counters, and joins again with the leave first when a topic's join frame changes;
-`Act::Frame` sends one more (a sheet's place); and a `receive` that sets the state's `reload_pending` asks for its source again at once (the next read of a component whose `source` changes with what it
-received).
+`Act::Frame` sends one more (a sheet's place); and a `receive` that sets the state's `reload_pending` asks for its
+source again at once (the next read of a component whose `source` changes with what it received).
 
 #### Sheet colours
 

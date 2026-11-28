@@ -39,8 +39,12 @@ impl LinkFrames {
         _factory: std::sync::Weak<ExecutionContextFactory>,
         _user: Arc<std::sync::Mutex<Option<String>>>,
         _deliver: Box<dyn Fn(&serde_json::Value) + Send + Sync>,
-    ) -> Option<Self> {
-        None
+    ) -> Self {
+        Self
+    }
+
+    pub(crate) fn takes_frames(&self) -> bool {
+        false
     }
 
     pub(crate) fn send(&self, _frame: serde_json::Value) -> bool {

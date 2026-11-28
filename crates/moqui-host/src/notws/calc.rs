@@ -302,10 +302,10 @@ struct LinkSink {
     user: Arc<Mutex<Option<String>>>,
     deliver: Box<dyn Fn(&Json) + Send + Sync>,
     closed: AtomicBool,
-    /// The frames it may still be handed now, and when that was counted ([`LinkSink::send`]); whether a drop was
-    /// logged.
+    /// The rooms' frames it may still be handed now, and when that was counted ([`LinkSink::send`]).
     budget: Mutex<(f64, std::time::Instant)>,
-    dropped: AtomicBool,
+    /// The frames dropped since the last warning, and when that warning was.
+    dropped: Mutex<(u64, Option<std::time::Instant>)>,
 }
 
 #[cfg_attr(not(feature = "tui"), allow(dead_code))]
@@ -317,14 +317,47 @@ impl LinkSink {
             deliver,
             closed: AtomicBool::new(false),
             budget: Mutex::new((LINK_FRAMES, std::time::Instant::now())),
-            dropped: AtomicBool::new(false),
+            dropped: Mutex::new((0, None)),
+        }
+    }
+
+    /// Whether the rate leaves room for one more of the rooms' frames now, taking it.
+    fn take(&self) -> bool {
+        let mut budget = lock(&self.budget);
+        let now = std::time::Instant::now();
+        let tokens = (budget.0 + now.duration_since(budget.1).as_secs_f64() * LINK_FRAMES).min(LINK_FRAMES);
+        let taken = tokens >= 1.0;
+        *budget = (if taken { tokens - 1.0 } else { tokens }, now);
+        taken
+    }
+
+    /// One frame dropped: a warning with the count, at most once a minute while frames go on being dropped.
+    fn note_dropped(&self) {
+        let mut dropped = lock(&self.dropped);
+        dropped.0 += 1;
+        if dropped.1.is_none_or(|at| at.elapsed() >= DROPPED_WARNING) {
+            tracing::warn!(
+                link = self.id,
+                dropped = dropped.0,
+                "CalcGrid: a terminal's room frames come faster than {LINK_FRAMES} a second; frames were dropped"
+            );
+            *dropped = (0, Some(std::time::Instant::now()));
         }
     }
 }
 
-/// The frames a link is handed at once, as many as a socket's queue holds (`SOCKET_QUEUE`), given back at that many a
-/// second: past it a frame is dropped, as a socket with a full queue drops one.
+/// The rooms' frames a link is handed: at most this many a second, in bursts of this many (the size of a socket's
+/// queue, `SOCKET_QUEUE`); past it a frame is dropped, as a socket with a full queue drops one. The session takes the
+/// frames on an unbounded channel, so this is a bound on their rate, not on the frames waiting there.
 const LINK_FRAMES: f64 = super::SOCKET_QUEUE as f64;
+/// How often a link's dropped frames are warned of, at most.
+const DROPPED_WARNING: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// A frame for the link itself, which no rate drops: the answer to its own join (`joined`, `error`, only ever sent to
+/// the joiner), and `reopen`, which the join caps bound already.
+fn own_frame(message: &Json) -> bool {
+    matches!(message["type"].as_str(), Some("joined" | "error")) || message["reopen"] == true
+}
 
 impl Out for LinkSink {
     fn id(&self) -> u64 {
@@ -339,28 +372,25 @@ impl Out for LinkSink {
         if self.is_closed() {
             return;
         }
-        // the session takes the frames on an unbounded channel, so they are bounded here
-        let taken = {
-            let mut budget = lock(&self.budget);
-            let now = std::time::Instant::now();
-            let tokens = (budget.0 + now.duration_since(budget.1).as_secs_f64() * LINK_FRAMES).min(LINK_FRAMES);
-            let taken = tokens >= 1.0;
-            *budget = (if taken { tokens - 1.0 } else { tokens }, now);
-            taken
-        };
-        if taken {
+        if own_frame(message) || self.take() {
             (self.deliver)(message);
-        } else if !self.dropped.swap(true, Ordering::Relaxed) {
-            tracing::warn!(
-                link = self.id,
-                "CalcGrid: a terminal's room frames come faster than {LINK_FRAMES} a second; the rest are dropped"
-            );
+        } else {
+            self.note_dropped();
         }
     }
 
     fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Acquire)
     }
+}
+
+/// The thread that takes a link's frames: not started before the first, its sender while it runs, and failed (or let
+/// go) after, so a spawn that failed is not tried again for each frame.
+#[cfg_attr(not(feature = "tui"), allow(dead_code))]
+enum Thread {
+    NotYet,
+    Running(std::sync::mpsc::Sender<Json>),
+    Failed,
 }
 
 /// An in-process terminal link's CalcGrid frames (`join`, `select`, `leave`), taken in order on a thread of their own
@@ -370,7 +400,7 @@ impl Out for LinkSink {
 #[cfg_attr(not(feature = "tui"), allow(dead_code))] // the in-process link is its only maker
 pub(crate) struct LinkFrames {
     factory: Weak<ExecutionContextFactory>,
-    tx: Mutex<Option<std::sync::mpsc::Sender<Json>>>,
+    thread: Mutex<Thread>,
     sink: Arc<LinkSink>,
 }
 
@@ -382,21 +412,29 @@ impl LinkFrames {
         factory: Weak<ExecutionContextFactory>,
         user: Arc<Mutex<Option<String>>>,
         deliver: Box<dyn Fn(&Json) + Send + Sync>,
-    ) -> Option<Self> {
-        Some(Self {
+    ) -> Self {
+        Self {
             factory,
-            tx: Mutex::new(None),
+            thread: Mutex::new(Thread::NotYet),
             sink: Arc::new(LinkSink::new(user, deliver)),
-        })
+        }
+    }
+
+    /// The host has the rooms, so the link takes frames.
+    pub(crate) fn takes_frames(&self) -> bool {
+        true
     }
 
     /// Queue one frame, starting the thread for the first; false once the link let go or the thread did not start.
     pub(crate) fn send(&self, frame: Json) -> bool {
-        let mut tx = lock(&self.tx);
-        if tx.is_none() && !self.sink.is_closed() {
-            *tx = self.spawn();
+        let mut thread = lock(&self.thread);
+        if matches!(*thread, Thread::NotYet) {
+            *thread = self.spawn().map_or(Thread::Failed, Thread::Running);
         }
-        tx.as_ref().is_some_and(|tx| tx.send(frame).is_ok())
+        match &*thread {
+            Thread::Running(tx) => tx.send(frame).is_ok(),
+            Thread::NotYet | Thread::Failed => false,
+        }
     }
 
     fn spawn(&self) -> Option<std::sync::mpsc::Sender<Json>> {
@@ -426,7 +464,7 @@ impl Drop for LinkFrames {
     fn drop(&mut self) {
         // nothing more goes to the link, and its thread leaves the rooms once the frames queued are done
         self.sink.closed.store(true, Ordering::Release);
-        lock(&self.tx).take();
+        *lock(&self.thread) = Thread::Failed;
     }
 }
 
@@ -907,18 +945,27 @@ mod tests {
         }
     }
 
-    /// CG3.4: a link is handed at most a socket's queue of frames at once, as a socket with a full queue drops them.
+    /// CG3.4: a link is handed at most 256 of the rooms' frames a second, in bursts of 256, and the rest are dropped;
+    /// its own `joined` and `error` and a `reopen` are handed past the bound.
     #[test]
-    fn a_link_is_handed_no_more_frames_at_once_than_a_sockets_queue_holds() {
+    fn a_link_is_handed_at_most_its_rate_of_frames_but_always_its_own() {
+        let queue = super::super::SOCKET_QUEUE;
         let (sink, got) = link_sink(Some("link-burst"));
-        for seq in 0..super::super::SOCKET_QUEUE + 50 {
+        for seq in 0..queue * 3 {
             sink.send(&json!({"type": "changed", "seq": seq}));
         }
         let handed = lock(&got).len();
-        assert!(
-            (super::super::SOCKET_QUEUE..super::super::SOCKET_QUEUE + 10).contains(&handed),
-            "{handed} handed"
-        );
+        // a burst, and what came back while it was sent (a slow machine takes longer than a millisecond)
+        assert!((queue..2 * queue).contains(&handed), "{handed} handed");
+        lock(&got).clear();
+        for own in [
+            json!({"type": "joined", "client": "c1", "peers": []}),
+            json!({"type": "error", "client": "c1", "code": 409}),
+            json!({"type": "changed", "seq": 9, "reopen": true}),
+        ] {
+            sink.send(&own);
+        }
+        assert_eq!(lock(&got).len(), 3, "its own frames are not dropped");
     }
 
     /// CG3.4: a link's frames thread starts with its first frame, and letting go of the link leaves its rooms.
@@ -934,9 +981,11 @@ mod tests {
             Box::new(move |frame: &Json| {
                 let _ = lock(&seen_tx).send(frame.clone());
             }),
-        )
-        .expect("the link's frames");
-        assert!(lock(&frames.tx).is_none(), "no thread before a frame");
+        );
+        assert!(
+            matches!(*lock(&frames.thread), Thread::NotYet),
+            "no thread before a frame"
+        );
         let id = frames.sink.id;
         lock(members()).push(link_member(&frames.sink, "leave-room", "l1", "link-leaver"));
         // a frame starts the thread: a place of a client not joined, refused

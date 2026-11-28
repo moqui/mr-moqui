@@ -1488,22 +1488,22 @@ listener on `calc:<roomId>` and sends, as JSON frames with `calc`:
 
 It gets, on its room's topic: `joined` (`peers`: who has the document open, each `client`, `userId`, `name`, `sheet`,
 `area`), `peer` (one came or went, `joined`), `select` (where one is now), and `changed` (`seq`, `userId`, `name`,
-`kind`: `edit`, `undo`, `redo`, `save`, `refresh` or `revert`) after this server's rooms of the document applied an
-edit made on any server. A `changed` past the sheet's own edit (or a save or refresh) reads the room's state
-(`calcState`) and its cells again, after a cell being typed in is set; one with `reopen` means the room could not
-follow and was dropped, and the screen opens the document again. Presence is by document, across the rooms of every
-scope and server (cluster topic `calc-presence`); it carries names and places, never a value. The frames and the
-cluster topic `calc-update` carry no cell. The terminal's `calcgrid` component sends and takes the same frames:
-`moqui tui --server` on its own `/notws` socket (the push thread's; it joins its rooms again on each new socket, and
-the component sends its place again on `joined`), and a
-client in the server's process (SSH, the browser's terminal) through a sink beside the sockets'
-(`notws/calc.rs` `LinkFrames`), which takes a join only into a room the link's user has open and under the same
-presence caps, the sink counted as a socket, and is given the frames a socket member is while the link's user is the
-one it joined as. A frame comes to the client as a push with `frame` set, on its room's topic, and goes to the
-component that joined it, never to the counters; on a socket, one is told from a notification by having no `message`.
-The component then reads the room's state on a `changed`, and its cells only when the edit changed one it holds, and
-polls every 15 seconds as a fallback; a link that cannot push (an agent's screens) reads with `calcCells`'s `since`,
-`client` and `selection` every second and a half instead.
+`kind`: `edit`, `undo`, `redo`, `save`, `refresh` or `revert`) after this server's rooms of the document applied an edit
+made on any server. A `changed` past the sheet's own edit (or a save or refresh) reads the room's state (`calcState`)
+and its cells again, after a cell being typed in is set; one with `reopen` means the room could not follow and was
+dropped, and the screen opens the document again. Presence is by document, across the rooms of every scope and server
+(cluster topic `calc-presence`); it carries names and places, never a value. The frames and the cluster topic
+`calc-update` carry no cell. The terminal's `calcgrid` component sends and takes the same frames: `moqui tui --server`
+on its own `/notws` socket (the push thread's; it joins its rooms again on each new socket, and the component sends its
+place again on `joined`), and a client in the server's process (SSH, the browser's terminal) through a sink beside the
+sockets' (`notws/calc.rs` `LinkFrames`), which takes a join only into a room the link's user has open and under the same
+presence caps, the sink counted as a socket, and is given the frames a socket member is while the link's user is the one
+it joined as: at most 256 of the rooms' frames a second, in bursts of 256, the rest dropped (its own `joined` and
+`error` and a `reopen` are always given). A frame comes to the client as a push with `frame` set, on its room's topic,
+and goes to the component that joined it, never to the counters; on a socket, one is told from a notification by having
+no `message`. The component then reads the room's state on a `changed`, and its cells only when the edit changed one it
+holds, and polls every 15 seconds as a fallback; a link that cannot push (an agent's screens) reads with `calcCells`'s
+`since`, `client` and `selection` every second and a half instead.
 
 ## Mail sign-in popup
 

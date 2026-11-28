@@ -676,16 +676,16 @@ impl Transport for InProcess {
 /// The in-process link's subscription: the notifications, and the rooms' frames when the host has the rooms.
 struct InProcessPushes {
     _notifications: moqui_core::notify::Subscription,
-    frames: Option<crate::notws::calc::LinkFrames>,
+    frames: crate::notws::calc::LinkFrames,
 }
 
 impl Pushes for InProcessPushes {
     fn takes_frames(&self) -> bool {
-        self.frames.is_some()
+        self.frames.takes_frames()
     }
 
     fn frame(&self, frame: serde_json::Value) -> bool {
-        self.frames.as_ref().is_some_and(|frames| frames.send(frame))
+        self.frames.send(frame)
     }
 }
 
