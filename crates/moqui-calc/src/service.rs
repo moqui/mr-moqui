@@ -1350,7 +1350,17 @@ fn edit_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
     } else if let Err(err) = held.edit(&user, &ops) {
         add_error(err.message());
     }
+    // an undo passes by the conditional formats another changed or deleted since, and says so
+    let passed = held.take_rules_passed();
+    if passed > 0 {
+        let message = format!(
+            "{passed} formatting rule {} changed by others since and not undone",
+            if passed == 1 { "change was" } else { "changes were" }
+        );
+        ExecutionContext::with_current(|ec| ec.message().add_message(message));
+    }
     let mut out = room_out(facade, &held, &user);
+    out.insert("rulesPassed".to_string(), Value::I64(i64::try_from(passed).unwrap_or(0)));
     if let Some(changed) = held.changed() {
         out.insert("changed".to_string(), from_json(&together::areas_json(changed)));
     }

@@ -185,9 +185,8 @@ pub fn edit(facade: &EntityFacade, room: &mut Room, user_id: &str, ops: &[Json])
                 let target = log::undo_target(&mine, user_id, base)
                     .map(|row| row.seq)
                     .ok_or_else(|| Error::new("Nothing of yours to undo since the document was saved"))?;
-                // refused before any step is applied when what it takes back was changed since (the room stays at the
-                // log); a step that fails after that leaves the room ahead of the log, so it is opened anew
-                room.check_undo(target)?;
+                // a rule another changed or deleted since is passed by and the rest applied (Room::take_rules_passed);
+                // a step that fails leaves the room ahead of the log, so it is opened anew
                 touched = true;
                 room.undo_row(target)?;
                 let seq = log.append(log::UNDO, &[], Some(target))?;

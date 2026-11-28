@@ -158,6 +158,15 @@ pub struct Room {
     changed: Option<Vec<Area>>,
     /// Whether every edit since the last evaluation changed values only ([`VALUE_EDITS`]).
     values_only: bool,
+    /// An id for each rule of each sheet's conditional formats, beside the engine's list (`room_rules.rs`): what an
+    /// undo of a rule finds it by.
+    rule_ids: Vec<Vec<u64>>,
+    next_rule_id: u64,
+    /// How many steps of the last undo passed a rule by (another changed or deleted it since).
+    rules_passed: usize,
+    /// The rules a deletion's undo found as the deletion left them, with what they were before it, between its
+    /// `ruleCheck` and `ruleRanges` steps.
+    rule_restore: Vec<(u64, Json)>,
 }
 
 /// What a room is opened with.
@@ -196,6 +205,7 @@ impl Room {
             .collect();
         let mut model = fill::fill(opening.base, &opening.rows)?;
         // a file can hold any number of merges and rules, of any size: what an edit is held to is kept
+        formats::clean_colors(&mut model, &id);
         formats::trim_merges(&mut model, &id);
         rules::trim_rules(&mut model, &id);
         let started = Instant::now();
@@ -222,7 +232,12 @@ impl Room {
             filled_at: Instant::now(),
             changed: None,
             values_only: true,
+            rule_ids: Vec::new(),
+            next_rule_id: 0,
+            rules_passed: 0,
+            rule_restore: Vec::new(),
         };
+        room.assign_rule_ids();
         room.timed(took);
         Ok(room)
     }
@@ -338,6 +353,8 @@ impl Room {
         model.evaluate();
         self.timed(elapsed_ms(started));
         self.model = user_model(model);
+        // the same sheets and rules, in the same order: the ids stay
+        self.sync_rule_ids();
         self.changed = None;
         self.values_only = true;
         self.data_rows = data_rows;
@@ -400,6 +417,7 @@ impl Room {
     ///
     /// Returns the first edit's refusal; the edits before it are applied (and are undone together).
     pub fn edit(&mut self, user_id: &str, ops: &[Json]) -> Result<(), Error> {
+        self.rules_passed = 0;
         self.model.pause_evaluation();
         let result = self.edit_own(user_id, ops);
         self.evaluate();
@@ -412,7 +430,6 @@ impl Room {
                 let target = log::undo_target(&self.own_log, user_id, 0)
                     .map(|row| row.seq)
                     .ok_or_else(|| Error::new(NOTHING_TO_UNDO))?;
-                self.check_undo(target)?;
                 self.undo_row(target)?;
                 let seq = self.push_own(user_id, log::UNDO, Vec::new(), Some(target));
                 self.mark_own(target, seq);
@@ -571,18 +588,10 @@ impl Room {
         self.inverses.insert(seq, inverse);
     }
 
-    /// Refuse to take back the edit of row `target` when a step of it would find what it takes back changed since (a
-    /// conditional format another changed or deleted), before any step is applied.
-    ///
-    /// # Errors
-    ///
-    /// The refusal; an error too when this room did not apply that edit.
-    pub fn check_undo(&self, target: i64) -> Result<(), Error> {
-        let inverse = self
-            .inverses
-            .get(&target)
-            .ok_or_else(|| Error::new("That edit is no longer undone here"))?;
-        self.check_rule_undo(inverse)
+    /// How many steps of the last undo passed a conditional format by, another having changed or deleted it since,
+    /// and none counted from then: what the edit's answer tells its person.
+    pub fn take_rules_passed(&mut self) -> usize {
+        std::mem::take(&mut self.rules_passed)
     }
 
     /// Take back the edit of row `target` with what this room took of it.
@@ -596,6 +605,8 @@ impl Room {
             .get(&target)
             .cloned()
             .ok_or_else(|| Error::new("That edit is no longer undone here"))?;
+        self.rules_passed = 0;
+        self.rule_restore.clear();
         inverse.iter().try_for_each(|op| self.apply(op))
     }
 
@@ -615,7 +626,11 @@ impl Room {
                 }
                 self.inverses.insert(row.seq, inverse);
             }
-            log::UNDO => self.undo_row(row.target.unwrap_or(0))?,
+            log::UNDO => {
+                self.undo_row(row.target.unwrap_or(0))?;
+                // another's undo: its rules passed by are told to its person by their own room
+                self.rules_passed = 0;
+            }
             _ => return Err(Error::new(REOPEN)),
         }
         self.seq = row.seq;
@@ -798,18 +813,7 @@ impl Room {
             }
             // what sets cells back as they were is an undo's alone: from a call it would write any style as it is
             "restore" => return Err(Error::new("restore is an undo's edit alone")),
-            "clear" | "clearFormatting" => {
-                let (width, height) = if op["op"] == "restore" {
-                    let cells = op["cells"].as_array().map(Vec::as_slice).unwrap_or_default();
-                    (
-                        i32::try_from(cells.first().and_then(Json::as_array).map_or(1, Vec::len)).unwrap_or(1),
-                        i32::try_from(cells.len()).unwrap_or(1),
-                    )
-                } else {
-                    (width, height)
-                };
-                self.snapshot(sheet, row, column, width, height, op["op"] == "restore")?
-            }
+            "clear" | "clearFormatting" => self.snapshot(sheet, row, column, width, height, false)?,
             "style" => {
                 // what is styled beyond the used area had no style of its own
                 let mut edits = vec![
@@ -858,26 +862,31 @@ impl Room {
             "deleteRows" => {
                 let count = small("count", 1).max(1);
                 let (_, max_column) = self.used(sheet);
-                let mut edits = vec![json!({"op": "insertRows", "sheet": sheet, "row": row, "count": count})];
+                // the rules' ranges and formulas the deletion moves: checked before the rows come back, set after
+                let rules = self.rule_ranges_back(sheet)?;
+                let mut edits: Vec<Json> = rules.iter().map(|(check, _)| check.clone()).collect();
+                edits.push(json!({"op": "insertRows", "sheet": sheet, "row": row, "count": count}));
                 edits.extend(self.sizes(sheet, row, row + count - 1, false)?);
                 edits.extend(self.snapshot(sheet, row, 1, max_column, count, false)?);
                 edits.extend(self.formulas()?);
                 // the merges the rows cut or held, and the conditional formats whose ranges they moved
                 let last_column = i32::try_from(SHEET_COLUMNS).unwrap_or(i32::MAX);
                 edits.extend(self.merges_back(sheet, row, 1, row.saturating_add(count - 1), last_column)?);
-                edits.extend(self.rule_ranges_back(sheet)?);
+                edits.extend(rules.map(|(_, ranges)| ranges));
                 edits
             }
             "deleteColumns" => {
                 let count = small("count", 1).max(1);
                 let (max_row, _) = self.used(sheet);
-                let mut edits = vec![json!({"op": "insertColumns", "sheet": sheet, "column": column, "count": count})];
+                let rules = self.rule_ranges_back(sheet)?;
+                let mut edits: Vec<Json> = rules.iter().map(|(check, _)| check.clone()).collect();
+                edits.push(json!({"op": "insertColumns", "sheet": sheet, "column": column, "count": count}));
                 edits.extend(self.sizes(sheet, column, column + count - 1, true)?);
                 edits.extend(self.snapshot(sheet, 1, column, count, max_row, false)?);
                 edits.extend(self.formulas()?);
                 let last_row = i32::try_from(SHEET_ROWS).unwrap_or(i32::MAX);
                 edits.extend(self.merges_back(sheet, 1, column, last_row, column.saturating_add(count - 1))?);
-                edits.extend(self.rule_ranges_back(sheet)?);
+                edits.extend(rules.map(|(_, ranges)| ranges));
                 edits
             }
             "addSheet" => vec![json!({"op": "deleteSheet", "sheet": sheet_count})],
@@ -996,7 +1005,7 @@ impl Room {
                 )));
             }
         }
-        match kind {
+        let applied = match kind {
             "input" => self
                 .model
                 .set_user_input(sheet, small("row", 1), small("column", 1), &text("value")),
@@ -1084,7 +1093,12 @@ impl Room {
             "undo" | "redo" => Err(format!("{kind} is an edit of its own")),
             other => Err(format!("{other:?} is not an edit")),
         }
-        .map_err(engine)
+        .map_err(engine);
+        if applied.is_ok() {
+            self.track_sheets(kind, op);
+        }
+        self.sync_rule_ids();
+        applied
     }
 
     /// A `restore` edit: each cell set as typed (an empty one cleared), then each cell's style.

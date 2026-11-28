@@ -30,6 +30,7 @@ use moqui_core::context::Error;
 use moqui_core::workbook::ironcalc::base::expressions::types::Area;
 use moqui_core::workbook::ironcalc::base::types::MergedCell;
 use moqui_core::workbook::ironcalc::base::BorderArea;
+use moqui_core::workbook::ironcalc::base::Model;
 use serde_json::{json, Value as Json};
 
 use super::{Room, MAX_EDIT_CELLS, SHEET_COLUMNS, SHEET_ROWS};
@@ -318,13 +319,87 @@ pub fn hex_color(text: &str) -> bool {
 
 /// Take off the merged cells of a workbook just opened past [`MAX_SHEET_MERGES`] on a sheet, logging each sheet's, so a
 /// view's search of them stays short (a file can hold any number).
-pub(super) fn trim_merges(model: &mut moqui_core::workbook::ironcalc::base::Model<'static>, room: &str) {
+pub(super) fn trim_merges(model: &mut Model<'static>, room: &str) {
     for worksheet in &mut model.workbook.worksheets {
         if worksheet.merged_cells.len() > MAX_SHEET_MERGES {
             tracing::warn!(room, sheet = %worksheet.get_name(), merges = worksheet.merged_cells.len(), kept = MAX_SHEET_MERGES,
                 "A CalcGrid workbook's sheet had more merged cells than are kept; the rest are unmerged");
             worksheet.merged_cells.truncate(MAX_SHEET_MERGES);
         }
+    }
+}
+
+/// Set to none, in a value of the workbook as JSON, every colour (a string under a key with `color` in its name) that
+/// is not `#RRGGBB`: the count set.
+fn clean_json(value: &mut Json) -> usize {
+    match value {
+        Json::Object(fields) => fields
+            .iter_mut()
+            .map(|(key, field)| match field.as_str() {
+                Some(text) if key.contains("color") && !hex_color(text) => {
+                    *field = Json::Null;
+                    1
+                }
+                _ => clean_json(field),
+            })
+            .sum(),
+        Json::Array(items) => items.iter_mut().map(clean_json).sum(),
+        _ => 0,
+    }
+}
+
+/// Each item of a list of the workbook's styles with its colours cleaned ([`clean_json`]), read back as its type.
+macro_rules! clean_each {
+    ($items:expr, $kind:ty) => {{
+        let mut cleaned = 0;
+        for item in $items.iter_mut() {
+            let Ok(mut value) = serde_json::to_value(&*item) else {
+                continue;
+            };
+            let count = clean_json(&mut value);
+            if count > 0 {
+                if let Ok(fixed) = serde_json::from_value::<$kind>(value) {
+                    *item = fixed;
+                    cleaned += count;
+                }
+            }
+        }
+        cleaned
+    }};
+}
+
+/// Set to none every colour of a workbook just opened that is not `#RRGGBB` (or a theme's), logged: in its fonts,
+/// fills, borders, the conditional formats' formats and rules, and the sheets' tabs. A file's colour is kept as the
+/// file has it, and goes into an exported file's XML as it is.
+pub(super) fn clean_colors(model: &mut Model<'static>, room: &str) {
+    use moqui_core::workbook::ironcalc::base::cf_types::CfRule;
+    use moqui_core::workbook::ironcalc::base::types::{Border, Color, Dxf, Fill, Font};
+    let styles = &mut model.workbook.styles;
+    let mut cleaned = clean_each!(styles.fonts, Font)
+        + clean_each!(styles.fills, Fill)
+        + clean_each!(styles.borders, Border)
+        + clean_each!(styles.dxfs, Dxf);
+    for worksheet in &mut model.workbook.worksheets {
+        if matches!(&worksheet.color, Color::Rgb(text) if !hex_color(text)) {
+            worksheet.color = Color::None;
+            cleaned += 1;
+        }
+        let mut rules: Vec<CfRule> = worksheet
+            .conditional_formatting
+            .iter()
+            .map(|rule| rule.cf_rule.clone())
+            .collect();
+        cleaned += clean_each!(rules, CfRule);
+        for (rule, fixed) in worksheet.conditional_formatting.iter_mut().zip(rules) {
+            rule.cf_rule = fixed;
+        }
+    }
+    if cleaned > 0 {
+        tracing::warn!(
+            room,
+            cleaned,
+            "A CalcGrid workbook had colours that are not #RRGGBB; they are set to none"
+        );
     }
 }
 

@@ -17,7 +17,7 @@ use serde_json::{json, Value as Json};
 use super::*;
 use crate::fill::{self, CellData, SheetRows};
 use crate::log::{self, LogRow};
-use crate::room::{range_cells, DataSheet, Opening, Rooms, SharedRoom};
+use crate::room::{range_cells, DataSheet, Opening, Rooms, SharedRoom, MAX_SHEET_RULES};
 use moqui_lib::sync::lock;
 
 fn orders(count: usize) -> SheetRows {
@@ -370,24 +370,29 @@ fn conditional_formats_are_added_changed_moved_and_deleted_each_taken_back_in_ev
     }
     let four = pair.states();
     // moved: the first rule applied last, so it wins on 20
-    let moved = pair.write(&[json!({"op": "moveRule", "sheet": 1, "index": 0, "up": true})]);
-    let moved_up = pair.write(&[json!({"op": "moveRule", "sheet": 1, "index": 0, "up": true})]);
-    let moved_up_again = pair.write(&[json!({"op": "moveRule", "sheet": 1, "index": 0, "up": true})]);
+    let up =
+        |pair: &Pair| json!({"op": "moveRule", "sheet": 1, "index": 0, "up": true, "expect": view_of(&pair.writer, 0)});
+    let moved = pair.write(&[up(&pair)]);
+    let moved_up = pair.write(&[up(&pair)]);
+    let moved_up_again = pair.write(&[up(&pair)]);
     assert_eq!(drawn(&lock(&pair.writer), 4, 2)["style"]["fill"]["color"], "#FFC7CE");
     // past the last place a move changes nothing, and its undo nothing
-    let past = pair.write(&[json!({"op": "moveRule", "sheet": 1, "index": 0, "up": true})]);
+    let past = pair.write(&[up(&pair)]);
     pair.undo(past);
     for seq in [moved_up_again, moved_up, moved] {
         pair.undo(seq);
     }
     assert_eq!(pair.states(), four);
     // changed, and deleted
-    let changed = pair.write(&[json!({"op": "changeRule", "sheet": 1, "index": 0, "range": "B1:B3",
-        "rule": cell_is("LessThan", "3", "#FFE0B2")})]);
+    let changed = pair.write(&[
+        json!({"op": "changeRule", "sheet": 1, "index": 0, "expect": view_of(&pair.writer, 0),
+        "range": "B1:B3", "rule": cell_is("LessThan", "3", "#FFE0B2")}),
+    ]);
     assert_eq!(drawn(&lock(&pair.follower), 1, 2)["style"]["fill"]["color"], "#FFE0B2");
     pair.undo(changed);
     assert_eq!(pair.states(), four);
-    let deleted = pair.write(&[json!({"op": "deleteRule", "sheet": 1, "index": 1})]);
+    let deleted =
+        pair.write(&[json!({"op": "deleteRule", "sheet": 1, "index": 1, "expect": view_of(&pair.writer, 1)})]);
     assert_eq!(lock(&pair.writer).rules_of(1).unwrap().len(), 3);
     pair.undo(deleted);
     assert_eq!(pair.states(), four, "the rules back in their places and order");
@@ -417,12 +422,14 @@ fn conditional_formats_are_added_changed_moved_and_deleted_each_taken_back_in_ev
         refusal(&pair.writer, rule_op("addRule", "B1:B2", json!({"type": "Nope"})))
             .contains("Not a conditional format")
     );
-    assert!(refusal(&pair.writer, json!({"op": "deleteRule", "sheet": 1, "index": 9})).contains("out of bounds"));
+    let nowhere = json!({"op": "deleteRule", "sheet": 1, "index": 9, "expect": {"range": "Z1", "rule": {}}});
+    assert!(refusal(&pair.writer, nowhere).contains("changed or deleted since"));
     // an undo's edits are refused from a call
     for op in [
         json!({"op": "removeRule", "sheet": 1, "index": 0, "expect": {"range": "B1:B5"}}),
         json!({"op": "putRule", "sheet": 1, "range": "A1", "rule": cell_is("GreaterThan", "1", "#FFC7CE"), "higher": 0}),
-        json!({"op": "ruleRanges", "sheet": 1, "rules": []}),
+        json!({"op": "ruleRanges", "sheet": 1}),
+        json!({"op": "ruleCheck", "sheet": 1, "rules": []}),
         json!({"op": "restore", "sheet": 1, "row": 1, "column": 1, "cells": [["x"]], "styles": [[{"fill": {"color": "x\"/>"}}]]}),
     ] {
         assert!(
@@ -483,6 +490,16 @@ fn view_of(room: &SharedRoom, index: usize) -> Json {
     json!({"range": rules[index]["range"], "rule": rules[index]["rule"]})
 }
 
+/// The place in sheet 1's list of the rule over `range`.
+fn at(room: &SharedRoom, range: &str) -> usize {
+    lock(room)
+        .rules_of(1)
+        .unwrap()
+        .iter()
+        .position(|rule| rule["range"] == range)
+        .unwrap()
+}
+
 fn kinds(room: &SharedRoom) -> Vec<String> {
     let mut rules = lock(room).rules_of(1).unwrap();
     rules.sort_by_key(|rule| rule["priority"].as_u64());
@@ -498,11 +515,10 @@ fn kinds(room: &SharedRoom) -> Vec<String> {
         .collect()
 }
 
-/// Two people edit one sheet's rules: an undo takes back only its own edit's rule, found by what that edit left; one
-/// changed or deleted since is refused with nothing applied; and the undo of a deletion of rows sets back only the
-/// ranges it moved, keeping another's later change of a rule.
+/// Two people edit one sheet's rules: an undo takes back its own rule, found by its id, whatever was added, deleted or
+/// moved around it; one changed or deleted by another since is passed by, counted, and the rest of the undo applied.
 #[test]
-fn a_rules_undo_takes_back_only_its_own_rule_and_refuses_one_changed_since() {
+fn a_rules_undo_finds_its_rule_by_id_and_passes_by_one_changed_since() {
     let rooms = Rooms::default();
     let mut pair = Pair::new(&rooms);
     let rule_op = |kind: &str, range: &str, rule: Json| json!({"op": kind, "sheet": 1, "range": range, "rule": rule});
@@ -522,52 +538,257 @@ fn a_rules_undo_takes_back_only_its_own_rule_and_refuses_one_changed_since() {
         json!({"type": "Top10", "rank": 1, "percent": false,
         "format": {"fill": {"color": "#C8E6C9"}}, "stop_if_true": false}),
     )]);
-    let first = view_of(&pair.writer, 0);
-    pair.write(&[json!({"op": "deleteRule", "sheet": 1, "index": 0, "expect": first})]);
+    pair.write(&[json!({"op": "deleteRule", "sheet": 1, "index": 0, "expect": view_of(&pair.writer, 0)})]);
     assert_eq!(kinds(&pair.writer), ["Text A1:A5", "Top10 B1:B5"]);
     // Ann's undo takes her rule back, not Bob's that is now at its place
     pair.undo(ann);
     assert_eq!(kinds(&pair.writer), ["Top10 B1:B5"]);
     assert_eq!(kinds(&pair.follower), ["Top10 B1:B5"]);
 
-    // Ann changes Bob's rule, Bob deletes it: Ann's undo is refused before anything is applied
-    let top = view_of(&pair.writer, 0);
-    let changed = pair.write(&[
-        json!({"op": "changeRule", "sheet": 1, "index": 0, "expect": top, "range": "B1:B4",
-        "rule": {"type": "Bottom10", "rank": 1, "percent": false, "format": {}, "stop_if_true": false}}),
-    ]);
-    let bottom = view_of(&pair.writer, 0);
-    pair.write(&[json!({"op": "deleteRule", "sheet": 1, "index": 0, "expect": bottom})]);
+    // Ann changes Bob's rule, Bob deletes it: Ann's undo passes it by, in both rooms
+    let changed = pair.write(&[json!({"op": "changeRule", "sheet": 1, "index": 0, "expect": view_of(&pair.writer, 0),
+        "range": "B1:B4", "rule": {"type": "Bottom10", "rank": 1, "percent": false, "format": {}, "stop_if_true": false}})]);
+    pair.write(&[json!({"op": "deleteRule", "sheet": 1, "index": 0, "expect": view_of(&pair.writer, 0)})]);
     let before = pair.states();
-    let refused = lock(&pair.writer).check_undo(changed).expect_err("changed since");
-    assert!(
-        refused.message().contains("changed or deleted since"),
-        "{}",
-        refused.message()
-    );
-    assert_eq!(pair.states(), before);
-    // an edit naming a rule that is gone is refused too
-    let gone = json!({"op": "deleteRule", "sheet": 1, "index": 0, "expect": bottom});
+    pair.undo(changed);
+    assert_eq!(lock(&pair.writer).rules_passed(), 1);
+    assert_eq!(pair.states(), before, "nothing of a rule that is gone");
+    // an edit of a call names its rule by what it is: one gone, or one named by its place alone, is refused
+    let gone =
+        json!({"op": "deleteRule", "sheet": 1, "index": 0, "expect": {"range": "B1:B4", "rule": {"type": "Bottom10"}}});
     assert!(refusal(&pair.writer, gone).contains("changed or deleted since"));
+    assert!(refusal(&pair.writer, json!({"op": "deleteRule", "sheet": 1, "index": 0})).contains("named by what it is"));
+}
 
-    // Ann deletes rows 2 and 3, Bob then changes the rule they moved; Ann's undo sets its range back and keeps Bob's
-    pair.write(&[rule_op("addRule", "A1:A5", cell_is("GreaterThan", "1", "#FFC7CE"))]);
-    let rows = pair.write(&[json!({"op": "deleteRows", "sheet": 1, "row": 2, "count": 2})]);
-    assert_eq!(kinds(&pair.writer), ["CellIs A1:A3"]);
-    let moved = view_of(&pair.writer, 0);
+/// The reviewer's case: rules A and B; Ann deletes a row of them, then deletes A, then takes both back. A is put back at
+/// the end of the list, and the deletion's undo still gives each rule its own range back, found by id.
+#[test]
+fn a_deletions_undo_sets_back_each_rules_range_and_formulas_by_id() {
+    let rooms = Rooms::default();
+    let mut pair = Pair::new(&rooms);
+    let rule_op = |kind: &str, range: &str, rule: Json| json!({"op": kind, "sheet": 1, "range": range, "rule": rule});
     pair.write(&[
-        json!({"op": "changeRule", "sheet": 1, "index": 0, "expect": moved, "range": "A1:A3",
-        "rule": cell_is("GreaterThan", "1", "#BBDEFB")}),
+        rule_op("addRule", "B1:B10", cell_is("GreaterThan", "1", "#FFC7CE")),
+        rule_op("addRule", "C1:C10", cell_is("GreaterThan", "2", "#C8E6C9")),
+        // a rule whose formula reads a cell of the row deleted: the deletion makes it #REF!
+        rule_op("addRule", "D1:D3", cell_is("GreaterThan", "$F$5", "#BBDEFB")),
+    ]);
+    let before = pair.states();
+    let rows = pair.write(&[json!({"op": "deleteRows", "sheet": 1, "row": 5, "count": 1})]);
+    assert_eq!(kinds(&pair.writer), ["CellIs B1:B9", "CellIs C1:C9", "CellIs D1:D3"]);
+    assert!(
+        view_of(&pair.writer, 2)["rule"]["formula"]
+            .as_str()
+            .unwrap()
+            .contains("#REF!"),
+        "{}",
+        view_of(&pair.writer, 2)
+    );
+    let deleted =
+        pair.write(&[json!({"op": "deleteRule", "sheet": 1, "index": 0, "expect": view_of(&pair.writer, 0)})]);
+    pair.undo(deleted);
+    pair.undo(rows);
+    assert_eq!(
+        pair.states(),
+        before,
+        "each rule its own range and formula, in both rooms"
+    );
+    let formula = view_of(&pair.follower, at(&pair.follower, "D1:D3"))["rule"]["formula"].clone();
+    assert_eq!(formula, "$F$5");
+
+    // a rule another changed since the deletion is passed by; the others are set back
+    let rows = pair.write(&[json!({"op": "deleteRows", "sheet": 1, "row": 5, "count": 1})]);
+    let index = at(&pair.writer, "C1:C9");
+    pair.write(&[
+        json!({"op": "changeRule", "sheet": 1, "index": index, "expect": view_of(&pair.writer, index), "range": "C1:C9",
+        "rule": cell_is("GreaterThan", "2", "#FFE0B2")}),
     ]);
     pair.undo(rows);
-    for room in [&pair.writer, &pair.follower] {
-        assert_eq!(kinds(room), ["CellIs A1:A5"]);
-        assert_eq!(
-            view_of(room, 0)["rule"]["format"]["fill"]["color"],
-            "#BBDEFB",
-            "Bob's change stays"
-        );
-    }
+    assert_eq!(lock(&pair.writer).rules_passed(), 1);
+    // the rule passed by is moved by the rows coming back, as the engine moves any range
+    assert_eq!(kinds(&pair.writer), ["CellIs B1:B10", "CellIs C1:C10", "CellIs D1:D3"]);
+    let changed = view_of(&pair.follower, at(&pair.follower, "C1:C10"));
+    assert_eq!(
+        changed["rule"]["format"]["fill"]["color"], "#FFE0B2",
+        "the change stays"
+    );
+}
+
+/// In one room (a person's own undo stack): Bob's insertion of rows above Ann's rule moves it, and her undo still takes
+/// it back; Bob's change of her next rule makes her undo pass it by, the answer says so, and her next undo goes on.
+#[test]
+fn an_undo_passed_by_moves_the_persons_stack_on() {
+    let rooms = Rooms::default();
+    let room = room(&rooms, "ann", 3);
+    let mut room = lock(&room);
+    let rule_op = |kind: &str, range: &str, rule: Json| json!({"op": kind, "sheet": 1, "range": range, "rule": rule});
+    room.edit("ann", &[json!({"op": "addSheet"})]).unwrap();
+    room.edit(
+        "ann",
+        &[rule_op("addRule", "A5:A8", cell_is("GreaterThan", "1", "#FFC7CE"))],
+    )
+    .unwrap();
+    room.edit("bob", &[json!({"op": "insertRows", "sheet": 1, "row": 1, "count": 2})])
+        .unwrap();
+    room.edit(
+        "ann",
+        &[rule_op("addRule", "B1:B5", cell_is("GreaterThan", "1", "#C8E6C9"))],
+    )
+    .unwrap();
+    let shown = room.rules_of(1).unwrap()[1].clone();
+    let expect = json!({"range": shown["range"], "rule": shown["rule"]});
+    room.edit(
+        "bob",
+        &[
+            json!({"op": "changeRule", "sheet": 1, "index": 1, "expect": expect, "range": "B1:B5",
+        "rule": cell_is("GreaterThan", "1", "#FFE0B2")}),
+        ],
+    )
+    .unwrap();
+    // Ann's last edit's rule was changed by Bob: passed by, and said
+    room.edit("ann", &[json!({"op": "undo"})]).unwrap();
+    assert_eq!(room.take_rules_passed(), 1);
+    assert_eq!(room.rules_of(1).unwrap().len(), 2);
+    // her next undo goes on to her first rule, which Bob's rows moved down
+    assert_eq!(room.rules_of(1).unwrap()[0]["range"], "A7:A10");
+    room.edit("ann", &[json!({"op": "undo"})]).unwrap();
+    assert_eq!(room.take_rules_passed(), 0);
+    let left: Vec<Json> = room
+        .rules_of(1)
+        .unwrap()
+        .iter()
+        .map(|rule| rule["range"].clone())
+        .collect();
+    assert_eq!(
+        left,
+        [json!("B1:B5")],
+        "Ann's moved rule taken back, Bob's changed one left"
+    );
+    assert_eq!(
+        room.undo_state("ann"),
+        (true, true),
+        "her stack goes on: the sheet, and a redo"
+    );
+}
+
+/// One call's steps are taken back in turn, each finding its rule as the step before left it.
+#[test]
+fn a_calls_steps_over_one_rule_are_taken_back_in_turn() {
+    let rooms = Rooms::default();
+    let mut pair = Pair::new(&rooms);
+    let before = pair.states();
+    let call = pair.write(&[
+        json!({"op": "addRule", "sheet": 1, "range": "A2:A8", "rule": cell_is("GreaterThan", "1", "#FFC7CE")}),
+        json!({"op": "deleteRows", "sheet": 1, "row": 3, "count": 2}),
+    ]);
+    assert_eq!(kinds(&pair.writer), ["CellIs A2:A6"]);
+    pair.undo(call);
+    assert_eq!(pair.states(), before);
+    assert_eq!(lock(&pair.writer).rules_passed(), 0);
+
+    pair.write(&[
+        json!({"op": "addRule", "sheet": 1, "range": "A1:A3", "rule": cell_is("GreaterThan", "1", "#FFC7CE")}),
+    ]);
+    let x = pair.states();
+    let changes = pair.write(&[
+        json!({"op": "changeRule", "sheet": 1, "index": 0, "expect": view_of(&pair.writer, 0), "range": "A1:A3",
+            "rule": cell_is("GreaterThan", "2", "#C8E6C9")}),
+        json!({"op": "changeRule", "sheet": 1, "index": 0,
+            "expect": {"range": "A1:A3", "rule": cell_is("GreaterThan", "2", "#C8E6C9")}, "range": "A1:A4",
+            "rule": cell_is("GreaterThan", "3", "#BBDEFB")}),
+    ]);
+    assert_eq!(view_of(&pair.writer, 0)["range"], "A1:A4");
+    pair.undo(changes);
+    assert_eq!(pair.states(), x, "X back through Y");
+}
+
+/// A redo after its undo put the rule back at the end of the list finds it by what it is; a twin another deleted is not
+/// taken for the one an undo removes; a rule put back goes just after the rule applied before it, and is passed by
+/// when the sheet is full.
+#[test]
+fn a_redo_a_twin_and_a_put_back_rule_each_find_their_own() {
+    let rooms = Rooms::default();
+    let room = room(&rooms, "ann", 3);
+    let mut room = lock(&room);
+    let rule_op = |range: &str, fill: &str| json!({"op": "addRule", "sheet": 1, "range": range, "rule": cell_is("GreaterThan", "1", fill)});
+    let named = |room: &Room, at: usize| {
+        let rule = room.rules_of(1).unwrap()[at].clone();
+        json!({"range": rule["range"], "rule": rule["rule"]})
+    };
+    let order = |room: &Room| {
+        let mut rules = room.rules_of(1).unwrap();
+        rules.sort_by_key(|rule| rule["priority"].as_u64());
+        rules
+            .iter()
+            .map(|rule| rule["range"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    room.edit(
+        "ann",
+        &[
+            json!({"op": "addSheet"}),
+            rule_op("A1", "#FFC7CE"),
+            rule_op("B1", "#C8E6C9"),
+        ],
+    )
+    .unwrap();
+    // a redo of a deletion after its undo put the rule back at the end
+    let expect = named(&room, 0);
+    room.edit(
+        "ann",
+        &[json!({"op": "deleteRule", "sheet": 1, "index": 0, "expect": expect})],
+    )
+    .unwrap();
+    room.edit("ann", &[json!({"op": "undo"})]).unwrap();
+    assert_eq!(
+        room.rules_of(1).unwrap()[1]["range"],
+        "A1",
+        "put back at the end of the list"
+    );
+    room.edit("ann", &[json!({"op": "redo"})]).unwrap();
+    assert_eq!(order(&room), ["B1"], "the redo deleted A1, not B1 at its old place");
+
+    // Ann adds a twin of B1; Bob deletes Ann's copy; Ann's undo leaves the first
+    room.edit("ann", &[rule_op("B1", "#C8E6C9")]).unwrap();
+    let expect = named(&room, 1);
+    room.edit(
+        "bob",
+        &[json!({"op": "deleteRule", "sheet": 1, "index": 1, "expect": expect})],
+    )
+    .unwrap();
+    room.edit("ann", &[json!({"op": "undo"})]).unwrap();
+    assert_eq!(room.take_rules_passed(), 1);
+    assert_eq!(order(&room), ["B1"]);
+
+    // A1, C1, D1 apply in that order; Ann deletes C1, Bob adds E1, Ann's undo puts C1 just after A1
+    room.edit("ann", &[rule_op("C1", "#BBDEFB"), rule_op("D1", "#FFE0B2")])
+        .unwrap();
+    assert_eq!(order(&room), ["B1", "C1", "D1"]);
+    let expect = named(&room, 1);
+    room.edit(
+        "ann",
+        &[json!({"op": "deleteRule", "sheet": 1, "index": 1, "expect": expect})],
+    )
+    .unwrap();
+    room.edit("bob", &[rule_op("E1", "#E1BEE7")]).unwrap();
+    room.edit("ann", &[json!({"op": "undo"})]).unwrap();
+    assert_eq!(order(&room), ["B1", "C1", "D1", "E1"]);
+
+    // a sheet full when a deleted rule would come back: passed by
+    let expect = named(&room, 0);
+    room.edit(
+        "ann",
+        &[json!({"op": "deleteRule", "sheet": 1, "index": 0, "expect": expect})],
+    )
+    .unwrap();
+    let fill: Vec<Json> = (0..(MAX_SHEET_RULES - 3))
+        .map(|at| rule_op(&format!("F{}", at + 1), "#FFC7CE"))
+        .collect();
+    room.edit("bob", &fill).unwrap();
+    assert_eq!(room.rules_of(1).unwrap().len(), MAX_SHEET_RULES);
+    room.edit("ann", &[json!({"op": "undo"})]).unwrap();
+    assert_eq!(room.take_rules_passed(), 1);
+    assert_eq!(room.rules_of(1).unwrap().len(), MAX_SHEET_RULES);
 }
 
 /// A room over `base`, a workbook as a file gives one, beside the data sheet.
@@ -629,12 +850,16 @@ fn a_workbook_opened_past_the_bounds_keeps_what_fits() {
     let mut room = lock(&room);
     assert_eq!(room.merges_of(0, 1, 1, 3_000, 10).len(), 2_000);
     let all: usize = (0..5).map(|sheet| room.rules_of(sheet).unwrap().len()).sum();
-    assert_eq!(all, 2_000, "the bad two left out, and the workbook's last");
+    assert_eq!(all, 2_000, "the icon set left out, and the workbook's last");
+    // the rule with a colour that is not one is kept, its colour set to none
+    let first = room.rules_of(0).unwrap()[0].clone();
+    assert_eq!(first["range"], "D1");
+    assert!(first["rule"]["format"]["fill"]["color"].is_null(), "{first}");
     assert!(room
         .rules_of(0)
         .unwrap()
         .iter()
-        .all(|rule| rule["range"].as_str().unwrap().starts_with('C')));
+        .all(|rule| rule["rule"]["type"] != "IconSet"));
 
     let err = room
         .edit(
@@ -693,4 +918,46 @@ fn a_column_named_with_brackets_is_read_by_its_escaped_reference() {
         .unwrap();
     assert_eq!(room.model().get_formatted_cell_value(1, 1, 1).unwrap(), "6");
     assert_eq!(room.model().get_formatted_cell_value(1, 2, 1).unwrap(), "6");
+}
+
+/// A workbook as the xlsx import gives one from a crafted file (its rgb kept as `#` and the raw text) has every colour
+/// that is not `#RRGGBB` set to none when it opens: the export would write it into the XML of the files others get.
+#[test]
+fn a_files_colours_that_are_not_rrggbb_are_set_to_none_when_it_opens() {
+    use moqui_core::workbook::ironcalc::base::types::{BorderItem, BorderStyle, Color, Dxf, Fill};
+    let bad = || Color::Rgb("#00\"/><x a=\"".to_string());
+    let mut base = fill::new_model("Notes").unwrap();
+    let styles = &mut base.workbook.styles;
+    let mut font = styles.fonts[0].clone();
+    font.color = bad();
+    styles.fonts.push(font);
+    styles.fills.push(Fill { color: bad() });
+    let mut border = styles.borders[0].clone();
+    border.left = Some(BorderItem {
+        style: BorderStyle::Thin,
+        color: bad(),
+    });
+    styles.borders.push(border);
+    styles.dxfs.push(Dxf {
+        fill: Some(Fill { color: bad() }),
+        ..Dxf::default()
+    });
+    styles.fills.push(Fill {
+        color: Color::Rgb("#2E7D32".to_string()),
+    });
+    base.workbook.worksheets[0].color = bad();
+    let rooms = Rooms::default();
+    let room = opened(&rooms, base);
+    let room = lock(&room);
+    let workbook = &room.model().workbook;
+    let all = serde_json::to_string(&(
+        &workbook.styles.fonts,
+        &workbook.styles.fills,
+        &workbook.styles.borders,
+        &workbook.styles.dxfs,
+    ))
+    .unwrap();
+    assert!(!all.contains("<x"), "{all}");
+    assert!(all.contains("#2E7D32"), "a colour that is one is kept");
+    assert_eq!(workbook.worksheets[0].color, Color::None);
 }
