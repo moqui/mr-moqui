@@ -26,9 +26,10 @@ use std::collections::HashMap;
 
 use moqui_core::context::Error;
 use moqui_core::workbook::ironcalc::base::formatter::dates::from_ironcalc_serial;
+use moqui_core::workbook::ironcalc::base::number_format::{get_new_num_fmt_index, get_num_fmt};
 use moqui_core::workbook::ironcalc::base::types::{
-    Alignment, Cell, DateSystem, HorizontalAlignment, Style, Table, TableColumn, TableStyleInfo, VerticalAlignment,
-    Workbook,
+    Alignment, Cell, DateSystem, HorizontalAlignment, NumFmt, Style, Table, TableColumn, TableStyleInfo,
+    VerticalAlignment, Workbook,
 };
 use moqui_core::workbook::ironcalc::base::{Model, UserModel};
 use serde_json::{json, Value as Json};
@@ -188,11 +189,32 @@ impl Styles {
     }
 
     fn of(workbook: &mut Workbook) -> Self {
+        sound_num_fmts(&mut workbook.styles.num_fmts);
         let [plain, header, date, time, date_time] = Self::specs().map(|style| {
-            workbook
-                .styles
+            let styles = &mut workbook.styles;
+            let index = styles
                 .get_style_index(&style)
-                .unwrap_or_else(|| workbook.styles.create_new_style(&style))
+                .unwrap_or_else(|| styles.create_new_style(&style));
+            // the format its number format id stands for is the spec's, whatever the workbook's own formats say
+            let at = usize::try_from(index).unwrap_or(usize::MAX);
+            let shown = styles
+                .cell_xfs
+                .get(at)
+                .map(|xf| get_num_fmt(xf.num_fmt_id, &styles.num_fmts));
+            if shown.as_deref() == Some(style.num_fmt.as_str()) {
+                return index;
+            }
+            let num_fmt_id = get_new_num_fmt_index(&styles.num_fmts);
+            styles.num_fmts.push(NumFmt {
+                num_fmt_id,
+                format_code: style.num_fmt.clone(),
+            });
+            let Some(mut xf) = styles.cell_xfs.get(at).cloned() else {
+                return index;
+            };
+            xf.num_fmt_id = num_fmt_id;
+            styles.cell_xfs.push(xf);
+            i32::try_from(styles.cell_xfs.len() - 1).unwrap_or(index)
         });
         Self {
             plain,
@@ -216,6 +238,19 @@ impl Styles {
             dates: workbook.settings.date_system,
         })
     }
+}
+
+/// A workbook's own number formats made sound: an id given twice keeps its first format, and a built-in id (below the
+/// engine's first custom one) keeps the built-in format. The engine reads a workbook's format before its built-in
+/// one, so an overlay that gave id 0 (`general`) the format `;;;`, or an id twice, would draw the plain and date
+/// styles of the data cells as that (plans/IronCalc-DB2.md CG4 review).
+pub(crate) fn sound_num_fmts(num_fmts: &mut Vec<NumFmt>) {
+    let first_custom = get_new_num_fmt_index(&[]);
+    let mut seen = std::collections::HashSet::new();
+    num_fmts.retain(|num_fmt| {
+        seen.insert(num_fmt.num_fmt_id)
+            && (num_fmt.num_fmt_id >= first_custom || num_fmt.format_code == get_num_fmt(num_fmt.num_fmt_id, &[]))
+    });
 }
 
 /// The cells of a data row, with their column, and how wide each column shows (`widths`, in characters, grown).
@@ -361,7 +396,23 @@ pub fn fill(mut model: Model<'static>, sheets: &[SheetRows]) -> Result<Model<'st
                 index
             }
             None => {
-                model.add_sheet(&sheet.name).map_err(engine)?;
+                if let Err(refused) = model.add_sheet(&sheet.name) {
+                    // a sheet the engine takes for the same name (in capitals beyond ASCII, which a saved overlay
+                    // may hold) is renamed aside, so the data sheet is added and the document opens
+                    let names: Vec<String> = sheets.iter().map(|sheet| sheet.name.clone()).collect();
+                    let clashing = model
+                        .workbook
+                        .get_worksheet_names()
+                        .iter()
+                        .position(|name| name.to_uppercase() == sheet.name.to_uppercase())
+                        .and_then(|at| u32::try_from(at).ok());
+                    let aside = clashing.and_then(|at| crate::upload::rename_aside(&mut model, at, &names));
+                    if aside.is_none() {
+                        return Err(engine(refused));
+                    }
+                    tracing::warn!(sheet = %sheet.name, renamed = ?aside, "A sheet in the place of a data sheet is renamed aside");
+                    model.add_sheet(&sheet.name).map_err(engine)?;
+                }
                 sheet_index(&model, &sheet.name).ok_or_else(|| Error::new("The sheet was not added"))?
             }
         };

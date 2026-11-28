@@ -362,3 +362,96 @@ fn a_data_date_shows_the_same_day_in_a_1904_workbook() {
         );
     }
 }
+
+/// A workbook's own number formats cannot stand for the plain or date styles of the data cells: a format given to a
+/// built-in id (`general`'s 0) and an id given twice are not kept, and the fill's styles stay found, so a refill
+/// adds none.
+#[test]
+fn a_planted_number_format_hides_no_data_cell() {
+    use moqui_core::workbook::ironcalc::base::types::NumFmt;
+    let dated = |rows: usize| SheetRows {
+        name: "Orders".to_string(),
+        columns: vec!["customer".to_string(), "placed".to_string()],
+        rows: (0..rows)
+            .map(|_| vec![CellData::Text("Customer 1".into()), CellData::Date(46_354.0)])
+            .collect(),
+        truncated: false,
+    };
+    let planted = |formats: Vec<NumFmt>| {
+        let mut workbook = fill::new_model("Summary").unwrap().workbook;
+        workbook.styles.num_fmts.extend(formats);
+        Model::from_workbook(workbook, "en").unwrap()
+    };
+    let fmt = |num_fmt_id: i32, code: &str| NumFmt {
+        num_fmt_id,
+        format_code: code.to_string(),
+    };
+    for formats in [vec![fmt(0, ";;;")], vec![fmt(50, ";;;"), fmt(50, "yyyy-mm-dd")]] {
+        let mut filled = fill::fill(planted(formats.clone()), &[dated(1)]).unwrap();
+        filled.evaluate();
+        let text = |row, column| filled.get_formatted_cell_value(1, row, column).unwrap();
+        assert_eq!(text(1, 1), "customer", "{formats:?}");
+        assert_eq!(text(2, 1), "Customer 1", "{formats:?}");
+        assert_eq!(text(2, 2), "2026-11-28", "{formats:?}");
+        // the stored form filled again finds the same styles: no style is added
+        let styles = filled.workbook.styles.cell_xfs.len();
+        let again =
+            fill::open_stored(&fill::stored_form(&filled.to_bytes(), &[("Orders".to_string(), 1)]).unwrap()).unwrap();
+        let again = fill::fill(again, &[dated(1)]).unwrap();
+        assert_eq!(again.workbook.styles.cell_xfs.len(), styles, "{formats:?}");
+    }
+}
+
+/// However many of the names a rename would take a forged body holds, a lookalike tab is renamed, and a fill whose
+/// data sheet the engine takes for another sheet's name (a capital beyond ASCII) renames that one aside and opens.
+#[test]
+fn a_lookalike_is_always_renamed_and_a_clash_never_stops_a_fill() {
+    let data = ["Orders".to_string()];
+    let mut model = stored();
+    let mut taken = vec!["Orders (renamed)".to_string()];
+    taken.extend((2..=20).map(|n| format!("Orders (renamed {n})")));
+    taken.extend((1..=20).map(|n| format!("Renamed {n}")));
+    for name in &taken {
+        model.add_sheet(name).unwrap();
+    }
+    model.add_sheet("Orders\u{200b}").unwrap();
+    let opened = saved_overlay(model, &data).unwrap();
+    let names = opened.workbook.get_worksheet_names();
+    assert!(!names.iter().any(|name| name == "Orders\u{200b}"), "{names:?}");
+    assert!(names.iter().any(|name| name == "Renamed 21"), "{names:?}");
+
+    let mut model = fill::new_model("Summary").unwrap();
+    model.add_sheet("ÉTÉ").unwrap();
+    let rows = SheetRows {
+        name: "été".to_string(),
+        ..orders(2)
+    };
+    let filled = fill::fill(model, &[rows]).unwrap();
+    let names = filled.workbook.get_worksheet_names();
+    assert!(names.iter().any(|name| name == "été"), "{names:?}");
+    assert!(names.iter().any(|name| name.starts_with("Renamed")), "{names:?}");
+}
+
+/// A data sheet's width or height that is not a number, or so large it pushes the data past it out of reach, is not
+/// kept.
+#[test]
+fn a_saved_size_that_is_not_a_number_or_too_large_is_not_kept() {
+    let data = ["Orders".to_string()];
+    let mut model = stored();
+    model.set_column_width(1, 1, 120.0).unwrap();
+    model.set_row_height(1, 1, 30.0).unwrap();
+    let mut workbook = model.workbook;
+    for col in &mut workbook.worksheets[1].cols {
+        col.width = f64::NAN;
+    }
+    for row in &mut workbook.worksheets[1].rows {
+        row.height = 1e9;
+    }
+    let opened = saved_overlay(Model::from_workbook(workbook, "en").unwrap(), &data).unwrap();
+    let width = opened.get_column_width(1, 1).unwrap();
+    let height = opened.get_row_height(1, 1).unwrap();
+    assert!((MIN_DATA_WIDTH..=MAX_DATA_WIDTH).contains(&width), "{width}");
+    assert!((MIN_DATA_HEIGHT..=MAX_DATA_HEIGHT).contains(&height), "{height}");
+    assert_eq!(data_size(f64::NAN, MIN_DATA_WIDTH, MAX_DATA_WIDTH, 90.0), 90.0);
+    assert_eq!(data_size(1e9, MIN_DATA_HEIGHT, MAX_DATA_HEIGHT, 25.0), MAX_DATA_HEIGHT);
+}

@@ -129,18 +129,37 @@ pub fn overlay_refusal(model: &Model<'_>, data_sheets: &[String]) -> Option<Stri
 }
 
 /// The narrowest a data sheet's column is, in pixels: a width below it would hide the column for every reader, as
-/// hiding it would, so a room's width edit of a data sheet is held to it (room.rs `apply`) and a saved overlay's
-/// narrower one is not kept.
+/// hiding it would, so a room's width edit of a data sheet is held to it and [`MAX_DATA_WIDTH`] (room.rs `apply`) and
+/// a saved overlay's size out of them is not kept.
 pub(crate) const MIN_DATA_WIDTH: f64 = 20.0;
 /// The lowest a data sheet's row is, in pixels (as [`MIN_DATA_WIDTH`]).
 pub(crate) const MIN_DATA_HEIGHT: f64 = 12.0;
+/// The widest a data sheet's column is, in pixels: Excel's 255 characters. A wider one, or a taller row than
+/// [`MAX_DATA_HEIGHT`], would push the data past it out of reach.
+pub(crate) const MAX_DATA_WIDTH: f64 = 255.0 * COLUMN_WIDTH_FACTOR;
+/// The tallest a data sheet's row is, in pixels: Excel's 409 points.
+pub(crate) const MAX_DATA_HEIGHT: f64 = 409.0 * 4.0 / 3.0;
+
+/// A data sheet's size, in pixels, within its bounds: one that is not a number is `fallback`.
+pub(crate) fn data_size(pixels: f64, min: f64, max: f64, fallback: f64) -> f64 {
+    if pixels.is_finite() {
+        pixels.clamp(min, max)
+    } else {
+        fallback
+    }
+}
+
+/// Whether a size, in pixels, is out of a data sheet's bounds, or not a number.
+fn out_of_bounds(pixels: f64, min: f64, max: f64) -> bool {
+    !(pixels >= min && pixels <= max)
+}
 
 fn too_narrow(col: &Col) -> bool {
-    col.width * COLUMN_WIDTH_FACTOR < MIN_DATA_WIDTH
+    out_of_bounds(col.width * COLUMN_WIDTH_FACTOR, MIN_DATA_WIDTH, MAX_DATA_WIDTH)
 }
 
 fn too_low(row: &Row) -> bool {
-    row.height * ROW_HEIGHT_FACTOR < MIN_DATA_HEIGHT
+    out_of_bounds(row.height * ROW_HEIGHT_FACTOR, MIN_DATA_HEIGHT, MAX_DATA_HEIGHT)
 }
 
 /// Whether a data sheet of a saved overlay holds what its stored form does not: a cell below its header, or what a
@@ -201,22 +220,39 @@ const MAX_SHEET_NAME: usize = 31;
 
 /// Rename the sheet at `index`, one that looks like the data sheet `data`, to a name no sheet and no data sheet has:
 /// `<data> (renamed)`, then `(renamed 2)` and on, `data` cut so the name fits the engine's 31 characters, else
-/// `Renamed <n>`. The name the engine took, or None when it took none (each refusal logged).
+/// `Renamed <n>` ([`rename_aside`]). The name the engine took, or None when it took none (each refusal logged).
 fn rename_lookalike(model: &mut Model<'static>, index: u32, data: &str, data_sheets: &[String]) -> Option<String> {
     let fits = |suffix: &str| {
         let room = MAX_SHEET_NAME.saturating_sub(suffix.chars().count());
         let cut: String = data.chars().take(room).collect();
         format!("{}{suffix}", cut.trim_end())
     };
-    let candidates = (1..=20)
-        .map(|n| {
-            fits(&if n == 1 {
-                " (renamed)".to_string()
-            } else {
-                format!(" (renamed {n})")
-            })
+    let named = (1..=20).map(|n| {
+        fits(&if n == 1 {
+            " (renamed)".to_string()
+        } else {
+            format!(" (renamed {n})")
         })
-        .chain((1..=20).map(|n| format!("Renamed {n}")));
+    });
+    rename_to_first(model, index, named, data_sheets).or_else(|| rename_aside(model, index, data_sheets))
+}
+
+/// Rename the sheet at `index` to `Renamed <n>`, the first `n` no sheet and no data sheet has: there is always one
+/// among the first sheets-and-data-sheets-and-one, each within the engine's 31 characters. The name the engine took,
+/// or None when it refused every one (each refusal logged).
+pub(crate) fn rename_aside(model: &mut Model<'static>, index: u32, data_sheets: &[String]) -> Option<String> {
+    let count = model.workbook.worksheets.len() + data_sheets.len() + 1;
+    let plain = (1..=count).map(|n| format!("Renamed {n}"));
+    rename_to_first(model, index, plain, data_sheets)
+}
+
+/// Rename the sheet at `index` to the first of `candidates` that no sheet and no data sheet has and the engine takes.
+fn rename_to_first(
+    model: &mut Model<'static>,
+    index: u32,
+    candidates: impl Iterator<Item = String>,
+    data_sheets: &[String],
+) -> Option<String> {
     for renamed in candidates {
         let taken = model.workbook.get_worksheet_names();
         if taken.iter().any(|one| same(one, &renamed)) || data_sheets.iter().any(|sheet| same(sheet, &renamed)) {

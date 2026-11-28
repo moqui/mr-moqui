@@ -964,11 +964,8 @@ impl Room {
                     sheet,
                     column,
                     small("columnEnd", i64::from(column)),
-                    // a data sheet's column is not hidden by its width (upload.rs MIN_DATA_WIDTH)
-                    op["width"]
-                        .as_f64()
-                        .unwrap_or(90.0)
-                        .max(self.data_floor(sheet, crate::upload::MIN_DATA_WIDTH)),
+                    // a data sheet's column is not hidden, nor its next ones pushed away, by its width (upload.rs)
+                    self.data_size(sheet, op["width"].as_f64().unwrap_or(90.0), true),
                 )
             }
             "height" => {
@@ -977,10 +974,7 @@ impl Room {
                     sheet,
                     row,
                     small("rowEnd", i64::from(row)),
-                    op["height"]
-                        .as_f64()
-                        .unwrap_or(25.0)
-                        .max(self.data_floor(sheet, crate::upload::MIN_DATA_HEIGHT)),
+                    self.data_size(sheet, op["height"].as_f64().unwrap_or(25.0), false),
                 )
             }
             "freeze" => self
@@ -1007,12 +1001,18 @@ impl Room {
         .map_err(engine)
     }
 
-    /// `floor` for a data sheet, else no floor.
-    fn data_floor(&self, sheet: u32, floor: f64) -> f64 {
-        if self.data_sheet_name(sheet).is_some() {
-            floor
+    /// A width or height edit's pixels, held to a data sheet's bounds (upload.rs `data_size`), as they are on others.
+    fn data_size(&self, sheet: u32, pixels: f64, width: bool) -> f64 {
+        use crate::upload::{data_size, MAX_DATA_HEIGHT, MAX_DATA_WIDTH, MIN_DATA_HEIGHT, MIN_DATA_WIDTH};
+        let (min, max, fallback) = if width {
+            (MIN_DATA_WIDTH, MAX_DATA_WIDTH, 90.0)
         } else {
-            0.0
+            (MIN_DATA_HEIGHT, MAX_DATA_HEIGHT, 25.0)
+        };
+        if self.data_sheet_name(sheet).is_some() {
+            data_size(pixels, min, max, fallback)
+        } else {
+            pixels
         }
     }
 
