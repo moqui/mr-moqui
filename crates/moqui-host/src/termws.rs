@@ -44,7 +44,7 @@ use moqui_lib::object::Value;
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::http::{plain, Closing, HttpState};
+use crate::http::{plain, Closing, HttpState, OnListener};
 use crate::notws::{origin_allowed, session_cookie, session_user, RequestSite};
 use crate::term::access::{self, Facts, Refusal};
 use crate::term::registry::Registry;
@@ -66,8 +66,9 @@ const FIRST_SIZE_WAIT: Duration = Duration::from_secs(30);
 const PIPE: usize = 1 << 20;
 
 /// What the upgrade request says about where it came from, for a command or host session
-/// (plans/archive/Terminal-Fancy.md §8.2).
-pub(crate) struct UpgradeFacts(Facts);
+/// (plans/archive/Terminal-Fancy.md §8.2), and the listener it came over (`OnListener`), which a session of its own
+/// says its calls came over (plans/Runtime-Config.md §3.6).
+pub(crate) struct UpgradeFacts(Facts, Option<&'static str>);
 
 impl FromRequestParts<Arc<HttpState>> for UpgradeFacts {
     type Rejection = std::convert::Infallible;
@@ -85,14 +86,13 @@ impl FromRequestParts<Arc<HttpState>> for UpgradeFacts {
             .map(|peer| state.guard.client_of(peer, &parts.headers).to_string())
             .unwrap_or_default();
         let headers = &parts.headers;
-        Ok(Self(Facts::of(
-            peer,
-            via,
-            https,
-            addressing.header(),
-            client_ip,
-            |name| headers.get(name).and_then(|value| value.to_str().ok()),
-        )))
+        let listener = parts.extensions.get::<OnListener>().map(|on| on.name);
+        Ok(Self(
+            Facts::of(peer, via, https, addressing.header(), client_ip, |name| {
+                headers.get(name).and_then(|value| value.to_str().ok())
+            }),
+            listener,
+        ))
     }
 }
 
@@ -100,7 +100,7 @@ pub(crate) async fn upgrade(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
     site: RequestSite,
-    UpgradeFacts(facts): UpgradeFacts,
+    UpgradeFacts(facts, listener): UpgradeFacts,
     RawQuery(query): RawQuery,
     Closing(closing): Closing,
     State(state): State<Arc<HttpState>>,
@@ -174,6 +174,7 @@ pub(crate) async fn upgrade(
                     .and_then(|query| query_value(query, "observe"))
                     .as_deref()
                     == Some("1"),
+                listener,
             },
             closing,
         )
@@ -242,6 +243,9 @@ struct Opened {
     ticket: String,
     /// `observe=1`: to watch the session, not type in it (plans/Terminal-Fancy2.md §4.4).
     observe: bool,
+    /// The listener the upgrade request came over (`OnListener`), which a session of its own says its calls came over
+    /// (plans/Runtime-Config.md §3.6).
+    listener: Option<&'static str>,
 }
 
 /// What a socket's sign-in is rechecked by.
@@ -451,6 +455,7 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
         key_hash,
         ticket,
         observe,
+        listener,
     } = opened;
     let by_key = key_hash.is_some();
     let sign_in = SignIn {
@@ -544,6 +549,11 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
     };
     #[cfg(not(all(feature = "devtools", unix)))]
     let _ = restart;
+    // its calls came over this page's listener from now on, until another page that types attaches (a window that only
+    // watches makes no calls of the session's, plans/Terminal-Fancy2.md §4.4)
+    if !viewer {
+        kept.origin.set(listener);
+    }
     let joining = crate::term::session::Joining {
         observe: viewer,
         username: username.clone(),
@@ -656,6 +666,7 @@ async fn run_ephemeral(mut socket: WebSocket, opened: Opened, mut shutdown: toki
         user_id,
         username,
         key_hash,
+        listener,
         ..
     } = opened;
     let by_key = key_hash.is_some();
@@ -699,6 +710,7 @@ async fn run_ephemeral(mut socket: WebSocket, opened: Opened, mut shutdown: toki
         client_ip: String::new(),
         admission: crate::term::Admission::Take,
         redraw: None,
+        listener: crate::term::Origin::of(listener),
     };
     let session = tokio::spawn(async move { crate::term::serve(&mut theirs, &mut start).await });
     let mut buffer = vec![0u8; 64 * 1024];

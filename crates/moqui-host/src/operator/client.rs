@@ -17,7 +17,9 @@
 //! line each, when it is not a terminal), and the shares `init` issues are printed once. The socket is
 //! [`UNIT_SOCKET`] or `--socket`, never one a conf, `runtime/.env` or the environment names, so whoever can write those
 //! cannot point root's passphrase at a socket of their own. `moqui operator bind` makes the socket as root for a
-//! server that drops to its own user (a container's entrypoint).
+//! server that drops to its own user (a container's entrypoint). `moqui operator listeners` and `moqui operator listener
+//! <name> on|off` list and switch the server's listeners (plans/Runtime-Config.md §3.6): the way back to a server with
+//! no listener open, since the socket needs none.
 
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::os::fd::AsRawFd as _;
@@ -161,6 +163,21 @@ pub fn dispatch(args: &[String]) -> Result<(), Error> {
             }
             Ok(())
         }
+        // `surface` is plans/Sealed-Secrets.md S12's name for the list of what the server opens
+        ["listeners" | "surface"] => {
+            let answer = call(&socket, json!({"command": "listeners"}))?;
+            for line in listener_lines(&answer["listeners"]) {
+                println!("{line}");
+            }
+            Ok(())
+        }
+        ["listener", name, state, options @ ..] => {
+            let answer = call(&socket, listener_request(name, state, options)?)?;
+            for line in answer_lines(&answer["answer"]) {
+                println!("{line}");
+            }
+            Ok(())
+        }
         ["export-seal", path] => {
             let answer = call(&socket, json!({"command": "export-seal"}))?;
             write_private(Path::new(path), answer["bundle"].as_str().unwrap_or_default())?;
@@ -172,6 +189,121 @@ pub fn dispatch(args: &[String]) -> Result<(), Error> {
         }
         _ => Err(crate::usage::command_usage("operator")),
     }
+}
+
+/// The request of `listener <name> on|off [options]`: `--now`, `--port N`, `--host H`, `--access open|login|key`,
+/// `--reason TEXT`, `--confirm-public-http`, `--confirm-dependents` and `--no-persist`.
+fn listener_request(name: &str, state: &str, options: &[&str]) -> Result<Value, Error> {
+    let usage = || crate::usage::command_usage("operator");
+    let enabled = match state {
+        "on" => true,
+        "off" => false,
+        _ => return Err(usage()),
+    };
+    let mut request = json!({"command": "listener", "name": name, "enabled": enabled});
+    let mut words = options.iter();
+    while let Some(option) = words.next() {
+        let field = match *option {
+            "--now" => {
+                request["now"] = Value::Bool(true);
+                continue;
+            }
+            "--confirm-public-http" => {
+                request["confirm_public_http"] = Value::Bool(true);
+                continue;
+            }
+            "--confirm-dependents" => {
+                request["confirm_dependents"] = Value::Bool(true);
+                continue;
+            }
+            "--no-persist" => {
+                request["persist"] = Value::Bool(false);
+                continue;
+            }
+            "--port" => "port",
+            "--host" => "host",
+            "--access" => "access",
+            "--reason" => "reason",
+            _ => return Err(usage()),
+        };
+        let given = words.next().ok_or_else(usage)?;
+        request[field] = Value::String((*given).to_string());
+    }
+    Ok(request)
+}
+
+/// The text of `value`, or empty for none, with any control character shown as `?`: a row's cause or error carries
+/// text people gave, which must not drive the operator's terminal.
+fn text_of(value: &Value) -> String {
+    let text = match value {
+        Value::Null => return String::new(),
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    };
+    text.chars().map(|c| if c.is_control() { '?' } else { c }).collect()
+}
+
+/// The listeners as `moqui operator listeners` prints them: a line each with its name, state and address, then what
+/// else its row says (detail, since, cause, connections, what waits for a restart, the last error), indented.
+fn listener_lines(rows: &Value) -> Vec<String> {
+    let mut lines = Vec::new();
+    for row in rows.as_array().into_iter().flatten() {
+        lines.push(
+            format!(
+                "{:<12} {:<12} {}",
+                text_of(&row["name"]),
+                text_of(&row["state"]),
+                text_of(&row["address"])
+            )
+            .trim_end()
+            .to_string(),
+        );
+        for (label, field) in [
+            ("", "detail"),
+            ("since ", "since"),
+            ("by ", "cause"),
+            ("connections ", "connections"),
+            ("waits for a restart: ", "pending"),
+            ("last error: ", "lastError"),
+        ] {
+            let text = text_of(&row[field]);
+            if !text.is_empty() {
+                lines.push(format!("    {label}{text}"));
+            }
+        }
+    }
+    lines
+}
+
+/// A listener change's answer as `moqui operator listener` prints it: its message, each setting kept and where, what
+/// the pass did to each listener, and the notes.
+fn answer_lines(answer: &Value) -> Vec<String> {
+    let mut lines = vec![text_of(&answer["message"])];
+    for setting in answer["settingList"].as_array().into_iter().flatten() {
+        lines.push(format!(
+            "  {} = {}: {}",
+            text_of(&setting["selector"]),
+            text_of(&setting["value"]),
+            text_of(&setting["note"])
+        ));
+    }
+    for outcome in answer["outcomeList"].as_array().into_iter().flatten() {
+        let detail = text_of(&outcome["detail"]);
+        let detail = if detail.is_empty() {
+            String::new()
+        } else {
+            format!(": {detail}")
+        };
+        lines.push(format!(
+            "  {} {}{detail}",
+            text_of(&outcome["name"]),
+            text_of(&outcome["action"])
+        ));
+    }
+    for note in answer["noteList"].as_array().into_iter().flatten() {
+        lines.push(format!("  {}", text_of(note)));
+    }
+    lines
 }
 
 /// The socket a client reaches with no `--socket`: [`UNIT_SOCKET`], always for root; for another user, when it is
@@ -486,3 +618,7 @@ fn print_status(status: &Value) {
         println!("No seal: this process holds a root key in memory only");
     }
 }
+
+#[cfg(test)]
+#[path = "client_tests.rs"]
+mod tests;

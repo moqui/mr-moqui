@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<!-- CalcGrid, database-driven spreadsheets (plans/IronCalc-DB.md; crates/moqui-calc). A document is a report definition
+<!-- CalcGrid, database-driven spreadsheets (plans/archive/IronCalc-DB.md; crates/moqui-calc). A document is a report definition
     of type calcgrid; these hold what its editors changed since it was saved, so every room of the document (one for
     each scope of its readers, on any server) applies the same edits in the same order. -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">

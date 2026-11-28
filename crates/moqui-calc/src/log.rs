@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The edit log of a saved document (plans/IronCalc-DB.md, editing together): what its editors changed since it was
-//! saved, in one order for every room of it.
+//! The edit log of a saved document (plans/archive/IronCalc-DB.md, editing together): what its editors changed since it
+//! was saved, in one order for every room of it.
 //!
 //! A document is open in a room for each scope of its readers ([`crate::scope`]), on each server that has a reader of
 //! it, and each room holds its own data. An edit locks the document's head row (`moqui.calc.CalcDocumentHead`), brings

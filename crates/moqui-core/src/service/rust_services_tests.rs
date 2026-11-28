@@ -120,6 +120,8 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::images::image_writer_mime_types",
         "moqui_core::service::images::upload_rich_text_image",
         "moqui_core::service::images::write_image_service",
+        "moqui_core::service::listeners::get_listeners",
+        "moqui_core::service::listeners::set_listener",
         "moqui_core::service::shell::call_providers",
         "moqui_core::service::shell::get_appearance",
         "moqui_core::service::shell::get_appearance_policy",

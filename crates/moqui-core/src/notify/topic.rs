@@ -49,9 +49,9 @@ pub const RUNTIME_SETTINGS: &str = "runtime-settings";
 /// writes its files from the shared repository and loads it; its data is in the shared database already.
 pub const COMPONENT_DEPLOY: &str = "component-deploy";
 
-/// A CalcGrid document was edited, saved or reverted on one server (moqui-calc, plans/IronCalc-DB.md), `{"doc", "seq",
-/// "userId", "kind"}`: every server brings its rooms of the document up to `seq` from the document's edit log and tells
-/// their viewers.
+/// A CalcGrid document was edited, saved or reverted on one server (moqui-calc, plans/archive/IronCalc-DB.md), `{"doc",
+/// "seq", "userId", "kind"}`: every server brings its rooms of the document up to `seq` from the document's edit log
+/// and tells their viewers.
 pub const CALC_UPDATE: &str = "calc-update";
 
 /// Where a viewer of a CalcGrid document is, from one server's socket (`{"doc", "client", "userId", "name", "sheet",

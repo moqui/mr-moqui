@@ -284,12 +284,12 @@ fn run_server(detached: bool) -> Result<(), moqui_lib::error::Error> {
                 Err(err) => return Err(err),
             };
             if detached && !silenced {
-                println!("Listening on {} (pid {})", server.address(), std::process::id());
+                println!("Listening on {} (pid {})", server.listening(), std::process::id());
                 let _ = std::io::Write::flush(&mut std::io::stdout());
                 detach::silence_stdio();
                 silenced = true;
             } else {
-                println!("Listening on {}", server.address());
+                println!("Listening on {}", server.listening());
             }
             server.wait();
             // a signal while a restart's or a seal's shutdown ran asked the process to stop: it does, rather than boot
@@ -356,6 +356,18 @@ fn run_again() -> Result<(), moqui_lib::error::Error> {
     }
 }
 
+/// What the `Listening on` line names, the address clients use: the HTTP listener's (`http`) while it is bound, as before
+/// (`moqui serve`, the desktop app's node and the restart test read it as a socket address); else, with HTTP off (port 0),
+/// the HTTPS listener's as a URL (`https://0.0.0.0:8443`); else that no web listener is bound (plans/Runtime-Config.md
+/// §3.3).
+fn listening_text(http: std::net::SocketAddr, https: Option<std::net::SocketAddr>) -> String {
+    match https {
+        _ if http.port() != 0 => http.to_string(),
+        Some(https) => format!("https://{https}"),
+        None => "no web address: HTTP is off and HTTPS is not bound".to_string(),
+    }
+}
+
 /// A running plain HTTP listener and the cluster HTTPS listener.
 /// Drop stops both, then joins the thread that owns the database.
 #[must_use = "dropping the server stops the listener"]
@@ -380,6 +392,13 @@ impl Server {
     #[must_use]
     pub fn address(&self) -> std::net::SocketAddr {
         self.listener_address("HTTP").unwrap_or(self.address)
+    }
+
+    /// What the `Listening on` line names ([`listening_text`]): the HTTP listener's address while it is bound, else the
+    /// HTTPS listener's as a URL, else that no web listener is bound.
+    #[must_use]
+    pub fn listening(&self) -> String {
+        listening_text(self.address(), self.https_address())
     }
 
     /// The address the listener whose startup report row is `name` (`HTTP`, `HTTPS`, `gRPC`, `SSH`) is bound to now,
@@ -1835,15 +1854,28 @@ fn serve_thread(
     if matches!(bind, ListenBind::Property) {
         moqui_devkit::index::start(&factory);
     }
-    // The dev-aide gives its users code execution as this process's user (plans/archive/design-dev-aide.md 15): say so when the
-    // listener is reachable from other machines.
-    if moqui_core::devtools::is_dev_instance()
-        && factory
-            .components()
-            .iter()
-            .any(|component| component.name == "dev-aide")
-        && address.is_some_and(|address| !address.ip.is_loopback())
-    {
+    // The dev-aide gives its users code execution as this process's user (plans/archive/design-dev-aide.md 15): say so when a
+    // web listener that is turned on (HTTP, HTTPS, or both, on the address they share) is reachable from other machines.
+    let https_on = matches!(bind, ListenBind::Property)
+        && moqui_core::context::conf_env::switch_on(&moqui_core::context::conf_env::webroot_setting(
+            "https-listen-enabled",
+        ));
+    let exposed = address.filter(|address| !address.ip.is_loopback()).and_then(|address| {
+        let ip = address.ip;
+        match (address.http_port.is_some(), https_on) {
+            (true, true) => Some(format!("the HTTP and HTTPS listeners on {ip} are")),
+            (true, false) => Some(format!("the HTTP listener on {ip} is")),
+            (false, true) => Some(format!("the HTTPS listener on {ip} is")),
+            (false, false) => None,
+        }
+    });
+    if let Some(exposed) = exposed.filter(|_| {
+        moqui_core::devtools::is_dev_instance()
+            && factory
+                .components()
+                .iter()
+                .any(|component| component.name == "dev-aide")
+    }) {
         if factory.conf_setting("dev-aide", "shared") == "true" {
             tracing::info!(
                 "Dev AIDE in shared mode (a team dev server) on {}: network git commands are off until an admin enables them",
@@ -1851,10 +1883,9 @@ fn serve_thread(
             );
         } else {
             tracing::warn!(
-                "Dev AIDE is loaded and the HTTP listener on {} is not bound to the loopback address: anyone who \
-                 can sign in with a Dev AIDE permission can run code as this server's user. Set the webroot webapp's http-bind to 127.0.0.1, \
-                 or dev-aide shared=\"true\" for a team dev server",
-                address.map_or(unbound.ip(), |address| address.ip)
+                "Dev AIDE is loaded and {exposed} not bound to the loopback address: anyone who can sign in with a \
+                 Dev AIDE permission can run code as this server's user. Set the webroot webapp's http-bind to \
+                 127.0.0.1, or dev-aide shared=\"true\" for a team dev server"
             );
         }
     }

@@ -155,6 +155,10 @@ pub struct WebRequest {
     pub visitor_cookie: Option<String>,
     /// How the request reached this server.
     pub via: RequestVia,
+    /// The listener whose connection it came over (`HTTP`, `HTTPS`), as the host's connection says; none for one that
+    /// came over none (in process, down the edge link). Which one the caller is on, for the listener services
+    /// (plans/Runtime-Config.md §3.6, [`crate::listeners::origin`]).
+    pub listener: Option<String>,
 }
 
 impl WebRequest {
@@ -173,6 +177,7 @@ impl WebRequest {
             session_cookie: None,
             visitor_cookie: None,
             via: RequestVia::Direct,
+            listener: None,
         }
     }
 

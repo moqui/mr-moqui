@@ -199,6 +199,12 @@ along with this software (see the LICENSE.md file). If not, see
         The conf names the code the server runs, so it is sealed. -->
     <moqui.security.UserPermission userPermissionId="CONF_EDIT" description="System: edit the conf files"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="CONF_EDIT" fromDate="0"/>
+    <!-- Turning the listeners (HTTP, HTTPS, SSH and the others) on and off and moving them while the server runs
+        (org.moqui.admin.ListenerServices.set#Listener, plans/Runtime-Config.md 3.6), with a recent sign-in. Apart from
+        CONF_EDIT, so an incident responder switches services without editing the whole conf; sealed, as it can close
+        every way in. -->
+    <moqui.security.UserPermission userPermissionId="LISTENER_CONTROL" description="System: turn listeners on and off"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="LISTENER_CONTROL" fromDate="0"/>
     <!-- The built-in SSH server (ssh-server@enabled, on ssh-server@port): SFTP over ssh-server sftp-root, and the admin command shell, which runs JavaScript. -->
     <moqui.security.UserPermission userPermissionId="SSH_SFTP" description="SSH: SFTP file access"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="SSH_SFTP" fromDate="0"/>

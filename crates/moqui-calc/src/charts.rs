@@ -11,10 +11,10 @@
  * along with this software (see the LICENSE.md file). If not, see
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
-//! A CalcGrid document's charts in its xlsx (plans/IronCalc-DB.md, Phase 4): the charts of the document's body (a title,
-//! a type of bar, column, line, area or pie, a categories range and series of a name and a values range, drawn on the
-//! screen with Chart.js) as charts of the engine, on a sheet of their own, which Excel and LibreOffice draw from the
-//! cells as the screen does.
+//! A CalcGrid document's charts in its xlsx (plans/archive/IronCalc-DB.md, Phase 4): the charts of the document's body
+//! (a title, a type of bar, column, line, area or pie, a categories range and series of a name and a values range,
+//! drawn on the screen with Chart.js) as charts of the engine, on a sheet of their own, which Excel and LibreOffice
+//! draw from the cells as the screen does.
 
 use moqui_core::context::Error;
 use moqui_core::workbook::ironcalc::base::drawings::{

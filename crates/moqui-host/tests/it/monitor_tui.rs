@@ -419,7 +419,8 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
             "Dashboards/Drill",
             "/apps/dashboards/Drill?definitionId=tui-dashboard&panelId=a-total&from=now-1h&thru=now",
         ),
-        // CalcGrid's terminal render: the documents the viewer reads, each a link to its sheet (plans/IronCalc-DB.md)
+        // CalcGrid's terminal render: the documents the viewer reads, each a link to its sheet
+        // (plans/archive/IronCalc-DB.md)
         ("Dashboards/CalcGrid", "/apps/dashboards/CalcGrid"),
     ];
     // A new screen without an acceptance case is a failed gate, rather than silently missing coverage.

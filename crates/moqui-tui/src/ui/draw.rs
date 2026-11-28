@@ -1863,12 +1863,15 @@ fn draw_status(paint: &mut Painter, status: &LaidStatus, x: u16, y: usize) {
 fn draw_line(paint: &mut Painter, line: &Line, x: u16, y: usize, focused: bool) {
     let mut col = x;
     for span in line {
-        let mut look = Look::role(span.role);
+        let mut look = Look::role(span.role).colors(span.color, span.fill);
         if span.bold {
             look = look.bold();
         }
         if span.underline {
             look = look.underline();
+        }
+        if span.italic {
+            look = look.italic();
         }
         if span.reverse && focused {
             look = look.reverse();

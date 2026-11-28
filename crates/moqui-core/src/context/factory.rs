@@ -563,6 +563,7 @@ impl ExecutionContextFactory {
                 session: RefCell::new(crate::user::Memory::default()),
                 user_context: RefCell::new(std::collections::BTreeMap::new()),
                 agent_origin: RefCell::new(None),
+                listener_origin: RefCell::new(None),
                 shared_map: RefCell::new(indexmap::IndexMap::default()),
                 #[cfg(feature = "telemetry")]
                 telemetry: std::cell::OnceCell::new(),
@@ -1226,6 +1227,9 @@ struct ContextState {
     user_context: RefCell<std::collections::BTreeMap<String, moqui_lib::object::Value>>,
     /// The agent run this context works for ([`AgentOrigin`]), which entity hooks deep in a service call read.
     agent_origin: RefCell<Option<AgentOrigin>>,
+    /// The listener this context's work came over when no request of its own says so: the SSH server's terminal
+    /// client, whose renders and services each run in a context of their own ([`crate::listeners::origin`]).
+    listener_origin: RefCell<Option<String>>,
     /// `ec.context.sharedMap`: one map for the execution context, shared by every service call and script in it.
     shared_map: RefCell<moqui_lib::object::ValueMap>,
     #[cfg(feature = "telemetry")]
@@ -1281,6 +1285,18 @@ impl ExecutionContext {
 
     pub fn set_agent_origin(&self, origin: Option<AgentOrigin>) {
         *self.state.agent_origin.borrow_mut() = origin;
+    }
+
+    /// The listener this context's work came over, as its host set it ([`Self::set_listener_origin`]); a served
+    /// request's own is on the request ([`crate::listeners::origin`] reads both, plans/Runtime-Config.md §3.6).
+    pub fn listener_origin(&self) -> Option<String> {
+        self.state.listener_origin.borrow().clone()
+    }
+
+    /// Say which listener this context's work came over: the SSH server's terminal client marks each context it runs
+    /// in (`SSH`), so turning SSH off from there is the caller's own listener.
+    pub fn set_listener_origin(&self, listener: Option<String>) {
+        *self.state.listener_origin.borrow_mut() = listener;
     }
 
     /// Java's `ExecutionContext.getContext().getSharedMap()`: a map that lives as long as this execution context, whatever

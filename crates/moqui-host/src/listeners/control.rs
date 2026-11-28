@@ -29,6 +29,8 @@ use moqui_core::listeners::{Cause, ListenerControl, ListenerInfo, Outcome, Recon
 use moqui_lib::sync::lock;
 
 use super::{Inner, Registry};
+use crate::port_check::{Proto, Target};
+use crate::ListenBind;
 
 /// What a request to a registry that has ended answers.
 const ENDED: &str = "the listener registry has stopped";
@@ -70,6 +72,75 @@ impl ListenerControl for HostControl {
             // nobody waits for the answer: the pass records each row, and its receiver is dropped here
             drop(registry.request(request, delay));
         }
+    }
+
+    /// The port bound and let go at once, as the start's check does ([`crate::port_check::check_one`]): on `host`,
+    /// else the address the listener is bound to, else where its conf binds it ([`conf_host`]).
+    fn check_port(&self, name: &str, host: Option<&str>, port: u16) -> Result<(), String> {
+        let registry = self.registry().ok_or_else(|| ENDED.to_string())?;
+        let entry = moqui_core::listeners::switch(name).ok_or_else(|| format!("no listener is named {name}"))?;
+        let host = match host {
+            Some(host) => host.to_string(),
+            None => match registry.address(name) {
+                Some(address) => address.ip().to_string(),
+                None => conf_host(&registry.0.factory, &registry.0.boot.bind, name)?,
+            },
+        };
+        // call media, TURN and SIP take their main port over UDP
+        let proto = match name {
+            "Call media" | "TURN" | "SIP" => Proto::Udp,
+            _ => Proto::Tcp,
+        };
+        let property = entry.port().unwrap_or(entry.enabled);
+        crate::port_check::check_one(&Target::optional(entry.name, property, host, port, proto))
+    }
+
+    fn held(&self) -> Vec<String> {
+        let Some(registry) = self.registry() else {
+            return Vec::new();
+        };
+        let web = lock(&registry.0.web).clone();
+        web.map(|web| super::web::held_now(&web, &registry.0.boot.bind))
+            .unwrap_or_default()
+    }
+}
+
+/// Where the listener `name` binds by the running conf while it is not bound: SSH's and SMTP's host (127.0.0.1 when
+/// empty); a web listener's address as its pass takes it (gRPC's own `grpc-listen-bind`, else `http-bind`, every
+/// address when empty); any other on every address, which a port held on any one address fails.
+fn conf_host(factory: &ExecutionContextFactory, bind: &ListenBind, name: &str) -> Result<String, String> {
+    let setting = |selector: &str| {
+        factory
+            .conf_value(selector)
+            .map(|found| found.value.trim().to_string())
+            .unwrap_or_default()
+    };
+    let local = |text: String| {
+        if text.is_empty() {
+            "127.0.0.1".to_string()
+        } else {
+            text
+        }
+    };
+    match name {
+        "SSH" => Ok(local(setting("ssh-server@host"))),
+        "SMTP" => Ok(local(setting("smtp-server@listen-host"))),
+        "HTTP" | "HTTPS" | "gRPC" => {
+            let own = if name == "gRPC" {
+                setting("webapp-list/webapp[webroot]@grpc-listen-bind")
+            } else {
+                String::new()
+            };
+            if !own.is_empty() {
+                return Ok(own);
+            }
+            match super::web::web_ip(bind, false, &setting("webapp-list/webapp[webroot]@http-bind")) {
+                Ok(Some(ip)) => Ok(ip.to_string()),
+                Ok(None) => Err(format!("{name} has no port on a node reached in process only")),
+                Err(err) => Err(err),
+            }
+        }
+        _ => Ok("0.0.0.0".to_string()),
     }
 }
 

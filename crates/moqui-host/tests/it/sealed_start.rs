@@ -20,6 +20,8 @@
 //! counted and the next attempt waits longer; a conf that names another method is ignored; an automatic (`tpm`, a
 //! stub `systemd-creds`) first start holds its recovery shares once, and when it fails the recovery shares unseal; a
 //! recovery bundle restored on a new runtime directory unseals with the shares, then rekeys and rotates the root key.
+//! The operator socket is also the way back to a server with no listener open (plans/Runtime-Config.md §3.6, RC4): it
+//! lists the listeners and turns HTTP off and on again.
 
 #![cfg(all(unix, feature = "embedded-postgres"))]
 
@@ -183,6 +185,91 @@ fn a_dev_instance_makes_its_seal_and_seal_closes_the_listeners_until_unseal() {
     let answer = call(&socket, json!({"command": "unseal"})).unwrap();
     assert_eq!(answer["status"]["state"], "unsealed");
     let server = starting.join().unwrap().unwrap();
+    assert!(serves(http));
+    drop(server);
+}
+
+/// Wait up to 10 s for `done`.
+fn eventually(what: &str, done: impl Fn() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !done() {
+        assert!(Instant::now() < deadline, "{what}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// RC4 (plans/Runtime-Config.md §3.6): `moqui operator listeners` and `moqui operator listener HTTP off|on` on a
+/// running gated server, as the operator: the rows with their state, HTTP turned off (a reason needed, its connections
+/// ended now) and on again, each row's cause naming the socket's peer. The server's own user runs neither. No
+/// permission or lockout guard applies to the socket, itself a way back.
+#[test]
+fn the_operator_socket_lists_the_listeners_and_turns_http_off_and_on() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let _serial = crate::common::serial();
+    moqui_host::operator::require_gate();
+    let sockets = socket_dir("listeners");
+    let socket = sockets.0.join("op.sock");
+    moqui_lib::env::set_property("moqui_conf__instance__purpose", "dev");
+    moqui_lib::env::set_property("moqui_conf__cluster_member__https_port", "0");
+    let seeded = seeded("operator-listeners", &seal_conf(&socket));
+    let http = free_port();
+    let server = start(&seeded, http).join().unwrap().unwrap();
+    assert!(serves(http));
+    let err = call(&socket, json!({"command": "listeners"})).unwrap_err();
+    assert!(err.to_string().contains("only status"), "{err}");
+
+    as_operator();
+    let row = |name: &str| {
+        let listed = call(&socket, json!({"command": "listeners"})).unwrap();
+        listed["listeners"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["name"] == name)
+            .cloned()
+            .unwrap()
+    };
+    let before = row("HTTP");
+    assert_eq!(
+        (&before["state"], &before["running"]),
+        (&json!("on"), &json!(true)),
+        "{before}"
+    );
+    let err = call(
+        &socket,
+        json!({"command": "listener", "name": "HTTP", "enabled": false}),
+    )
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("A reason is required to turn HTTP off"),
+        "{err}"
+    );
+    let off = call(
+        &socket,
+        json!({"command": "listener", "name": "HTTP", "enabled": false, "reason": "the test", "now": true,
+            "persist": false}),
+    )
+    .unwrap();
+    assert_eq!(off["answer"]["applied"], "now", "{off}");
+    eventually("HTTP closed", || refused(http));
+    let after = row("HTTP");
+    assert_eq!(after["state"], "off", "{after}");
+    assert!(
+        after["cause"].as_str().unwrap().contains("operator socket (uid"),
+        "{after}"
+    );
+
+    // on again where it was: on loopback, at its port (plain HTTP on every address would need its confirmation)
+    let on = call(
+        &socket,
+        json!({"command": "listener", "name": "HTTP", "enabled": true, "host": "127.0.0.1", "port": http.to_string(),
+            "persist": false}),
+    )
+    .unwrap();
+    assert_eq!(on["answer"]["applied"], "now", "{on}");
+    eventually("HTTP open again", || !refused(http));
     assert!(serves(http));
     drop(server);
 }

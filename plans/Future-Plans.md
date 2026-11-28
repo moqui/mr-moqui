@@ -149,6 +149,43 @@ and 26 are built; guide [Dev-AIDE](../docs/tools/Dev-AIDE.md). After v0.1.0 ([§
 ## Component JavaScript libraries
 Built ([JS-Build](archive/JS-Build.md#component-javascript-libraries-in-dev-aide-built-2026-11-23); guide [Build-Test](../docs/Build-Test.md#add-a-component-library)). Next: removing a library (`add-js` adds and `update-js --component` changes a pin, but taking one out of `js-build.json`, its pin and lock, its outputs and its `.gitignore` lines is by hand), and client libraries in the desktop shell's bundled screens (`precompiled_qvue` registers no library list, so a bundled `.qvue` that declares one does not load it).
 
+## IronCalc and CalcGrid
+
+From [IronCalc-DB](archive/IronCalc-DB.md), archived 2026-11-27; what is for the first release is
+[IronCalc-DB2](IronCalc-DB2.md). Guide [Calc mode](../docs/tools/Database.md#calc-mode). After v0.1.0:
+
+**The engine in the browser.** The IronCalc engine as WASM in the browser, as a local copy fed by the room's edits, for
+offline spreadsheets: viewing, and editing merged on IronCalc's CRDT layer when upstream has one. With it the
+bindings' own tests and `ironcalc_base` on `wasm32-wasip2`, which upstream's CI runs. Important; the
+[thin client](archive/IronCalc-DB.md#thin-client) was designed so this can be added.
+
+**Waiting on IronCalc upstream, or larger changes to the fork** (let the fork's work be used for a while first):
+- Offer the fork's commits upstream, one at a time and the `data_sheet` example first, and add our use to
+  [issue 849](https://github.com/ironcalc/IronCalc/issues/849) (the user's call)
+  ([Proposed next](archive/IronCalc-DB.md#proposed-next-in-order)).
+- The function list with arguments, for completion and help: the engine's `functions` module is private, a request
+  upstream.
+- An engine call to add a table and set its range, so data sheets need not keep two stub rows and insert between them;
+  error types in place of messages; a custom function hook, for formulas that read entities directly; pivot tables
+  when upstream has them.
+- Engine speed: a smaller dependency index for sheets of many one-cell formulas (155 bytes a formula); `COUNTA` on
+  text, `MEDIAN`, and `VLOOKUP` and `MATCH`'s copy of the lookup column; a formula that calls a named function or a
+  `LAMBDA` is a dynamic array, so an edit it reads evaluates the whole workbook.
+- Images and charts in `UserModel`'s undo, and the fork's tests reading charts from rust_xlsxwriter's files.
+
+**Moved out of IronCalc-DB2 at review** (the notes are what the code needs, from the Nov 27 reading):
+- **Undo across a save.** What a room takes for undo lives in its memory, so a room opened after a save has none of
+  it. It would be stored with the edit's row (`CalcDocumentEdit`) in a form that does not depend on the data's row
+  count, building on IronCalc-DB2 CG5.2.
+- **A range of a document as a styled panel** (the cells with their styles, not their values in a table panel):
+  `get#CalcFrame` returning the room's block beside the frame, passed through the report engine's `execute_query`; a
+  panel kind in `m-report-panel` with WebrootCalc's `blockRows` and `cellCss` where the printed report loads them; a
+  branch in the terminal's `panel_view`. About 3 to 5 days.
+- **Evaluation on a thread of its own**, only if IronCalc-DB2 CG1.3 (no evaluation inside the log's row lock) and
+  CG1.4 (the slow warning) prove not enough; measure an edit at 100,000 rows with two rooms after them. An edit would
+  apply with evaluation paused and answer at once, a worker evaluate under the room's lock and push `changed`, a read
+  meanwhile answer busy or the values before, and a scratch room (which has no socket) poll. About 3 to 5 days.
+
 ## Messaging — runtime-reflective FlatBuffers ([Messaging.md](proposals/Messaging.md), 1286 lines)
 Binary request/response and WebSocket document subscriptions using FlatBuffers `.bfbs` schemas generated at runtime from service, screen-transition and Data Document definitions, with a Rust reflective reader, a browser reader/writer on Emscripten WASM, shared message buffers and large-scale fan-out. JSON and other contracts stay. Status: roadmap shows 0 of 6 phases done. Today `moqui-browser` speaks JSON ([`crates/moqui-browser/src/api.rs`](../crates/moqui-browser/src/api.rs)) and cites this plan for the binary forms. Prerequisites in place: Wasm browser build, cached QuickJS service functions, committed-update path. Go/no-go gates are in §19; capacity model in §12–13.
 

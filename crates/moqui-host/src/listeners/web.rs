@@ -29,7 +29,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use moqui_core::context::conf_env::switch_on;
+use moqui_core::context::conf_env::{same_selector, switch_on};
 use moqui_core::startup::State;
 use moqui_lib::error::Error;
 use tokio::net::TcpListener;
@@ -106,14 +106,18 @@ fn set_selectors(text: &str) -> impl Iterator<Item = &str> {
     text.split(", ").map(str::trim)
 }
 
-/// Whether `set` and `held` name one attribute, however a set spelled it.
-fn same_selector(set: &str, held: &str) -> bool {
-    let key = |selector: &str| {
-        moqui_lib::node::path::AttrPath::parse(selector)
-            .ok()
-            .map(|path| moqui_core::context::conf_env::compare_key(&path))
-    };
-    key(set).is_some_and(|set| key(held) == Some(set))
+/// The HTTP settings a server started on an address still holds at that address's (none for another start), which a
+/// change that sets one to the conf's value must still write so the hold is released (`ListenerControl::held`).
+pub(super) fn held_now(web: &WebContext, bind: &ListenBind) -> Vec<String> {
+    if !matches!(bind, ListenBind::Address(_)) {
+        return Vec::new();
+    }
+    HELD_SELECTORS
+        .iter()
+        .zip(web.held().held())
+        .filter(|(_, held)| *held)
+        .map(|(selector, _)| (*selector).to_string())
+        .collect()
 }
 
 /// Before a pass after the start: on a server started on an address, each of HTTP's settings a set of this pass's
@@ -124,19 +128,28 @@ pub(super) fn release_held(ctx: &Ctx, causes: &[moqui_core::listeners::Cause]) {
     let (Some(web), ListenBind::Address(_)) = (ctx.web, &ctx.boot.bind) else {
         return;
     };
+    let release = |set: &str| {
+        for (index, held) in HELD_SELECTORS.iter().enumerate() {
+            if same_selector(set, held) {
+                web.held().release(index);
+            }
+        }
+    };
     for cause in causes {
         match cause {
             Cause::SetValue(selectors) => {
                 for set in set_selectors(selectors) {
-                    for (index, held) in HELD_SELECTORS.iter().enumerate() {
-                        if same_selector(set, held) {
-                            web.held().release(index);
-                        }
-                    }
+                    release(set);
+                }
+            }
+            // a person's change through the listener services, which set its settings holding this pass's hook
+            Cause::Request { selectors, .. } => {
+                for set in selectors {
+                    release(set);
                 }
             }
             Cause::ConfReload => web.held().release_changed(&http_settings(ctx)),
-            Cause::Boot | Cause::Shutdown | Cause::Signal(_) | Cause::Request { .. } => {}
+            Cause::Boot | Cause::Shutdown | Cause::Signal(_) => {}
         }
     }
 }

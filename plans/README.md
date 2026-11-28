@@ -76,7 +76,12 @@ results. The [shared review protocol](ui-review-shared-gallery.md#common-review-
 - [Dogfood.md](Dogfood.md): the Moqui project's own infrastructure on mr-moqui at moqui.org, in place of GitHub (repositories, issues, pull requests), Discourse, Google Groups and the `moqui-site` web site: Smithy, a git hosting app in mr-pass with groups, public and private repositories, forks, issues as Mantle work items and merge requests, over the framework's git hosting; the forum inside it and the mailing lists as categories; CI with pipelines in the repository and runners started through a container API; the GitHub push mirror and importer; the contributor agreement as a check; and the phases to cutover. General, so a dev shop runs the same as its group server. Research and plan; nothing built.
 
 **Spreadsheets**
-- [IronCalc-DB.md](IronCalc-DB.md): database-driven spreadsheets: the IronCalc engine in the server with the browser a thin client, Tabulator as the grid, an overlay document of formulas, formatting and charts on entity data, XLSX with charts. Shown as a Calc mode of Tools › Data › Grid and as CalcGrid in the Dashboards app, where access profiles (an artifact group, its grants and their entity filter sets) say which entities and rows a user reads: `admin` as the Tools app, and `sales` for the user's organizations. Active since 2026-11-13, Phases 0 to 3 (through editing) for v0.1.0; the spike was run 2026-11-13 (it works; full recalculation sets the limit) and Phases 1 to 3 built (the engine is the xlsx writer; `calculate#Spreadsheet`; Calc mode in the Tools grid and CalcGrid in Dashboards under access profiles; a range as a dashboard panel), with Phase 3b the same day: editing together (a room per scope, an edit log every room follows, each person's own undo, presence), a whole document as a scheduled Excel export, and a sheet in the terminal.
+- [IronCalc-DB2.md](IronCalc-DB2.md): finishing CalcGrid for the first release (plan, Nov 27, 2026, not built): the
+  wrap-up batches CG1 to CG6, from BOSS dataset grants and scheduling from the document to the fill handle, merged cells,
+  the terminal, chart panels, undo after a refresh and the guide's screenshots. It follows
+  [IronCalc-DB](archive/IronCalc-DB.md) (database-driven spreadsheets on the IronCalc engine in the server: Calc mode of
+  Tools › Data › Grid and CalcGrid in Dashboards under access profiles, Phases 0 to 4 built Nov 13, 2026, the fork
+  merged with upstream and the plan archived Nov 27; guide [Calc mode](../docs/tools/Database.md#calc-mode)).
 
 **Maps**
 

@@ -16,10 +16,10 @@
 //! components and their data; a wizard's Next; the editor of a list's row; the editor of a click-to-edit value. And
 //! what a screen asks for once it has come.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
-use super::{shell, Editor, Overlay, Session, Timer};
+use super::{shell, Editor, Joined, Overlay, Session, Timer};
 use crate::components::{Act, ComponentState};
 use crate::edit::{self, Limits};
 use crate::forms::FocusKind;
@@ -175,6 +175,7 @@ impl Shown for Session {
         let component = crate::components::find(name)?;
         let mut state = self.components.get(id).cloned().unwrap_or_default();
         state.focused = self.focus_id() == id;
+        state.pushed = self.frames;
         Some(component.lines(props, &state, width, wide))
     }
 }
@@ -550,9 +551,10 @@ impl Session {
         let Some(component) = crate::components::find(&info.name) else {
             return;
         };
-        let rows = self.terminal_rows;
+        let (rows, pushed) = (self.terminal_rows, self.frames);
         let state = self.components.entry(id.to_string()).or_default();
         state.rows = rows;
+        state.pushed = pushed;
         let Some((url, parameters)) = component.source(&info.props, state) else {
             return;
         };
@@ -670,9 +672,10 @@ impl Session {
             )
             .and_then(|key| serde_json::from_str::<serde_json::Value>(self.buffer(&key)).ok());
         let wide = self.columns >= 180;
-        let rows = self.terminal_rows;
+        let (rows, pushed) = (self.terminal_rows, self.frames);
         let state = self.components.entry(id.clone()).or_default();
         state.rows = rows;
+        state.pushed = pushed;
         if let Some(bound) = bound {
             if info.name == "report-definition-editor" {
                 match serde_json::from_str::<serde_json::Value>(&bound) {
@@ -704,9 +707,10 @@ impl Session {
         let Some(component) = crate::components::find(&info.name) else {
             return;
         };
-        let rows = self.terminal_rows;
+        let (rows, pushed) = (self.terminal_rows, self.frames);
         let state = self.components.entry(id.to_string()).or_default();
         state.rows = rows;
+        state.pushed = pushed;
         let acts = component.tick(&info.props, state);
         self.component_actions(id, acts);
     }
@@ -726,9 +730,10 @@ impl Session {
         let Some(component) = crate::components::find(&info.name) else {
             return false;
         };
-        let rows = self.terminal_rows;
+        let (rows, pushed) = (self.terminal_rows, self.frames);
         let state = self.components.entry(id.clone()).or_default();
         state.rows = rows;
+        state.pushed = pushed;
         let Some(acts) = component.paste(&info.props, state, text) else {
             return false;
         };
@@ -795,9 +800,98 @@ impl Session {
                 Act::Follow(url) => self.follow_url(&Self::component_url(&base, &url)),
                 Act::Message(text) => self.set_message(text, false),
                 Act::Copy(text) => self.copy_text(text),
+                Act::Frame(frame) => {
+                    if self.frames {
+                        self.frames_out.push(frame);
+                    }
+                }
             }
         }
         self.schedule_component(id);
+    }
+
+    // ---- the push channel's frames ----
+
+    /// Whether the loop sends the components' frames ([`crate::link::Pushes::takes_frames`]): then a component that
+    /// wants a topic joins it and is given its frames, and polls only as a fallback.
+    pub fn set_frames(&mut self, on: bool) {
+        self.frames = on;
+        for state in self.components.values_mut() {
+            state.pushed = on;
+        }
+        if !on {
+            self.joined.clear();
+            self.frames_out.clear();
+        }
+    }
+
+    /// The frames to send now, in order: the joins of the topics the components on screen want and the session has
+    /// not joined (or joined with another frame, as a sheet opened again with a new client: its old leave first), the
+    /// frames the components asked to send, then the leaves of the topics no component wants any more. Empty while
+    /// the loop sends no frames.
+    pub fn take_frames(&mut self) -> Vec<serde_json::Value> {
+        if !self.frames {
+            return Vec::new();
+        }
+        let mut wanted: BTreeMap<String, Joined> = BTreeMap::new();
+        for (id, info) in &self.index.components {
+            let (Some(component), Some(state)) = (crate::components::find(&info.name), self.components.get(id)) else {
+                continue;
+            };
+            for topic in component.topics(&info.props, state) {
+                let joined = Joined {
+                    id: id.clone(),
+                    join: topic.join,
+                    leave: topic.leave,
+                };
+                wanted.insert(topic.name, joined);
+            }
+        }
+        let mut out = Vec::new();
+        for (name, want) in &wanted {
+            let had = self.joined.get(name);
+            if had.is_some_and(|had| had.id == want.id && had.join == want.join) {
+                continue;
+            }
+            if let Some(had) = had {
+                out.push(had.leave.clone());
+            }
+            out.push(want.join.clone());
+            self.joined.insert(name.clone(), want.clone());
+        }
+        out.append(&mut self.frames_out);
+        let gone: Vec<String> = self
+            .joined
+            .keys()
+            .filter(|name| !wanted.contains_key(*name))
+            .cloned()
+            .collect();
+        for name in gone {
+            if let Some(had) = self.joined.remove(&name) {
+                out.push(had.leave);
+            }
+        }
+        out
+    }
+
+    /// A frame pushed on a topic: given to the component that joined it, whose answer is acted on. A frame of a topic
+    /// no component holds now (one left a moment ago) is dropped.
+    pub(super) fn component_push(&mut self, push: &crate::link::Push) {
+        let Some(id) = self.joined.get(&push.topic).map(|joined| joined.id.clone()) else {
+            return;
+        };
+        let Some(info) = self.index.components.get(&id).cloned() else {
+            return;
+        };
+        let Some(component) = crate::components::find(&info.name) else {
+            return;
+        };
+        let (rows, pushed) = (self.terminal_rows, self.frames);
+        let state = self.components.entry(id.clone()).or_default();
+        state.rows = rows;
+        state.pushed = pushed;
+        let acts = component.push(&info.props, state, &push.message);
+        self.component_actions(&id, acts);
     }
 
     /// The form a component's `form` prop names: what Ctrl+S submits while a form-bound component (a `code` editor) has

@@ -73,6 +73,8 @@ pub fn run_local<L: ScreenLink + 'static>(link: L, options: LocalOptions) -> rev
         let _ = push_tx.send(push);
     }));
     view.session_mut().set_pushed(subscription.is_some());
+    view.session_mut()
+        .set_frames(subscription.as_deref().is_some_and(|pushes| pushes.takes_frames()));
     // The title line's clock moves once a minute; nothing else redraws an idle screen.
     let mut minute = jiff::Zoned::now().minute();
     let result = App::builder()
@@ -150,6 +152,7 @@ pub fn run_local<L: ScreenLink + 'static>(link: L, options: LocalOptions) -> rev
                 view.session_mut().saved(saved);
             }
             send(view, &link, &done_tx);
+            super::session_loop::send_frames(view, subscription.as_deref());
             changed
         });
     let _ = out.write_all(MOUSE_OFF);

@@ -197,15 +197,63 @@ impl Theme {
 
     /// The color of a role, or None in monochrome.
     pub fn color(&self, role: Role) -> Option<Rgb> {
-        if self.depth == Depth::Mono {
-            return None;
+        self.fit(self.colors.get(&role).copied()?)
+    }
+
+    /// A color as this terminal shows it: the nearest of its 16 or 256, as [`sgr_color`] writes it, or None in
+    /// monochrome.
+    pub fn fit(&self, rgb: Rgb) -> Option<Rgb> {
+        match self.depth {
+            Depth::Mono => None,
+            Depth::Ansi16 => Some(nearest_16(rgb)),
+            Depth::Ansi256 => Some(nearest_256(rgb)),
+            Depth::TrueColor => Some(rgb),
         }
-        let rgb = self.colors.get(&role).copied()?;
-        Some(match self.depth {
-            Depth::Ansi16 => nearest_16(rgb),
-            Depth::Ansi256 => nearest_256(rgb),
-            Depth::TrueColor | Depth::Mono => rgb,
-        })
+    }
+
+    /// The background the theme's colors are drawn on, as near as the client knows it: the terminal says only whether
+    /// its own is dark (`COLORFGBG`, OSC 11), so a near black or white.
+    pub fn background(&self) -> Rgb {
+        if self.dark {
+            BACKGROUND_DARK
+        } else {
+            BACKGROUND_LIGHT
+        }
+    }
+
+    /// A document's own colors (a sheet's font color and fill, plans/IronCalc-DB2.md CG3.1) as this terminal draws
+    /// them in place of `role`'s: the text color, and the fill (None for none), at the terminal's depth; (None, None)
+    /// in monochrome. The rule, so a sheet made on white paper reads on a dark terminal and the other way:
+    ///
+    /// - A fill is drawn, unless it is within [`SAME_AS_PAPER`] of the theme's background, where it would show nothing.
+    /// - The text color (the document's, else the role's) is drawn when it has [`READABLE`] contrast with what is behind
+    ///   it (the fill, else the theme's background). Else the role's color is, when it has; else black or white,
+    ///   whichever has more contrast with the fill.
+    ///
+    /// The contrast is WCAG 2's ratio of relative luminance, taken on the colors as the terminal shows them (after
+    /// [`Self::fit`]). Monochrome draws none.
+    pub fn readable(&self, color: Option<Rgb>, fill: Option<Rgb>, role: Option<Role>) -> (Option<Rgb>, Option<Rgb>) {
+        if self.mono() {
+            return (None, None);
+        }
+        let paper = self.background();
+        let fill = fill
+            .and_then(|fill| self.fit(fill))
+            .filter(|fill| contrast(*fill, paper) >= SAME_AS_PAPER);
+        let behind = fill.unwrap_or(paper);
+        let theirs = role.and_then(|role| self.color(role));
+        let reads = |text: Option<Rgb>| text.filter(|text| contrast(*text, behind) >= READABLE);
+        let text = reads(color.and_then(|color| self.fit(color)))
+            .or_else(|| reads(theirs))
+            .unwrap_or_else(|| {
+                let (black, white) = (Rgb(0, 0, 0), Rgb(255, 255, 255));
+                if contrast(black, behind) >= contrast(white, behind) {
+                    black
+                } else {
+                    white
+                }
+            });
+        (Some(text), fill)
     }
 
     pub fn mono(&self) -> bool {
@@ -292,6 +340,34 @@ pub enum Glyph {
     Todo,
     /// A tree node with no children.
     Leaf,
+}
+
+/// What [`Theme::background`] takes a dark and a light terminal's background to be.
+const BACKGROUND_DARK: Rgb = Rgb(24, 24, 24);
+const BACKGROUND_LIGHT: Rgb = Rgb(255, 255, 255);
+/// The contrast a document's text color needs to be drawn ([`Theme::readable`]): WCAG 2's least for large text and
+/// the parts of an interface, which keeps most of a sheet's colors; below it a color is hard to read.
+const READABLE: f64 = 3.0;
+/// The contrast below which a fill is taken for the paper itself and not drawn.
+const SAME_AS_PAPER: f64 = 1.1;
+
+/// WCAG 2's relative luminance of a color.
+fn luminance(rgb: Rgb) -> f64 {
+    let linear = |value: u8| {
+        let value = f64::from(value) / 255.0;
+        if value <= 0.039_28 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(rgb.0) + 0.7152 * linear(rgb.1) + 0.0722 * linear(rgb.2)
+}
+
+/// WCAG 2's contrast ratio of two colors, 1 (the same) to 21 (black and white).
+pub fn contrast(a: Rgb, b: Rgb) -> f64 {
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
 
 /// `COLORFGBG` is `fg;bg` with ANSI numbers; a background of 7 or 15 is light.
@@ -418,6 +494,54 @@ mod tests {
         assert_eq!(sgr_color(Depth::Ansi16, Rgb(240, 60, 60), false).as_deref(), Some("91"));
         assert_eq!(sgr_color(Depth::Ansi16, Rgb(0, 0, 0), true).as_deref(), Some("40"));
         assert_eq!(sgr_color(Depth::Mono, primary, false), None);
+    }
+
+    /// CG3.1: a document's colors through the contrast rule. A dark text on a dark terminal is drawn in the role's
+    /// color, a light one on a light terminal too; a text on a fill it does not read on in black or white, whichever
+    /// reads; a fill as near as the paper is not drawn; monochrome draws none, and 16 colors are judged as shown.
+    #[test]
+    fn a_documents_colors_are_drawn_where_they_read() {
+        let dark = Theme::built_in(true);
+        let light = Theme::built_in(false);
+        let text = |theme: &Theme| theme.color(Role::Text);
+        let navy = Rgb(0, 0, 128);
+        let red = Rgb(230, 0, 0);
+        let yellow = Rgb(255, 255, 0);
+        // a red text reads on both, navy on light only, white text on light not at all
+        assert_eq!(dark.readable(Some(red), None, Some(Role::Text)), (Some(red), None));
+        assert_eq!(dark.readable(Some(navy), None, Some(Role::Text)), (text(&dark), None));
+        assert_eq!(light.readable(Some(navy), None, Some(Role::Text)), (Some(navy), None));
+        assert_eq!(
+            light.readable(Some(Rgb(255, 255, 255)), None, Some(Role::Text)),
+            (text(&light), None)
+        );
+        // on a yellow fill: the dark theme's light text does not read, nor does a white font; black does
+        assert_eq!(
+            dark.readable(None, Some(yellow), Some(Role::Text)),
+            (Some(Rgb(0, 0, 0)), Some(yellow))
+        );
+        assert_eq!(
+            dark.readable(Some(Rgb(255, 255, 255)), Some(yellow), Some(Role::Text)),
+            (Some(Rgb(0, 0, 0)), Some(yellow))
+        );
+        // navy on yellow reads as it is, on a dark terminal too
+        assert_eq!(
+            dark.readable(Some(navy), Some(yellow), Some(Role::Text)),
+            (Some(navy), Some(yellow))
+        );
+        // a white fill on a light terminal is the paper: not drawn
+        assert_eq!(
+            light.readable(None, Some(Rgb(255, 255, 255)), Some(Role::Text)),
+            (text(&light), None)
+        );
+        let mut mono = Theme::built_in(true);
+        mono.depth = Depth::Mono;
+        assert_eq!(mono.readable(Some(red), Some(yellow), Some(Role::Text)), (None, None));
+        let mut ansi = Theme::built_in(true);
+        ansi.depth = Depth::Ansi16;
+        assert_eq!(ansi.readable(Some(red), None, Some(Role::Text)).0, Some(Rgb(205, 0, 0)));
+        assert!((contrast(Rgb(0, 0, 0), Rgb(255, 255, 255)) - 21.0).abs() < 1e-9);
+        assert!((contrast(red, red) - 1.0).abs() < 1e-9);
     }
 
     #[test]

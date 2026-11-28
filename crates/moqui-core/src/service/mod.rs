@@ -62,6 +62,7 @@ pub mod info;
 mod inline_tests;
 mod job_lease;
 mod jobs;
+mod listeners;
 pub mod mail_capture;
 mod outbox;
 pub mod overlay;

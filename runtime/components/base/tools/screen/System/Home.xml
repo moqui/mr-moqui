@@ -15,14 +15,19 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The System home (plans/archive/Tools-Fancy.md §3): is this instance healthy, what is it, what has it been doing, what is
     switched on, what needs an administrator, and where to go from here. Every block is read in the actions as data:
     the runtime report and the status map with its resource readings (in-process), the attention service, and the
-    navigation catalog of template/HomeParts.xml. The period of the Activity strip is the `period` URL parameter;
-    nothing is written, so the page works for a view-only administrator. A reading the platform does not report is
-    "—" with a tooltip, never zero. -->
+    navigation catalog of template/HomeParts.xml. The period of the Activity strip is the `period` URL parameter. The
+    one thing the page writes is a listener switched in its Services and ports dialog (plans/Runtime-Config.md §3.7:
+    Conf/ServicesPorts.xml included, its setListener taken in), which is rendered only for a holder of LISTENER_CONTROL;
+    the transition is conditioned on that permission too and set#Listener checks it again with a recent sign-in. For a
+    view-only administrator nothing new is rendered or callable, so the page works for one. A reading the platform does
+    not report is "—" with a tooltip, never zero. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-index="1" menu-image="sym_o_home" menu-image-type="icon" default-menu-title="Home">
 
     <parameter name="period"/>
     <parameter name="refresh"/>
+
+    <transition-include name="setListener" location="component://tools/screen/System/Conf/ServicesPorts.xml"/>
 
     <actions>
         <!-- users today: those with a visit since midnight in the user's time zone, counted to a thousand -->
@@ -289,17 +294,20 @@ along with this software (see the LICENSE.md file). If not, see
             const mounted = new Set(read('system menu', () => Array.from(sri.getMenuItems('/' + fullPath.slice(0, -1).join('/')) || [])
                 .map(item => String(item.name)), []))
             const SCREENS = [[/^search/i, '//apps/tools/Data/Documents'], [/^telemetry/i, '../Monitor/Sources'], [/^(llm|mcp|a2a)/i, '../Llm'],
-                [/^edge/i, '../EdgeNode'], [/^schedul/i, '../ServiceJob'], [/^(pdf|ipp|print)/i, '../Print'],
+                [/^edge/i, '../EdgeNode'], [/^schedul/i, '../Operations/Jobs'], [/^(pdf|ipp|print)/i, '../Print'],
                 [/^(call|sip|turn)/i, mounted.has('Voice') ? '../Voice' : '../Conf'], [/^(xmpp|chat)/i, mounted.has('ChatBridges') ? '../ChatBridges' : '../Conf'],
                 [/^sso/i, '../Security']]
-            const entryRows = entries => entries.map((entry, index) => {
+            // a listener goes to Conf › Services and ports, where it is switched; an integration to the screen that configures it
+            const entryRows = (entries, listener) => entries.map((entry, index) => {
                 const state = STATES[entry.state] || {text: String(entry.state || DASH), color: 'grey-6', order: 4}
                 const screen = SCREENS.find(candidate => candidate[0].test(String(entry.name)))
                 return {name: String(entry.name), detail: String(entry.detail || ''), stateText: state.text, stateColor: state.color,
-                    order: state.order * 1000 + index, screenLink: screen ? screen[1] : '../Conf'}
+                    order: state.order * 1000 + index, screenLink: listener ? '../Conf/ServicesPorts' : screen ? screen[1] : '../Conf'}
             }).sort((first, second) => first.order - second.order)
-            listenerRows = entryRows(listeners)
-            integrationRows = entryRows(integrations)
+            listenerRows = entryRows(listeners, true)
+            integrationRows = entryRows(integrations, false)
+            // the Services and ports dialog, for a holder of LISTENER_CONTROL only
+            listenerControlAllowed = read('listener control', () => ec.user.hasPermission('LISTENER_CONTROL'), false)
             toolsText = Array.from(report.tools || []).map(tool => String(tool && tool.name ? tool.name : tool)).join(', ')
             notBuiltText = notBuilt.join(', ')
             routesText = Array.from(report.routes || []).join('\n')
@@ -384,8 +392,8 @@ along with this software (see the LICENSE.md file). If not, see
                 </widgets></section-iterate>
                 <label text="Updated ${nowText}" type="span" style="m-muted"/>
                 <link url="." text="Refresh" icon="sym_o_refresh" parameter-map="{period: period, refresh: refresh}"/>
-                <!-- auto refresh is in the address, as the period is, so the page still writes nothing: the browser reads the
-                    page again each minute while it is in view (m-page-refresh); the terminal has F5 -->
+                <!-- auto refresh is in the address, as the period is, so it writes nothing: the browser reads the page again
+                    each minute while it is in view (m-page-refresh); the terminal has F5 -->
                 <link url="." text="Auto refresh" link-type="anchor" parameter-map="{period: period, refresh: '60'}" condition="!refreshSeconds"
                         tooltip="Read this page again each minute"/>
                 <link url="." text="Auto refresh is on" link-type="anchor" parameter-map="{period: period}" condition="refreshSeconds"
@@ -517,6 +525,11 @@ along with this software (see the LICENSE.md file). If not, see
             </row-col>
             <row-col md="6">
                 <container-box id="SystemListeners"><box-header title="Listeners and integrations"/><box-toolbar>
+                    <!-- the listeners switched on and off: Conf › Services and ports, one definition, for a holder of LISTENER_CONTROL -->
+                    <container-dialog id="ServicesPorts" button-text="Services and ports" icon="sym_o_settings_ethernet" width="1100"
+                            condition="listenerControlAllowed">
+                        <include-screen location="component://tools/screen/System/Conf/ServicesPorts.xml" share-scope="true"/>
+                    </container-dialog>
                     <container-dialog id="SystemRoutes" button-text="Routes" condition="routesText">
                         <label text="${routesText}" type="pre"/>
                     </container-dialog>

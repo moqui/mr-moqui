@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Editing together (plans/IronCalc-DB.md): a saved document is open in a room for each scope of its readers, every
-//! room follows the document's edit log ([`crate::log`]), and the people in them see where the others are.
+//! Editing together (plans/archive/IronCalc-DB.md): a saved document is open in a room for each scope of its readers,
+//! every room follows the document's edit log ([`crate::log`]), and the people in them see where the others are.
 //!
 //! - [`catch_up`] brings a room up to the log's last edit: before a room is read, under the log's lock before an edit,
 //!   and when the host is told of an edit on any server ([`catch_up_document`], `notws/calc.rs` in moqui-host).

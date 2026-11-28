@@ -12,10 +12,10 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.resource.SpreadsheetServices.calculate#Spreadsheet`: calculation over a workbook (plans/IronCalc-DB.md,
-//! Phase 1). An xlsx with formulas is the template: the service sets input cells, evaluates the workbook on the
-//! IronCalc engine ([`crate::workbook`]) and returns the cells asked for, and the calculated workbook as bytes or
-//! written to a location.
+//! `org.moqui.resource.SpreadsheetServices.calculate#Spreadsheet`: calculation over a workbook
+//! (plans/archive/IronCalc-DB.md, Phase 1). An xlsx with formulas is the template: the service sets input cells,
+//! evaluates the workbook on the IronCalc engine ([`crate::workbook`]) and returns the cells asked for, and the
+//! calculated workbook as bytes or written to a location.
 //!
 //! A cell is named as Excel names it: `B2`, or `Inputs!B2` on a sheet other than the first, and a range `A1:C3` to
 //! read. A text value is set as a person typing it would (so `=B2*2` is a formula and `12` a number); a number and a

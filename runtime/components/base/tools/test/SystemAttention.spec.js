@@ -5,7 +5,12 @@
 // call the service but holds no provider's permission. The second runs the service's script over readings, finds and
 // checks of its own, since a spec cannot fill a disk: a resource at warning is listed with its number, the resources
 // come first, the checks that are not ready follow by their state with a System place or none, and one item's failure
-// leaves the others.
+// leaves the others. The listener items (plans/Runtime-Config.md §3.7) come from the same run, over a startup report
+// and the answer of ListenerServices.get#Listeners of its own, since no listeners run under moqui test: one that
+// failed after a change is apart from the start's failures, plain HTTP in public with no proxy is a warning, and no
+// way in over the network is critical when a change while running left it so, not for a server that started that way
+// (the desktop node); where each way in reaches is get#Listeners' own (reachable, plainPublic: the listener guards'
+// rules), and each item links to Conf › Services and ports.
 // Run: ./moq test tools --spec SystemAttention
 const SERVICE = "moqui.tools.SystemHomeServices.get#SystemAttention"
 const USER = "SYSTEM_ATTENTION_SPEC"
@@ -144,7 +149,17 @@ feature("a resource at warning is listed with its number, resources first, then 
             {checkKey: "spec.owner", state: "unavailable", subject: "Spec organization", message: "Accounting setup could not be checked",
                 fixRoute: "accountingSetup"}
         ]}
-        const answer = (name) => name === "org.moqui.admin.ReadinessServices.get#Readiness" ? readiness : {}
+        // a listener's row as get#Listeners answers it: on at an address, or off
+        // a way in as get#Listeners answers it: its state and address, whether clients reach it (the guard's rule), and
+        // what changed it last
+        const listener = (name, address, state, more) =>
+            Object.assign({name, state: state || (address ? "on" : "off"), address, wayIn: true, reachable: false, cause: "boot"}, more || {})
+        // HTTP on in public with no proxy; HTTPS failed after a person moved it; SSH failed at the start
+        const startedListeners = [{name: "HTTP", state: "on", detail: "tcp 0.0.0.0:8080", cause: "boot"},
+            {name: "SSH", state: "failed", detail: "the port is in use", cause: "boot"},
+            {name: "HTTPS", state: "failed", detail: "tcp 0.0.0.0:9443: address in use", cause: "request by john.doe: move it"}]
+        const listening = {running: true, listenerList: [listener("HTTP", "0.0.0.0:8080", null, {reachable: true, plainPublic: true}),
+            listener("HTTPS", null, "failed", {cause: "request by john.doe: move it"}), listener("SSH", null, "failed")]}
         const logged = []
         const finder = (entityName) => {
             // one item's source fails
@@ -152,33 +167,54 @@ feature("a resource at warning is listed with its number, resources first, then 
             const find = {condition: () => find, limit: () => find, disableAuthz: () => find, list: () => rows[entityName] || []}
             return find
         }
-        const state = {
-            ec: {
-                factory: {
-                    getStatusMap: () => status,
-                    getStartupReport: () => ({listeners: [{name: "HTTP", state: "on", detail: "tcp 0.0.0.0:8080"},
-                        {name: "SSH", state: "failed", detail: "the port is in use"}], integrations: [{name: "PDF", state: "off", detail: "no Chromium found"}]}),
-                    workerPool: {activeCount: 3, maximumPoolSize: 22, queue: {size: () => 0, remainingCapacity: () => 100}}
+        // the service's script over a startup report's listeners and get#Listeners' answer
+        const run = (reported, listeners) => {
+            const answer = (name) => name === "org.moqui.admin.ReadinessServices.get#Readiness" ? readiness
+                : name === "org.moqui.admin.ListenerServices.get#Listeners" ? listeners : {}
+            const state = {
+                ec: {
+                    factory: {
+                        getStatusMap: () => status,
+                        getStartupReport: () => ({listeners: reported, integrations: [{name: "PDF", state: "off", detail: "no Chromium found"}]}),
+                        workerPool: {activeCount: 3, maximumPoolSize: 22, queue: {size: () => 0, remainingCapacity: () => 100}}
+                    },
+                    entity: {find: finder},
+                    artifactExecution: {isPermitted: () => true},
+                    user: {hasPermission: () => true, nowTimestamp: new Date()},
+                    service: {sync: () => ({name: (name) => ({parameters: () => ({call: () => answer(name)}), call: () => answer(name)})})},
+                    resource: ec.resource,
+                    message: {hasError: () => false},
+                    logger: {error: (message) => logged.push(String(message))},
+                    l10n: ec.l10n
                 },
-                entity: {find: finder},
-                artifactExecution: {isPermitted: () => true},
-                user: {hasPermission: () => true, nowTimestamp: new Date()},
-                service: {sync: () => ({name: (name) => ({parameters: () => ({call: () => answer(name)}), call: () => answer(name)})})},
-                resource: ec.resource,
-                message: {hasError: () => false},
-                logger: {error: (message) => logged.push(String(message))},
-                l10n: ec.l10n
-            },
-            items: null, checkedDate: null
+                items: null, checkedDate: null
+            }
+            runInContext(script, state)
+            return state
         }
-        runInContext(script, state)
+        const state = run(startedListeners, listening)
         const items = Array.from(state.items || [])
-        return {items, keys: items.map((item) => item.key).join(","), logged: logged.join(" | "), checkedDate: state.checkedDate,
-            acmeUntil: ec.l10n.format(acmeExpiry, "yyyy-MM-dd")}
+        const firstLogged = logged.join(" | ")
+        // the listener items alone, for the ways in: HTTPS turned off with only SSH left, on loopback; HTTPS on loopback
+        // behind a proxy on this machine; a server that started with no way in on purpose (the desktop node: HTTP on
+        // loopback, HTTPS and SSH off); and no listeners in this process
+        const listenerKeys = (result) => Array.from(result.items || []).filter((item) => ["startup", "listenerFailed", "publicHttp", "noWayIn"].includes(item.key))
+        const up = [{name: "HTTPS", state: "off", detail: "", cause: "request by john.doe: incident"}]
+        const incident = {cause: "request by john.doe: incident"}
+        const sshOnly = listenerKeys(run(up, {running: true, listenerList: [listener("HTTP", null), listener("HTTPS", null, null, incident),
+            listener("SSH", "127.0.0.1:2222")]}))
+        const proxied = listenerKeys(run(up, {running: true, listenerList: [listener("HTTP", null),
+            listener("HTTPS", "127.0.0.1:8443", null, Object.assign({reachable: true}, incident)), listener("SSH", null)]}))
+        const desktop = listenerKeys(run(up, {running: true, listenerList: [listener("HTTP", "127.0.0.1:8080"), listener("HTTPS", null),
+            listener("SSH", null)]}))
+        const notRunning = listenerKeys(run(up, {running: false, listenerList: [listener("HTTP", null), listener("HTTPS", null, null, incident),
+            listener("SSH", null)]}))
+        return {items, keys: items.map((item) => item.key).join(","), logged: firstLogged, checkedDate: state.checkedDate,
+            acmeUntil: ec.l10n.format(acmeExpiry, "yyyy-MM-dd"), sshOnly, proxied, desktop, notRunning}
     },
-    then({items, keys, logged, checkedDate, acmeUntil}) {
+    then({items, keys, logged, checkedDate, acmeUntil, sshOnly, proxied, desktop, notRunning}) {
         // the resources first, the critical one before the warning; then the others, the critical one first
-        keys == "disk,memory,certificates,acmeRenewal,startup,spec.failed,spec.owner,spec.warning"
+        keys == "disk,memory,certificates,acmeRenewal,startup,listenerFailed,spec.failed,publicHttp,spec.owner,spec.warning"
         items[0].severity == "critical"
         items[0].text == "Disk /var is 91 % full, 4.0 GiB free (runtime, database)"
         items[0].value == 91.2
@@ -197,20 +233,41 @@ feature("a resource at warning is listed with its number, resources first, then 
         items[3].value == 10
         items[3].text == "Renewing the certificate of www.example.com by ACME failed; it expires " + acmeUntil
         items[3].link == "/apps/system/Certificates"
+        // a listener that failed at the start, linked to where listeners are switched; one that failed after a change
+        // apart from it, naming the change
         items[4].severity == "critical"
         items[4].text == "Listener SSH failed to start: the port is in use"
+        items[4].link == "/apps/system/Conf/ServicesPorts"
+        items[5].severity == "critical"
+        items[5].text == "Listener HTTPS failed after a change (request by john.doe: move it): tcp 0.0.0.0:9443: address in use"
+        items[5].link == "/apps/system/Conf/ServicesPorts"
         // the checks that are not ready: the failed one critical, the others warnings, the unavailable before the
         // warning; a fix place that is a System screen is linked, an app's own place is not
-        items[5].severity == "critical"
-        items[5].text == "3 job runs failed in the last day: Spec"
-        items[5].link == "/apps/system/Operations/JobRuns"
-        items[5].parameters.state == "failed"
-        items[6].severity == "warning"
-        items[6].text == "Accounting setup could not be checked (Spec organization)"
-        items[6].link == null
-        items[7].text == "Backups are not mirrored off the server"
-        items[7].link == "/apps/system/Integrations/ConnectionDetail"
-        items[7].parameters.adapterKey == "remote"
+        items[6].severity == "critical"
+        items[6].text == "3 job runs failed in the last day: Spec"
+        items[6].link == "/apps/system/Operations/JobRuns"
+        items[6].parameters.state == "failed"
+        // plain HTTP on every address with no proxy believed in front
+        items[7].severity == "warning"
+        items[7].text.startsWith("HTTP serves plain HTTP at 0.0.0.0:8080 with no proxy believed in front")
+        items[7].link == "/apps/system/Conf/ServicesPorts"
+        items[8].severity == "warning"
+        items[8].text == "Accounting setup could not be checked (Spec organization)"
+        items[8].link == null
+        items[9].text == "Backups are not mirrored off the server"
+        items[9].link == "/apps/system/Integrations/ConnectionDetail"
+        items[9].parameters.adapterKey == "remote"
+        // no way in over the network after HTTPS was turned off: SSH on loopback is none
+        sshOnly.length == 1
+        sshOnly[0].key == "noWayIn"
+        sshOnly[0].severity == "critical"
+        sshOnly[0].text.includes("moqui operator listener HTTPS on")
+        sshOnly[0].link == "/apps/system/Conf/ServicesPorts"
+        // HTTPS on loopback that the guard counts (behind a proxy on this machine) is a way in; a server that started with
+        // none on purpose is not listed; with no listeners in this process there is nothing to say
+        proxied.length == 0
+        desktop.length == 0
+        notRunning.length == 0
         // the item that failed is named in the log and the rest came back
         logged == "System attention item systemMessages failed: Error: the spec's failure"
         checkedDate != null

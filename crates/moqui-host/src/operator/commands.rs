@@ -13,12 +13,17 @@
  */
 
 //! The operator socket's commands (plans/Sealed-Secrets.md §3.3): `status` for any peer; `init`, `unseal`, `seal`,
-//! `rekey`, `rotate-root`, `export-seal` and `secret-put`, `secret-list` and `secret-rm` (S4) for root and the operator
-//! group ([`super::peer`]). A request is a JSON object with `command` and that command's fields; the answer is
+//! `rekey`, `rotate-root`, `export-seal` and `secret-put`, `secret-list` and `secret-rm` (S4), and `listeners` and
+//! `listener` (plans/Runtime-Config.md §3.6, the ways back with no network listener) for root and the operator group
+//! ([`super::peer`]). A request is a JSON object with `command` and that command's fields; the answer is
 //! `{"ok": true, ...}` or `{"ok": false, "error"}`. Passphrases, shares and secret values are moved into zeroizing
 //! strings as soon as they are parsed, and never logged or answered.
 
-use moqui_core::context::Error;
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use moqui_core::context::{Error, ExecutionContextFactory};
+use moqui_core::listeners::{Actor, Change};
 use moqui_core::seal::{secrets, Init, Keeper, MethodKind, Rekey, RotateRoot, UnsealInput};
 use serde_json::{json, Value};
 use zeroize::Zeroizing;
@@ -40,9 +45,20 @@ struct Request {
     shares: Vec<Zeroizing<String>>,
     /// A recovery bundle to restore (`init --from`).
     bundle: Option<String>,
-    /// A secret's name and value (`secret put`, `secret rm`).
+    /// A secret's name and value (`secret put`, `secret rm`); a listener's name (`listener`).
     name: Option<String>,
     value: Option<Zeroizing<String>>,
+    /// `listener`: on or off, a new port and host, SSH's access mode, the reason, whether to end its connections now,
+    /// the confirmations, and whether to keep the change in `runtime/.env` (true unless `persist` is false).
+    enabled: Option<bool>,
+    port: Option<String>,
+    host: Option<String>,
+    ssh_access: Option<String>,
+    reason: Option<String>,
+    now: bool,
+    confirm_public_http: bool,
+    confirm_dependents: bool,
+    persist: bool,
 }
 
 impl Request {
@@ -59,6 +75,10 @@ impl Request {
         let bundle = text("bundle");
         let name = text("name");
         let secret_value = text("value").map(Zeroizing::new);
+        let port = text("port");
+        let host = text("host");
+        let ssh_access = text("access");
+        let reason = text("reason");
         let shares = match value.get_mut("shares").map(Value::take) {
             Some(Value::Array(items)) => items
                 .into_iter()
@@ -81,12 +101,21 @@ impl Request {
             bundle,
             name,
             value: secret_value,
+            enabled: value["enabled"].as_bool(),
+            port,
+            host,
+            ssh_access,
+            reason,
+            now: value["now"] == Value::Bool(true),
+            confirm_public_http: value["confirm_public_http"] == Value::Bool(true),
+            confirm_dependents: value["confirm_dependents"] == Value::Bool(true),
+            persist: value["persist"] != Value::Bool(false),
         })
     }
 }
 
-/// Run one request line for a peer with `access`.
-pub(crate) fn run(keeper: &Keeper, access: Access, line: &str) -> Value {
+/// Run one request line for a peer with `access` whose user id is `uid` (on the audit log of a listener change).
+pub(crate) fn run(keeper: &Keeper, access: Access, uid: u32, line: &str) -> Value {
     let request = match Request::parse(line) {
         Ok(request) => request,
         Err(err) => return refusal(&err),
@@ -96,9 +125,12 @@ pub(crate) fn run(keeper: &Keeper, access: Access, line: &str) -> Value {
             "Operator socket: {} refused to a peer that may run only status (the server's own user)",
             request.command
         );
+        if request.command == "listener" {
+            audit_refused(&request, uid, "statusOnly");
+        }
         return refusal("refused: this user may run only status (root or the operator group may run the others)");
     }
-    match command(keeper, request) {
+    match command(keeper, uid, request) {
         Ok(answer) => answer,
         Err(err) => refusal(&err.to_string()),
     }
@@ -108,7 +140,19 @@ fn refusal(error: &str) -> Value {
     json!({"ok": false, "error": error})
 }
 
-fn command(keeper: &Keeper, request: Request) -> Result<Value, Error> {
+/// A refused `listener` request on the audit log, as a refused change is, with the socket's peer
+/// ([`moqui_core::listeners::audit_refused`]).
+fn audit_refused(request: &Request, uid: u32, code: &str) {
+    moqui_core::listeners::audit_refused(
+        request.name.as_deref().unwrap_or_default(),
+        &Actor::Operator { uid },
+        request.enabled,
+        code,
+        request.reason.as_deref().unwrap_or_default(),
+    );
+}
+
+fn command(keeper: &Keeper, uid: u32, request: Request) -> Result<Value, Error> {
     let status = |keeper: &Keeper| serde_json::to_value(keeper.status()).unwrap_or(Value::Null);
     match request.command.as_str() {
         "status" => Ok(json!({"ok": true, "status": status(keeper)})),
@@ -209,8 +253,90 @@ fn command(keeper: &Keeper, request: Request) -> Result<Value, Error> {
             }
             Ok(json!({"ok": true, "removed": removed}))
         }
+        "listeners" => {
+            let factory = serving(keeper)?;
+            Ok(json!({"ok": true, "listeners": moqui_core::listeners::rows(&factory, None)}))
+        }
+        "listener" => listener(keeper, uid, request),
         other => Err(Error::new(format!("unknown operator command {other:?}"))),
     }
+}
+
+/// `listener`: one listener turned on or off, moved or set, as the listener services do it
+/// ([`moqui_core::listeners::change`]), by the operator socket: its own access is the authorization, and as it needs
+/// no network listener it is itself a way back, so the lockout guard does not apply; the public HTTP and dependents
+/// confirmations do, and turning one off needs a reason. A refusal answers `reason_code` and, for a guard, `confirm`.
+fn listener(keeper: &Keeper, uid: u32, request: Request) -> Result<Value, Error> {
+    let refused = |code: &str, error: Error| {
+        audit_refused(&request, uid, code);
+        Err(error)
+    };
+    let factory = match serving(keeper) {
+        Ok(factory) => factory,
+        Err(err) => return refused("notServing", err),
+    };
+    let Some(name) = request.name.clone().filter(|name| !name.trim().is_empty()) else {
+        return refused("invalid", Error::new("name the listener: listener <name> on|off"));
+    };
+    let Some(enabled) = request.enabled else {
+        return refused(
+            "invalid",
+            Error::new("say whether to turn it on or off: listener <name> on|off"),
+        );
+    };
+    let settings: BTreeMap<String, String> = request
+        .ssh_access
+        .into_iter()
+        .map(|access| ("access".to_string(), access))
+        .collect();
+    let change = Change {
+        name,
+        enabled,
+        port: request.port,
+        host: request.host,
+        settings,
+        reason: request.reason.unwrap_or_default(),
+        persist: request.persist,
+        end_now: request.now,
+        confirm_lockout: false,
+        confirm_public_http: request.confirm_public_http,
+        confirm_dependents: request.confirm_dependents,
+    };
+    match moqui_core::listeners::change(&factory, &change, &Actor::Operator { uid }) {
+        Ok(answer) => Ok(json!({"ok": true, "answer": answer.to_json()})),
+        Err(refused) => {
+            let flag = refused.kind.confirmation().map(confirm_flag);
+            let error = match flag {
+                Some(flag) => format!("{}. From the operator socket: add {flag}", refused.message),
+                None => refused.message,
+            };
+            Ok(json!({"ok": false, "error": error, "reason_code": refused.kind.code(), "confirm": flag}))
+        }
+    }
+}
+
+/// The client's flag of a confirmation the services name by parameter.
+fn confirm_flag(parameter: &str) -> &'static str {
+    match parameter {
+        "confirmPublicHttp" => "--confirm-public-http",
+        "confirmDependents" => "--confirm-dependents",
+        _ => "",
+    }
+}
+
+/// The server this keeper's runtime runs, once it serves: its listeners are what `listeners` and `listener` act on.
+fn serving(keeper: &Keeper) -> Result<Arc<ExecutionContextFactory>, Error> {
+    keeper
+        .path()
+        .parent()
+        .and_then(|db| db.parent())
+        .and_then(|runtime| ExecutionContextFactory::running().filter(|factory| factory.runtime_dir() == runtime))
+        .ok_or_else(|| {
+            Error::new(
+                "this server does not serve yet (it is sealed or starting): its listeners open once it is unsealed, \
+                 as the conf and runtime/.env say",
+            )
+        })
 }
 
 /// The name a `secret` command gives.
@@ -222,13 +348,14 @@ fn secret_name(name: Option<String>) -> Result<String, Error> {
 
 /// The entity facade of the server this keeper's runtime runs, once its database is open: where a SecretValue is kept.
 fn database(keeper: &Keeper) -> Option<moqui_core::entity::EntityFacade> {
-    let runtime = keeper.path().parent()?.parent()?;
-    moqui_core::context::ExecutionContextFactory::running()
-        .filter(|factory| factory.runtime_dir() == runtime)
-        .and_then(|factory| factory.entity())
+    serving(keeper).ok().and_then(|factory| factory.entity())
 }
 
 /// The shares as the texts an answer carries.
 fn texts(shares: &[Zeroizing<String>]) -> Vec<&str> {
     shares.iter().map(|share| share.as_str()).collect()
 }
+
+#[cfg(test)]
+#[path = "commands_tests.rs"]
+mod tests;

@@ -159,21 +159,32 @@ feature("recovery editors load configuration, keep rejected blanks and separate 
 })
 
 // The System home (plans/archive/Tools-Fancy.md §3), its one render: plain XML widgets, so html alone. `moqui test` serves no
-// requests, so the runtime report has no listeners and the page says so; a server's page has a row for each.
+// requests, so the runtime report has no listeners and the page says so; a server's page has a row for each. john.doe holds
+// LISTENER_CONTROL (ADMIN_ADV), so the Listeners box has the Services and ports dialog (plans/Runtime-Config.md §3.7), which
+// includes Conf › Services and ports: this is that screen's one html render in the suite, so its checks are here, with a
+// change a guard refused kept in the session as its transition keeps one (SSH turned off, the lockout already confirmed,
+// refused for what depends on SSH). Its transition's rules are ServicesPorts.spec.js's.
+const SERVICES_LISTENERS = ["HTTP", "HTTPS", "gRPC", "SSH", "SMTP", "XMPP", "SIP", "Call media", "TURN"]
 feature("the System home shows the instance, its listeners or their absence, and what needs attention", {
     when() {
         const status = ec.factory.getStatusMap(true)
         const report = ec.factory.getStartupReport()
+        ec.web.sessionAttributes.listenerConfirm = JSON.stringify({name: "SSH", enabled: false, port: "", host: "", access: "",
+            reason: "spec: incident", persist: true, endNow: true, confirmLockout: true, confirmPublicHttp: false,
+            confirmDependents: false, confirm: "confirmDependents", reasonCode: "dependents",
+            message: "Turning SSH off ends what depends on it: the edge node's SSH tunnel. Confirm it to turn it off anyway"})
         const page = render("Home")
         return {
+            keptAfter: ec.web.sessionAttributes.listenerConfirm ?? null,
             page,
             version: report.version,
             listeners: Array.from(report.listeners || []),
             started: ec.l10n.format(status.Runtime.Start, "MMM d, HH:mm"),
-            processCpu: status.Resources.Cpu.ProcessPercent
+            processCpu: status.Resources.Cpu.ProcessPercent,
+            listenerControl: ec.user.hasPermission("LISTENER_CONTROL")
         }
     },
-    then({page, version, listeners, started, processCpu}) {
+    then({page, version, listeners, started, processCpu, listenerControl, keptAfter}) {
         page.status == 200
         page.errors == ""
         !/Error rendering|Exception in render/.test(page.output)
@@ -183,8 +194,40 @@ feature("the System home shows the instance, its listeners or their absence, and
         page.output.includes("Listeners and integrations")
         page.output.includes('id="SystemCounters"')
         listeners.length > 0
-            ? page.output.includes('id="ListenerList_table"') && page.output.includes(">" + listeners[0].name + "<")
+            ? page.output.includes('id="ListenerList_table"') && page.output.includes(">" + listeners[0].name + "<") &&
+                page.output.includes("Conf/ServicesPorts")
             : page.output.includes("This process reported no listeners")
+        // the Services and ports button and its dialog: each listener with a switch, its state from the conf (no listeners
+        // run here), a control on the HTTPS row, the settings with where each comes from, SSH's services, the recent changes
+        listenerControl
+        page.output.includes('id="ServicesPorts-button"')
+        page.output.includes('<dialog id="ServicesPorts"')
+        page.output.includes('id="ServicesListenerList_table"')
+        SERVICES_LISTENERS.every(name => page.output.includes("<strong>" + name + "</strong>"))
+        /<span data-level>(On|Off) in the conf<\/span>/.test(page.output)
+        page.output.includes("This process runs no listeners")
+        page.output.includes('data-dialog="TurnOff_HTTPS') || page.output.includes('data-confirm="Turn HTTPS on?"')
+        !page.output.includes("Turning a listener on or off needs the LISTENER_CONTROL permission")
+        page.output.includes('id="ServicesSettingList_table"')
+        page.output.includes("moqui_conf__ssh_server__access")
+        page.output.includes('id="ServicesSubList_table"')
+        page.output.includes("ssh-server@sftp-enabled")
+        page.output.includes('id="ServicesChangeList_table"') || page.output.includes("No listener was changed here since the server started")
+        // the refused change again, once: what was asked (the reason, End connections now), the confirmation the refusal
+        // named as a checkbox, the one already given carried, and no port, address or access the request did not carry
+        keptAfter == null
+        page.output.includes('id="ServicesConfirmBox"')
+        page.output.includes("Turn off: SSH")
+        page.output.includes("the edge node&#39;s SSH tunnel. Confirm it to turn it off anyway") ||
+            page.output.includes("the edge node's SSH tunnel. Confirm it to turn it off anyway")
+        page.output.includes('<input type="checkbox" name="confirmDependents" value="Y">')
+        page.output.includes("Turn SSH off though something depends on it")
+        page.output.includes('name="confirmLockout" id="ConfirmListenerChange_confirmLockout" value="Y"')
+        !page.output.includes('id="ConfirmListenerChange_confirmPublicHttp"')
+        page.output.includes('id="ConfirmListenerChange_reason" name="reason" value="spec: incident"')
+        /id="ConfirmListenerChange_endNow"><label><input type="checkbox" name="endNow" value="Y" checked/.test(page.output)
+        !page.output.includes('id="ConfirmListenerChange_port"')
+        !page.output.includes('id="ConfirmListenerChange_access"')
         // the empty attention state or its rows, each with its level as a word
         page.output.includes("Nothing needs attention") ||
             (page.output.includes('id="AttentionList_table"') &&

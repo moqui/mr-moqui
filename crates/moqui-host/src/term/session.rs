@@ -254,6 +254,8 @@ pub(crate) struct Session {
     next_client: AtomicU64,
     /// The user typed since the pump last looked.
     typed: std::sync::atomic::AtomicBool,
+    /// The listener its calls came over: a kept session's is that of the page attached to it now.
+    pub(crate) origin: super::Origin,
     /// Its last events, numbered (plans/Terminal-Fancy2.md §4.3).
     events: Mutex<Events>,
     /// The users the owner shared it with, and whether each may type (§4.4, D3).
@@ -360,6 +362,8 @@ pub(crate) struct Spec {
     pub agent: bool,
     /// What an attention is told to; none for a session that notifies nothing (the apps).
     pub attend: Option<Attend>,
+    /// The listener its calls came over, which an attach sets ([`super::Origin`]).
+    pub origin: super::Origin,
     /// Taken back from the holder after a restart: its kept output was written across sizes this server did not see.
     pub adopted: bool,
     /// The count of its first byte here: the holder's, for a session taken back (D17); else 0.
@@ -637,6 +641,7 @@ pub(crate) fn spawn(registry: &Arc<Registry>, spec: Spec, program: Program) -> A
         input,
         next_client: AtomicU64::new(1),
         typed: std::sync::atomic::AtomicBool::new(false),
+        origin: spec.origin.clone(),
         events: Mutex::new(Events::default()),
         shares: Mutex::new(std::collections::BTreeMap::new()),
         recording: Mutex::new(None),

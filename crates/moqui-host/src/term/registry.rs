@@ -193,6 +193,8 @@ impl Registry {
         let id = new_id()?;
         let (size, size_in) = watch::channel((cols, rows));
         let redraw = Arc::new(Notify::new());
+        // set again by each page that attaches to it
+        let origin = super::Origin::default();
         let start = Start {
             factory: Arc::downgrade(factory),
             sessions,
@@ -204,6 +206,7 @@ impl Registry {
             // the client holds the place it was opened with, and gives it back when it ends
             admission: Admission::Held(slot),
             redraw: Some(Arc::clone(&redraw)),
+            listener: origin.clone(),
         };
         let program = apps_program(start, size, redraw);
         let spec = Spec {
@@ -226,6 +229,7 @@ impl Registry {
             held: false,
             agent: false,
             attend: None,
+            origin,
             adopted: false,
             count_from: 0,
             prelude: Vec::new(),
@@ -271,7 +275,9 @@ impl Registry {
         let slot = sessions.take(&spec.username)?;
         let (size, size_in) = watch::channel((spec.cols, spec.rows));
         let redraw = Arc::new(Notify::new());
-        // `apps` at this prompt runs in the place the command line holds
+        // `apps` at this prompt runs in the place the command line holds, and says the listener the page attached to it
+        // came over
+        let origin = super::Origin::default();
         let apps = Start {
             factory: Arc::downgrade(factory),
             sessions,
@@ -282,6 +288,7 @@ impl Registry {
             client_ip: String::new(),
             admission: Admission::Counted,
             redraw: Some(Arc::clone(&redraw)),
+            listener: origin.clone(),
         };
         #[cfg(unix)]
         let host = Some(crate::command::host::HostAccess {
@@ -339,6 +346,7 @@ impl Registry {
             held: false,
             agent: false,
             attend: Some(super::notice::hook(factory)),
+            origin,
             adopted: false,
             count_from: 0,
             prelude: Vec::new(),
@@ -437,6 +445,7 @@ impl Registry {
             held: in_holder,
             agent: spec.profile.agent,
             attend: Some(super::notice::hook(factory)),
+            origin: super::Origin::default(),
             adopted: false,
             count_from: 0,
             prelude: spec.prelude,
@@ -478,6 +487,7 @@ impl Registry {
             held: true,
             agent: adopted.agent,
             attend: Some(super::notice::hook(factory)),
+            origin: super::Origin::default(),
             adopted: true,
             count_from: adopted.count_from,
             prelude: Vec::new(),

@@ -22,7 +22,9 @@
 //! out, both with no key, and then the login.
 //! Plain `http://` is refused except to this machine.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,7 +35,7 @@ use moqui_lib::error::Error;
 use moqui_lib::reconnect::Backoff;
 use moqui_lib::remote_login::{form_body, SignIn};
 use moqui_lib::sync::lock;
-use moqui_tui::{AdminAccount, AdminSetup, LinkError, PushSink, Subscription};
+use moqui_tui::{AdminAccount, AdminSetup, LinkError, PushSink, Pushes, Subscription};
 
 use crate::tui::{Ask, Link, Transport};
 
@@ -301,17 +303,23 @@ impl Transport for Http {
     }
 
     /// `/notws` with the login key, on a thread of its own that connects again after a drop, waiting longer each time
-    /// up to a minute, with jitter (`moqui_lib::reconnect`). Before a login it only waits.
+    /// up to a minute, with jitter (`moqui_lib::reconnect`). Before a login it only waits. The client's frames (a
+    /// CalcGrid room's `join`, `select`, `leave`) go through a channel into that thread, which sends them on the socket
+    /// and joins the rooms again on each new one.
     fn subscribe(&self, sink: PushSink) -> Option<Subscription> {
         let stop = Arc::new(AtomicBool::new(false));
+        let (frames, outgoing) = mpsc::channel();
         let http = self.clone();
         let stopped = Arc::clone(&stop);
         std::thread::Builder::new()
             .name("tui-push".to_string())
-            .spawn(move || http.push_loop(&sink, &stopped))
+            .spawn(move || http.push_loop(&sink, &stopped, &outgoing))
             .map_err(|err| tracing::warn!("TUI notifications not pushed: {err}"))
             .ok()?;
-        Some(Box::new(StopOnDrop(stop)))
+        Some(Box::new(RemotePushes {
+            _stop: StopOnDrop(stop),
+            frames,
+        }))
     }
 }
 
@@ -324,8 +332,55 @@ impl Drop for StopOnDrop {
     }
 }
 
-/// How often a socket read gives up waiting so the push thread can see it was stopped.
-const PUSH_POLL: Duration = Duration::from_secs(1);
+/// The subscription of the client over HTTP: its push thread, and the channel of its frames to it.
+struct RemotePushes {
+    _stop: StopOnDrop,
+    frames: Sender<serde_json::Value>,
+}
+
+impl Pushes for RemotePushes {
+    fn takes_frames(&self) -> bool {
+        true
+    }
+
+    fn frame(&self, frame: serde_json::Value) -> bool {
+        self.frames.send(frame).is_ok()
+    }
+}
+
+/// The rooms the client joined, by room and client, each with its join frame: sent again on each new socket, as the
+/// browser's sheet joins again when its socket opens (the server let the old socket's go). No place is sent with
+/// them: the server takes a join after looking at the room and a place at once, so a place sent behind its join would
+/// be refused; the component sends its place again when the server says `joined`.
+#[derive(Debug, Default)]
+pub(crate) struct Rooms {
+    joined: BTreeMap<(String, String), serde_json::Value>,
+}
+
+impl Rooms {
+    /// Keep what a frame the client sends changes: a join, a leave.
+    pub(crate) fn note(&mut self, frame: &serde_json::Value) {
+        let field = |name: &str| frame[name].as_str().unwrap_or_default().to_string();
+        let key = (field("room"), field("client"));
+        match frame["calc"].as_str() {
+            Some("join") => {
+                self.joined.insert(key, frame.clone());
+            }
+            Some("leave") => {
+                self.joined.remove(&key);
+            }
+            _ => {}
+        }
+    }
+
+    /// The frames that put the client back in its rooms on a new socket: the joins.
+    pub(crate) fn again(&self) -> Vec<serde_json::Value> {
+        self.joined.values().cloned().collect()
+    }
+}
+
+/// How often a socket read gives up waiting so the push thread can see it was stopped, and send the frames queued.
+const PUSH_POLL: Duration = Duration::from_millis(200);
 
 /// A stream the notification socket reads: plain, or TLS for https.
 trait Duplex: std::io::Read + std::io::Write {}
@@ -333,24 +388,35 @@ trait Duplex: std::io::Read + std::io::Write {}
 impl<T: std::io::Read + std::io::Write> Duplex for T {}
 
 impl Http {
-    fn push_loop(&self, sink: &PushSink, stop: &AtomicBool) {
+    fn push_loop(&self, sink: &PushSink, stop: &AtomicBool, outgoing: &Receiver<serde_json::Value>) {
         let mut backoff = Backoff::new();
+        let mut rooms = Rooms::default();
         while !stop.load(Ordering::Relaxed) {
             if self.stored().is_some() {
-                match self.listen(sink, stop) {
+                match self.listen(sink, stop, outgoing, &mut rooms) {
                     Ok(()) => backoff.reset(),
                     Err(err) => tracing::debug!("TUI notification socket: {err}"),
                 }
             }
             let until = std::time::Instant::now() + backoff.next_wait(moqui_lib::reconnect::jitter());
             while !stop.load(Ordering::Relaxed) && std::time::Instant::now() < until {
+                // without a socket a frame only changes what is joined again on the next one
+                for frame in outgoing.try_iter() {
+                    rooms.note(&frame);
+                }
                 std::thread::sleep(Duration::from_millis(200));
             }
         }
     }
 
     /// One socket until it closes or the subscription drops.
-    fn listen(&self, sink: &PushSink, stop: &AtomicBool) -> Result<(), String> {
+    fn listen(
+        &self,
+        sink: &PushSink,
+        stop: &AtomicBool,
+        outgoing: &Receiver<serde_json::Value>,
+        rooms: &mut Rooms,
+    ) -> Result<(), String> {
         let key = self.stored().map(|stored| stored.key).unwrap_or_default();
         let url = reqwest::Url::parse(&self.base).map_err(|err| err.to_string())?;
         let host = url.host_str().unwrap_or("localhost").to_string();
@@ -384,15 +450,26 @@ impl Http {
         socket
             .send(tungstenite::Message::Text("subscribe:ALL".into()))
             .map_err(|err| err.to_string())?;
+        for frame in rooms.again() {
+            socket
+                .send(tungstenite::Message::Text(frame.to_string().into()))
+                .map_err(|err| err.to_string())?;
+        }
         loop {
             if stop.load(Ordering::Relaxed) {
                 let _ = socket.close(None);
                 return Ok(());
             }
+            for frame in outgoing.try_iter() {
+                rooms.note(&frame);
+                socket
+                    .send(tungstenite::Message::Text(frame.to_string().into()))
+                    .map_err(|err| err.to_string())?;
+            }
             match socket.read() {
                 Ok(tungstenite::Message::Text(text)) => {
                     if let Ok(body) = serde_json::from_str::<serde_json::Value>(text.as_str()) {
-                        sink(crate::tui::push_of(&body));
+                        sink(crate::tui::socket_push(&body));
                     }
                 }
                 Ok(tungstenite::Message::Close(_)) => return Ok(()),

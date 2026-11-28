@@ -1,7 +1,7 @@
 // CalcGrid in the Dashboards app (screen/Dashboards/CalcGrid.xml; docs/tools/Database.md, CalcGrid and access profiles;
-// plans/IronCalc-DB.md Phase 2b): what the screen's transitions answer, over org.moqui.calc.CalcServices and, for a
-// document's list, group and deletion, the report engine's definition services, each called as the viewer. Presentation
-// only: a service decides every access. No entity is read here.
+// plans/archive/IronCalc-DB.md Phase 2b): what the screen's transitions answer, over org.moqui.calc.CalcServices and,
+// for a document's list, group and deletion, the report engine's definition services, each called as the viewer.
+// Presentation only: a service decides every access. No entity is read here.
 //
 // The access profile a call is made under is the mount's (template/ReportMount.js, policy.calcProfile) when the mount
 // names one, else the request's profileId, else none, which is the Tools app's own access. Naming a profile gives no

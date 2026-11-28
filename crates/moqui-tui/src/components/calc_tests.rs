@@ -12,6 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
+use super::charts::{range_name, CHART_MENU};
 use super::*;
 use crate::components::line_text;
 
@@ -24,7 +25,8 @@ fn props(editable: bool) -> Value {
             {"index": 0, "name": "Orders", "rows": 4, "columns": 2, "widths": [80, 96], "frozenRows": 1, "frozenColumns": 0, "data": true, "dataRows": 3},
             {"index": 1, "name": "Sum", "rows": 2, "columns": 1, "widths": [120], "frozenRows": 0, "frozenColumns": 0, "data": false}
         ],
-        "charts": [{"title": "By order", "labels": ["O1", "O2"], "series": [{"name": "Total", "data": [110, 220]}]}]
+        "charts": [{"title": "By order", "type": "bar", "categories": "Orders!A2:A3", "labels": ["O1", "O2"],
+            "series": [{"name": "Total", "values": "Orders!B2:B3", "data": [110, 220]}]}]
     }})
 }
 
@@ -320,4 +322,234 @@ fn a_frozen_column_past_the_width_scrolls_into_view() {
         !header.split_whitespace().any(|name| name == column_name(50)),
         "{header}"
     );
+}
+
+/// CG3.1: a cell's font colour, fill and italic are kept from the engine's block and drawn, the fill over the gap to a
+/// neighbour of the same fill; the active cell is drawn in the theme's roles alone.
+#[test]
+fn a_cells_colours_and_italic_are_drawn_but_not_on_the_cursor() {
+    let (props, mut state) = loaded(true);
+    let main = json!({"row": 2, "column": 1, "width": 40, "height": 20, "seq": 3,
+        "styles": [{"style": {"font": {}}}, {"style": {"font": {"color": "#C00000", "i": true}}}],
+        "style_indices": [0, 1], "texts": [{"row": 2, "column": 2, "text": "110", "cell_type": 1}],
+        "fills": [{"row": 2, "column": 1, "width": 2, "color": "#FFFF00"}, {"row": 2, "column": 3, "width": 38, "color": ""},
+            {"row": 3, "column": 1, "width": 40, "color": ""}]});
+    CalcGrid.receive(&props, &mut state, main);
+    let found = cells(&View::of(&props, &state).block);
+    let red = found[&(2, 2)].clone();
+    assert_eq!(
+        (red.color, red.fill, red.italic),
+        (Some(Rgb(0xC0, 0, 0)), Some(Rgb(255, 255, 0)), true)
+    );
+    assert_eq!(found[&(2, 1)].fill, Some(Rgb(255, 255, 0)));
+    assert!(!found.contains_key(&(3, 1)), "a run of no colour is no cell");
+    let grid = CalcGrid.lines(&props, &state, 60, false);
+    let row = &grid[3];
+    let span = row.iter().find(|span| span.text.contains("110")).unwrap();
+    assert_eq!(
+        (span.color, span.fill, span.italic),
+        (Some(Rgb(0xC0, 0, 0)), Some(Rgb(255, 255, 0)), true)
+    );
+    // A2 and B2 share the fill, so the gap between them has it; the gap after B2 does not
+    let gaps: Vec<&Span> = row.iter().filter(|span| span.text == " ").collect();
+    assert_eq!((gaps[0].fill, gaps[1].fill), (Some(Rgb(255, 255, 0)), None));
+    // on the active cell the theme's roles alone show where it is
+    CalcGrid.key(&props, &mut state, &KeyPress::plain(Key::Down), false);
+    CalcGrid.key(&props, &mut state, &KeyPress::plain(Key::Right), false);
+    let grid = CalcGrid.lines(&props, &state, 60, false);
+    let cursor = grid[3].iter().find(|span| span.reverse).unwrap();
+    assert!(cursor.text.contains("110"));
+    assert_eq!((cursor.color, cursor.fill), (None, None));
+}
+
+/// CG3.5: the status line has the last evaluation's time, a warning past the room's `slowMs`, else past 250 ms.
+#[test]
+fn the_status_line_has_the_calculation_time_and_warns_when_it_is_slow() {
+    let status = |room: Value| {
+        let mut props = props(true);
+        for (key, value) in room.as_object().unwrap() {
+            props["room"][key] = value.clone();
+        }
+        let state = ComponentState {
+            rows: 30,
+            ..ComponentState::default()
+        };
+        CalcGrid
+            .lines(&props, &state, 100, false)
+            .into_iter()
+            .find(|line| line_text(line).contains("calculated"))
+            .unwrap()
+    };
+    let quick = status(json!({"evaluateMs": 12.4}));
+    assert!(quick
+        .iter()
+        .any(|span| span.text == "calculated in 12 ms" && span.role == Role::Muted));
+    let slow = status(json!({"evaluateMs": 300.0}));
+    assert!(slow
+        .iter()
+        .any(|span| span.text.ends_with("300 ms, slow") && span.role == Role::Warning));
+    let allowed = status(json!({"evaluateMs": 300.0, "slowMs": 500}));
+    assert!(allowed.iter().all(|span| span.role != Role::Warning), "{allowed:?}");
+}
+
+/// CG3.4: a sheet whose session sends frames joins its room, polls only as a fallback once joined, and on another's
+/// edit reads the room's state again, and its cells only when the edit changed one held.
+#[test]
+fn a_pushed_sheet_reads_again_only_what_anothers_edit_changed() {
+    let (props, mut state) = loaded(true);
+    assert!(
+        CalcGrid.topics(&props, &state).is_empty(),
+        "a session that sends no frames polls"
+    );
+    state.pushed = true;
+    let topics = CalcGrid.topics(&props, &state);
+    let client = View::of(&props, &state).client;
+    assert_eq!(topics[0].name, "calc:d1");
+    assert_eq!(topics[0].join, json!({"calc": "join", "room": "d1", "client": client}));
+    assert_eq!(topics[0].leave["calc"], "leave");
+    assert_eq!(
+        CalcGrid.poll_millis(&props, &state),
+        Some(POLL_MILLIS),
+        "until the server says joined"
+    );
+    let acts = CalcGrid.push(
+        &props,
+        &mut state,
+        &json!({"type": "joined", "client": client, "peers": []}),
+    );
+    assert!(matches!(&acts[..], [Act::Frame(frame)] if frame["calc"] == "select"));
+    assert_eq!(CalcGrid.poll_millis(&props, &state), Some(PUSHED_POLL_MILLIS));
+    // a place refused before its join was in leaves the view joined; a join refused does not
+    let refused = |code: i64| json!({"type": "error", "client": client, "code": code});
+    CalcGrid.push(&props, &mut state, &refused(409));
+    assert!(View::of(&props, &state).live);
+    CalcGrid.push(&props, &mut state, &refused(403));
+    assert_eq!(CalcGrid.poll_millis(&props, &state), Some(POLL_MILLIS));
+    CalcGrid.push(
+        &props,
+        &mut state,
+        &json!({"type": "joined", "client": client, "peers": []}),
+    );
+    // the view's own edit is not read again
+    assert!(CalcGrid
+        .push(
+            &props,
+            &mut state,
+            &json!({"type": "changed", "seq": 3, "kind": "edit"})
+        )
+        .is_empty());
+    // values below the rows held: the state is read, then the cells are kept
+    let below = json!({"type": "changed", "seq": 4, "from": 3, "kind": "edit",
+        "changed": [{"sheet": 0, "row": 500, "column": 1, "width": 1, "height": 1}]});
+    assert_eq!(CalcGrid.push(&props, &mut state, &below), [Act::Reload]);
+    assert_eq!(CalcGrid.source(&props, &state).unwrap().0, "calcState");
+    let room = json!({"roomId": "d1", "shared": true, "seq": 4, "sheets": props["room"]["sheets"]});
+    CalcGrid.receive(&props, &mut state, room.clone());
+    assert!(!View::of(&props, &state).need_cells, "the cells held stay");
+    // a value held changed: the cells are read again
+    let held = json!({"type": "changed", "seq": 5, "from": 4, "kind": "edit",
+        "changed": [{"sheet": 0, "row": 3, "column": 2, "width": 1, "height": 1}]});
+    CalcGrid.push(&props, &mut state, &held);
+    let mut room = room;
+    room["seq"] = json!(5);
+    CalcGrid.receive(&props, &mut state, room);
+    assert!(View::of(&props, &state).need_cells);
+    // someone came and went
+    CalcGrid.push(
+        &props,
+        &mut state,
+        &json!({"type": "peer", "client": "b1", "name": "Bea", "joined": true}),
+    );
+    assert!(texts(&props, &state, 100)
+        .iter()
+        .any(|line| line.contains("Bea has it open")));
+    CalcGrid.push(
+        &props,
+        &mut state,
+        &json!({"type": "peer", "client": "b1", "joined": false}),
+    );
+    assert!(View::of(&props, &state).peers.is_empty());
+}
+
+/// The menu's item `at` chosen.
+fn menu(props: &Value, state: &mut ComponentState, at: usize) -> Vec<Act> {
+    CalcGrid.key(props, state, &KeyPress::plain(Key::Char('m')), false);
+    for _ in 0..at {
+        CalcGrid.key(props, state, &KeyPress::plain(Key::Down), false);
+    }
+    CalcGrid.key(props, state, &KeyPress::plain(Key::Enter), false).unwrap()
+}
+
+/// The `charts` edit an answer posts: the document's whole list of charts.
+fn charts_sent(acts: &[Act]) -> Value {
+    let [Act::Call { url, parameters }] = acts else {
+        panic!("{acts:?}")
+    };
+    assert_eq!(url, "calcEdit");
+    let ops: Value = serde_json::from_str(&parameters["opsJson"]).unwrap();
+    assert_eq!(ops[0]["op"], "charts", "{ops}");
+    ops[0]["charts"].clone()
+}
+
+fn type_text(props: &Value, state: &mut ComponentState, text: &str) {
+    for ch in text.chars() {
+        CalcGrid.key(props, state, &KeyPress::plain(Key::Char(ch)), false);
+    }
+}
+
+/// CG3.3: a chart is added from the selection as the browser's toolbar makes one (its first column the labels, a
+/// series for each other column), its type and series changed and it removed, each sent as the `charts` edit of the
+/// whole list; a reader is refused, and a selection of one row makes no chart.
+#[test]
+fn the_menu_adds_a_chart_of_the_selection_changes_its_type_and_removes_it() {
+    let (props, mut state) = loaded(true);
+    let by_order = json!({"title": "By order", "type": "bar", "categories": "Orders!A2:A3",
+        "series": [{"name": "Total", "values": "Orders!B2:B3"}]});
+    // one row selected is no chart
+    assert!(menu(&props, &mut state, CHART_MENU).is_empty());
+    assert!(View::of(&props, &state).message.contains("Select the chart's cells"));
+    let shift = |key| KeyPress {
+        shift: true,
+        ..KeyPress::plain(key)
+    };
+    for key in [Key::Down, Key::Down, Key::Right, Key::Right] {
+        CalcGrid.key(&props, &mut state, &shift(key), false);
+    }
+    assert!(
+        menu(&props, &mut state, CHART_MENU).is_empty(),
+        "the title is asked first"
+    );
+    assert!(texts(&props, &state, 80)[0].contains("Chart title:"));
+    type_text(&props, &mut state, "Totals");
+    let acts = CalcGrid
+        .key(&props, &mut state, &KeyPress::plain(Key::Enter), false)
+        .unwrap();
+    assert_eq!(
+        charts_sent(&acts),
+        json!([by_order, {"title": "Totals", "type": "column", "categories": "Orders!A1:A3", "series": [
+            {"name": "Series 1", "values": "Orders!B1:B3"}, {"name": "Series 2", "values": "Orders!C1:C3"}]}])
+    );
+    assert_eq!(View::of(&props, &state).chart, 1, "the new chart is the one chosen");
+    // the room still has the one chart, which the type, the series and the removal act on
+    state.local["chart"] = json!(0);
+    let mut columns = by_order.clone();
+    columns["type"] = json!("column");
+    assert_eq!(charts_sent(&menu(&props, &mut state, CHART_MENU + 4)), json!([columns]));
+    assert!(menu(&props, &mut state, CHART_MENU + 3).is_empty());
+    assert_eq!(View::of(&props, &state).editing.unwrap().text, "Orders!B2:B3");
+    type_text(&props, &mut state, ", Orders!C2:C3");
+    let acts = CalcGrid
+        .key(&props, &mut state, &KeyPress::plain(Key::Enter), false)
+        .unwrap();
+    assert_eq!(
+        charts_sent(&acts)[0]["series"],
+        json!([{"name": "Total", "values": "Orders!B2:B3"}, {"name": "Series 2", "values": "Orders!C2:C3"}])
+    );
+    assert_eq!(charts_sent(&menu(&props, &mut state, MENU.len() - 1)), json!([]));
+    assert_eq!(range_name("Q 4", 1, 1, 2, 1), "'Q 4'!A1:A2");
+    assert_eq!(range_name("", 1, 1, 1, 1), "A1", "as calc.rangeName with no sheet");
+    // a reader is refused
+    let (props, mut state) = loaded(false);
+    assert!(menu(&props, &mut state, CHART_MENU + 4).is_empty());
+    assert!(View::of(&props, &state).message.contains("read only"));
 }

@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Access profiles (plans/IronCalc-DB.md, Access and row scope): what a person who is not an administrator may read
-//! through CalcGrid, set in the authorization data and not in a document.
+//! Access profiles (plans/archive/IronCalc-DB.md, Access and row scope): what a person who is not an administrator may
+//! read through CalcGrid, set in the authorization data and not in a document.
 //!
 //! A profile is an artifact group. Its members, all service-type artifacts, are the profile artifact
 //! `org.moqui.calc.profile.<profileId>` (`inheritAuthz` Y) and the entities it offers, each as

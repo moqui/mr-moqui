@@ -999,6 +999,7 @@ impl Connection {
                 client_ip: self.peer.ip().to_string(),
                 admission: crate::term::Admission::Take,
                 redraw: None,
+                listener: crate::term::Origin::of(Some(moqui_core::listeners::SSH_SWITCH.name)),
             })
         }
         #[cfg(not(feature = "tui"))]

@@ -1,8 +1,9 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The sheet view of a CalcGrid document (plans/IronCalc-DB.md, Thin client) as moqui.calc, loaded by the screens that
- * show one (component://tools/screen/Tools/Data/Grid.qvue) and tested in the page by test/client/WebrootCalc.spec.js.
+ * The sheet view of a CalcGrid document (plans/archive/IronCalc-DB.md, Thin client) as moqui.calc, loaded by the
+ * screens that show one (component://tools/screen/Tools/Data/Grid.qvue) and tested in the page by
+ * test/client/WebrootCalc.spec.js.
  * The workbook and the spreadsheet engine are in the server; this draws the cells on screen.
  *   - moqui.calc.sheet: a Vue component. Props: room (what open#CalcDocument answered: roomId, sheets, charts, ...) and
  *     cellsUrl (the transition that answers a rectangle of cells: roomId, sheet, row, column, width, height, and what

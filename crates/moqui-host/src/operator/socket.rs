@@ -338,8 +338,11 @@ pub(crate) fn stop_asked() -> bool {
 
 /// One connection: its peer's access, then its requests in turn.
 async fn connection(stream: tokio::net::UnixStream, keeper: Arc<Keeper>, settings: Settings) {
-    let access = match stream.peer_cred() {
-        Ok(cred) => super::peer::access(cred.uid(), cred.gid(), cred.pid(), &settings),
+    let (access, uid) = match stream.peer_cred() {
+        Ok(cred) => (
+            super::peer::access(cred.uid(), cred.gid(), cred.pid(), &settings),
+            cred.uid(),
+        ),
         Err(err) => {
             tracing::warn!("The operator socket could not read a peer's credentials: {err}");
             return;
@@ -360,7 +363,7 @@ async fn connection(stream: tokio::net::UnixStream, keeper: Arc<Keeper>, setting
             return;
         }
         let keeper = Arc::clone(&keeper);
-        let mut answer = tokio::task::spawn_blocking(move || super::commands::run(&keeper, access, &line))
+        let mut answer = tokio::task::spawn_blocking(move || super::commands::run(&keeper, access, uid, &line))
             .await
             .unwrap_or_else(|_| serde_json::json!({"ok": false, "error": "the command failed"}));
         let mut text = zeroize::Zeroizing::new(answer.to_string());

@@ -13,7 +13,7 @@
  */
 
 //! `org.moqui.calc.CalcServices`: open a CalcGrid document into a room, read its cells a viewport at a time, refresh
-//! its data, save it, export it and close it (plans/IronCalc-DB.md, Phase 2).
+//! its data, save it, export it and close it (plans/archive/IronCalc-DB.md, Phase 2).
 //!
 //! A document is a report definition of type `calcgrid` (`org.moqui.report.ReportServices`), so its sharing, versions
 //! and git sync are the definitions'. Its body is `dataSheets` (each a `name` and the data grid's spec: `source`,

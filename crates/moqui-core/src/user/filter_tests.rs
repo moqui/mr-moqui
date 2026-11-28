@@ -346,9 +346,9 @@ fn view_find_applies_user_org_and_skips_active_org_until_set() {
     session::reset_session();
 }
 
-/// plans/IronCalc-DB.md, Access profiles: an engine that enters a profile artifact (an inheritable always-allow) before
-/// it reads gets that record's filters on every find below, for a user who also holds an unfiltered grant on the same
-/// entity. Without the frame the other grant answers and nothing is filtered.
+/// plans/archive/IronCalc-DB.md, Access profiles: an engine that enters a profile artifact (an inheritable
+/// always-allow) before it reads gets that record's filters on every find below, for a user who also holds an
+/// unfiltered grant on the same entity. Without the frame the other grant answers and nothing is filtered.
 #[test]
 fn a_profile_frame_gives_its_filters_to_finds_below_whatever_else_the_user_holds() {
     const PROFILE: &str = "org.moqui.calc.profile.test";
