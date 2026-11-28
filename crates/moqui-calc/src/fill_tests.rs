@@ -87,6 +87,17 @@ fn a_data_sheet_is_a_typed_table_a_formula_names_by_column() {
     assert_eq!(sheets[1]["columns"], 3);
     assert_eq!(sheets[1]["frozenRows"], 1);
     assert_eq!(sheets[1]["widths"].as_array().unwrap().len(), 3);
+    assert_eq!(sheets[0]["heights"], json!([]));
+}
+
+/// plans/IronCalc-DB2.md CG2.3: a view is sent the rows that have a height of their own, in pixels.
+#[test]
+fn the_layout_has_the_rows_of_their_own_height() {
+    let mut model = workbook();
+    model.workbook.worksheets[0].set_row_height(4, 44.0).unwrap();
+    model.workbook.worksheets[0].set_row_height(2, 30.0).unwrap();
+    let sheets = layout(&model, &[("Orders".to_string(), 5)]);
+    assert_eq!(sheets[0]["heights"], json!([[2, 30.0], [4, 44.0]]));
 }
 
 #[test]

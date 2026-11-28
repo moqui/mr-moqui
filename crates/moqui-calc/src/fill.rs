@@ -476,8 +476,34 @@ pub fn stored_form(bytes: &[u8], data: &[(String, usize)]) -> Result<Vec<u8>, Er
     Ok(model.to_bytes())
 }
 
+/// The most rows of a sheet whose own heights a view is sent ([`layout`]); the rows past them are drawn at the default
+/// height.
+pub const MAX_LAYOUT_HEIGHTS: usize = 5_000;
+
+/// The rows of a sheet with a height of their own, as `[row, pixels]` (plans/IronCalc-DB2.md CG2.3), in row order, at
+/// most [`MAX_LAYOUT_HEIGHTS`]. A hidden row is drawn at its height: CalcGrid does not hide rows.
+fn row_heights(worksheet: &moqui_core::workbook::ironcalc::base::types::Worksheet) -> Vec<Json> {
+    let mut rows: Vec<(i32, f64)> = worksheet
+        .rows
+        .iter()
+        .filter(|row| row.custom_height && row.height > 0.0)
+        .map(|row| {
+            (
+                row.r,
+                (row.height * moqui_core::workbook::ironcalc::base::ROW_HEIGHT_FACTOR).round(),
+            )
+        })
+        .collect();
+    rows.sort_by_key(|(row, _)| *row);
+    rows.into_iter()
+        .take(MAX_LAYOUT_HEIGHTS)
+        .map(|(row, height)| json!([row, height]))
+        .collect()
+}
+
 /// What a view needs of each sheet: its name, its used rows and columns, the width of each used column in pixels,
-/// the frozen rows and columns, and whether it is one of `data` (a read-only data sheet).
+/// the heights of the rows that have their own ([`row_heights`]), the frozen rows and columns, and whether it is one of
+/// `data` (a read-only data sheet).
 #[must_use]
 pub fn layout(model: &Model<'_>, data: &[(String, usize)]) -> Json {
     let sheets: Vec<Json> = model
@@ -501,6 +527,7 @@ pub fn layout(model: &Model<'_>, data: &[(String, usize)]) -> Json {
                 "rows": dimension.max_row.max(1),
                 "columns": dimension.max_column.max(1),
                 "widths": widths,
+                "heights": row_heights(worksheet),
                 "frozenRows": worksheet.frozen_rows,
                 "frozenColumns": worksheet.frozen_columns,
                 "data": rows.is_some(),

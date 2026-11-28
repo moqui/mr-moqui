@@ -15,8 +15,8 @@
  *     With editUrl (the transition that applies edits: roomId, opsJson) and contentUrl (a cell's content as typed) the
  *     sheet is edited: a toolbar (undo, redo, font, colours, alignment, number format, rows and columns, a chart), a
  *     formula bar that completes function and table names, a cell's editor on a double click, Delete, a paste of rows of
- *     cells, a column's width, the fill handle dragged down, up or across (the engine's autofill), and sheets added,
- *     renamed and deleted. Each edit is sent to the server, which answers the
+ *     cells, a column's width and a row's height, the fill handle dragged down, up or across (the engine's autofill),
+ *     and sheets added, renamed and deleted. Each edit is sent to the server, which answers the
  *     room's new state (emitted as changed, for the holder of room to take); the cells are then asked again. A data
  *     sheet is not edited. It also emits selection (sheet, row, column, lastRow, lastColumn and the range's name).
  *     A saved document's room (room.shared) is edited together: the sheet joins it on the notification socket
@@ -27,7 +27,8 @@
  *     neededRange(have, first, last, rows, margin), chartConfig(chart), completions(text, caret, tables, functions),
  *     rangeName(range, sheetName), pasteRows(text), tableName(sheetName), peerColor(index), receive(peers, seq, frame)
  *     and peerCells(peers, sheet), fillOp(sheet, source, target, rowAt, columnAt); and takeFillHandle(table, onFill),
- *     which takes Tabulator 6.7's fill handle (its internals, pinned by the spec).
+ *     rowHeight(row) and setRowHeight(row, height), which take Tabulator 6.7's fill handle and rows (its internals,
+ *     pinned by the spec).
  */
 (function (root) {
     "use strict";
@@ -230,6 +231,15 @@
         return true;
     };
     calc.MAX_FORGET_ROWS = 5000;
+    /** The height a row was given (by a drag of its edge, or calc.setRowHeight), as the engine keeps it: the cells', not
+     * the row's outer height with its border. */
+    calc.rowHeight = (row) => Math.round((row && row._row && row._row.height) || (row && row.getElement().offsetHeight) || 0);
+    /** Give a table's row (a RowComponent) a height of its own, in pixels, through Tabulator 6.7's row (setHeight, as
+     * its row resize does); none leaves it as Tabulator measured it. */
+    calc.setRowHeight = (row, height) => {
+        const inner = row && row._row;
+        if (height > 0 && inner && typeof inner.setHeight === "function") inner.setHeight(height, true);
+    };
 
     /**
      * The `fill` edit of a drag of the fill handle (plans/IronCalc-DB2.md CG2.1): `source` the range dragged from and
@@ -519,7 +529,10 @@
                 const extent = this.extent(sheet);
                 const rowCount = extent.rows, columnCount = extent.columns;
                 this.columnCount = columnCount; this.rowCount = rowCount;
-                this.built = { frozenRows: Number(sheet.frozenRows || 0), frozenColumns: Number(sheet.frozenColumns || 0), widths: JSON.stringify((sheet.widths || []).slice(0, columnCount)), name: sheet.name };
+                this.built = { frozenRows: Number(sheet.frozenRows || 0), frozenColumns: Number(sheet.frozenColumns || 0), widths: JSON.stringify((sheet.widths || []).slice(0, columnCount)), name: sheet.name,
+                    heights: JSON.stringify(sheet.heights || []) };
+                // the rows with a height of their own (fill::layout), in pixels
+                this.heights = new Map((sheet.heights || []).map(([row, height]) => [Number(row), Number(height)]));
                 const formatter = (cell) => {
                     const row = cell.getRow().getData().id, column = cell.getColumn().getDefinition().calcColumn;
                     const cells = vm.rows().get(row);
@@ -545,6 +558,8 @@
                 for (let r = 0; r < rowCount; r++) data[r] = { id: r + 1 };
                 this.table = new root.Tabulator(element, { data, columns, index: "id", height: this.height, layout: "fitData", placeholder: "",
                     frozenRows: Number(sheet.frozenRows || 0), columnDefaults: { tooltip: false }, editTriggerEvent: "dblclick",
+                    // a row's own height, after Tabulator measured it; a row is resized by dragging its lower edge
+                    rowFormatter: (row) => calc.setRowHeight(row, vm.heights.get(row.getData().id)), resizableRows: this.editable,
                     selectableRange: 1, selectableRangeColumns: true, selectableRangeRows: true, selectableRangeClearCells: false, selectableRangeFill: cellEdits,
                     clipboard: "copy", clipboardCopyStyled: false, clipboardCopyRowRange: "range", clipboardCopyConfig: { rowHeaders: false, columnHeaders: false } });
                 this.table.on("tableBuilt", () => {
@@ -553,6 +568,10 @@
                     if (vm.editable) vm.table.on("columnResized", (column) => {
                         const at = column.getDefinition().calcColumn;
                         if (at) vm.edit([{ op: "width", sheet: vm.sheetIndex, column: at, width: Math.round(column.getWidth()) }]);
+                    });
+                    if (vm.editable) vm.table.on("rowResized", (row) => {
+                        const at = row.getData().id, height = calc.rowHeight(row);
+                        if (at && height > 0) vm.edit([{ op: "height", sheet: vm.sheetIndex, row: at, height }]);
                     });
                     // the fill handle's drop is the engine's autofill, as Fill down is
                     if (cellEdits) calc.takeFillHandle(vm.table, (source, target) => vm.fillTo(source, target));
@@ -691,7 +710,8 @@
                     const extent = this.extent(sheet), built = this.built || {};
                     const same = this.table && extent.rows <= this.rowCount && extent.columns <= this.columnCount && built.name === sheet.name
                         && built.frozenRows === Number(sheet.frozenRows || 0) && built.frozenColumns === Number(sheet.frozenColumns || 0)
-                        && built.widths === JSON.stringify((sheet.widths || []).slice(0, this.columnCount));
+                        && built.widths === JSON.stringify((sheet.widths || []).slice(0, this.columnCount))
+                        && built.heights === JSON.stringify(sheet.heights || []);
                     if (same) this.load(); else this.build(top);
                     // what is being typed in the bar is left as it is
                     const typing = this.$refs.bar && root.document && root.document.activeElement === this.$refs.bar && this.barText !== this.barOriginal;

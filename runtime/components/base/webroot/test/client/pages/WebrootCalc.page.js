@@ -177,3 +177,17 @@ test("the fill handle's drop is taken from Tabulator and the range reached is se
         assert.equal(calc.takeFillHandle({ modules: {} }, () => null), false, "a table with no fill handle");
     } finally { done(); }
 });
+
+test("a row is given its own height, and the height it was given is read back", async () => {
+    const heights = new Map([[3, 44]]);
+    const { table, done } = await sheetTable({ rowFormatter: (row) => calc.setRowHeight(row, heights.get(row.getData().id)), resizableRows: true });
+    try {
+        assert.equal(calc.rowHeight(table.getRow(3)), 44);
+        assert.ok(Math.abs(table.getRow(3).getElement().offsetHeight - 44) <= 2, String(table.getRow(3).getElement().offsetHeight));
+        // drawn again (new cells), it keeps it
+        table.getRow(3).reformat();
+        assert.ok(Math.abs(table.getRow(3).getElement().offsetHeight - 44) <= 2);
+        assert.ok(table.getRow(2).getElement().offsetHeight < 40, "another row keeps Tabulator's height");
+        assert.ok(table.getRow(3).getElement().querySelector(".tabulator-row-resize-handle"), "a row can be resized");
+    } finally { done(); }
+});
