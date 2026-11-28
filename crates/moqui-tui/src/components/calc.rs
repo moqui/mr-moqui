@@ -36,6 +36,10 @@
 //! text colour, and a text on a fill in black or white when its own does not read there); the active cell, the
 //! selection and the others' places are drawn in the theme's roles. Bold, italic and underline are drawn, numbers
 //! stand right, and a text runs on into empty cells beside it. Borders are not drawn.
+//!
+//! A merged cell is drawn as one box ([`merges`]): its anchor's text and style across its columns, on its first row
+//! on screen, with no gap inside it and its other cells blank. The cursor stands on the anchor and steps past the box,
+//! a selection that meets one takes all of it, and an author merges and unmerges the selection from the menu.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -83,6 +87,10 @@ struct Editing {
     target: String,
     /// The completion chosen.
     choice: usize,
+    /// The cell typed into, fixed when the typing starts (a merged cell's anchor): a merge that comes in over it
+    /// meanwhile refuses the edit rather than write it into another cell.
+    #[serde(default)]
+    cell: Option<(i32, i32)>,
 }
 
 /// What the component keeps in its state's `local`.
@@ -202,7 +210,19 @@ const MENU: &[&str] = &[
     "Chart type: area",
     "Chart type: pie",
     "Chart: remove it",
+    "Merge the cells selected",
+    "Unmerge the cells selected",
 ];
+/// The menu's Merge item, and Unmerge after it: an author's, not on a data sheet.
+const MERGE_MENU: usize = 26;
+
+/// The menu's items offered, by their place in [`MENU`]: Merge and Unmerge to an author on a sheet of their own.
+fn menu_items(view: &View, props: &Value) -> Vec<usize> {
+    let merges = props["editable"] == true && !view.is_data();
+    (0..MENU.len())
+        .filter(|item| merges || !(MERGE_MENU..=MERGE_MENU + 1).contains(item))
+        .collect()
+}
 
 /// The menu's items drawn at once, around the one chosen.
 const MENU_SHOWN: usize = 12;
@@ -386,12 +406,12 @@ impl View {
             .unwrap_or(0)
     }
 
-    fn layout(&self) -> Value {
+    fn layout(&self) -> &Value {
+        static NONE: Value = Value::Null;
         self.sheets()
             .into_iter()
             .find(|sheet| sheet["index"].as_u64() == Some(u64::from(self.sheet)))
-            .cloned()
-            .unwrap_or(Value::Null)
+            .unwrap_or(&NONE)
     }
 
     fn is_data(&self) -> bool {
@@ -460,7 +480,7 @@ impl View {
         } else {
             (self.left, COLUMNS_ASKED)
         };
-        (row, height, column, width.min(MAX_CELLS / height.max(1)))
+        self.with_anchors((row, height, column, width.min(MAX_CELLS / height.max(1))), frozen_rows)
     }
 
     /// Whether the block read covers the rows and columns on screen.
@@ -475,14 +495,22 @@ impl View {
             && int(&block["column"]) + int(&block["width"]) >= column + width
     }
 
-    /// The selection: its top left and bottom right.
+    /// The selection: its top left and bottom right, grown to the merged cells it meets.
     fn area(&self) -> (i32, i32, i32, i32) {
+        self.area_in(&self.boxes())
+    }
+
+    /// [`View::area`] with the sheet's boxes already found.
+    fn area_in(&self, boxes: &[merges::Merged]) -> (i32, i32, i32, i32) {
         let (row, column) = self.anchor.unwrap_or((self.row, self.column));
-        (
-            row.min(self.row),
-            column.min(self.column),
-            row.max(self.row),
-            column.max(self.column),
+        merges::expand(
+            (
+                row.min(self.row),
+                column.min(self.column),
+                row.max(self.row),
+                column.max(self.column),
+            ),
+            boxes,
         )
     }
 
@@ -492,8 +520,13 @@ impl View {
             "width": last_column - column + 1, "height": last_row - row + 1})
     }
 
+    #[cfg(test)]
     fn address(&self) -> String {
-        let (row, column, last_row, last_column) = self.area();
+        self.address_in(&self.boxes())
+    }
+
+    fn address_in(&self, boxes: &[merges::Merged]) -> String {
+        let (row, column, last_row, last_column) = self.area_in(boxes);
         let first = format!("{}{row}", column_name(column));
         if (row, column) == (last_row, last_column) {
             first
@@ -558,14 +591,19 @@ impl View {
     }
 
     /// Move the active cell, and with `extend` keep the selection's other corner; the rows and columns shown follow.
+    /// A merged cell is moved onto at its anchor, and out of past its far side ([`View::landing`]).
     fn move_to(&mut self, row: i32, column: i32, extend: bool, terminal_rows: u16) {
         if extend {
             self.anchor.get_or_insert((self.row, self.column));
         } else {
             self.anchor = None;
         }
-        self.row = row.clamp(1, LAST_ROW);
-        self.column = column.clamp(1, LAST_COLUMN);
+        (self.row, self.column) = self.landing(row.clamp(1, LAST_ROW), column.clamp(1, LAST_COLUMN));
+        self.scroll_to_cursor(terminal_rows);
+    }
+
+    /// The rows and columns shown follow the active cell, which is read, and the cells on screen when they are not.
+    fn scroll_to_cursor(&mut self, terminal_rows: u16) {
         let (frozen_rows, frozen_columns) = self.frozen_counts();
         let shown = self.rows_shown(terminal_rows);
         if self.row > frozen_rows {
@@ -718,7 +756,15 @@ fn editing_key(view: &mut View, props: &Value, press: &KeyPress, terminal_rows: 
             vec![json!({"op": "renameSheet", "sheet": view.sheet, "name": name})],
         );
     }
-    let (row, column) = (view.row, view.column);
+    // the cell the typing started in, which a merge that came in meanwhile may have covered
+    let (row, column) = editing.cell.unwrap_or((view.row, view.column));
+    if view.anchor_of(row, column) != (row, column) {
+        view.message = format!(
+            "{}{row} was merged into another cell while you typed: not set",
+            column_name(column)
+        );
+        return Vec::new();
+    }
     let changed = editing.text != view.current_content();
     view.content = editing.text.clone();
     view.content_at = view.content_key();
@@ -770,7 +816,7 @@ fn menu_choice(view: &mut View, props: &Value, choice: usize) -> Vec<Act> {
                 text: name,
                 cursor,
                 target: "rename".to_string(),
-                choice: 0,
+                ..Editing::default()
             });
             Vec::new()
         }
@@ -803,6 +849,8 @@ fn menu_choice(view: &mut View, props: &Value, choice: usize) -> Vec<Act> {
             view.message = "This document is read only for you".to_string();
             Vec::new()
         }
+        MERGE_MENU => merges::menu_choice(view, props, true),
+        choice if choice == MERGE_MENU + 1 => merges::menu_choice(view, props, false),
         choice => charts::menu_choice(view, props, choice),
     }
 }
@@ -923,6 +971,10 @@ impl Component for CalcGrid {
         } else if errors.is_empty() {
             state.data = Some(value);
         }
+        // a merge that came in under the active cell: onto its anchor, unless a cell is being typed into
+        if view.editing.is_none() {
+            view.snap();
+        }
         view.store(state);
     }
 
@@ -943,18 +995,21 @@ impl Component for CalcGrid {
         }
         let width = usize::from(width).max(20);
         let mut lines = Vec::new();
-        bar_lines(&view, width, &mut lines);
-        grid_lines(&view, state.rows, width, &mut lines);
+        let boxes = view.boxes();
+        bar_lines(&view, &boxes, width, &mut lines);
+        grid_lines(&view, &boxes, state.rows, width, &mut lines);
         tab_line(&view, &mut lines);
         status_line(&view, props, &mut lines);
         if let Some(chosen) = view.menu {
             // a window of the menu around the choice, so it fits under the sheet
-            let first = chosen
+            let items = menu_items(&view, props);
+            let at = items.iter().position(|item| *item == chosen).unwrap_or(0);
+            let first = at
                 .saturating_sub(MENU_SHOWN / 2)
-                .min(MENU.len().saturating_sub(MENU_SHOWN));
-            for (at, item) in MENU.iter().enumerate().skip(first).take(MENU_SHOWN) {
-                let span = Span::new(format!("  {item}"), Role::Text);
-                lines.push(vec![if at == chosen { span.reverse() } else { span }]);
+                .min(items.len().saturating_sub(MENU_SHOWN));
+            for item in items.iter().skip(first).take(MENU_SHOWN) {
+                let span = Span::new(format!("  {}", MENU[*item]), Role::Text);
+                lines.push(vec![if *item == chosen { span.reverse() } else { span }]);
             }
         }
         if view.charts {
@@ -971,17 +1026,23 @@ impl Component for CalcGrid {
         }
         view.room_id()?;
         view.message.clear();
-        let place = (view.sheet, view.area());
+        if view.editing.is_none() {
+            view.snap();
+        }
+        let boxes = view.boxes();
+        let place = (view.sheet, view.area_in(&boxes));
         let acts = if view.editing.is_some() {
             editing_key(&mut view, props, press, rows)
         } else if let Some(chosen) = view.menu {
+            let items = menu_items(&view, props);
+            let at = items.iter().position(|item| *item == chosen).unwrap_or(0);
             match press.key {
                 Key::Up => {
-                    view.menu = Some((chosen + MENU.len() - 1) % MENU.len());
+                    view.menu = Some(items[(at + items.len() - 1) % items.len()]);
                     Vec::new()
                 }
                 Key::Down => {
-                    view.menu = Some((chosen + 1) % MENU.len());
+                    view.menu = Some(items[(at + 1) % items.len()]);
                     Vec::new()
                 }
                 Key::Enter => {
@@ -1032,6 +1093,7 @@ impl Component for CalcGrid {
                             text,
                             target: "cell".to_string(),
                             choice: 0,
+                            cell: Some((view.row, view.column)),
                         });
                         Vec::new()
                     }
@@ -1041,6 +1103,7 @@ impl Component for CalcGrid {
                             cursor: 1,
                             target: "cell".to_string(),
                             choice: 0,
+                            cell: Some((view.row, view.column)),
                         });
                         Vec::new()
                     }
@@ -1103,8 +1166,12 @@ impl Component for CalcGrid {
                         vec![json!({"op": "freeze", "sheet": sheet, "rows": row, "columns": column - 1})],
                     ),
                     Key::Char('d') => {
-                        let (top, left, bottom, right) = view.area();
-                        if bottom <= top {
+                        let boxes = view.boxes();
+                        let (top, left, bottom, right) = view.area_in(&boxes);
+                        // one merged cell has only its own covered cells below it
+                        let one_box = merges::box_at(&boxes, top, left)
+                            .is_some_and(|merged| (merged.last_row(), merged.last_column()) == (bottom, right));
+                        if bottom <= top || one_box {
                             view.message = "Select the rows to fill first (Shift+Down)".to_string();
                             Vec::new()
                         } else {
@@ -1142,7 +1209,7 @@ impl Component for CalcGrid {
         };
         let mut acts = acts;
         // where the view is now, to the others at once, while the room's frames are pushed
-        if state.pushed && view.live && (view.sheet, view.area()) != place {
+        if state.pushed && view.live && (view.sheet, view.area_in(&boxes)) != place {
             acts.push(Act::Frame(view.frame("select")));
         }
         view.store(state);
@@ -1296,15 +1363,15 @@ impl Component for CalcGrid {
             ("R", "Read the data again"),
             (
                 "m",
-                "More: rows and columns, sheets, number formats, save, discard, export, charts",
+                "More: rows and columns, sheets, number formats, save, discard, export, charts, merging cells",
             ),
         ]
     }
 }
 
 /// The formula bar, and the completions while a formula is typed.
-fn bar_lines(view: &View, width: usize, lines: &mut Vec<Line>) {
-    let address = format!("{:<10}", view.address());
+fn bar_lines(view: &View, boxes: &[merges::Merged], width: usize, lines: &mut Vec<Line>) {
+    let address = format!("{:<10}", view.address_in(boxes));
     let mut line = vec![Span::new(address, Role::Primary).bold()];
     match &view.editing {
         Some(editing) => {
@@ -1401,7 +1468,8 @@ fn columns_shown(view: &View, room: usize) -> Vec<i32> {
     shown
 }
 
-fn grid_lines(view: &View, terminal_rows: u16, width: usize, lines: &mut Vec<Line>) {
+/// The rows on screen: the sheet's, its frozen ones and its others; `boxes` are the sheet's merged cells.
+fn grid_lines(view: &View, boxes: &[merges::Merged], terminal_rows: u16, width: usize, lines: &mut Vec<Line>) {
     let (frozen_rows, _) = view.frozen_counts();
     let first = view.top.max(frozen_rows + 1);
     let rows: Vec<i32> = (1..=frozen_rows)
@@ -1409,7 +1477,7 @@ fn grid_lines(view: &View, terminal_rows: u16, width: usize, lines: &mut Vec<Lin
         .collect();
     let gutter = rows.last().map_or(1, |row| row.to_string().len()).max(3) + 1;
     let columns = columns_shown(view, width.saturating_sub(gutter));
-    let (top, left, bottom, right) = view.area();
+    let (top, left, bottom, right) = view.area_in(boxes);
     let mut header = vec![Span::new(" ".repeat(gutter), Role::Muted)];
     for column in &columns {
         let name = column_name(*column);
@@ -1429,7 +1497,14 @@ fn grid_lines(view: &View, terminal_rows: u16, width: usize, lines: &mut Vec<Lin
     lines.push(header);
     let main = cells(&view.block);
     let frozen = cells(&view.frozen);
-    let peers: HashMap<(i32, i32), String> = view
+    let source_of = |row: i32| {
+        if row <= frozen_rows && view.frozen.is_object() {
+            &frozen
+        } else {
+            &main
+        }
+    };
+    let peers: Vec<((i32, i32), String)> = view
         .peers
         .iter()
         .filter(|peer| peer["sheet"].as_u64() == Some(u64::from(view.sheet)))
@@ -1441,12 +1516,25 @@ fn grid_lines(view: &View, terminal_rows: u16, width: usize, lines: &mut Vec<Lin
             ))
         })
         .collect();
-    for row in rows {
-        let source = if row <= frozen_rows && view.frozen.is_object() {
-            &frozen
-        } else {
-            &main
-        };
+    // the boxes on screen alone, each cell drawn looks among them
+    let boxes = merges::meeting(
+        boxes,
+        (
+            rows.first().copied().unwrap_or(1),
+            columns.first().copied().unwrap_or(1),
+            rows.last().copied().unwrap_or(1),
+            columns.last().copied().unwrap_or(1),
+        ),
+    );
+    // a box's text is on its first row on screen (the anchor's, or the first below the frozen ones or the top)
+    let text_row = |merged: merges::Merged| rows.iter().copied().find(|row| merged.has_row(*row));
+    // what a cell draws: its own, or as a cell of a box, its anchor's
+    let drawn = |row: i32, column: i32| {
+        let (row, column) =
+            merges::box_at(&boxes, row, column).map_or((row, column), |merged| (merged.row, merged.column));
+        source_of(row).get(&(row, column)).cloned().unwrap_or_default()
+    };
+    for &row in &rows {
         let label = format!("{row:>w$} ", w = gutter - 1);
         let mut line = vec![if row == view.row {
             Span::new(label, Role::Primary).bold()
@@ -1456,12 +1544,40 @@ fn grid_lines(view: &View, terminal_rows: u16, width: usize, lines: &mut Vec<Lin
         // a text runs on into the empty cells to its right, in its own colour
         let mut carry = String::new();
         let mut carry_color = None;
-        for (index, column) in columns.iter().enumerate() {
-            let w = view.width_of(*column);
-            let cell = source.get(&(row, *column)).cloned().unwrap_or_default();
+        let mut index = 0;
+        while index < columns.len() {
+            let column = columns[index];
+            let merged = merges::box_at(&boxes, row, column);
+            let mut cell = drawn(row, column);
+            // a box is one cell over its columns on screen next to each other (the frozen edge cuts it), with its
+            // text in the first part, on its text row
+            let mut end = index + 1;
+            let (at_cursor, selected, peer, w) = if let Some(merged) = merged {
+                while end < columns.len() && columns[end] == columns[end - 1] + 1 && merged.has_column(columns[end]) {
+                    end += 1;
+                }
+                let first_part = !columns[..index].iter().any(|before| merged.has_column(*before));
+                // the rest of the box is its fill alone
+                if !first_part || text_row(merged) != Some(row) {
+                    cell.text.clear();
+                    cell.underline = false;
+                }
+                carry.clear();
+                (
+                    merged.contains(view.row, view.column),
+                    (top..=bottom).contains(&merged.row) && (left..=right).contains(&merged.column),
+                    peers.iter().any(|(at, _)| merged.contains(at.0, at.1)),
+                    columns[index..end].iter().map(|at| view.width_of(*at)).sum::<usize>() + (end - index - 1),
+                )
+            } else {
+                (
+                    (row, column) == (view.row, view.column),
+                    (top..=bottom).contains(&row) && (left..=right).contains(&column),
+                    peers.iter().any(|(at, _)| *at == (row, column)),
+                    view.width_of(column),
+                )
+            };
             let mut color = cell.color;
-            let at_cursor = (row, *column) == (view.row, view.column);
-            let selected = (top..=bottom).contains(&row) && (left..=right).contains(column);
             let text = if !cell.text.is_empty() {
                 carry.clear();
                 let right_aligned = cell.align == "right" || (cell.number && cell.align.is_empty());
@@ -1478,11 +1594,14 @@ fn grid_lines(view: &View, terminal_rows: u16, width: usize, lines: &mut Vec<Lin
                     "#".repeat(w)
                 } else {
                     let shown = truncate_width(&cell.text, w);
-                    carry = cell.text.chars().skip(shown.chars().count()).collect();
-                    carry_color = cell.color;
+                    // a box's text stays in it
+                    if merged.is_none() {
+                        carry = cell.text.chars().skip(shown.chars().count()).collect();
+                        carry_color = cell.color;
+                    }
                     format!("{shown:<w$}")
                 }
-            } else if !carry.is_empty() && !at_cursor && !selected {
+            } else if merged.is_none() && !carry.is_empty() && !at_cursor && !selected {
                 let shown = truncate_width(&carry, w);
                 carry = carry.chars().skip(shown.chars().count()).collect();
                 color = carry_color;
@@ -1491,14 +1610,13 @@ fn grid_lines(view: &View, terminal_rows: u16, width: usize, lines: &mut Vec<Lin
                 carry.clear();
                 " ".repeat(w)
             };
-            let peer = peers.get(&(row, *column));
             let mut span = Span::new(
                 text,
                 if at_cursor {
                     Role::Focus
                 } else if selected {
                     Role::Selection
-                } else if peer.is_some() {
+                } else if peer {
                     Role::Warning
                 } else {
                     Role::Text
@@ -1508,7 +1626,7 @@ fn grid_lines(view: &View, terminal_rows: u16, width: usize, lines: &mut Vec<Lin
                 span = span.reverse();
             }
             // the place of the cursor, the selection and the others is the theme's to show
-            let own_colors = !at_cursor && !selected && peer.is_none();
+            let own_colors = !at_cursor && !selected && !peer;
             if own_colors {
                 span = span.colors(color, cell.fill);
             }
@@ -1518,21 +1636,19 @@ fn grid_lines(view: &View, terminal_rows: u16, width: usize, lines: &mut Vec<Lin
             if cell.italic {
                 span = span.italic();
             }
-            if cell.underline || peer.is_some() {
+            if cell.underline || peer {
                 span = span.underline();
             }
             line.push(span);
             // the gap between two cells of one fill is filled too, so a run of them is one band
-            let next_fill = columns
-                .get(index + 1)
-                .and_then(|next| source.get(&(row, *next)))
-                .and_then(|next| next.fill);
+            let next_fill = columns.get(end).and_then(|next| drawn(row, *next).fill);
             let gap = Span::new(" ", Role::Text);
             line.push(if own_colors && cell.fill.is_some() && next_fill == cell.fill {
                 gap.colors(None, cell.fill)
             } else {
                 gap
             });
+            index = end;
         }
         lines.push(line);
     }
@@ -1616,6 +1732,9 @@ fn status_line(view: &View, props: &Value, lines: &mut Vec<Line>) {
 
 #[path = "calc_charts.rs"]
 mod charts;
+
+#[path = "calc_merges.rs"]
+mod merges;
 
 #[cfg(test)]
 #[path = "calc_tests.rs"]

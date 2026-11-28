@@ -158,7 +158,7 @@ pub(super) fn chart_prompt(view: &mut View, target: &str, text: String) {
         cursor: text.chars().count(),
         text,
         target: target.to_string(),
-        choice: 0,
+        ..Editing::default()
     });
 }
 
