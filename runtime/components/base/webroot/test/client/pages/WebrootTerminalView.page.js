@@ -213,3 +213,47 @@ test("a watching window keeps the session's size, sends nothing it is typed, say
         await settle()
     }
 })
+
+test("a recording plays at its times, seeks by feeding again from the start, and offers its download", async () => {
+    const cast = [
+        '{"version":2,"width":40,"height":6}',
+        '[0.0,"o","first line\\r\\n"]',
+        '[0.2,"r","50x8"]',
+        '[0.4,"o","second line\\r\\n"]'
+    ].join("\n")
+    const fetching = window.fetch
+    window.fetch = url =>
+        String(url).includes("/apps/Terminal/recording?recordingId=rec-1")
+            ? Promise.resolve(new Response(cast, {status: 200}))
+            : fetching(url)
+    const box = document.createElement("div")
+    document.body.appendChild(box)
+    const player = Vue.createApp({template: '<m-terminal-player recording-id="rec-1"></m-terminal-player>'})
+    player.use(Quasar)
+    Object.keys(moqui.qvtComponents).forEach(name => player.component(name, moqui.qvtComponents[name]))
+    const vm = player.mount(box).$.subTree.component.proxy
+    try {
+        await until(() => vm.loaded)
+        const text = () =>
+            vm.term.buffer.active.getLine(0).translateToString(true) +
+            "|" +
+            vm.term.buffer.active.getLine(1).translateToString(true)
+        await new Promise(resolve => vm.term.write("", resolve))
+        assert.equal(text(), "first line|", "the start, before the first second")
+        assert.equal(vm.duration, 0.4)
+        vm.seek(0.5)
+        await new Promise(resolve => vm.term.write("", resolve))
+        assert.equal(text(), "first line|second line")
+        assert.deepEqual([vm.term.cols, vm.term.rows], [50, 8], "its resize")
+        vm.seek(0)
+        vm.play()
+        await until(() => !vm.playing)
+        await new Promise(resolve => vm.term.write("", resolve))
+        assert.equal(text(), "first line|second line", "played to its end")
+        assert.ok(box.querySelector('a[href*="download=true"]'), "Download")
+    } finally {
+        window.fetch = fetching
+        player.unmount()
+        box.remove()
+    }
+})

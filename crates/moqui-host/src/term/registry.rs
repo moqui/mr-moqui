@@ -222,6 +222,7 @@ impl Registry {
             agent: false,
             attend: None,
             adopted: false,
+            count_from: 0,
         };
         Ok(session::spawn(self, spec, program))
     }
@@ -333,6 +334,7 @@ impl Registry {
             agent: false,
             attend: Some(super::notice::hook(factory)),
             adopted: false,
+            count_from: 0,
         };
         Ok(session::spawn(self, spec, program))
     }
@@ -388,7 +390,7 @@ impl Registry {
                 "agent": spec.profile.agent,
             });
             let (holder, id, launch, replay) = (Arc::clone(&holder), spec.id.clone(), spec.launch.clone(), self.replay);
-            match crate::edge::block_on(async move { holder.open(&id, &launch, replay, meta).await }) {
+            match crate::edge::block_on(async move { holder.open(&id, &launch, replay, meta, None).await }) {
                 Ok(Ok(program)) => program,
                 Ok(Err(err)) => return Err(err.to_string()),
                 Err(err) => return Err(err.message().to_string()),
@@ -419,6 +421,7 @@ impl Registry {
             agent: spec.profile.agent,
             attend: Some(super::notice::hook(factory)),
             adopted: false,
+            count_from: 0,
         };
         Ok(session::spawn(self, spec, program))
     }
@@ -444,10 +447,12 @@ impl Registry {
             agent: adopted.agent,
             attend: Some(super::notice::hook(factory)),
             adopted: true,
+            count_from: adopted.count_from,
         };
         let session = session::spawn(self, spec, adopted.program);
-        // its shares outlive the restart in their rows (D15)
-        super::share::reload(Arc::downgrade(factory), session);
+        // its shares and its recording outlive the restart in their rows (D15, §4.5)
+        super::share::reload(Arc::downgrade(factory), Arc::clone(&session));
+        super::recording::reload(Arc::downgrade(factory), session);
     }
 
     pub fn contains(&self, id: &str) -> bool {
@@ -472,6 +477,8 @@ pub(crate) struct Adopted {
     pub rows: u16,
     pub agent: bool,
     pub program: Program,
+    /// The holder's count where the program's replay starts, less the modes' preamble (D17).
+    pub count_from: u64,
 }
 
 /// A new session id: 22 URL-safe characters, 132 random bits.

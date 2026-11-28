@@ -16,7 +16,8 @@ along with this software (see the LICENSE.md file). If not, see
     server, the apps, the moqui> command line and programs on the operating system, with their state and when they last
     wrote; never what they show. End ends one (org.moqui.terminal.TerminalServices.end#TerminalSessionOf), and another
     user's is an audit row. The opening and the end of each command line and host session are also in the audit
-    entity moqui.terminal.TerminalSession. -->
+    entity moqui.terminal.TerminalSession. Recordings (plans/Terminal-Fancy2.md §4.5) are listed and deleted here, never
+    played: only their owner plays one, in the Terminal. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-index="24" default-menu-group="Server" default-menu-title="Terminal Sessions" menu-image="sym_o_terminal" menu-image-type="icon">
 
@@ -27,7 +28,26 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
 
+    <transition name="deleteRecording">
+        <service-call name="org.moqui.terminal.TerminalServices.delete#TerminalRecording" in-map="{recordingId:recordingId}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">The recording was deleted</message></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
     <actions><script><![CDATA[
+        // the recordings, in a build that records (one without host sessions has none)
+        recordingList = []
+        try {
+            const recorded = ec.service.sync().name('org.moqui.terminal.TerminalServices.find#AllTerminalRecordings').call() || {}
+            recordingList = (recorded.recordings || []).map((recording) => Object.assign({}, recording, {
+                sizeText: recording.bytes != null ? Math.ceil(Number(recording.bytes) / 1024) + ' KB' : '',
+                forcedText: recording.forced ? ec.l10n.localize('Yes') : ''
+            }))
+        } catch (e) {
+            recordingList = []
+        }
+        ec.message.clearErrors()
         const out = ec.service.sync().name('org.moqui.terminal.TerminalServices.find#AllTerminalSessions').call() || {}
         const when = (millis) => millis ? ec.l10n.format(new Date(Number(millis)), null) : ''
         sessionList = (out.sessions || []).map((session) => Object.assign({}, session, {
@@ -64,6 +84,24 @@ along with this software (see the LICENSE.md file). If not, see
                                 <field name="submitButton"><default-field title="End the session"><submit confirmation="End this session? Its program stops."/></default-field></field>
                             </form-single>
                         </container-dialog>
+                    </default-field></field>
+                </form-list>
+            </widgets>
+        </section>
+        <section name="TerminalRecordingListSection" condition="recordingList.length">
+            <widgets>
+                <label text="Recordings" type="h6"/>
+                <label text="What recorded sessions showed: only each one's owner plays it, in the Terminal." type="p" style="m-muted"/>
+                <form-list name="TerminalRecordingList" list="recordingList" skip-form="true" paginate="false">
+                    <field name="username"><default-field title="User"><display/></default-field></field>
+                    <field name="title"><default-field><display/></default-field></field>
+                    <field name="fromDate"><default-field title="From"><display/></default-field></field>
+                    <field name="thruDate"><default-field title="Thru"><display/></default-field></field>
+                    <field name="sizeText"><default-field title="Size"><display/></default-field></field>
+                    <field name="forcedText"><default-field title="Forced"><display/></default-field></field>
+                    <field name="delete"><default-field title="">
+                        <link url="deleteRecording" text="Delete" parameter-map="{recordingId: recordingId}"
+                                confirmation="Delete this recording? Its file is removed."/>
                     </default-field></field>
                 </form-list>
             </widgets>

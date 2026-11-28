@@ -263,8 +263,9 @@ are listed apart. SSH gets `attach --view <id>` (`command/attach.rs`).
   `moqui.terminal.TerminalRecording`: the session, the user, the location, from and thru, the bytes, and whether it
   was forced. A new Rust service, `clean#TerminalRecordings`, removes recordings past `recording-days`, file and row;
   `clean#TerminalSessions`, a script, calls it.
-- **Shown.** A REC mark on the pane, the float, the tab and the session list (`state.recording`), and a line in the
-  session's output when recording starts or stops.
+- **Shown.** A REC mark on the pane, the float's title and the session list (`state.recording`), and a `recording`
+  event when it starts or stops. No line is written into the session's output: it would break a full-screen program's
+  screen.
 - **Played.** The Terminal's Recordings list, the owner's alone: a player (xterm.js fed by the events' times, with
   play, pause, speed and seek by feeding again from the start) and Download `.cast`, which asciinema plays too. System
   › Terminal Sessions lists every recording's row and deletes them; it does not play them (D2).

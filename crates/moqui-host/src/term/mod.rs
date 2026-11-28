@@ -55,6 +55,10 @@ mod keys;
 mod notice;
 pub(crate) mod registry;
 mod ring;
+#[cfg(all(feature = "devtools", unix))]
+pub(crate) mod record;
+#[cfg(all(feature = "devtools", unix))]
+mod recording;
 #[cfg(feature = "devtools")]
 pub(crate) mod screen;
 #[cfg(feature = "devtools")]

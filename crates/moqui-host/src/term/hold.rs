@@ -43,11 +43,14 @@ use tokio::net::unix::OwnedWriteHalf;
 use tokio::net::{UnixListener, UnixStream};
 
 use super::exec;
+use super::record::{Keep, Recorder, Wrote};
 use super::ring::Ring;
 use super::track::Tracker;
 
-/// The holder's protocol. A server speaks to the holder of its own version; one of another is an earlier build's.
-pub(crate) const PROTOCOL: u32 = 1;
+/// The holder's protocol. A server speaks to the holder of its own version; one of another is an earlier build's. 2:
+/// `open` takes `record`, a `record` request starts and stops a recording, and `attach` answers where its replay starts
+/// (plans/Terminal-Fancy2.md §4.5, D17).
+pub(crate) const PROTOCOL: u32 = 2;
 /// Where the holder's runtime directory is named for it.
 pub(crate) const HOLD_ENV: &str = "MOQUI_TERM_HOLD";
 /// The holder ends this long after its last session ended.
@@ -84,16 +87,33 @@ struct Output {
     ring: Ring,
     tracker: Tracker,
     count: u64,
+    /// The terminal's size now, for a recording's header.
+    size: (u16, u16),
+    /// The session's recording, written here so a restart of the server loses nothing of it (§4.5).
+    recorder: Option<Recorder>,
+}
+
+/// Start a recording of `keep` at `size`, or none when it does not start (logged).
+fn start_recording(id: &str, keep: &Keep, size: (u16, u16)) -> Option<Recorder> {
+    match Recorder::start(keep.clone(), size.0, size.1) {
+        Ok(recorder) => Some(recorder),
+        Err(err) => {
+            eprintln!("term-hold: session {id}: the recording did not start: {err}");
+            None
+        }
+    }
 }
 
 impl Held {
-    /// What a window that comes back is sent first: the modes in force where the kept output starts, and that output.
-    fn replay(&self) -> Vec<u8> {
+    /// What a window that comes back is sent first: the modes in force where the kept output starts, and that output;
+    /// with the count where it starts and the length of the modes' preamble, so the server goes on in the same count.
+    fn replay(&self) -> (u64, usize, Vec<u8>) {
         let output = lock(&self.output);
-        let (_, bytes, modes) = output.ring.replay_from_rest(output.count, output.tracker.modes());
+        let (from, bytes, modes) = output.ring.replay_from_rest(output.count, output.tracker.modes());
         let mut replay = modes.preamble();
+        let preamble = replay.len();
         replay.extend_from_slice(&bytes);
-        replay
+        (from, preamble, replay)
     }
 }
 
@@ -259,12 +279,37 @@ async fn connection(mut stream: UnixStream, sessions: Sessions) {
         },
         "resize" => match find(text(&request, "id")) {
             Some(held) => {
-                exec::resize(
-                    &held.master,
-                    dimension(&request, "cols", 80),
-                    dimension(&request, "rows", 24),
-                );
+                let size = (dimension(&request, "cols", 80), dimension(&request, "rows", 24));
+                exec::resize(&held.master, size.0, size.1);
+                let mut output = lock(&held.output);
+                output.size = size;
+                if let Some(recorder) = output.recorder.as_mut() {
+                    let _ = recorder.resize(size.0, size.1);
+                }
                 serde_json::json!({})
+            }
+            None => error("no such session"),
+        },
+        // start (`keep`) or stop (no `keep`) the session's recording
+        "record" => match find(text(&request, "id")) {
+            Some(held) => {
+                let id = text(&request, "id").to_string();
+                let mut output = lock(&held.output);
+                if let Some(mut before) = output.recorder.take() {
+                    let _ = before.finish();
+                }
+                match request.get("keep").and_then(Keep::of_json) {
+                    Some(keep) => {
+                        let size = output.size;
+                        output.recorder = start_recording(&id, &keep, size);
+                        if output.recorder.is_some() {
+                            serde_json::json!({})
+                        } else {
+                            error("the recording did not start")
+                        }
+                    }
+                    None => serde_json::json!({}),
+                }
             }
             None => error("no such session"),
         },
@@ -375,6 +420,11 @@ async fn open(mut stream: UnixStream, request: &serde_json::Value, sessions: &Se
         pid,
         child,
     } = started;
+    let size = (dimension(request, "cols", 80), dimension(request, "rows", 24));
+    let recorder = request
+        .get("record")
+        .and_then(Keep::of_json)
+        .and_then(|keep| start_recording(&id, &keep, size));
     let held = Arc::new(Held {
         meta: request.get("meta").cloned().unwrap_or(serde_json::Value::Null),
         master,
@@ -383,6 +433,8 @@ async fn open(mut stream: UnixStream, request: &serde_json::Value, sessions: &Se
             ring: Ring::new(usize::try_from(replay).unwrap_or(2048 * 1024)),
             tracker: Tracker::default(),
             count: 0,
+            size,
+            recorder,
         }),
         subscriber: tokio::sync::Mutex::new(None),
         ended: Mutex::new(None),
@@ -407,6 +459,13 @@ async fn open(mut stream: UnixStream, request: &serde_json::Value, sessions: &Se
                 let at = output.count;
                 output.ring.push(bytes, at, &changes.rests);
                 output.count += read as u64;
+                let full = output
+                    .recorder
+                    .as_mut()
+                    .is_some_and(|recorder| !matches!(recorder.output(bytes), Ok(Wrote::Kept)));
+                if full {
+                    output.recorder = None;
+                }
             }
             if let Some(connection) = subscriber.as_mut() {
                 if connection.write_all(bytes).await.is_err() {
@@ -421,6 +480,9 @@ async fn open(mut stream: UnixStream, request: &serde_json::Value, sessions: &Se
             _ => 1,
         };
         *lock(&pump.ended) = Some((status, Instant::now()));
+        if let Some(mut recorder) = lock(&pump.output).recorder.take() {
+            let _ = recorder.finish();
+        }
         if let Some(mut connection) = pump.subscriber.lock().await.take() {
             let _ = connection.shutdown().await;
         }
@@ -436,13 +498,15 @@ async fn open(mut stream: UnixStream, request: &serde_json::Value, sessions: &Se
 
 /// `attach`: this connection takes the session's stream, with its replay first when asked.
 async fn subscribe(mut stream: UnixStream, held: Arc<Held>, replay: bool) {
-    if write_line(&mut stream, &serde_json::json!({"attached": true}))
-        .await
-        .is_err()
-    {
+    let (from, preamble, first) = if replay {
+        held.replay()
+    } else {
+        (lock(&held.output).count, 0, Vec::new())
+    };
+    let answer = serde_json::json!({"attached": true, "from": from, "preamble": preamble});
+    if write_line(&mut stream, &answer).await.is_err() {
         return;
     }
-    let first = if replay { held.replay() } else { Vec::new() };
     let writer = Arc::new(tokio::sync::Mutex::new(exec::PtyWriter::of(&held.master)));
     attach_stream(stream, held, writer, first).await;
 }

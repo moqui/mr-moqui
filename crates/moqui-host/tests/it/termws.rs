@@ -314,6 +314,25 @@ impl Page {
         self.attach_query(&format!("session={id}"), have)
     }
 
+    pub(crate) fn cookie(&self) -> &str {
+        &self.cookie
+    }
+
+    /// A GET of the Terminal screen's transition `name` (with its query), as text.
+    pub(crate) fn get_text(&self, name: &str) -> String {
+        let (status, _, text) = crate::common::exchange(
+            self.address,
+            &crate::common::http_request(
+                "GET",
+                &format!("/apps/Terminal/{name}"),
+                &[("Cookie", self.cookie.as_str())],
+                "",
+            ),
+        );
+        assert_eq!(status, 200, "{name}: {text}");
+        text
+    }
+
     /// Attach a window that only watches the session `id` (`observe=1`).
     pub(crate) fn observe(&self, id: &str) -> Ws {
         self.attach_query(&format!("session={id}&observe=1"), None)
@@ -950,6 +969,68 @@ fn a_shared_shell_is_watched_beside_its_writer_and_its_share_revoked() {
     writer.send(Message::Binary(b"exit\r".to_vec().into())).unwrap();
 }
 
+/// Recording forced by the conf (plans/Terminal-Fancy2.md §4.5, D2): every host session is recorded from its start, its
+/// owner cannot stop it, the file has its output and never what was typed beyond the echo, and nobody else plays it.
+#[test]
+fn a_forced_recording_cannot_be_stopped_and_plays_for_its_owner_alone() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let helper = helper_property();
+    let gate = crate::common::start_with_conf_files(
+        "termws-record",
+        Some(PLAIN_USER),
+        r#"<terminal recording="always"><host-profile name="plain" title="Plain sh" command="sh"/></terminal>"#,
+        &[("moqui_conf__instance__purpose", "dev"), (helper.0, &helper.1)],
+        &[],
+    );
+    let address = gate.server.address();
+    let page = Page::signed_in(address, "john.doe");
+    let plain = Page::signed_in(address, "plain.user");
+    gate.server.factory().flush_sessions().unwrap();
+    assert_eq!(page.call("options", None)["options"]["recording"], "always");
+    let opened = page.call(
+        "open",
+        Some(serde_json::json!({"kind": "host", "profileName": "plain"})),
+    );
+    assert_eq!(opened["session"]["recording"], true, "{opened}");
+    assert_eq!(opened["session"]["recordingForced"], true, "{opened}");
+    let id = opened["sessionId"].as_str().unwrap().to_string();
+    let mut socket = page.attach(&id, None);
+    // a query the program asks the terminal is left out of the recording
+    socket
+        .send(Message::Binary(
+            b"printf 'q\\033[6nq'; echo; echo rec-$((6*7))\r".to_vec().into(),
+        ))
+        .unwrap();
+    read_messages_until(&mut socket, "rec-42").unwrap();
+    let refused = page.call("rename", Some(serde_json::json!({"sessionId": id, "record": "N"})));
+    assert_eq!(refused["reasonCode"], "notStopped", "{refused}");
+    let recordings = page.call("recordings", None);
+    let recording = &recordings["recordings"][0];
+    assert_eq!(recording["forced"], true, "{recordings}");
+    let recording_id = recording["recordingId"].as_str().unwrap().to_string();
+    let cast = page.get_text(&format!("recording?recordingId={recording_id}"));
+    assert!(cast.contains("rec-42"), "{cast}");
+    assert!(!cast.contains("\\u001b[6n"), "the query is left out: {cast}");
+    // another user's request is as for none
+    let (status, _, _) = crate::common::exchange(
+        address,
+        &crate::common::http_request(
+            "GET",
+            &format!("/apps/Terminal/recording?recordingId={recording_id}"),
+            &[("Cookie", plain.cookie())],
+            "",
+        ),
+    );
+    assert_eq!(status, 404);
+    assert!(plain.call("recordings", None)["recordings"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    socket.send(Message::Binary(b"exit\r".to_vec().into())).unwrap();
+}
+
 /// The holder (plans/archive/Terminal-Fancy.md §7.5): a host session's program runs on through a restart of the server,
 /// and the next window gets its output again and goes on with it.
 #[test]
@@ -983,6 +1064,13 @@ fn a_host_session_outlives_a_restart_of_the_server() {
         .unwrap();
     read_messages_until(&mut socket, "before-42").unwrap();
     assert_eq!(page.call("options", None)["options"]["hostSessionsOutliveServer"], true);
+    // recorded from here (plans/Terminal-Fancy2.md §4.5): the holder writes it, so the restart loses nothing of it
+    let recorded = page.call("rename", Some(serde_json::json!({"sessionId": id, "record": "Y"})));
+    assert_eq!(recorded["session"]["recording"], true, "{recorded}");
+    socket
+        .send(Message::Binary(b"echo while-$((5*5))\r".to_vec().into()))
+        .unwrap();
+    read_messages_until(&mut socket, "while-25").unwrap();
 
     let gate = gate.restart();
     drop(socket);
@@ -1004,6 +1092,34 @@ fn a_host_session_outlives_a_restart_of_the_server() {
     back.send(Message::Binary(b"echo still-$marker\r".to_vec().into()))
         .unwrap();
     read_messages_until(&mut back, "still-before-42").unwrap();
+    // still recording after the restart, said so again, and the file holds what came before and after it
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let listed = page.call("sessions", None);
+        let recording = listed["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["id"] == id.as_str() && s["recording"] == true);
+        if recording {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the recording is shown again: {listed}");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let stopped = page.call("rename", Some(serde_json::json!({"sessionId": id, "record": "N"})));
+    assert_eq!(stopped["session"]["recording"], false, "{stopped}");
+    let recordings = page.call("recordings", None);
+    let recording_id = recordings["recordings"][0]["recordingId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{recordings}"))
+        .to_string();
+    let cast = page.get_text(&format!("recording?recordingId={recording_id}"));
+    assert!(cast.contains("while-25") && cast.contains("still-before-42"), "{cast}");
+    assert!(
+        cast.lines().next().unwrap_or_default().contains(r#""version":2"#),
+        "{cast}"
+    );
     page.call("close", Some(serde_json::json!({"sessionId": id})));
     assert!(read_messages_until(&mut back, "never").is_err());
 }

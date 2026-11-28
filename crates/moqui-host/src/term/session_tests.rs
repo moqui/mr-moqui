@@ -68,6 +68,7 @@ fn session(kind: Kind, replay: usize, detached_for: Duration) -> (Arc<Registry>,
         agent: false,
         attend: None,
         adopted: false,
+        count_from: 0,
     };
     let session = spawn(&registry, spec, program_value);
     (
@@ -309,6 +310,13 @@ async fn a_viewer_far_behind_is_let_go_and_a_revoked_share_closes_its_windows() 
         fake.program.write_all(&chunk).await.unwrap();
     }
     assert_eq!(closed(&mut slow).await, "behind");
+    // one that joins now gets the whole replay, which is not held against it
+    let mut late = session.attach_as(None, 80, 24, joining("bob", true)).await.unwrap();
+    read_until(&mut late, "xxxx").await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    fake.program.write_all(b"\nstill here\n").await.unwrap();
+    read_until(&mut late, "still here").await;
+    drop(late);
     let mut watching = session.attach_as(None, 80, 24, joining("bob", true)).await.unwrap();
     assert!(session.unshare("bob"));
     assert_eq!(closed(&mut watching).await, "the share was revoked");

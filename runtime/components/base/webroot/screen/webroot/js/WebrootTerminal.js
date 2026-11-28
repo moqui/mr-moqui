@@ -332,6 +332,7 @@
         } else if (message.type === "state") {
             sizeToSession(session, message.cols, message.rows);
             if (info && Array.isArray(message.viewers)) info.viewers = message.viewers;
+            if (info && message.recording !== undefined) info.recording = !!message.recording;
             if (info) {
                 info.title = message.title;
                 info.cwd = message.cwd;
@@ -577,7 +578,7 @@
         const floats = moqui.floats;
         if (!floats || floats.kinds[FLOAT]) return;
         floats.register(FLOAT, {
-            title: (key) => (state.sessions[key] && state.sessions[key].title) || t("Terminal"),
+            title: (key) => ((state.sessions[key] && state.sessions[key].title) || t("Terminal")) + (state.sessions[key] && state.sessions[key].recording ? " · REC" : ""),
             icon: "sym_o_terminal",
             dot: (key) => DOT_COLORS[statusOf(state.sessions[key])] || "",
             defaultSize: { w: 760, h: 440 },
@@ -1034,6 +1035,25 @@
                 if (reason === "no such terminal session" && info) info.state = "ended";
             };
             session.socket = socket;
+        },
+
+        // Start or stop recording the session (Terminal-Fancy2 §4.5): what it shows, never what is typed.
+        setRecording(key, on) {
+            return request("rename", { sessionId: key, record: on ? "Y" : "N" })
+                .then((out) => {
+                    if (out.session && state.sessions[key]) Object.assign(state.sessions[key], { recording: !!out.session.recording, recordingForced: !!out.session.recordingForced });
+                })
+                .catch(notifyError);
+        },
+
+        // The user's recordings, newest first.
+        recordings() {
+            return request("recordings").then((out) => (Array.isArray(out.recordings) ? out.recordings : []));
+        },
+
+        // Where a recording's asciicast file is: inline for the player, or to download.
+        recordingUrl(recordingId, download) {
+            return (shellVm().appRootPath || "") + "/apps/Terminal/recording?recordingId=" + encodeURIComponent(recordingId) + (download ? "&download=true" : "");
         },
 
         // This window types again: it attaches as the one that types, and the window that typed watches (D7).
@@ -1499,7 +1519,8 @@
                 unzoom: t("Restore"), close: t("Close pane"), end: t("End session"), float: t("Float"),
                 gone: t("This session ended with the server."), startAgain: t("Start again"),
                 floating: t("This session is in a floating window."), showHere: t("Show here"), watchers: t("Watching"),
-                revoke: t("Revoke"), mayType: t("may type"), mayWatch: t("may watch") } };
+                revoke: t("Revoke"), mayType: t("may type"), mayWatch: t("may watch"),
+                recordingHint: t("What this session shows is being recorded") } };
         },
         computed: {
             info() {
@@ -1552,6 +1573,7 @@
             '<span class="m-terminal-dot" :class="\'m-terminal-dot-\' + dot" :title="dot"></span>' +
             '<span class="ellipsis q-ml-xs">{{info.title || node.session}}</span>' +
             '<span v-if="info.cwd" class="ellipsis q-ml-sm text-caption m-terminal-muted">{{info.cwd}}</span>' +
+            '<q-badge v-if="info.recording" color="negative" class="q-ml-sm" :title="labels.recordingHint">REC</q-badge>' +
             "<q-space></q-space>" +
             // who watches it, and the shares to take back (Terminal-Fancy2 §4.4)
             '<q-btn v-if="watchers.length || shares.length" flat dense no-caps size="sm" icon="sym_o_visibility" :label="String(watchers.length)" ' +
@@ -1685,6 +1707,99 @@
         template:
             '<template v-for="key in keys" :key="key"><teleport v-if="target(key)" :to="target(key)">' +
             '<m-terminal-view :session-key="key" :data-float-terminal="key"></m-terminal-view></teleport></template>'
+    };
+
+    // A recording played (Terminal-Fancy2 §4.5): xterm.js fed the asciicast's output at its times, with play, pause,
+    // speed, and seek by feeding again from the start. It answers nothing: its terminal sends nowhere.
+    components["m-terminal-player"] = {
+        name: "mTerminalPlayer",
+        props: { recordingId: { type: String, required: true } },
+        data() {
+            return { loaded: false, failed: "", playing: false, speed: 1, at: 0, duration: 0,
+                labels: { play: t("Play"), pause: t("Pause"), download: t("Download"), failed: t("The recording could not be read.") } };
+        },
+        mounted() {
+            terminal.loadLibs().then(() => this.load(), () => (this.failed = this.labels.failed));
+        },
+        beforeUnmount() {
+            this.stop();
+            if (this.term) this.term.dispose();
+        },
+        methods: {
+            load() {
+                root.fetch(terminal.recordingUrl(this.recordingId, false), { credentials: "same-origin" })
+                    .then((response) => (response.ok ? response.text() : Promise.reject(response.status)))
+                    .then((text) => {
+                        const lines = text.split("\n").filter((line) => line.trim());
+                        const header = JSON.parse(lines[0] || "{}");
+                        this.events = lines.slice(1).map((line) => JSON.parse(line)).filter((event) => Array.isArray(event));
+                        this.duration = this.events.length ? Number(this.events[this.events.length - 1][0]) || 0 : 0;
+                        this.term = new root.Terminal({ cols: header.width || 80, rows: header.height || 24, disableStdin: true, scrollback: 1000,
+                            fontFamily: state.settings.fontFamily || FONT, fontSize: Number(state.settings.fontSize) || 14, theme: themeOf() });
+                        this.term.open(this.$refs.screen);
+                        this.loaded = true;
+                        this.seek(0);
+                    })
+                    .catch(() => (this.failed = this.labels.failed));
+            },
+            // feed every event up to `to` seconds, from the start
+            seek(to) {
+                if (!this.term) return;
+                const playing = this.playing;
+                this.stop();
+                this.term.reset();
+                this.next = 0;
+                this.at = Math.max(0, Math.min(Number(to) || 0, this.duration));
+                while (this.next < this.events.length && Number(this.events[this.next][0]) <= this.at) this.apply(this.events[this.next++]);
+                if (playing) this.play();
+            },
+            apply(event) {
+                if (event[1] === "o") this.term.write(String(event[2]));
+                else if (event[1] === "r") {
+                    const size = String(event[2]).split("x").map(Number);
+                    if (size[0] > 0 && size[1] > 0) this.term.resize(size[0], size[1]);
+                }
+            },
+            play() {
+                if (!this.term) return;
+                if (this.at >= this.duration) this.seek(0);
+                this.playing = true;
+                this.started = Date.now() - (this.at * 1000) / this.speed;
+                const step = () => {
+                    if (!this.playing) return;
+                    this.at = Math.min(this.duration, ((Date.now() - this.started) * this.speed) / 1000);
+                    while (this.next < this.events.length && Number(this.events[this.next][0]) <= this.at) this.apply(this.events[this.next++]);
+                    if (this.next >= this.events.length) this.playing = false;
+                    else this.timer = root.setTimeout(step, 30);
+                };
+                step();
+            },
+            stop() {
+                this.playing = false;
+                clearTimeout(this.timer);
+            },
+            setSpeed(speed) {
+                const playing = this.playing;
+                this.stop();
+                this.speed = speed;
+                if (playing) this.play();
+            }
+        },
+        template:
+            '<div class="column no-wrap q-gutter-y-xs m-terminal-player">' +
+            '<div v-if="failed" class="text-negative">{{failed}}</div>' +
+            '<div ref="screen" class="m-terminal-player-screen" style="overflow: auto"></div>' +
+            '<div v-if="loaded" class="row items-center no-wrap q-gutter-x-sm">' +
+            '<q-btn dense flat round :icon="playing ? \'sym_o_pause\' : \'sym_o_play_arrow\'" :aria-label="playing ? labels.pause : labels.play" @click="playing ? stop() : play()"></q-btn>' +
+            '<q-slider class="col" dense :min="0" :max="duration || 1" :step="0.1" :model-value="at" @update:model-value="seek"></q-slider>' +
+            '<q-btn-toggle dense flat no-caps size="sm" :model-value="speed" @update:model-value="setSpeed" :options="[{label: \'1×\', value: 1}, {label: \'2×\', value: 2}, {label: \'4×\', value: 4}]"></q-btn-toggle>' +
+            '<q-btn dense flat no-caps size="sm" icon="sym_o_download" :label="labels.download" :href="downloadUrl" target="_blank"></q-btn>' +
+            "</div></div>",
+        computed: {
+            downloadUrl() {
+                return terminal.recordingUrl(this.recordingId, true);
+            }
+        }
     };
 
     components["m-terminal-copy"] = {

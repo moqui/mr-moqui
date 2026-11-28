@@ -40,7 +40,28 @@ function web(p) {
   return {}
 }
 
+// One of the user's own recordings as its asciicast file (get#TerminalRecording finds it, theirs alone): inline for the
+// Terminal's player, or with download=true as an attachment.
+function cast() {
+  if (!ec.user.userId) {
+    ec.web.sendJsonError(401, 'Authentication required')
+    return {}
+  }
+  const parameters = ec.web.parameters
+  const out = ec.service.sync().name('org.moqui.terminal.TerminalServices.get#TerminalRecording')
+    .parameters({ recordingId: parameters.recordingId || '' }).disableAuthz().call() || {}
+  if (ec.message.hasError() || !out.location) {
+    ec.message.clearErrors()
+    ec.web.sendJsonError(404, 'No such recording')
+    return {}
+  }
+  const name = (out.recording && out.recording.sessionId ? out.recording.sessionId : 'session') + '.cast'
+  ec.web.sendResourceResponse(out.location, parameters.download !== 'true', name)
+  return {}
+}
+
 function execute(op, parameters) {
+  if (op === 'cast') return cast()
   if (op !== 'web') throw new Error('Unknown terminal operation ' + op)
   return web(parameters)
 }

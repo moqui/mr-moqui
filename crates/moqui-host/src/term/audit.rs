@@ -14,7 +14,8 @@
 
 //! The terminal's audit (plans/archive/Terminal-Fancy.md §5.7): a `moqui.terminal.TerminalSession` row for each command
 //! line and host session, written when it is opened and when it ends, with an INFO line each. What is typed and shown
-//! is never recorded. A row that cannot be written is logged and the session goes on.
+//! is never recorded here; what a session shows is recorded only as plans/Terminal-Fancy2.md §4.5 says (opt-in, shown,
+//! bounded, its owner's to play: [`super::recording`]). A row that cannot be written is logged and the session goes on.
 
 use std::sync::Weak;
 
@@ -104,6 +105,8 @@ pub(crate) fn on_end(factory: Weak<ExecutionContextFactory>, id: String) -> Box<
     Box::new(move |status, reason| {
         // its shares end with it (plans/Terminal-Fancy2.md §4.4)
         super::share::close_on_end(factory.clone(), id.clone());
+        #[cfg(unix)]
+        super::recording::close_on_end(factory.clone(), id.clone());
         crate::edge::handle().spawn(async move {
             let row_id = id.clone();
             let written = crate::worker::on_pool_without_authz(&factory, move |factory| {

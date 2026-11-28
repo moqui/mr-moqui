@@ -147,13 +147,15 @@ impl Holder {
         Err(io::Error::other("the terminal holder did not answer"))
     }
 
-    /// Start `launch` in the holder as session `id`, with what the server knows of it in `meta`.
+    /// Start `launch` in the holder as session `id`, with what the server knows of it in `meta`, recorded as `record`
+    /// says from its first byte.
     pub async fn open(
         self: &Arc<Self>,
         id: &str,
         launch: &Launch,
         replay: usize,
         meta: serde_json::Value,
+        record: Option<&super::record::Keep>,
     ) -> io::Result<Program> {
         self.ensure().await?;
         let helper = super::exec::helper("term-exec")?;
@@ -162,28 +164,43 @@ impl Holder {
         let request = serde_json::json!({
             "op": "open", "id": id, "argv": launch.argv, "arg0": launch.arg0, "helper": helper_line,
             "directory": launch.directory.to_string_lossy(), "env": launch.env, "cols": launch.cols, "rows": launch.rows,
-            "replay": replay, "meta": meta,
+            "replay": replay, "meta": meta, "record": record.map(super::record::Keep::to_json),
         });
-        let stream = self.stream(&request).await?;
+        let (stream, _) = self.stream(&request).await?;
         Ok(self.program(id, stream))
     }
 
-    /// Take back the session `id` the holder kept, its last output first.
-    pub async fn attach(self: &Arc<Self>, id: &str) -> io::Result<Program> {
-        let stream = self
+    /// Take back the session `id` the holder kept, its last output first: the program, and the count its replay starts
+    /// at, less the modes' preamble before it, so the server's count goes on as the holder's (D17).
+    pub async fn attach(self: &Arc<Self>, id: &str) -> io::Result<(Program, u64)> {
+        let (stream, answer) = self
             .stream(&serde_json::json!({"op": "attach", "id": id, "replay": true}))
             .await?;
-        Ok(self.program(id, stream))
+        let number = |key: &str| answer.get(key).and_then(serde_json::Value::as_u64).unwrap_or(0);
+        Ok((
+            self.program(id, stream),
+            number("from").saturating_sub(number("preamble")),
+        ))
     }
 
-    async fn stream(&self, request: &serde_json::Value) -> io::Result<UnixStream> {
+    /// Start (`Some`) or stop (`None`) the recording of the held session `id` (§4.5).
+    pub async fn record(&self, id: &str, keep: Option<&super::record::Keep>) -> io::Result<()> {
+        let request = serde_json::json!({"op": "record", "id": id, "keep": keep.map(super::record::Keep::to_json)});
+        let answer = ask(&self.path(), &request).await?;
+        match answer.get("error").and_then(serde_json::Value::as_str) {
+            Some(error) => Err(io::Error::other(error.to_string())),
+            None => Ok(()),
+        }
+    }
+
+    async fn stream(&self, request: &serde_json::Value) -> io::Result<(UnixStream, serde_json::Value)> {
         let mut stream = UnixStream::connect(self.path()).await?;
         write_line(&mut stream, request).await?;
         let answer = read_line(&mut stream).await?;
         if let Some(error) = answer.get("error").and_then(serde_json::Value::as_str) {
             return Err(io::Error::other(error.to_string()));
         }
-        Ok(stream)
+        Ok((stream, answer))
     }
 
     /// The sessions the holder keeps: id, what the server said of each, and an ended one's status.
@@ -299,6 +316,7 @@ impl Holder {
                     rows: 24,
                     agent: false,
                     program: earlier_program(path.clone(), id),
+                    count_from: 0,
                 },
             );
         }
@@ -315,8 +333,6 @@ impl Holder {
             return;
         };
         let registry = super::registry::Registry::of(&strong);
-        // empty while this is the first version of the protocol
-        #[allow(clippy::reversed_empty_ranges)]
         for version in 1..PROTOCOL {
             self.adopt_earlier(&strong, &registry, version).await;
         }
@@ -355,7 +371,7 @@ impl Holder {
                 continue;
             }
             match self.attach(&id).await {
-                Ok(program) => {
+                Ok((program, count_from)) => {
                     let size = |key: &str, default: u16| {
                         meta.get(key)
                             .and_then(serde_json::Value::as_u64)
@@ -374,6 +390,7 @@ impl Holder {
                             rows: size("rows", 24),
                             agent: meta.get("agent").and_then(serde_json::Value::as_bool).unwrap_or(false),
                             program,
+                            count_from,
                         },
                     );
                     tracing::info!("terminal session {id} taken back from the holder");

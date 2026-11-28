@@ -54,6 +54,8 @@ pub(crate) struct Profile {
     pub integration: bool,
     /// A coding agent: quiet output reads as done (§11.1).
     pub agent: bool,
+    /// Its sessions start recorded (plans/Terminal-Fancy2.md §4.5), where the conf offers recording.
+    pub record: bool,
     pub env: Vec<(String, String)>,
     /// The user's own, not the conf's.
     pub own: bool,
@@ -104,6 +106,7 @@ pub(crate) fn conf_profiles(conf_text: &str) -> Vec<Profile> {
                 login: truthy(node.attribute("login")),
                 integration: truthy(node.attribute("integration")),
                 agent: truthy(node.attribute("agent")),
+                record: truthy(node.attribute("record")),
                 env,
                 own: false,
             });
@@ -152,6 +155,7 @@ pub(crate) fn own_profiles(json: &str) -> Vec<Profile> {
                     .and_then(serde_json::Value::as_bool)
                     .unwrap_or(false),
                 agent: item.get("agent").and_then(serde_json::Value::as_bool).unwrap_or(false),
+                record: item.get("record").and_then(serde_json::Value::as_bool).unwrap_or(false),
                 env: item
                     .get("env")
                     .and_then(serde_json::Value::as_object)
@@ -205,6 +209,7 @@ pub(crate) fn available(conf_text: &str, own_json: Option<&str>) -> Vec<Profile>
             if let Some(shell) = profiles.first_mut() {
                 shell.title.clone_from(&profile.title);
                 shell.integration = profile.integration;
+                shell.record = profile.record;
                 shell.env.clone_from(&profile.env);
                 shell.directory = profile.directory.clone().or(shell.directory.take());
             }

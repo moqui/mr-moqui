@@ -37,11 +37,17 @@ pub(crate) struct Ring {
 
 impl Ring {
     pub fn new(capacity: usize) -> Self {
+        Self::starting_at(capacity, 0)
+    }
+
+    /// An empty ring whose first byte will be count `start`: a held session taken back goes on in the holder's count
+    /// (plans/Terminal-Fancy2.md D17).
+    pub fn starting_at(capacity: usize, start: u64) -> Self {
         Self {
             capacity: capacity.max(1),
             bytes: VecDeque::new(),
-            start: 0,
-            rests: VecDeque::from([(0, Modes::default())]),
+            start,
+            rests: VecDeque::from([(start, Modes::default())]),
         }
     }
 

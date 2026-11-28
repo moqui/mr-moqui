@@ -151,6 +151,8 @@ enum Command {
     Revoke {
         username: String,
     },
+    /// Tell the windows the session's state again (its recording changed).
+    State,
     Detach {
         client: u64,
     },
@@ -179,6 +181,12 @@ enum Command {
         scope: Scope,
         ansi: bool,
         reply: oneshot::Sender<Option<Read>>,
+    },
+    /// Start (`Some`) or stop (`None`) the recording of a session in process (§4.5); a held one's is the holder's.
+    #[cfg(all(feature = "devtools", unix))]
+    Record {
+        keep: Option<super::record::Keep>,
+        reply: oneshot::Sender<Result<(), String>>,
     },
     /// A program's input (§4.3): `text` as typed, then the named `keys`, in the modes in force; answers the count of
     /// the output so far, or why it was refused.
@@ -239,6 +247,16 @@ pub(crate) struct Session {
     events: Mutex<Events>,
     /// The users the owner shared it with, and whether each may type (§4.4, D3).
     shares: Mutex<std::collections::BTreeMap<String, bool>>,
+    /// Its recording now (§4.5).
+    recording: Mutex<Option<Recording>>,
+}
+
+/// A session's recording: its `TerminalRecording` row, the file, and whether the conf forces it (D2).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Recording {
+    pub id: String,
+    pub location: String,
+    pub forced: bool,
 }
 
 /// What a session that wants its user while nobody looks tells (§11.1): the notification's sender.
@@ -282,6 +300,8 @@ pub(crate) struct Spec {
     pub attend: Option<Attend>,
     /// Taken back from the holder after a restart: its kept output was written across sizes this server did not see.
     pub adopted: bool,
+    /// The count of its first byte here: the holder's, for a session taken back (D17); else 0.
+    pub count_from: u64,
 }
 
 pub(crate) fn now_millis() -> i64 {
@@ -333,6 +353,29 @@ impl Session {
             .await
             .ok()?;
         answer.await.ok()
+    }
+
+    /// Its recording now, if any.
+    pub fn recording(&self) -> Option<Recording> {
+        lock(&self.recording).clone()
+    }
+
+    /// Its recording changed: the windows are told (the REC mark).
+    #[cfg_attr(not(all(feature = "devtools", unix)), allow(dead_code))]
+    pub fn set_recording(&self, recording: Option<Recording>) {
+        *lock(&self.recording) = recording;
+        let _ = self.commands.try_send(Command::State);
+    }
+
+    /// Start (`Some`) or stop (`None`) the recording of a session in process; a held session's is the holder's.
+    #[cfg(all(feature = "devtools", unix))]
+    pub async fn record(&self, keep: Option<super::record::Keep>) -> Result<(), String> {
+        let (reply, answer) = oneshot::channel();
+        self.commands
+            .send(Command::Record { keep, reply })
+            .await
+            .map_err(|_| "the session has ended".to_string())?;
+        answer.await.map_err(|_| "the session has ended".to_string())?
     }
 
     /// Share the session with `username`, who may type in it when `write` (§4.4, D3).
@@ -479,6 +522,8 @@ impl Session {
             "lastOutput": info.last_output,
             "owner": self.username,
             "viewers": info.viewers,
+            "recording": self.recording().is_some(),
+            "recordingForced": self.recording().is_some_and(|recording| recording.forced),
             "shares": self.shares().iter().map(|(user, write)| serde_json::json!({"username": user, "write": write})).collect::<Vec<_>>(),
         })
     }
@@ -509,14 +554,15 @@ pub(crate) fn spawn(registry: &Arc<Registry>, spec: Spec, program: Program) -> A
         typed: std::sync::atomic::AtomicBool::new(false),
         events: Mutex::new(Events::default()),
         shares: Mutex::new(std::collections::BTreeMap::new()),
+        recording: Mutex::new(None),
     });
     registry.insert(Arc::clone(&session));
     let pump = Pump {
         session: Arc::clone(&session),
         registry: Arc::downgrade(registry),
-        ring: (spec.replay > 0).then(|| Ring::new(spec.replay)),
+        ring: (spec.replay > 0).then(|| Ring::starting_at(spec.replay, spec.count_from)),
         tracker: Tracker::default(),
-        count: 0,
+        count: spec.count_from,
         client: None,
         pending: Vec::new(),
         detached_since: Some(Instant::now()),
@@ -529,6 +575,8 @@ pub(crate) fn spawn(registry: &Arc<Registry>, spec: Spec, program: Program) -> A
         screen: None,
         resized: spec.adopted,
         observers: Vec::new(),
+        #[cfg(all(feature = "devtools", unix))]
+        recorder: None,
     };
     crate::edge::handle().spawn(pump.run(program, commands_in, input_in));
     session
@@ -582,6 +630,9 @@ struct Pump {
     screen: Option<Screen>,
     /// The kept output was written at more than one size (or before an adoption): a screen made from it is `rebuilt`.
     resized: bool,
+    /// The recording of a session in process (§4.5).
+    #[cfg(all(feature = "devtools", unix))]
+    recorder: Option<super::record::Recorder>,
 }
 
 /// Write the client's input to the program until the session ends it or the program stops reading.
@@ -752,6 +803,20 @@ impl Pump {
         #[cfg(feature = "devtools")]
         if let Some(screen) = self.screen.as_mut() {
             screen.feed(bytes);
+        }
+        #[cfg(all(feature = "devtools", unix))]
+        if let Some(recorder) = self.recorder.as_mut() {
+            if !matches!(recorder.output(bytes), Ok(super::record::Wrote::Kept)) {
+                // at its limit (or a write that failed) the recording stops, and the windows are told
+                tracing::info!(
+                    "terminal session {}: its recording stopped at its limit",
+                    self.session.id
+                );
+                self.recorder = None;
+                *lock(&self.session.recording) = None;
+                self.session.event("recording", "stopped at its limit", None);
+                self.send_state();
+            }
         }
         if let Some(ring) = self.ring.as_mut() {
             ring.push(bytes, self.count, &changes.rests);
@@ -976,6 +1041,28 @@ impl Pump {
                 }
             }
             Command::Revoke { username } => self.revoke(&username),
+            Command::State => self.send_state(),
+            #[cfg(all(feature = "devtools", unix))]
+            Command::Record { keep, reply } => {
+                if let Some(mut before) = self.recorder.take() {
+                    let _ = before.finish();
+                }
+                let started = match keep {
+                    Some(keep) => {
+                        let info = self.session.info();
+                        super::record::Recorder::start(keep, info.cols, info.rows)
+                            .map(|recorder| self.recorder = Some(recorder))
+                            .map_err(|err| format!("the recording did not start: {err}"))
+                    }
+                    None => Ok(()),
+                };
+                self.session.event(
+                    "recording",
+                    if self.recorder.is_some() { "started" } else { "stopped" },
+                    None,
+                );
+                let _ = reply.send(started);
+            }
             Command::Detach { client } => {
                 if self.client.as_ref().is_some_and(|current| current.id == client) {
                     self.client = None;
@@ -1055,6 +1142,10 @@ impl Pump {
             info.cols = cols;
             info.rows = rows;
         });
+        #[cfg(all(feature = "devtools", unix))]
+        if let Some(recorder) = self.recorder.as_mut() {
+            let _ = recorder.resize(cols, rows);
+        }
         #[cfg(feature = "devtools")]
         if let Some(screen) = self.screen.as_mut() {
             screen.resize(cols, rows);
@@ -1137,6 +1228,11 @@ impl Pump {
             visible: true,
         };
         if joining.observe {
+            // its replay is not held against it: it is let go only when the output after it goes unacknowledged
+            let client = Client {
+                acked: self.count,
+                ..client
+            };
             self.observers.push(client);
             self.session
                 .event("attach", format!("{} watches", joining.username), None);
@@ -1190,10 +1286,11 @@ impl Pump {
                 return (have, false, after);
             }
         }
-        let (from, kept, modes) = ring.replay_from_rest(self.count, self.tracker.modes());
+        let (_, kept, modes) = ring.replay_from_rest(self.count, self.tracker.modes());
         let mut bytes = modes.preamble();
-        bytes.extend_from_slice(&kept);
-        (from, true, bytes)
+        bytes.extend_from_slice(&without_queries(&kept));
+        // the window counts from where its bytes end at the session's count, whatever was left out of them
+        (self.count.saturating_sub(bytes.len() as u64), true, bytes)
     }
 
     fn state_message(&self) -> String {
@@ -1209,6 +1306,7 @@ impl Pump {
             "cols": info.cols,
             "rows": info.rows,
             "viewers": info.viewers,
+            "recording": self.session.recording().is_some(),
         })
         .to_string()
     }
@@ -1240,6 +1338,19 @@ impl Pump {
                 },
             }
         }
+    }
+}
+
+/// The kept output of a replay without the terminal's queries (plans/Terminal-Fancy2.md §4.5): a new window's terminal
+/// would answer an old query, and the answer, typed into the program, is garbage.
+fn without_queries(kept: &[u8]) -> Vec<u8> {
+    #[cfg(all(feature = "devtools", unix))]
+    {
+        super::record::strip_queries(kept, true).0
+    }
+    #[cfg(not(all(feature = "devtools", unix)))]
+    {
+        kept.to_vec()
     }
 }
 

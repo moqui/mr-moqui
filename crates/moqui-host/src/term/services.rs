@@ -56,6 +56,8 @@ fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<
     super::drive::register(map)?;
     #[cfg(feature = "devtools")]
     super::share::register(map)?;
+    #[cfg(all(feature = "devtools", unix))]
+    super::recording::register(map)?;
     Ok(())
 }
 
@@ -179,8 +181,19 @@ fn get_terminal_options(_parameters: &BTreeMap<String, Value>, _facade: &EntityF
         "detachSeconds": registry.detach.as_secs(),
         // a host session outlives the server while the holder keeps it (§7.5)
         "hostSessionsOutliveServer": host_outlives(&factory),
+        // recording what a session shows: offer, always or off (plans/Terminal-Fancy2.md §4.5)
+        "recording": recording_mode(&factory),
     });
     answer("options", &options)
+}
+
+#[cfg(all(feature = "devtools", unix))]
+fn recording_mode(factory: &ExecutionContextFactory) -> &'static str {
+    super::recording::mode(factory)
+}
+#[cfg(not(all(feature = "devtools", unix)))]
+fn recording_mode(_factory: &ExecutionContextFactory) -> &'static str {
+    "off"
 }
 
 /// The host sessions the holder kept from the server before, listed again on the first look after a start (§7.5).
@@ -411,6 +424,7 @@ fn open_host(
         on_end: Some(super::audit::on_end(Arc::downgrade(factory), id.clone())),
     };
     let session = registry.open_host(factory, spec).map_err(HostRefusal::Refused)?;
+    super::recording::at_open(factory, &session, profile.record);
     super::audit::record_open(&super::audit::Opened {
         id: &id,
         username,
@@ -577,6 +591,21 @@ fn update_terminal_session(parameters: &BTreeMap<String, Value>, _facade: &Entit
     let notify = text(parameters, "notify");
     if !notify.is_empty() {
         session.set_notify(&notify);
+    }
+    // its recording started or stopped (plans/Terminal-Fancy2.md §4.5)
+    #[cfg(all(feature = "devtools", unix))]
+    match text(parameters, "record").as_str() {
+        "Y" | "true" => {
+            if let Err(why) = super::recording::start(&factory, &session, false) {
+                return refuse("notRecorded", &why);
+            }
+        }
+        "N" | "false" => {
+            if let Err(why) = super::recording::stop(&factory, &session) {
+                return refuse("notStopped", &why);
+            }
+        }
+        _ => {}
     }
     answer("session", &session.to_json())
 }

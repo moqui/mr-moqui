@@ -14,7 +14,8 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- The terminal's audit (plans/archive/Terminal-Fancy.md §5.7): one row per command line and host session of the
     browser terminal (crates/moqui-host/src/term), written when it is opened and when it ends. What is typed and shown
-    is never recorded. clean#TerminalSessions removes rows older than 90 days, each day. -->
+    is never recorded in it; what a session shows is recorded only in a TerminalRecording (opt-in or forced by the conf,
+    always shown, its owner's to play). clean#TerminalSessions removes rows older than 90 days, each day. -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
     <entity entity-name="TerminalSession" package="moqui.terminal" use="transactional" cache="never">
         <field name="terminalSessionId" type="id" is-pk="true"/>
@@ -50,5 +51,22 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="sharedByUsername" type="text-medium"/>
         <field name="writeAllowed" type="text-indicator"/>
         <index name="TERM_SHARE_USER"><index-field name="username"/></index>
+    </entity>
+    <!-- A session's recording (plans/Terminal-Fancy2.md §4.5): an asciicast file of what it showed, never what was typed,
+        at location under runtime/terminal/recordings/<username>/. Only its owner plays it (get#TerminalRecording); an
+        administrator lists and deletes recordings. forced Y when the conf's recording="always" made it. Removed, file and
+        row, after terminal@recording-days. -->
+    <entity entity-name="TerminalRecording" package="moqui.terminal" use="transactional" cache="never">
+        <field name="recordingId" type="id" is-pk="true"/>
+        <field name="terminalSessionId" type="id"/>
+        <field name="username" type="text-medium"/>
+        <field name="title" type="text-medium"/>
+        <field name="location" type="text-long"/>
+        <field name="fromDate" type="date-time"/>
+        <field name="thruDate" type="date-time"/>
+        <field name="bytes" type="number-integer"/>
+        <field name="forced" type="text-indicator"/>
+        <index name="TERM_REC_SESSION"><index-field name="terminalSessionId"/></index>
+        <index name="TERM_REC_USER"><index-field name="username"/></index>
     </entity>
 </entities>

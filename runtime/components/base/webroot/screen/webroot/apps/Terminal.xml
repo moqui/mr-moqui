@@ -44,7 +44,16 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <transition name="rename" method="post" begin-transaction="false" authz-action="view">
-        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'update#TerminalSession', names: ['sessionId', 'title', 'notify']})</script></actions>
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'update#TerminalSession', names: ['sessionId', 'title', 'notify', 'record']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the user's recordings (plans/Terminal-Fancy2.md §4.5): the list, and one's file to play or download, theirs alone -->
+    <transition name="recordings" read-only="true" begin-transaction="false">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'find#TerminalRecordings', names: []})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="recording" read-only="true" begin-transaction="false">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('cast', {})</script></actions>
         <default-response type="none"/>
     </transition>
     <!-- sharing a session with another user (plans/Terminal-Fancy2.md §4.4) -->

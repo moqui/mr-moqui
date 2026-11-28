@@ -41,6 +41,7 @@ along with this software (see the LICENSE.md file). If not, see
             </q-list>
         </q-btn-dropdown>
         <q-btn flat dense round icon="sym_o_list" :aria-label="labels.sessions" id="TerminalSessionsToggle" @click="listOpen = !listOpen"><q-tooltip>{{labels.sessions}}</q-tooltip></q-btn>
+        <q-btn v-if="recordingOffered" flat dense round icon="sym_o_video_library" :aria-label="labels.recordings" id="TerminalRecordingsOpen" @click="openRecordings"><q-tooltip>{{labels.recordings}}</q-tooltip></q-btn>
         <q-btn flat dense round icon="sym_o_settings" :aria-label="labels.settings" id="TerminalSettingsOpen" @click="openSettings"><q-tooltip>{{labels.settings}}</q-tooltip></q-btn>
     </div>
     <div class="col row no-wrap" style="min-height: 0">
@@ -63,13 +64,14 @@ along with this software (see the LICENSE.md file). If not, see
                         @before-show="loadPreview(id)"><pre class="m-terminal-preview">{{(previews[id] || []).join('\n') || labels.noPreview}}</pre></q-tooltip>
                     <q-item-section avatar style="min-width: 0"><span class="m-terminal-dot" :class="'m-terminal-dot-' + dotOf(terminalState.sessions[id])"></span></q-item-section>
                     <q-item-section>
-                        <q-item-label class="ellipsis">{{terminalState.sessions[id].title || id}}</q-item-label>
+                        <q-item-label class="ellipsis"><q-badge v-if="terminalState.sessions[id].recording" color="negative" class="q-mr-xs">REC</q-badge>{{terminalState.sessions[id].title || id}}</q-item-label>
                         <q-item-label caption class="ellipsis">{{placeOf(id)}}<span v-if="terminalState.sessions[id].shared"> · {{labels.sharedBy}} {{terminalState.sessions[id].owner}}</span><span v-else-if="(terminalState.sessions[id].viewers || []).length"> · {{terminalState.sessions[id].viewers.length}} {{labels.watching}}</span></q-item-label>
                     </q-item-section>
                     <q-item-section side>
                         <div class="row no-wrap">
                             <q-btn v-if="terminalState.sessions[id].state !== 'ended'" flat dense round size="sm" icon="sym_o_tab" :aria-label="labels.showHere" @click="showHere(id)"><q-tooltip>{{labels.showHere}}</q-tooltip></q-btn>
                             <q-btn v-if="!terminalState.sessions[id].shared" flat dense round size="sm" :icon="notifyIcon(id)" :aria-label="labels.notify" @click="cycleNotify(id)"><q-tooltip>{{labels.notify}}: {{notifyLabel(id)}}</q-tooltip></q-btn>
+                            <q-btn v-if="recordingOffered && !terminalState.sessions[id].shared && terminalState.sessions[id].kind !== 'apps' && terminalState.sessions[id].state !== 'ended' && !terminalState.sessions[id].recordingForced" flat dense round size="sm" :color="terminalState.sessions[id].recording ? 'negative' : undefined" :icon="terminalState.sessions[id].recording ? 'sym_o_stop_circle' : 'sym_o_radio_button_checked'" :aria-label="terminalState.sessions[id].recording ? labels.stopRecording : labels.record" @click="toggleRecording(id)"><q-tooltip>{{terminalState.sessions[id].recording ? labels.stopRecording : labels.record}}</q-tooltip></q-btn>
                             <q-btn v-if="!terminalState.sessions[id].shared && terminalState.sessions[id].kind !== 'apps' && terminalState.sessions[id].state !== 'ended'" flat dense round size="sm" icon="sym_o_share" :aria-label="labels.share" @click="shareSession(id)"><q-tooltip>{{labels.share}}</q-tooltip></q-btn>
                             <q-btn v-if="!terminalState.sessions[id].shared" flat dense round size="sm" icon="sym_o_edit" :aria-label="labels.rename" @click="renameSession(id)"><q-tooltip>{{labels.rename}}</q-tooltip></q-btn>
                             <q-btn v-if="terminalState.sessions[id].state !== 'ended' && !terminalState.sessions[id].shared" flat dense round size="sm" icon="sym_o_power_settings_new" :aria-label="labels.end" @click="endSession(id)"><q-tooltip>{{labels.end}}</q-tooltip></q-btn>
@@ -84,6 +86,26 @@ along with this software (see the LICENSE.md file). If not, see
     </div>
     </template>
 </div>
+<q-dialog v-model="recordingsOpen" @hide="playing = ''">
+    <q-card style="min-width: 360px; max-width: 96vw" id="TerminalRecordings">
+        <q-card-section class="text-h6">{{labels.recordings}}</q-card-section>
+        <q-card-section v-if="playing" class="q-pt-none"><m-terminal-player :recording-id="playing" :key="playing"></m-terminal-player></q-card-section>
+        <q-list dense separator style="max-height: 50vh" class="scroll">
+            <q-item v-for="recording in recordingList" :key="recording.recordingId">
+                <q-item-section>
+                    <q-item-label class="ellipsis">{{recording.title || recording.sessionId}}</q-item-label>
+                    <q-item-label caption>{{recording.fromDate}}<span v-if="recording.bytes != null"> · {{Math.ceil(recording.bytes / 1024)}} KB</span><span v-if="recording.forced"> · {{labels.forced}}</span></q-item-label>
+                </q-item-section>
+                <q-item-section side><div class="row no-wrap">
+                    <q-btn flat dense round size="sm" icon="sym_o_play_arrow" :aria-label="labels.play" @click="playing = recording.recordingId"><q-tooltip>{{labels.play}}</q-tooltip></q-btn>
+                    <q-btn flat dense round size="sm" icon="sym_o_download" :aria-label="labels.download" :href="recordingUrl(recording.recordingId)" target="_blank"><q-tooltip>{{labels.download}}</q-tooltip></q-btn>
+                </div></q-item-section>
+            </q-item>
+            <q-item v-if="!recordingList.length"><q-item-section class="m-terminal-muted">{{labels.noRecordings}}</q-item-section></q-item>
+        </q-list>
+        <q-card-actions align="right"><q-btn flat no-caps :label="labels.close" v-close-popup></q-btn></q-card-actions>
+    </q-card>
+</q-dialog>
 <q-dialog v-model="settingsOpen">
     <q-card style="min-width: 320px; max-width: 92vw" id="TerminalSettings">
         <q-card-section class="text-h6">{{labels.settings}}</q-card-section>
@@ -145,11 +167,16 @@ module.exports = {
             tabs: [], active: "", focusedPane: "", listOpen: false, settingsOpen: false, draft: {}, profileDraft: [], failed: "",
             // a session's last lines, read when its row is hovered (plans/Terminal-Fancy2.md §4.2)
             previews: {},
+            // the recordings dialog (§4.5): the user's recordings, and the one playing
+            recordingsOpen: false, recordingList: [], playing: "",
             labels: { notLoaded: localize("The terminal could not load."), new: localize("New"), sessions: localize("Sessions"),
                 settings: localize("Settings"), closeTab: localize("Close tab"), showHere: localize("Show here"),
                 rename: localize("Rename"), end: localize("End session"), forget: localize("Remove from the list"),
                 noSessions: localize("No sessions"), noPreview: localize("Nothing shown yet"),
                 share: localize("Share"), sharedWithYou: localize("Shared with you"), sharedBy: localize("shared by"),
+                recordings: localize("Recordings"), record: localize("Record what it shows"), stopRecording: localize("Stop recording"),
+                noRecordings: localize("No recordings"), play: localize("Play"), download: localize("Download"),
+                forced: localize("recorded by the server"), close: localize("Close"),
                 watching: localize("watching"), opening: localize("Opening a terminal…"), tryAgain: localize("Try again"),
                 apps: localize("Apps"), command: localize("Command line"), fontSize: localize("Font size"),
                 fontFamily: localize("Font"), fontFamilyHint: localize("A CSS font list; empty for the default"),
@@ -172,6 +199,11 @@ module.exports = {
     },
     computed: {
         // the user's own sessions, then those shared with them (Terminal-Fancy2 §4.4)
+        // whether this server records sessions at all (terminal@recording is not off)
+        recordingOffered() {
+            const options = this.terminalState.options;
+            return !!(options && options.recording && options.recording !== "off");
+        },
         listedOrder() {
             const order = this.terminalState.order.filter((id) => this.terminalState.sessions[id]);
             const shared = (id) => !!this.terminalState.sessions[id].shared;
@@ -278,6 +310,18 @@ module.exports = {
             if (!info) return "idle";
             if (info.state === "ended") return "ended";
             return info.status || "idle";
+        },
+        openRecordings() {
+            this.recordingsOpen = true;
+            this.playing = "";
+            moqui.terminal.recordings().then((list) => (this.recordingList = list), () => (this.recordingList = []));
+        },
+        recordingUrl(id) {
+            return moqui.terminal.recordingUrl(id, true);
+        },
+        toggleRecording(id) {
+            const info = this.terminalState.sessions[id];
+            if (this.ready && info) moqui.terminal.setRecording(id, !info.recording);
         },
         shareSession(id) {
             if (this.ready) moqui.terminal.share(id);

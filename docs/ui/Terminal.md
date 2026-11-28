@@ -183,6 +183,24 @@ far behind is let go and comes back by what it drew. Only your own watching wind
   recent sign-in), and the driving services read a shared session too, typing only where the share lets them.
 - `/termws?session=<id>&observe=1` watches; over SSH, `attach --view <id>`.
 
+## Recording
+
+A session's output can be kept as an asciicast file (plans/Terminal-Fancy2.md §4.5): what it showed, with its timing
+and resizes, never what was typed, and without the terminal's queries, so a playback answers nothing. It is the one
+exception to "what is shown is never recorded", so it is visible and bounded:
+
+- `terminal@recording` is `offer` (the default: the record button on a session's row starts and stops it, and a
+  profile's `record="true"` starts its sessions recorded), `always` (every host session from its start, which its
+  owner cannot stop) or `off`. A recorded session shows REC on its pane, its window's title and its row.
+- The holder writes a held session's recording, so a restart of the server loses nothing of it; the server writes one
+  in process. At `recording-max-mb` (256) a recording stops. Files are kept under
+  `runtime/terminal/recordings/<username>/`, `0600` in a `0700` directory, as the server's OS user.
+- **Recordings** (the Terminal's header) lists yours: Play (xterm.js at the recording's times, with play, pause,
+  speed and seek) and Download (`.cast`, which asciinema plays too). Nobody else plays them; System › Terminal Sessions
+  lists every user's and deletes them. They expire after `recording-days` (30).
+- A new window's replay of a session's kept output also leaves the terminal's queries out, so it never types an answer
+  to an old question into the program.
+
 ## Driving a session
 
 A program or an agent can read a command line or a shell and type into it (plans/Terminal-Fancy2.md §4.2, §4.3); an
@@ -226,12 +244,13 @@ apps session cannot be driven.
 - They take only the server's own origin, whatever `allow-origins` says.
 - Elsewhere the Terminal offers the apps only, and a request for more gets one vague refusal.
 - Each command line and host session is an audit row (`moqui.terminal.TerminalSession`: who, what, where from, when,
-  how it ended), kept 90 days. What is typed and shown is never recorded.
+  how it ended), kept 90 days. What is typed is never recorded; what a session shows only in a recording (below).
 
 ## Conf
 
 ```xml
 <terminal max-sessions="16" max-sessions-per-user="4" detach-seconds="120" replay-kb="2048" screen-scrollback="1000"
+        recording="offer" recording-days="30" recording-max-mb="256"
         command-line="dev" host-sessions="dev" remote="false"
         remote-reauth-minutes="60" host-max-sessions="32" host-max-sessions-per-user="16" host-detach-hours="72"
         host-directory="">
