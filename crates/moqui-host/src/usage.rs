@@ -27,6 +27,7 @@ Server
   (no command)     [options]                                Start the HTTP server (HTTP port default 8080, HTTPS 8443: moqui help serve)
   serve            [options]                                Start the HTTP server in the background, with no console log
   tui              [--path P] [--user U] [options]          The apps in this terminal, on this runtime
+  term             list | capture | send | wait | events     Read and drive your terminal sessions on a running server
   operator         status | init | unseal | seal | ...      The sealed start: a server's operator socket
   vault            --server URL --user U <command>          A vault client on this machine: your key, vaults and items
 
@@ -271,6 +272,29 @@ set the directory. The default is types/ inside the runtime directory. This does
   moqui types
   moqui types --out /tmp/types
   moqui types --out=runtime/types
+";
+
+const TERM: &str = "\
+moqui term list
+moqui term capture <sessionId> [--scope visible|scrollback|last] [--lines N] [--ansi]
+moqui term send <sessionId> [--keys Enter,C-c,...] [text...]
+moqui term wait <sessionId> [--status idle,done,...] [--pattern RE] [--prompt] [--quiet-ms N] [--ended] [--timeout S]
+moqui term events <sessionId> [--after N]
+    Read and drive your terminal sessions (command lines and shells) on a running server.
+
+list prints each session you may drive: id, kind, state, status and title. capture prints its screen as text
+(the rows shown; scrollback, what scrolled off then the screen; last, its last --lines lines), or as escape
+sequences with --ansi. send types the text (a line end is Enter; several lines go as one paste to a program
+that asked for it), then the named keys: Enter, Tab, Esc, Backspace, Up, Down, Left, Right, Home, End,
+PageUp, PageDown, Insert, Delete, F1 to F12, S-Tab, C-x for Ctrl, M-x for Alt. wait returns when the
+session's status is one of --status, its screen matches --pattern, its shell marks a prompt, its output is
+quiet for --quiet-ms, or it ends, printing its last lines; it exits 2 when --timeout (300 s at most) passes.
+events prints the session's events after number --after: number, kind, status, text.
+
+Inside one of your shells on the server it uses that session's MOQUI_TERMINAL_URL and MOQUI_TERMINAL_TOKEN,
+which reach your command lines and shells from that machine only. Elsewhere, --server URL signs in with the
+login key moqui tui --server keeps for that server (or MOQUI_LOGIN_KEY); a command line or a shell from
+another machine also wants --ticket, a ticket of confirm#TerminalUser for a recent sign-in.
 ";
 
 const CHECK: &str = "\
@@ -871,6 +895,7 @@ pub fn command_help(name: &str) -> Option<&'static str> {
         "load" => Some(LOAD),
         "serve" => Some(SERVE),
         "tui" => Some(TUI),
+        "term" => Some(TERM),
         "save-db" => Some(SAVE_DB),
         "load-save" => Some(LOAD_SAVE),
         "lint" => Some(LINT),
@@ -963,6 +988,7 @@ fn is_known_command(name: &str) -> bool {
             | "ci-run"
             | "serve"
             | "tui"
+            | "term"
             // the browser terminal's helper (`crate::terminal_helper`), hidden from the help
             | "term-exec"
             | "term-hold"

@@ -54,6 +54,9 @@ const HELP: &str = "Commands:
   profiles                      the programs sh runs
   sessions                      your kept terminal sessions, from the browser and here
   attach <id>                   (SSH) be the window of one of your sessions; Ctrl+\\ detaches, and it goes on
+  capture <id> [last N]         one of your command lines' or shells' screen as text (scrollback: all it keeps)
+  send <id> [--keys K,K] text   type into one of them: the text, then keys (Enter, Tab, Up, C-c, M-x, ...)
+  wait <id> --prompt|--ended    until it shows a prompt or ends (--status s,s, --pattern RE, --quiet-ms N, --timeout S)
   (exec) agent-apps ...         the applications for a program, a command at a time: agent-apps help
   exit                          end the session";
 

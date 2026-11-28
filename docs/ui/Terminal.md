@@ -69,8 +69,9 @@ onto its tab strip, puts it back in a pane; Close puts it back in
 the session list and ends nothing; End session and Pop out are on its title bar. Arrange › Gather terminals docks them
 all. Ctrl+\` is the quick terminal: the last floating terminal shown or hidden, else one floated, else a new one. The
 header's terminal button, while you have sessions, lists them, with a count of those that want you. Pop out opens the
-session in a browser window of its own with no shell around it. A terminal is never in Assist's reach, in a pane or a
-window. Nothing floats below 600 px.
+session in a browser window of its own with no shell around it. A floating terminal is the whole view, as in a pane:
+its menu, find bar, banners (taken, closed) and, on a touch screen, its key bar. A terminal is never in Assist's reach,
+in a pane or a window. Nothing floats below 600 px.
 
 ## Sessions that outlive the page
 
@@ -165,6 +166,36 @@ Claude Code's lines were run against Claude Code 2.1 in a host session on Nov 11
 another Claude Code session (a server started from one passes it on) runs as that session's child and does not run its
 permission hooks: start the server outside it, or `claude` with those variables cleared. Codex's line was not run.
 
+## Driving a session
+
+A program or an agent can read a command line or a shell and type into it (plans/Terminal-Fancy2.md §4.2, §4.3); an
+apps session cannot be driven.
+
+- **The screen as text.** The server keeps what a session shows as text once something reads it: made from the output
+  it keeps (`replay-kb`), then fed as output comes, following the window's size and the alternate screen, with
+  `screen-scrollback` lines above (1000). One made from kept output written at other sizes says `rebuilt`: a
+  full-screen program's may be partial until it draws again. It is for reading, never for drawing: a page always draws
+  the bytes. The session list shows a session's last three lines on hover.
+- **The services** (`org.moqui.terminal.TerminalServices`): `find#DrivableTerminalSessions`; `get#TerminalScreen`
+  (scope visible, scrollback or last, as text or escape sequences); `send#TerminalInput` (text as typed, a line end
+  is Enter, several lines one paste to a program that asked for bracketed paste; then named keys such as `Enter`,
+  `Up`, `C-c`, `M-x`, in the program's cursor mode; at most 64 KiB); `wait#TerminalSession` (until a status, a pattern
+  on the screen, a prompt mark, quiet output or the end; 300 s at most, 4 at once for a user); `find#TerminalEvents`
+  (the last 256 events: title, directory, status, prompt, a command's end with its status, bell, notification,
+  attach, detach, end). The checks are an attach's (above), and input from a program never renews your HTTP session.
+  Over REST they are `/rest/s1/moqui/terminal` (`key-scope="terminal"`, so a key made for the terminal alone opens
+  them and nothing else).
+- **`moqui term`** `list`, `capture`, `send`, `wait`, `events` (`moqui help term`). Inside one of your shells it uses
+  `MOQUI_TERMINAL_URL` and `MOQUI_TERMINAL_TOKEN`, which a host session's environment carries: the token, signed with
+  `terminal@token-key` (generated into `runtime/.env`), reaches your command lines and shells, only from the server's
+  own machine, only while its session runs, and holds through a restart of the server. Elsewhere `--server URL` uses
+  the login key `moqui tui --server` keeps.
+- **At the `moqui>` prompt**, `capture <id>`, `send <id> [--keys …] text` and `wait <id> --prompt` do the same for your
+  other sessions.
+- **An agent** drives them with the dev tools' `terminal` tool ([Assist](../ai/Assist.md#development-tools)): its first
+  read of or keystroke into a session in a run is an approval that names the session, after which the run reads and
+  types there until it ends; ending a session asks every time. What a screen shows reaches the model as untrusted data.
+
 ## Who may open what, and from where
 
 - The command line needs `SSH_SHELL` (sealed, on `ADMIN_ADV`), host sessions `TERMINAL_HOST` (sealed, on `ADMIN_ADV`),
@@ -183,7 +214,7 @@ permission hooks: start the server outside it, or `claude` with those variables 
 ## Conf
 
 ```xml
-<terminal max-sessions="16" max-sessions-per-user="4" detach-seconds="120" replay-kb="2048"
+<terminal max-sessions="16" max-sessions-per-user="4" detach-seconds="120" replay-kb="2048" screen-scrollback="1000"
         command-line="dev" host-sessions="dev" remote="false"
         remote-reauth-minutes="60" host-max-sessions="32" host-max-sessions-per-user="16" host-detach-hours="72"
         host-directory="">
@@ -208,7 +239,9 @@ typo never turns it on (and `true` on a production instance is a warning in the 
   the device's login key. A key is never a recent sign-in, so a command line or a shell from another machine first asks
   for your password (and code) in the app: Confirm it is you, which answers a ticket for a few minutes.
 - On a phone the terminal has a key bar above the keyboard (Esc, Tab, Ctrl and Alt for the next key, the arrows, and
-  `| ~ / - \``), fits above the keyboard as it opens, takes a pinch for the font size, and a long press copies the line.
+  `| ~ / - \``), fits above the keyboard as it opens, and takes a pinch for the font size. A long press selects the line
+  and opens the terminal's menu at the finger, once; Copy there copies it (the tap is what a browser wants before it
+  writes the clipboard). A right click opens the same menu.
 - Through an edge node a terminal is from another machine, so the remote rules apply; a dropped link resumes by the
   count of what was drawn. Each session is one of the link's forwarded sockets.
 

@@ -9300,7 +9300,7 @@
                 : _createCommentVNode("", true)
             }
         } },
-        "m-qapps-root": { hash: "73ff1c4", make: function (Vue) {
+        "m-qapps-root": { hash: "8b49aa37", make: function (Vue) {
             const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, renderList: _renderList, Fragment: _Fragment, withModifiers: _withModifiers, withKeys: _withKeys, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeClass: _normalizeClass, createElementVNode: _createElementVNode, resolveDynamicComponent: _resolveDynamicComponent, vShow: _vShow } = Vue
 
             return function render(_ctx, _cache) {
@@ -9343,6 +9343,7 @@
               const _component_q_layout = _resolveComponent("q-layout")
               const _component_m_float_layer = _resolveComponent("m-float-layer")
               const _component_m_terminal_copy = _resolveComponent("m-terminal-copy")
+              const _component_m_terminal_floats = _resolveComponent("m-terminal-floats")
               const _component_m_text_line = _resolveComponent("m-text-line")
               const _component_q_form = _resolveComponent("q-form")
               const _component_m_dialog = _resolveComponent("m-dialog")
@@ -10373,6 +10374,9 @@
                 (_ctx.terminalOn)
                   ? (_openBlock(), _createBlock(_component_m_terminal_copy, { key: 1 }))
                   : _createCommentVNode("", true),
+                (_ctx.terminalOn && _ctx.floatsOn)
+                  ? (_openBlock(), _createBlock(_component_m_terminal_floats, { key: 2 }))
+                  : _createCommentVNode("", true),
                 _createVNode(_component_m_dialog, {
                   modelValue: _ctx.reLoginShow,
                   "onUpdate:modelValue": $event => ((_ctx.reLoginShow) = $event),
@@ -10475,7 +10479,7 @@
                 _createVNode(_component_m_shell_keys),
                 _createVNode(_component_m_appearance_dialog),
                 (_ctx.chatStatus)
-                  ? (_openBlock(), _createBlock(_component_m_user_status_dialog, { key: 2 }))
+                  ? (_openBlock(), _createBlock(_component_m_user_status_dialog, { key: 3 }))
                   : _createCommentVNode("", true)
               ], 64))
             }
@@ -12381,6 +12385,29 @@
               }, 8, ["modelValue", "onUpdate:modelValue", "onShow"]))
             }
         } },
+        "m-terminal-floats": { hash: "698acd6b", make: function (Vue) {
+            const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createVNode: _createVNode, Teleport: _Teleport, createBlock: _createBlock, createCommentVNode: _createCommentVNode } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_m_terminal_view = _resolveComponent("m-terminal-view")
+
+              return (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.keys, (key) => {
+                return (_openBlock(), _createElementBlock(_Fragment, { key: key }, [
+                  (_ctx.target(key))
+                    ? (_openBlock(), _createBlock(_Teleport, {
+                        key: 0,
+                        to: _ctx.target(key)
+                      }, [
+                        _createVNode(_component_m_terminal_view, {
+                          "session-key": key,
+                          "data-float-terminal": key
+                        }, null, 8, ["session-key", "data-float-terminal"])
+                      ], 8, ["to"]))
+                    : _createCommentVNode("", true)
+                ], 64))
+              }), 128))
+            }
+        } },
         "m-terminal-keys": { hash: "99f47568", make: function (Vue) {
             const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, withModifiers: _withModifiers, normalizeClass: _normalizeClass, createBlock: _createBlock } = Vue
 
@@ -12624,7 +12651,7 @@
                   ], 2))
             }
         } },
-        "m-terminal-view": { hash: "dac7644", make: function (Vue) {
+        "m-terminal-view": { hash: "e8fcacc9", make: function (Vue) {
             const { resolveComponent: _resolveComponent, withModifiers: _withModifiers, withKeys: _withKeys, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createElementVNode: _createElementVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, createBlock: _createBlock } = Vue
 
             return function render(_ctx, _cache) {
@@ -12698,7 +12725,8 @@
                   onClick: _ctx.focus
                 }, null, 8, ["onClick"]),
                 _createVNode(_component_q_menu, {
-                  "context-menu": "",
+                  ref: "menu",
+                  "no-parent-event": "",
                   "touch-position": "",
                   "auto-close": ""
                 }, {
@@ -12810,7 +12838,7 @@
                     })
                   ]),
                   _: 1
-                }),
+                }, 512),
                 (_ctx.shown.reconnecting)
                   ? (_openBlock(), _createElementBlock("div", {
                       key: 1,

@@ -150,6 +150,9 @@ pub mod tui;
 mod tui_cmd;
 #[cfg(feature = "tui")]
 pub mod tui_remote;
+// `moqui term`: read and drive terminal sessions on a running server (plans/Terminal-Fancy2.md §4.3)
+#[cfg(all(feature = "devtools", feature = "tui"))]
+mod term_cli;
 pub mod types;
 pub mod usage;
 // The request-worker handoff of the SSH server, the SMTP listener, the XMPP server, the edge link, the SIP engine and
@@ -1057,6 +1060,24 @@ where
         [command, rest @ ..] if command == "autodoc" => {
             devtools_cmd::dispatch_autodoc(rest)?;
             Ok(None)
+        }
+        [command, rest @ ..] if command == "term" => {
+            #[cfg(all(feature = "devtools", feature = "tui"))]
+            {
+                let code = term_cli::dispatch(rest)?;
+                if code != 0 {
+                    std::process::exit(code);
+                }
+                Ok(None)
+            }
+            #[cfg(not(all(feature = "devtools", feature = "tui")))]
+            {
+                let _ = rest;
+                Err(moqui_lib::error::Error::new(
+                    "moqui term is not built into this host: it is in the Maximal (default) and Debug packages (the \
+                     devtools feature)",
+                ))
+            }
         }
         [command, rest @ ..] if command == "lsp" => {
             #[cfg(all(feature = "devtools", feature = "tui"))]

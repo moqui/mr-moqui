@@ -44,16 +44,18 @@ each.
 - A thread terminal is a host session in every way but its policy. Host sessions need `TERMINAL_HOST` and a dev
   instance.
 - New rule, the `thread` policy this component registers (Terminal-Fancy2 TF7): a thread terminal needs
-  `AgentCodeHost` ([14](14-Security.md)) and the project's work root. It does not need a dev instance. It runs as the
-  account of `agent-code@run-as` (14 §5) when that is set, through Terminal-Fancy2 TF6's sudo-gated `term-exec`
-  supervisor, not as the server user.
+  `AgentCodeHost` ([14](14-Security.md)) and the project's work root. It does not need a dev instance, but it needs a
+  build with the dev tools, as host sessions do (Terminal-Fancy2 D13). It runs as the account of `agent-code@run-as`
+  (14 §5) when that is set, through Terminal-Fancy2 TF6's sudo-gated `term-exec` supervisor, not as the server user.
+- The `MOQUI_TERMINAL_TOKEN` of a thread terminal reaches only the thread terminals of its own conversation, never the
+  person's own shells (Terminal-Fancy2 D14).
 - Remote use keeps the remote rules: HTTPS, `terminal@remote` (`moqui_conf__terminal__remote=true`), and a recent
   sign-in ticket. The desktop and phone
   apps ask **Confirm it is you** as today.
 - The directory is always inside the thread's work root. `cwd` outside it is refused.
 - Each thread terminal writes a `TerminalSession` audit row, as other host sessions.
 - Driving: an agent reads and types in a thread terminal through Terminal-Fancy2 TF3's services and `terminal` tool,
-  with one approval per session per run; another of the user's windows watches as a TF4 viewer.
+  with one approval per session per run (over MCP, one per call); another of the user's windows watches as a TF4 viewer.
 
 ### 1.4 Thread links
 

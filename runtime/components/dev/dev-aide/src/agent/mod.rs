@@ -16,13 +16,15 @@
 //! files and the checks; `propose_edit` proposes a change set the user accepts; `try_service` runs a service in sim;
 //! `vcs` reads and writes git. Each needs the `dev.aide` capability, which a run has only on a dev instance with the
 //! dev-aide loaded for a user with one of its permissions, and checks the instance, the component and the user's tier
-//! again when called. The read tools are listed over MCP too (13.6).
+//! again when called. The read tools are listed over MCP too (13.6). `terminal` reads and drives the user's command
+//! lines and shells after an approval per session per run (plans/Terminal-Fancy2.md §4.3).
 
 pub mod artifact;
 pub mod check;
 pub mod hosting;
 pub mod propose;
 pub mod source;
+pub mod terminal;
 pub mod try_service;
 pub mod vcs;
 

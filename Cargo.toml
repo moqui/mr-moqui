@@ -160,6 +160,9 @@ indexmap = "2"
 foldhash = "0.2"
 # The thread's CPU clock for the operation profile (moqui-core telemetry/profile.rs); already in the tree.
 rustix = { version = "1", default-features = false, features = ["std", "time"] }
+# A terminal session's screen as text (crates/moqui-host/src/term/screen.rs, plans/Terminal-Fancy2.md §4.2), MIT; it
+# brings vte, unicode-width and itoa, of which unicode-width and itoa are in the tree already.
+vt100 = { version = "0.18.1", default-features = false, features = ["std"] }
 # The binaries' global allocator (crates/moqui, and the binary ./moq build generates); not on MSVC.
 tikv-jemallocator = "0.7"
 serde = { version = "1", features = ["derive"] }
