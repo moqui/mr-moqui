@@ -379,6 +379,12 @@ title menu (`#m-app-screens`) and in the palette.
 
 The shell's precompiled render file (`WebrootVue.qvt.render.js`) is rebuilt with TF8.
 
+**As built (Nov 28, 2026).** A float keeps its `title` and `data` in `localStorage`, which a screen window needs to come
+back titled and a record panel's to keep its provide. The call window's `m-call` is made inside the window rather than
+moved there, so its `<video>` elements start there; `playVideos` plays any paused one after the window's body changes.
+That a moved video plays on was not proven with real media in a browser (no camera in the specs): it is a hand check of
+[Mobile-Desktop-Exit-Checks](Mobile-Desktop-Exit-Checks.md).
+
 ---
 
 ## 5. Tests

@@ -22,7 +22,13 @@ const host = document.createElement("div");
 document.body.appendChild(host);
 const app = Vue.createApp({
     data() { return { notes: ["a", "b"], handheld: false, labels: {} }; },
-    template: '<div id="home"><m-test-note v-for="key in notes" :key="key" :note="key"></m-test-note></div><m-float-layer></m-float-layer>'
+    template: '<div id="home"><m-test-note v-for="key in notes" :key="key" :note="key"></m-test-note></div><m-float-layer></m-float-layer><m-float-screens></m-float-screens>'
+});
+// the shell's container, which loads a screen: here what it was given, and the record panel it was provided
+app.component("m-dynamic-container", {
+    props: ["id", "url"],
+    inject: { panel: { from: "mRecordPanel", default: null } },
+    template: '<div :data-dynamic="url" :data-container="id" :data-panel="panel ? panel.recordEntity + \'/\' + panel.recordId : \'\'"></div>'
 });
 app.use(Quasar);
 Object.keys(floats.components).forEach((name) => app.component(name, floats.components[name]));
@@ -348,5 +354,50 @@ test("nothing floats below 600 px or on a handheld screen: open refuses, and wha
     vm.handheld = false;
     await settle();
     assert.equal(floats.canFloat(), true);
+    await reset();
+});
+
+test("a screen floats by its URL in a container of its own, comes back after a load with its title and data, and docks into the page", async () => {
+    const url = "/apps/test/Screen?x=1";
+    const id = floats.openScreen(url, "My screen", { recordPanel: { kind: "chatter", recordEntity: "OrderHeader", recordId: "O1" } });
+    assert.ok(id, "it floats");
+    await settle();
+    const inner = document.getElementById(floats.bodyId(id)).querySelector("[data-dynamic]");
+    assert.equal(inner.getAttribute("data-dynamic"), url);
+    assert.ok(inner.getAttribute("data-container").startsWith("m-float-screen-"), "a container id of its own");
+    assert.equal(inner.getAttribute("data-panel"), "OrderHeader/O1", "the record panel's provide");
+    assert.equal(win(id).getAttribute("aria-label"), "My screen");
+    assert.deepEqual(floats.reach(), [floats.bodyId(id)], "a screen is in Assist's reach");
+    // the page is left and loaded again: the window comes back, titled, with its data
+    floats.save();
+    floats.state.floats.splice(0);
+    await settle();
+    floats.load(true);
+    floats.restoreScreens();
+    await settle();
+    const back = floats.find("screen", url);
+    assert.equal(back.title, "My screen");
+    assert.equal(back.data.recordPanel.recordId, "O1");
+    // Dock opens it in the page
+    const opened = [];
+    moqui.webrootVue = { setUrl: (to) => opened.push(to) };
+    floats.dock(back.id);
+    await settle();
+    assert.deepEqual(opened, [url]);
+    assert.equal(floats.find("screen", url), null);
+    delete moqui.webrootVue;
+    await reset();
+});
+
+test("a kind's close hook keeps its window, minimized, as a call's does", async () => {
+    const closed = [];
+    floats.register("keeper", { title: "Keeper", close: (key) => { closed.push(key); return true; }, dock: () => {} });
+    const id = floats.open("keeper", "k1");
+    await settle();
+    floats.close(id);
+    await settle();
+    assert.deepEqual(closed, ["k1"]);
+    assert.ok(floats.get(id) && floats.get(id).minimized, "still a window, minimized");
+    floats.end(id, false);
     await reset();
 });

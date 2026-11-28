@@ -5116,10 +5116,12 @@
               }, 8, ["data-flow", "data-user"]))
             }
         } },
-        "m-chatter": { hash: "394b2802", make: function (Vue) {
-            const { resolveComponent: _resolveComponent, createVNode: _createVNode, normalizeClass: _normalizeClass, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode } = Vue
+        "m-chatter": { hash: "f216e4d0", make: function (Vue) {
+            const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, normalizeClass: _normalizeClass } = Vue
 
             return function render(_ctx, _cache) {
+              const _component_q_tooltip = _resolveComponent("q-tooltip")
+              const _component_q_btn = _resolveComponent("q-btn")
               const _component_m_dynamic_container = _resolveComponent("m-dynamic-container")
               const _component_m_record_boards = _resolveComponent("m-record-boards")
 
@@ -5128,6 +5130,33 @@
                     key: 0,
                     class: _normalizeClass('m-record-panel m-record-panel-' + _ctx.kind)
                   }, [
+                    (_ctx.canFloat)
+                      ? (_openBlock(), _createElementBlock("div", {
+                          key: 0,
+                          class: "row justify-end"
+                        }, [
+                          _createVNode(_component_q_btn, {
+                            flat: "",
+                            dense: "",
+                            round: "",
+                            size: "sm",
+                            icon: "sym_o_open_in_new",
+                            class: "m-record-panel-float",
+                            "aria-label": _ctx.$root.labels.openInWindow,
+                            onClick: _ctx.float
+                          }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_tooltip, null, {
+                                default: _withCtx(() => [
+                                  _createTextVNode(_toDisplayString(_ctx.$root.labels.openInWindow), 1)
+                                ]),
+                                _: 1
+                              })
+                            ]),
+                            _: 1
+                          }, 8, ["aria-label", "onClick"])
+                        ]))
+                      : _createCommentVNode("", true),
                     _createVNode(_component_m_dynamic_container, {
                       ref: "container",
                       id: _ctx.containerId,
@@ -7061,6 +7090,43 @@
                       : _createCommentVNode("", true)
                   ], 10, ["data-float-over"]))
                 : _createCommentVNode("", true)
+            }
+        } },
+        "m-float-screen": { hash: "4147757f", make: function (Vue) {
+            const { resolveComponent: _resolveComponent, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_m_dynamic_container = _resolveComponent("m-dynamic-container")
+
+              return (_openBlock(), _createElementBlock("div", {
+                class: "m-float-screen col scroll q-pa-sm",
+                "data-float-screen": _ctx.url
+              }, [
+                _createVNode(_component_m_dynamic_container, {
+                  id: _ctx.containerId,
+                  url: _ctx.url
+                }, null, 8, ["id", "url"])
+              ], 8, ["data-float-screen"]))
+            }
+        } },
+        "m-float-screens": { hash: "1c7fb753", make: function (Vue) {
+            const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createVNode: _createVNode, Teleport: _Teleport, createBlock: _createBlock } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_m_float_screen = _resolveComponent("m-float-screen")
+
+              return (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.shown, (f) => {
+                return (_openBlock(), _createBlock(_Teleport, {
+                  key: f.id,
+                  to: _ctx.s.ready[f.id] ? '#' + _ctx.bodyIdOf(f.id) : 'body',
+                  disabled: !_ctx.s.ready[f.id]
+                }, [
+                  _createVNode(_component_m_float_screen, {
+                    url: f.key,
+                    panel: f.data && f.data.recordPanel ? f.data.recordPanel : null
+                  }, null, 8, ["url", "panel"])
+                ], 8, ["to", "disabled"]))
+              }), 128))
             }
         } },
         "m-form": { hash: "8ee42ca5", make: function (Vue) {
@@ -9300,7 +9366,7 @@
                 : _createCommentVNode("", true)
             }
         } },
-        "m-qapps-root": { hash: "8b49aa37", make: function (Vue) {
+        "m-qapps-root": { hash: "54ff991c", make: function (Vue) {
             const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, renderList: _renderList, Fragment: _Fragment, withModifiers: _withModifiers, withKeys: _withKeys, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeClass: _normalizeClass, createElementVNode: _createElementVNode, resolveDynamicComponent: _resolveDynamicComponent, vShow: _vShow } = Vue
 
             return function render(_ctx, _cache) {
@@ -9310,6 +9376,7 @@
               const _component_m_menu_icon = _resolveComponent("m-menu-icon")
               const _component_q_item_section = _resolveComponent("q-item-section")
               const _component_q_item = _resolveComponent("q-item")
+              const _component_q_separator = _resolveComponent("q-separator")
               const _component_q_list = _resolveComponent("q-list")
               const _component_q_menu = _resolveComponent("q-menu")
               const _component_q_toolbar_title = _resolveComponent("q-toolbar-title")
@@ -9317,7 +9384,6 @@
               const _component_q_breadcrumbs = _resolveComponent("q-breadcrumbs")
               const _component_q_space = _resolveComponent("q-space")
               const _component_q_chip = _resolveComponent("q-chip")
-              const _component_q_separator = _resolveComponent("q-separator")
               const _component_q_badge = _resolveComponent("q-badge")
               const _component_m_dynamic_dialog = _resolveComponent("m-dynamic-dialog")
               const _component_q_item_label = _resolveComponent("q-item-label")
@@ -9342,6 +9408,7 @@
               const _component_q_footer = _resolveComponent("q-footer")
               const _component_q_layout = _resolveComponent("q-layout")
               const _component_m_float_layer = _resolveComponent("m-float-layer")
+              const _component_m_float_screens = _resolveComponent("m-float-screens")
               const _component_m_terminal_copy = _resolveComponent("m-terminal-copy")
               const _component_m_terminal_floats = _resolveComponent("m-terminal-floats")
               const _component_m_text_line = _resolveComponent("m-text-line")
@@ -9478,7 +9545,38 @@
                                               }, 1032, ["active", "to", "onKeydown"])), [
                                                 [_directive_close_popup]
                                               ])
-                                            }), 128))
+                                            }), 128)),
+                                            (_ctx.canFloatScreen)
+                                              ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+                                                  _createVNode(_component_q_separator),
+                                                  _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                    clickable: "",
+                                                    id: "m-screen-float",
+                                                    onClick: $event => (_ctx.openScreenWindow())
+                                                  }, {
+                                                    default: _withCtx(() => [
+                                                      _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                        default: _withCtx(() => [
+                                                          _createVNode(_component_q_icon, {
+                                                            name: "sym_o_open_in_new",
+                                                            size: "xs"
+                                                          })
+                                                        ]),
+                                                        _: 1
+                                                      }),
+                                                      _createVNode(_component_q_item_section, null, {
+                                                        default: _withCtx(() => [
+                                                          _createTextVNode(_toDisplayString(_ctx.labels.openInWindow), 1)
+                                                        ]),
+                                                        _: 1
+                                                      })
+                                                    ]),
+                                                    _: 1
+                                                  }, 8, ["onClick"])), [
+                                                    [_directive_close_popup]
+                                                  ])
+                                                ], 64))
+                                              : _createCommentVNode("", true)
                                           ]),
                                           _: 1
                                         })
@@ -10371,11 +10469,14 @@
                 (_ctx.floatsOn)
                   ? (_openBlock(), _createBlock(_component_m_float_layer, { key: 0 }))
                   : _createCommentVNode("", true),
+                (_ctx.floatsOn)
+                  ? (_openBlock(), _createBlock(_component_m_float_screens, { key: 1 }))
+                  : _createCommentVNode("", true),
                 (_ctx.terminalOn)
-                  ? (_openBlock(), _createBlock(_component_m_terminal_copy, { key: 1 }))
+                  ? (_openBlock(), _createBlock(_component_m_terminal_copy, { key: 2 }))
                   : _createCommentVNode("", true),
                 (_ctx.terminalOn && _ctx.floatsOn)
-                  ? (_openBlock(), _createBlock(_component_m_terminal_floats, { key: 2 }))
+                  ? (_openBlock(), _createBlock(_component_m_terminal_floats, { key: 3 }))
                   : _createCommentVNode("", true),
                 _createVNode(_component_m_dialog, {
                   modelValue: _ctx.reLoginShow,
@@ -10479,7 +10580,7 @@
                 _createVNode(_component_m_shell_keys),
                 _createVNode(_component_m_appearance_dialog),
                 (_ctx.chatStatus)
-                  ? (_openBlock(), _createBlock(_component_m_user_status_dialog, { key: 3 }))
+                  ? (_openBlock(), _createBlock(_component_m_user_status_dialog, { key: 4 }))
                   : _createCommentVNode("", true)
               ], 64))
             }
@@ -10745,10 +10846,12 @@
               }))
             }
         } },
-        "m-record-files": { hash: "8482661e", make: function (Vue) {
-            const { resolveComponent: _resolveComponent, createVNode: _createVNode, normalizeClass: _normalizeClass, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode } = Vue
+        "m-record-files": { hash: "948d567c", make: function (Vue) {
+            const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, normalizeClass: _normalizeClass } = Vue
 
             return function render(_ctx, _cache) {
+              const _component_q_tooltip = _resolveComponent("q-tooltip")
+              const _component_q_btn = _resolveComponent("q-btn")
               const _component_m_dynamic_container = _resolveComponent("m-dynamic-container")
 
               return (_ctx.loadUrl)
@@ -10756,6 +10859,33 @@
                     key: 0,
                     class: _normalizeClass('m-record-panel m-record-panel-' + _ctx.kind)
                   }, [
+                    (_ctx.canFloat)
+                      ? (_openBlock(), _createElementBlock("div", {
+                          key: 0,
+                          class: "row justify-end"
+                        }, [
+                          _createVNode(_component_q_btn, {
+                            flat: "",
+                            dense: "",
+                            round: "",
+                            size: "sm",
+                            icon: "sym_o_open_in_new",
+                            class: "m-record-panel-float",
+                            "aria-label": _ctx.$root.labels.openInWindow,
+                            onClick: _ctx.float
+                          }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_tooltip, null, {
+                                default: _withCtx(() => [
+                                  _createTextVNode(_toDisplayString(_ctx.$root.labels.openInWindow), 1)
+                                ]),
+                                _: 1
+                              })
+                            ]),
+                            _: 1
+                          }, 8, ["aria-label", "onClick"])
+                        ]))
+                      : _createCommentVNode("", true),
                     _createVNode(_component_m_dynamic_container, {
                       ref: "container",
                       id: _ctx.containerId,
