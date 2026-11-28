@@ -244,6 +244,8 @@ class MainActivity : TauriActivity() {
       }
 
       override fun handleOnBackPressed() {
+        // a page's fullscreen view (a video's) goes first
+        if (RustWebChromeClient.leaveFullscreen()) return
         // one answer: the page's, or after BACK_WAIT_MS Tauri's back (a page that does not answer); a late answer is dropped
         var settled = false
         val timeout = Runnable { if (!settled) { settled = true; onwards() } }
@@ -258,6 +260,9 @@ class MainActivity : TauriActivity() {
     }
     onBackPressedDispatcher.addCallback(this, callback)
   }
+
+  /** A server page's media plays in the background ([MediaPlayback]): the webview is not paused with the activity. */
+  override fun keepWebViewRunning(): Boolean = MediaPlayback.active
 
   @Deprecated("Android's back, past the webview's own history")
   override fun onBackPressed() {

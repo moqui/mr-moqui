@@ -165,6 +165,7 @@ pub(crate) fn close_on_end(factory: Weak<ExecutionContextFactory>, id: String) {
 }
 
 /// Read the open shares of `session` again, on the request pool (a held session taken back after a restart, D15).
+#[cfg_attr(not(all(feature = "devtools", unix)), allow(dead_code))]
 pub(crate) fn reload(factory: Weak<ExecutionContextFactory>, session: std::sync::Arc<Session>) {
     crate::edge::handle().spawn(async move {
         let id = session.id.clone();

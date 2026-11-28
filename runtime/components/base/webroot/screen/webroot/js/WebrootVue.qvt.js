@@ -539,7 +539,7 @@
         const text = moqui.followableLink(link);
         if (!text) return;
         if (moqui.isExternalLink(text)) {
-            if (root.moquiDesktop && root.moquiDesktop.openExternal) root.moquiDesktop.openExternal(text);
+            if (root.moquiDesktop && root.moquiDesktop.openExternal) Promise.resolve(root.moquiDesktop.openExternal(text)).catch((err) => console.info("The link was not opened", err));
             else if (root.open) root.open(text, "_blank", "noopener");
             return;
         }

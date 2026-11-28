@@ -14,6 +14,17 @@
     <string name="channel_other">Other</string>
     <string name="channel_other_about">Other notifications from your apps</string>
 
+    <!-- A server page's media in the background (MediaPlayback.kt) -->
+    <string name="channel_media">Media playback</string>
+    <string name="channel_media_about">The audio or video a page plays, with play and pause, while the app is in the background</string>
+    <string name="media_playing">Playing</string>
+    <string name="media_play">Play</string>
+    <string name="media_pause">Pause</string>
+    <string name="media_back">Back 10 seconds</string>
+    <string name="media_forward">Forward 10 seconds</string>
+    <string name="media_next">Next</string>
+    <string name="media_previous">Previous</string>
+
     <!-- A chat notification -->
     <string name="chat_new_message">New message</string>
     <string name="chat_open_to_read">New message: open the app to read it</string>

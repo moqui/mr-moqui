@@ -146,10 +146,14 @@ abstract class WryActivity : AppCompatActivity() {
         outState.putInt(ACTIVITY_ID_KEY, id)
     }
 
+    // MR Moqui patch (crates/moqui-mobile/patches/README.md): an app whose page plays media in the background keeps the
+    // webview running as the activity pauses; the app's MainActivity says when
+    open fun keepWebViewRunning(): Boolean = false
+
     override fun onPause() {
         super.onPause()
         Rust.onPause(this)
-        if (::mWebView.isInitialized) {
+        if (::mWebView.isInitialized && !keepWebViewRunning()) {
             mWebView.onPause()
         }
     }

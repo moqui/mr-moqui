@@ -14,14 +14,21 @@ import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.DialogInterface
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.*
 import android.widget.EditText
+import android.widget.FrameLayout
 import androidx.core.content.FileProvider
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
@@ -46,6 +53,13 @@ class RustWebChromeClient(private val activity: WryActivity, private val webView
     // name; set by Rust as it opens them and cleared as they close (crates/moqui-mobile/src/host.rs open_remote)
     @Volatile private var appServer: String? = null
 
+    // MR Moqui patch: the chrome client whose page shows a fullscreen view, if one does
+    @Volatile private var fullscreen: java.lang.ref.WeakReference<RustWebChromeClient>? = null
+
+    /** MR Moqui patch: Android's back leaves a page's fullscreen view first; whether one showed. Main thread. */
+    @JvmStatic
+    fun leaveFullscreen(): Boolean = fullscreen?.get()?.leave() ?: false
+
     /** MR Moqui patch (SEC-CLI-119): the server whose pages the app origin shows, or none. Called by Rust (JNI). */
     @JvmStatic
     fun pageServer(host: String?) {
@@ -67,18 +81,48 @@ class RustWebChromeClient(private val activity: WryActivity, private val webView
    *
    * @see [](https://developer.android.com/reference/android/webkit/WebChromeClient.onShowCustomView
   ) */
+  // MR Moqui patch (crates/moqui-mobile/patches/README.md): a page's fullscreen (a video's fullscreen button, or
+  // requestFullscreen) shows its view over the activity, in landscape, with the system bars hidden, until the page
+  // leaves it or Android's back does ([leaveFullscreen]). wry refused it (the view hidden at once).
+  private var fullView: View? = null
+  private var fullCallback: CustomViewCallback? = null
+  private var orientationBefore = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+
   override fun onShowCustomView(view: View, callback: CustomViewCallback) {
-    callback.onCustomViewHidden()
-    super.onShowCustomView(view, callback)
+    val decor = activity.window.decorView as? FrameLayout
+    if (fullView != null || decor == null) {
+      callback.onCustomViewHidden()
+      return
+    }
+    view.setBackgroundColor(Color.BLACK)
+    decor.addView(view, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+    fullView = view
+    fullCallback = callback
+    fullscreen = java.lang.ref.WeakReference(this)
+    orientationBefore = activity.requestedOrientation
+    activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+    WindowCompat.getInsetsController(activity.window, decor).apply {
+      hide(WindowInsetsCompat.Type.systemBars())
+      systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    }
   }
 
-  /**
-   * Render web content in the original Web View again.
-   *
-   * Do not remove this method--@see #onShowCustomView(View, CustomViewCallback).
-   */
+  /** MR Moqui patch: the page left its fullscreen. */
   override fun onHideCustomView() {
-    super.onHideCustomView()
+    leave()
+  }
+
+  /** MR Moqui patch: out of the fullscreen view, if one shows; whether one did. */
+  fun leave(): Boolean {
+    val view = fullView ?: return false
+    val callback = fullCallback
+    fullView = null
+    fullCallback = null
+    (view.parent as? ViewGroup)?.removeView(view)
+    activity.requestedOrientation = orientationBefore
+    WindowCompat.getInsetsController(activity.window, activity.window.decorView).show(WindowInsetsCompat.Type.systemBars())
+    callback?.onCustomViewHidden()
+    return true
   }
 
   override fun onPermissionRequest(request: PermissionRequest) {

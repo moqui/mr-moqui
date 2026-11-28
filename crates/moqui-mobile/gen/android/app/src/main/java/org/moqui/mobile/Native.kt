@@ -151,6 +151,21 @@ object Native {
         }
     }
 
+    @JvmStatic external fun mediaAction(what: String, position: Double)
+
+    /**
+     * A button of the media notification ([MediaPlayback]): the server page that plays the media hears it; `position`
+     * in seconds, or -1. Nothing before the library is loaded.
+     */
+    fun mediaActionSafe(what: String, position: Double) {
+        if (ready != true) return
+        try {
+            mediaAction(what, position)
+        } catch (err: Throwable) {
+            Log.w(TAG, "The page was not told of the media's $what", err)
+        }
+    }
+
     /** The accounts signed in here. */
     fun accounts(context: Context): List<String> {
         if (!ensure(context)) return emptyList()

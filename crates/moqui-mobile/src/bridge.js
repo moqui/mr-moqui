@@ -328,11 +328,51 @@
             stop: (shareId) => invoke("location_share_stop", { shareId: String(shareId || "") }),
             status: () => ask("location_share_status").then((list) => (Array.isArray(list) ? list : []), () => [])
         });
+        // the page's media in the background (src/media.rs): a media notification with play and pause and a
+        // foreground service while it plays, so the audio goes on with the app in the background or the screen off.
+        // The notification's buttons come back to the listeners of on(fn): {action, position}.
+        const mediaListeners = [];
+        Object.defineProperty(window, "__moquiMediaAction", { configurable: false, writable: false,
+            value: (event) => {
+                mediaListeners.slice().forEach((fn) => {
+                    try { fn(event || {}); } catch (err) { console.error("moquiDesktop media listener failed", err); }
+                });
+            } });
+        const mediaInfo = (given) => {
+            const info = given || {};
+            const number = (value) => (typeof value === "number" && isFinite(value) ? value : null);
+            return { title: text(info.title), artist: text(info.artist), artworkUrl: text(info.artworkUrl),
+                playing: typeof info.playing === "boolean" ? info.playing : null, position: number(info.position),
+                duration: number(info.duration), rate: number(info.rate), hasNext: info.hasNext === true,
+                hasPrevious: info.hasPrevious === true };
+        };
+        const media = Object.freeze({
+            start: (info) => invoke("media_session", { action: "start", info: mediaInfo(info) }),
+            update: (info) => invoke("media_session", { action: "update", info: mediaInfo(info) }),
+            stop: () => invoke("media_session", { action: "stop", info: null }),
+            on: (fn) => {
+                if (typeof fn !== "function") return () => {};
+                mediaListeners.push(fn);
+                return () => { const i = mediaListeners.indexOf(fn); if (i >= 0) mediaListeners.splice(i, 1); };
+            }
+        });
+        // the media relay (src/media.rs): the URL a media element of this page plays for a stream on one of `hosts`,
+        // so the app asks the host for bounded ranges (full speed) for it
+        const mediaRelay = (url, hosts) => "/__moqui-app/media?url=" + encodeURIComponent(String(url || "")) +
+            "&hosts=" + encodeURIComponent((Array.isArray(hosts) ? hosts : [hosts]).map(String).join(","));
         // pushDelivers: the chat's notifications come by FCM, not from the page's socket (plans/Comms-Messaging.md §7.2 rule 7)
-        window.moquiDesktop = Object.freeze({ socket, outbox, drafts, vault, notify, windowSeen, pushDelivers: true, location,
+        window.moquiDesktop = Object.freeze({ socket, outbox, drafts, vault, notify, windowSeen, media, mediaRelay, pushDelivers: true, location,
             storageScope: String(page.storageScope || ""),
             openInShell: (path) => ask("open_in_shell", { path: String(path || "") }),
-            openExternal: (url) => invoke("open_external", { url: String(url || "") }),
+            openExternal: (url) => ask("open_external", { url: String(url || "") }),
+            // a request to the web through the app (src/web.rs): https to the hosts named only, no cookies, no CORS;
+            // {status, headers: [[name, value]], body (text), url}. For a page that relays a sandboxed script's requests.
+            webRequest: (given) => {
+                const req = given || {};
+                const headers = Object.entries(req.headers || {}).map(([name, value]) => [String(name), String(value)]);
+                return ask("web_request", { method: String(req.method || "GET"), url: String(req.url || ""), headers,
+                    body: req.body == null ? null : String(req.body), hosts: (Array.isArray(req.hosts) ? req.hosts : []).map(String) });
+            },
             backToShell });
         // the way back to the shell: a small button over the server's page, but in a build with a start screen (its home)
         const addButton = () => {
@@ -366,7 +406,7 @@
         outbox: Object.freeze(Object.assign({ unsent: () => ask("outbox_unsent") }, outbox)),
         setCounts: () => Promise.resolve(null),
         setPresence: () => Promise.resolve(null),
-        openExternal: (url) => invoke("open_external", { url: String(url || "") }),
+        openExternal: (url) => ask("open_external", { url: String(url || "") }),
         state: () => shellAsk("client_state"),
         deviceName: String(window.__moquiDeviceName || ""),
         signIn: (given) => shellAsk("client_sign_in", { server: String(given.server || ""), username: String(given.username || ""),

@@ -622,6 +622,18 @@ impl MobileHost {
         }
     }
 
+    /// Tell the main webview's server page (`moqui-app`) something, as the media notification's buttons do; nothing
+    /// when the shell or no page shows.
+    pub(crate) fn tell_app_page(&self, script: &str) {
+        let Some(window) = self.app.get_webview_window(MAIN) else { return };
+        let on_app = window.url().is_ok_and(|url| url.origin().ascii_serialization() == APP_ORIGIN);
+        if on_app {
+            if let Err(err) = window.eval(script) {
+                log::debug!("The page was not told: {err}");
+            }
+        }
+    }
+
     /// The shell leaves the call `id`, if it is in it or has it on hold (the call notification's Hang up, a headset's).
     pub(crate) fn hang_up(&self, id: &str) {
         // an answer handed over and not taken yet goes with the call (Hang up before the page joined)
@@ -694,6 +706,11 @@ impl MobileHost {
         #[cfg(target_os = "android")]
         if let Err(err) = crate::android::calls_page_gone() {
             log::warn!("The native calls were not told the page went: {err}");
+        }
+        // the page's media goes with it: the media notification and its service too
+        #[cfg(target_os = "android")]
+        if let Err(err) = crate::android::media_session("stop", "{}") {
+            log::warn!("The media notification was not stopped as the page went: {err}");
         }
         #[cfg(target_os = "android")]
         if let Err(err) = crate::android::chat_room_shown("", "") {

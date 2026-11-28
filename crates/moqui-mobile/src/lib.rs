@@ -41,10 +41,12 @@ mod host;
 mod join;
 mod keystore;
 mod location;
+mod media;
 mod native;
 mod push;
 mod scheme;
 mod screen;
+mod web;
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -162,7 +164,9 @@ pub fn run() {
             commands::location_allow,
             commands::location_share_start,
             commands::location_share_stop,
-            commands::location_share_status
+            commands::location_share_status,
+            commands::web_request,
+            commands::media_session
         ])
         .setup(move |app| {
             let embedded = files.take().ok_or("the app was set up twice")?;
@@ -548,12 +552,26 @@ fn resumed(app: &AppHandle) {
 
 /// Open `url` outside the app (the system browser, a mail or phone app).
 pub(crate) fn open_externally(url: &Url) {
-    #[cfg(target_os = "android")]
-    if let Err(err) = android::open_url(url.as_str()) {
+    if let Err(err) = try_open_externally(url) {
         log::error!("{} was not opened: {err}", url.scheme());
     }
+}
+
+/// Open `url` outside the app, or the reason it did not open (on Android: no app opens it).
+pub(crate) fn try_open_externally(url: &Url) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    return android::open_url(url.as_str()).map_err(|err| {
+        if err.contains("ActivityNotFound") || err.contains("Java exception") {
+            "No app on this phone opens it".to_string()
+        } else {
+            err
+        }
+    });
     #[cfg(not(target_os = "android"))]
-    log::info!("Not opened outside the app on this platform: {url}");
+    {
+        log::info!("Not opened outside the app on this platform: {url}");
+        Ok(())
+    }
 }
 
 /// The name of this device in the user's device list and of the shell's chat crypto device.

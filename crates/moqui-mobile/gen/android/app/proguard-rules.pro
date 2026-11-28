@@ -65,6 +65,8 @@
 }
 # ... and whether the phone has a secure lock screen (src/android.rs device_secure; SEC-CLI-113)
 -keep class org.moqui.mobile.DeviceLock { *; }
+# A server page's media in the background (src/android.rs media_session, MediaPlayback.kt), called only through JNI.
+-keep class org.moqui.mobile.MediaPlayback { *; }
 # The server pages' storage, cleared at a switch of account (PageStorage.kt, SEC-CLI-81), called only through JNI.
 -keep class org.moqui.mobile.PageStorage { *; }
 # ... and the server whose pages the app origin shows, for their dialogs' title (src/android.rs page_server; wry's

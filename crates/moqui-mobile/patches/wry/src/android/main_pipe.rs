@@ -413,7 +413,8 @@ impl<'a> MainPipe<'a> {
             })
             .unwrap_or_default();
 
-          tx.send(url).unwrap()
+          // the caller can have stopped waiting (a timeout): the answer goes nowhere
+          let _ = tx.send(url);
         }
       }
       WebViewMessage::Jni(f) => {

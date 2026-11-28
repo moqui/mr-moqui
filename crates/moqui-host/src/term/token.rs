@@ -41,6 +41,7 @@ pub(crate) fn token_with(key: &str, id: &str) -> String {
 }
 
 /// The token of session `id`, for its environment; `None` while the conf has no key.
+#[cfg_attr(not(all(feature = "devtools", unix)), allow(dead_code))]
 pub(crate) fn token(id: &str) -> Option<String> {
     conf_key().map(|key| token_with(&key, id))
 }
