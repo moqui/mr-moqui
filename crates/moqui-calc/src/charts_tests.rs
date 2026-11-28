@@ -88,3 +88,71 @@ fn the_charts_are_in_the_xlsx() {
     assert!(chart.contains("<c:barDir val=\"col\"/>"), "{chart}");
     assert!(chart.contains("Sales!$B$2:$B$4"), "{chart}");
 }
+
+/// A charts edit's charts keep the ids the view read and the new one gets its own; one sent twice is kept once.
+#[test]
+fn each_chart_has_a_stable_id() {
+    let charts = with_ids(vec![
+        json!({"id": "kept-1", "title": "Kept"}),
+        json!({"title": "New"}),
+        json!({"id": "kept-1", "title": "Twice"}),
+        json!({"id": "no spaces or ' quotes", "title": "Unsafe"}),
+    ]);
+    let ids: Vec<&str> = charts.iter().map(|chart| chart["id"].as_str().unwrap()).collect();
+    assert_eq!(ids[0], "kept-1");
+    for made in &ids[1..] {
+        assert!(
+            made.starts_with('c') && made[1..].chars().all(|ch| ch.is_ascii_hexdigit()),
+            "{made}"
+        );
+    }
+    let unique: std::collections::BTreeSet<&&str> = ids.iter().collect();
+    assert_eq!(unique.len(), 4);
+    assert_eq!(charts[1]["title"], "New");
+    // sent again as the view read them, they are the same
+    assert_eq!(with_ids(charts.clone()), charts);
+
+    // a document saved before charts had ids: by place, the same at every open, and an id it has is kept
+    let saved = vec![
+        json!({"title": "First"}),
+        json!({"id": "c1", "title": "Second"}),
+        json!({"title": "Third"}),
+    ];
+    let opened = saved_ids(saved.clone());
+    assert_eq!(
+        opened.iter().map(|chart| chart["id"].clone()).collect::<Vec<_>>(),
+        [json!("chart1"), json!("c1"), json!("chart3")]
+    );
+    assert_eq!(saved_ids(saved), opened);
+    // found by id, else by index for a panel added before
+    assert_eq!(find(&opened, "c1").unwrap()["title"], "Second");
+    assert_eq!(find(&opened, "2").unwrap()["title"], "Third");
+    assert!(find(&opened, "nosuch").is_none());
+    assert!(find(&opened, "9").is_none());
+}
+
+/// A chart, as a room read its ranges, is a table: its labels, then a column of numbers for each series.
+#[test]
+fn a_chart_is_a_frame_of_its_labels_and_a_column_for_each_series() {
+    let chart = json!({"id": "c1", "title": "By region", "type": "bar", "labels": ["North", "South", "East"],
+        "series": [{"name": "Amount", "data": [10.0, null, 13.0]}, {"name": "Amount", "data": [1, 2]}, {"name": "", "data": [5, 6, 7, 8]}]});
+    let frame = frame_of(&chart).unwrap();
+    let fields = frame["fields"].as_array().unwrap();
+    let names: Vec<&str> = fields.iter().map(|field| field["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["Label", "Amount", "Amount 2", "Series 3"]);
+    assert_eq!(fields[0]["type"], "string");
+    // the longest series sets the rows; a point with no label is labelled by its place
+    assert_eq!(fields[0]["values"], json!(["North", "South", "East", "4"]));
+    assert_eq!(fields[1]["type"], "number");
+    assert_eq!(fields[1]["values"], json!([10.0, null, 13.0, null]));
+    assert_eq!(fields[2]["values"], json!([1, 2, null, null]));
+    // with no categories, each point by its place
+    let plain = frame_of(&json!({"labels": [], "series": [{"name": "x", "data": [3, 4]}]})).unwrap();
+    assert_eq!(plain["fields"][0]["values"], json!(["1", "2"]));
+    // a series named Label does not take the label column's name
+    let label = frame_of(&json!({"labels": ["a"], "series": [{"name": "Label", "data": [1]}]})).unwrap();
+    assert_eq!(label["fields"][1]["name"], "Label 2");
+    // a chart whose ranges did not read is its error
+    let broken = frame_of(&json!({"error": "no sheet named Nowhere"})).unwrap_err();
+    assert!(broken.message().contains("Nowhere"));
+}

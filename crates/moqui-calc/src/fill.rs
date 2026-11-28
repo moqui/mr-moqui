@@ -25,8 +25,11 @@
 use std::collections::HashMap;
 
 use moqui_core::context::Error;
+use moqui_core::workbook::ironcalc::base::formatter::dates::from_ironcalc_serial;
+use moqui_core::workbook::ironcalc::base::number_format::{get_new_num_fmt_index, get_num_fmt};
 use moqui_core::workbook::ironcalc::base::types::{
-    Alignment, Cell, HorizontalAlignment, Style, Table, TableColumn, TableStyleInfo, VerticalAlignment, Workbook,
+    Alignment, Cell, DateSystem, HorizontalAlignment, NumFmt, Style, Table, TableColumn, TableStyleInfo,
+    VerticalAlignment, Workbook,
 };
 use moqui_core::workbook::ironcalc::base::{Model, UserModel};
 use serde_json::{json, Value as Json};
@@ -39,7 +42,8 @@ const FIT_PAD: f64 = 16.0;
 const FIT_MIN: f64 = 50.0;
 const FIT_MAX: f64 = 360.0;
 
-/// A cell of a data sheet. A date, a time and a time stamp are Excel serial numbers, shown by their formats.
+/// A cell of a data sheet. A date, a time and a time stamp are Excel serial numbers, shown by their formats: a date's
+/// counted from 1899-12-30, which a fill writes in the workbook's own date system.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CellData {
     Empty,
@@ -150,15 +154,20 @@ fn table(sheet: &str, columns: &[String], rows: i32) -> Table {
 
 /// The style indexes a fill writes with, found or made in the workbook.
 struct Styles {
+    /// A text, a number and a boolean: the plain style, never the workbook's style 0, which an overlay's author could
+    /// make one that hides or alters every data cell (a `;;;` format, a white font).
+    plain: i32,
     header: i32,
     date: i32,
     time: i32,
     date_time: i32,
+    /// The workbook's date system: a date's serial is written in it (an Excel for Mac workbook counts from 1904).
+    dates: DateSystem,
 }
 
 impl Styles {
-    /// The styles of a header, a date, a time and a time stamp.
-    fn specs() -> [Style; 4] {
+    /// The styles of a plain cell, a header, a date, a time and a time stamp.
+    fn specs() -> [Style; 5] {
         let mut header = Style::default();
         header.font.b = true;
         let format = |format: &str| Style {
@@ -171,6 +180,7 @@ impl Styles {
             ..Style::default()
         };
         [
+            Style::default(),
             header,
             format("yyyy-mm-dd"),
             format("hh:mm:ss"),
@@ -179,30 +189,68 @@ impl Styles {
     }
 
     fn of(workbook: &mut Workbook) -> Self {
-        let [header, date, time, date_time] = Self::specs().map(|style| {
-            workbook
-                .styles
+        sound_num_fmts(&mut workbook.styles.num_fmts);
+        let [plain, header, date, time, date_time] = Self::specs().map(|style| {
+            let styles = &mut workbook.styles;
+            let index = styles
                 .get_style_index(&style)
-                .unwrap_or_else(|| workbook.styles.create_new_style(&style))
+                .unwrap_or_else(|| styles.create_new_style(&style));
+            // the format its number format id stands for is the spec's, whatever the workbook's own formats say
+            let at = usize::try_from(index).unwrap_or(usize::MAX);
+            let shown = styles
+                .cell_xfs
+                .get(at)
+                .map(|xf| get_num_fmt(xf.num_fmt_id, &styles.num_fmts));
+            if shown.as_deref() == Some(style.num_fmt.as_str()) {
+                return index;
+            }
+            let num_fmt_id = get_new_num_fmt_index(&styles.num_fmts);
+            styles.num_fmts.push(NumFmt {
+                num_fmt_id,
+                format_code: style.num_fmt.clone(),
+            });
+            let Some(mut xf) = styles.cell_xfs.get(at).cloned() else {
+                return index;
+            };
+            xf.num_fmt_id = num_fmt_id;
+            styles.cell_xfs.push(xf);
+            i32::try_from(styles.cell_xfs.len() - 1).unwrap_or(index)
         });
         Self {
+            plain,
             header,
             date,
             time,
             date_time,
+            dates: workbook.settings.date_system,
         }
     }
 
     /// The styles a fill made, if the workbook has them all.
     fn found(workbook: &Workbook) -> Option<Self> {
-        let [header, date, time, date_time] = Self::specs().map(|style| workbook.styles.get_style_index(&style));
+        let [plain, header, date, time, date_time] = Self::specs().map(|style| workbook.styles.get_style_index(&style));
         Some(Self {
+            plain: plain?,
             header: header?,
             date: date?,
             time: time?,
             date_time: date_time?,
+            dates: workbook.settings.date_system,
         })
     }
+}
+
+/// A workbook's own number formats made sound: an id given twice keeps its first format, and a built-in id (below the
+/// engine's first custom one) keeps the built-in format. The engine reads a workbook's format before its built-in
+/// one, so an overlay that gave id 0 (`general`) the format `;;;`, or an id twice, would draw the plain and date
+/// styles of the data cells as that (plans/IronCalc-DB2.md CG4 review).
+pub(crate) fn sound_num_fmts(num_fmts: &mut Vec<NumFmt>) {
+    let first_custom = get_new_num_fmt_index(&[]);
+    let mut seen = std::collections::HashSet::new();
+    num_fmts.retain(|num_fmt| {
+        seen.insert(num_fmt.num_fmt_id)
+            && (num_fmt.num_fmt_id >= first_custom || num_fmt.format_code == get_num_fmt(num_fmt.num_fmt_id, &[]))
+    });
 }
 
 /// The cells of a data row, with their column, and how wide each column shows (`widths`, in characters, grown).
@@ -221,15 +269,27 @@ fn row_cells(
                 CellData::Text(text) => (
                     Cell::SharedString {
                         si: shared(text),
-                        s: 0,
+                        s: styles.plain,
                     },
                     text.chars().count(),
                 ),
-                CellData::Number(number) => (Cell::NumberCell { v: *number, s: 0 }, 10),
-                CellData::Bool(flag) => (Cell::BooleanCell { v: *flag, s: 0 }, 5),
-                CellData::Date(number) => (
+                CellData::Number(number) => (
                     Cell::NumberCell {
                         v: *number,
+                        s: styles.plain,
+                    },
+                    10,
+                ),
+                CellData::Bool(flag) => (
+                    Cell::BooleanCell {
+                        v: *flag,
+                        s: styles.plain,
+                    },
+                    5,
+                ),
+                CellData::Date(number) => (
+                    Cell::NumberCell {
+                        v: from_ironcalc_serial(*number, styles.dates),
                         s: styles.date,
                     },
                     10,
@@ -243,7 +303,7 @@ fn row_cells(
                 ),
                 CellData::DateTime(number) => (
                     Cell::NumberCell {
-                        v: *number,
+                        v: from_ironcalc_serial(*number, styles.dates),
                         s: styles.date_time,
                     },
                     19,
@@ -297,7 +357,14 @@ pub fn refill(model: &mut UserModel<'static>, sheets: &[SheetRows]) -> Result<bo
         let rows: Vec<Vec<(i32, Cell)>> = sheet
             .rows
             .iter()
-            .map(|cells| row_cells(cells, &styles, &mut |text| model.intern_shared_string(text), &mut widths))
+            .map(|cells| {
+                row_cells(
+                    cells,
+                    &styles,
+                    &mut |text| model.intern_shared_string(text),
+                    &mut widths,
+                )
+            })
             .collect();
         let count = i32::try_from(sheet.rows.len()).map_err(|_| Error::new("Too many rows for a sheet"))?;
         model
@@ -329,7 +396,23 @@ pub fn fill(mut model: Model<'static>, sheets: &[SheetRows]) -> Result<Model<'st
                 index
             }
             None => {
-                model.add_sheet(&sheet.name).map_err(engine)?;
+                if let Err(refused) = model.add_sheet(&sheet.name) {
+                    // a sheet the engine takes for the same name (in capitals beyond ASCII, which a saved overlay
+                    // may hold) is renamed aside, so the data sheet is added and the document opens
+                    let names: Vec<String> = sheets.iter().map(|sheet| sheet.name.clone()).collect();
+                    let clashing = model
+                        .workbook
+                        .get_worksheet_names()
+                        .iter()
+                        .position(|name| name.to_uppercase() == sheet.name.to_uppercase())
+                        .and_then(|at| u32::try_from(at).ok());
+                    let aside = clashing.and_then(|at| crate::upload::rename_aside(&mut model, at, &names));
+                    if aside.is_none() {
+                        return Err(engine(refused));
+                    }
+                    tracing::warn!(sheet = %sheet.name, renamed = ?aside, "A sheet in the place of a data sheet is renamed aside");
+                    model.add_sheet(&sheet.name).map_err(engine)?;
+                }
                 sheet_index(&model, &sheet.name).ok_or_else(|| Error::new("The sheet was not added"))?
             }
         };

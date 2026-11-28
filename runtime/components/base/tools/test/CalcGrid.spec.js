@@ -28,6 +28,11 @@ const OUTSIDER_ID = "SPEC_CALCGRID_OUTSIDER"
 const PEER = "spec.calcgrid.peer"
 const PEER_ID = "SPEC_CALCGRID_PEER"
 const SHARE_GROUP = "SPEC_CALCGRID_SHARE"
+const REPORT = "org.moqui.report.ReportServices."
+// an access profile john.doe and the peer hold through the share group, offering Enumeration with no filter
+// (crates/moqui-calc/src/profile.rs); made in setupSpec, since an authorization row is seen once its transaction commits
+const PROFILE = "specgrid"
+const PROFILE_GROUP = "SPEC_CALCGRID_PROFILE"
 
 spec({
     setupSpec() {
@@ -40,14 +45,28 @@ spec({
         ec.entity.makeValue("moqui.security.UserGroup").setAll({userGroupId: SHARE_GROUP, description: "Spec CalcGrid share"}).create()
         for (const [userGroupId, userId] of [["ADMIN", PEER_ID], [SHARE_GROUP, PEER_ID], [SHARE_GROUP, "EX_JOHN_DOE"]])
             ec.entity.makeValue("moqui.security.UserGroupMember").setAll({userGroupId, userId, fromDate: ec.user.nowTimestamp}).create()
+        ec.entity.makeValue("moqui.security.ArtifactGroup").setAll({artifactGroupId: PROFILE_GROUP, description: "Spec CalcGrid profile"}).create()
+        for (const [artifactName, inheritAuthz] of [["org.moqui.calc.profile." + PROFILE, "Y"], ["org.moqui.calc.entity.moqui.basic.Enumeration", "N"]])
+            ec.entity.makeValue("moqui.security.ArtifactGroupMember").setAll({artifactGroupId: PROFILE_GROUP, artifactName, nameIsPattern: "N",
+                artifactTypeEnumId: "AT_SERVICE", inheritAuthz}).create()
+        ec.entity.makeValue("moqui.security.ArtifactAuthz").setAll({artifactAuthzId: PROFILE_GROUP, userGroupId: SHARE_GROUP, artifactGroupId: PROFILE_GROUP,
+            authzTypeEnumId: "AUTHZT_ALWAYS", authzActionEnumId: "AUTHZA_VIEW"}).create()
         ec.artifactExecution.enableAuthz()
     },
     cleanupSpec() {
         // a document a failed feature left shared with the group goes first
-        for (const definitionId of ["spec-calcgrid-revoke", "spec-calcgrid-revoke-board"])
+        // each on its own: one already gone adds an error, which would stop the next delete
+        const left = ["spec-calcgrid-revoke", "spec-calcgrid-revoke-board", "spec-calcgrid-params-board", "spec-calcgrid-ds", "spec-calcgrid-params",
+            "spec-calcgrid-charts-board", "spec-calcgrid-charts", "spec-calcgrid-upload", "spec-calcgrid-planted"]
+        for (let at = 0; at < 9; at++) left.push("spec-calcgrid-ds-" + at)
+        for (const definitionId of left) {
             ec.service.sync().name("org.moqui.report.ReportServices.delete#Definition").parameters({definitionId}).disableAuthz().call()
-        ec.message.clearErrors()
+            ec.message.clearErrors()
+        }
         ec.artifactExecution.disableAuthz()
+        ec.entity.find("moqui.security.ArtifactAuthz").condition("artifactAuthzId", PROFILE_GROUP).deleteAll()
+        ec.entity.find("moqui.security.ArtifactGroupMember").condition("artifactGroupId", PROFILE_GROUP).deleteAll()
+        ec.entity.find("moqui.security.ArtifactGroup").condition("artifactGroupId", PROFILE_GROUP).deleteAll()
         ec.entity.find("moqui.security.UserGroupMember").condition("userId", PEER_ID).deleteAll()
         ec.entity.find("moqui.security.UserGroupMember").condition("userGroupId", SHARE_GROUP).deleteAll()
         ec.entity.find("moqui.security.UserGroup").condition("userGroupId", SHARE_GROUP).deleteAll()
@@ -497,6 +516,333 @@ feature("a range of a saved document is added to a dashboard of the viewer's own
         String(notSaved.json.errors).includes("Save the document first")
         String(notDashboard.json.errors).includes("Choose a dashboard")
         String(badKind.json.errors).includes("A panel of a range is")
+    },
+})
+
+// The dataset calcgrid declares its parameters (tools/report/calcgrid.json; docs/tools/Monitoring.md, A dataset's
+// parameters): list#Datasets lists them, with their choices as the viewer reads them when asked (what the panel editors
+// show), and get#Dataset always; a saved dataset names only a choices service a shipped one names. Add to dashboard writes
+// the profile chosen, only one the author holds, and the panel then reads under it.
+feature("the calcgrid dataset's parameters are listed with their choices for the panel editors, and a panel reads under the profile chosen", {
+    when() {
+        {
+            const opened = call("calcOpen", {sourceJson: JSON.stringify(source), columnsJson: JSON.stringify(["enumId", "sequenceNum"])}, "post")
+            call("calcSave", {roomId: opened.json.roomId, title: "Parameter types", definitionId: "spec-calcgrid-params"}, "post")
+            call("calcClose", {roomId: opened.json.roomId}, "post")
+            const listed = parameters => Array.from(ec.service.sync().name(REPORT + "list#Datasets").parameters(parameters).call().datasets || [])
+            const find = (list, id) => list.find(dataset => dataset.id === id) || {}
+            const plain = listed({}), chosen = listed({parameterChoices: true})
+            const got = (ec.service.sync().name(REPORT + "get#Dataset").parameters({datasetId: "calcgrid"}).call() || {}).dataset || {}
+            const byName = (dataset, name) => Array.from(dataset.parameters || []).find(parameter => parameter.name === name) || {}
+            const values = parameter => Array.from(parameter.choices || []).map(choice => choice.value)
+            const save = (id, parameters) => {
+                ec.service.sync().name(REPORT + "save#Definition").parameters({definition: {id, type: "dataset", title: id,
+                    body: {serviceName: "org.moqui.calc.CalcServices.get#CalcFrame", parameters}}}).call()
+                const errors = ec.message.hasError() ? ec.message.getErrorsString() : ""
+                ec.message.clearErrors()
+                return errors
+            }
+            const documents = {service: REPORT + "list#Definitions", parameters: {definitionType: "calcgrid"}, list: "definitions", value: "id", label: "title"}
+            const savedOwn = save("spec-calcgrid-ds", [{name: "definitionId", label: "Sheet", choices: documents}])
+            const savedListed = byName(find(listed({parameterChoices: true}), "spec-calcgrid-ds"), "definitionId")
+            const otherService = save("spec-calcgrid-ds-other", [{name: "x", choices: Object.assign({}, documents, {service: "org.moqui.calc.CalcServices.find#CalcEntities"})}])
+            const malformed = save("spec-calcgrid-ds-other", [{name: "x y"}])
+            // the shipped service with other parameters is another source of choices
+            const otherParameters = save("spec-calcgrid-ds-other", [{name: "x", choices: Object.assign({}, documents, {parameters: {definitionType: "dashboard"}})}])
+            // a listing gives every dataset its choices, each choices service called once for its parameters
+            for (let at = 0; at < 9; at++) save("spec-calcgrid-ds-" + at, [{name: "definitionId", choices: documents}])
+            const withChoices = listed({parameterChoices: true}).filter(dataset => /^spec-calcgrid-ds-\d$|^calcgrid$|^spec-calcgrid-ds$/.test(dataset.id))
+                .filter(dataset => Array.from(dataset.parameters || []).some(parameter => Array.isArray(parameter.choices))).length
+            for (let at = 0; at < 9; at++) {
+                ec.service.sync().name(REPORT + "delete#Definition").parameters({definitionId: "spec-calcgrid-ds-" + at}).call()
+                ec.message.clearErrors()
+            }
+            // Add to dashboard under the profile, and under one not held
+            const board = "spec-calcgrid-params-board"
+            ec.service.sync().name(REPORT + "save#Definition").parameters({definition: {id: board, type: "dashboard", title: "Spec parameters board", body: {panels: {}}}}).call()
+            const added = dashboardsCall("calcAddPanel", {definitionId: "spec-calcgrid-params", dashboardId: board, range: "Enumeration!A1:B3", panelProfileId: PROFILE}, "post")
+            const notHeld = dashboardsCall("calcAddPanel", {definitionId: "spec-calcgrid-params", dashboardId: board, range: "Enumeration!A1:B3", panelProfileId: "nosuch"}, "post")
+            const panel = (((ec.service.sync().name(REPORT + "get#Definition").parameters({definitionId: board}).call() || {}).definition || {}).body || {}).panels || {}
+            const query = ((panel[added.json.panelId] || {}).queries || [])[0] || {}
+            const frames = (ec.service.sync().name(REPORT + "run#Query").parameters({query}).call() || {}).frames
+            const names = Array.from((Array.from(frames || [])[0] || {}).fields || []).map(field => field.name)
+            const queryErrors = ec.message.getErrorsString()
+            for (const definitionId of [board, "spec-calcgrid-ds", "spec-calcgrid-params"])
+                ec.service.sync().name(REPORT + "delete#Definition").parameters({definitionId}).call()
+            ec.message.clearErrors()
+            return {plain: find(plain, "calcgrid"), chosen: find(chosen, "calcgrid"), got, logs: find(plain, "otel_logs"), byName, values, savedOwn, savedListed,
+                otherService, malformed, otherParameters, withChoices, added, notHeld, query, names, queryErrors}
+        }
+    },
+    then({plain, chosen, got, logs, byName, values, savedOwn, savedListed, otherService, malformed, otherParameters, withChoices, added, notHeld, query, names, queryErrors}) {
+        Array.from(plain.parameters || []).map(parameter => parameter.name).join(",") == "definitionId,range,chart,profileId"
+        byName(plain, "definitionId").label == "Document"
+        byName(plain, "profileId").optional === true
+        byName(plain, "range").optional === true
+        byName(plain, "definitionId").choices === undefined
+        values(byName(chosen, "definitionId")).includes("spec-calcgrid-params")
+        Array.from(byName(chosen, "definitionId").choices || []).some(choice => choice.label == "Parameter types")
+        values(byName(chosen, "profileId")).includes(PROFILE)
+        byName(chosen, "range").choices === undefined
+        values(byName(got, "definitionId")).includes("spec-calcgrid-params")
+        logs.parameters === undefined
+        savedOwn == ""
+        values(savedListed).includes("spec-calcgrid-params")
+        otherService.includes("choices service is one a shipped dataset's parameter names")
+        malformed.includes("starting with a letter")
+        otherParameters.includes("with its parameters")
+        withChoices == 11
+        !added.json.errors
+        query.parameters.profileId == PROFILE
+        query.parameters.definitionId == "spec-calcgrid-params"
+        names.join(",") == "enumId,sequenceNum"
+        queryErrors == ""
+        String(notHeld.json.errors).includes("Choose an access profile you hold")
+    },
+})
+
+// A document's chart as a panel (plans/IronCalc-DB2.md CG4.2): the server gives each chart of a charts edit an id and
+// keeps the ones the view sends back; get#CalcFrame with chart answers it as a table (a label column and a column for each
+// series) with its type and title, and Add to dashboard draws it as the chart is (a bar chart's bars across). A document
+// saved before charts had ids gives them by place when opened, and a chart is also found by its index.
+feature("a document's chart is a dashboard panel by its stable id: its labels and a column for each series, drawn as the chart is", {
+    when() {
+        const definitionId = "spec-calcgrid-charts", board = "spec-calcgrid-charts-board"
+        const opened = call("calcOpen", {sourceJson: JSON.stringify(source), columnsJson: JSON.stringify(["enumId", "sequenceNum"]),
+            sortJson: JSON.stringify([{field: "enumId", dir: "asc"}])}, "post")
+        const roomId = opened.json.roomId
+        const chart = (title, type) => ({title, type, categories: "Enumeration!A2:A4", series: [{name: "Sequence", values: "Enumeration!B2:B4"}]})
+        const edit = charts => call("calcEdit", {roomId, opsJson: JSON.stringify([{op: "charts", charts}])}, "post").json
+        const first = edit([chart("Across", "bar"), chart("Upright", "column")])
+        const ids = Array.from(first.charts || []).map(one => one.id)
+        // sent back as the view read them, with a new one: the ids stay, and the new one has its own
+        const read = Array.from(first.charts || []).map(one => ({id: one.id, title: one.title, type: one.type, categories: one.categories,
+            series: Array.from(one.series || []).map(series => ({name: series.name, values: series.values}))}))
+        const again = Array.from(edit(read.concat([chart("Trend", "line")])).charts || []).map(one => one.id)
+        call("calcSave", {roomId, title: "Chart types", definitionId}, "post")
+        call("calcClose", {roomId}, "post")
+        const frame = chart => {
+            const out = ec.service.sync().name("org.moqui.calc.CalcServices.get#CalcFrame").parameters({definitionId, chart}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.getErrorsString() : ""
+            ec.message.clearErrors()
+            return {out, errors, fields: Array.from((out.frame || {}).fields || [])}
+        }
+        const across = frame(ids[0])
+        const missing = frame("nosuch")
+        // a panel of it on a dashboard of the viewer's own, and the panel's query
+        ec.service.sync().name(REPORT + "save#Definition").parameters({definition: {id: board, type: "dashboard", title: "Spec chart board", body: {panels: {}}}}).call()
+        const added = dashboardsCall("calcAddPanel", {definitionId, dashboardId: board, chart: ids[0]}, "post")
+        const panels = (((ec.service.sync().name(REPORT + "get#Definition").parameters({definitionId: board}).call() || {}).definition || {}).body || {}).panels || {}
+        const panel = panels[added.json.panelId] || {}
+        const queried = Array.from((Array.from((ec.service.sync().name(REPORT + "run#Query").parameters({query: (panel.queries || [])[0]}).call() || {}).frames || [])[0] || {}).fields || [])
+        const noChart = dashboardsCall("calcAddPanel", {definitionId, dashboardId: board, chart: "nosuch"}, "post")
+        // the saved document's charts lose their ids, as one saved before they had them: opened again, each is found by place
+        ec.service.sync().name("org.moqui.calc.CalcServices.close#CalcDocument").parameters({roomId: (across.out.live || {}).room}).call()
+        const saved = (ec.service.sync().name(REPORT + "get#Definition").parameters({definitionId}).call() || {}).definition
+        const savedIds = Array.from(saved.body.charts || []).map(one => one.id)
+        for (const one of saved.body.charts) delete one.id
+        ec.service.sync().name(REPORT + "save#Definition").parameters({definition: saved, note: "charts without ids"}).call()
+        const byPlace = frame("chart2"), byIndex = frame("1")
+        ec.service.sync().name("org.moqui.calc.CalcServices.close#CalcDocument").parameters({roomId: (byPlace.out.live || {}).room}).call()
+        for (const id of [board, definitionId]) ec.service.sync().name(REPORT + "delete#Definition").parameters({definitionId: id}).call()
+        ec.message.clearErrors()
+        return {ids, again, savedIds, across, missing, added, panel, queried, noChart, byPlace, byIndex}
+    },
+    then({ids, again, savedIds, across, missing, added, panel, queried, noChart, byPlace, byIndex}) {
+        ids.length == 2
+        ids.every(id => /^c[0-9a-f]+$/.test(id))
+        ids[0] != ids[1]
+        again.length == 3
+        again[0] == ids[0]
+        again[1] == ids[1]
+        again[2] != ids[0] && again[2] != ids[1]
+        savedIds.join(",") == again.join(",")
+        across.errors == ""
+        across.out.chartType == "bar"
+        across.out.chartTitle == "Across"
+        across.fields.map(field => field.name).join(",") == "Label,Sequence"
+        across.fields.map(field => field.type).join(",") == "string,number"
+        Array.from(across.fields[0].values).length == 3
+        across.fields[0].values[0] == "AT_ENTITY"
+        across.out.live.kind == "calc"
+        missing.errors.includes("no chart nosuch")
+        !added.json.errors
+        panel.visualization == "bar"
+        panel.horizontal === true
+        panel.title == "Across"
+        panel.queries[0].parameters.chart == ids[0]
+        panel.queries[0].parameters.range === undefined
+        queried.map(field => field.name).join(",") == "Label,Sequence"
+        String(noChart.json.errors).includes("no chart nosuch")
+        byPlace.errors == ""
+        byPlace.out.chartTitle == "Upright"
+        byPlace.out.chartType == "column"
+        byIndex.out.chartTitle == "Upright"
+    },
+})
+
+// A workbook uploaded under a profile (plans/IronCalc-DB2.md CG4.4): the workbook its sheets and formulas, an entity the
+// profile offers its data sheet, filled as the author reads it; its formulas over the data (a table it did not have, a
+// sheet it did not have) read those rows, and so does the saved document opened again. A workbook with a sheet of the data
+// sheet's name is refused (its rows would stand below the data), and under a profile a workbook comes with a source.
+feature("a workbook uploaded under a profile is the overlay of a new document over an offered entity, its formulas over the data sheet", {
+    when() {
+        const CALC = "org.moqui.calc.CalcServices."
+        const ask = (verbNoun, parameters) => {
+            const out = ec.service.sync().name(CALC + verbNoun).parameters(parameters).call() || {}
+            const errors = ec.message.hasError() ? ec.message.getErrorsString() : ""
+            ec.message.clearErrors()
+            return {out, errors}
+        }
+        // an author's workbook made elsewhere: a Summary sheet whose formulas name the Enumeration data before it is there,
+        // beside a sheet of other data, written as an xlsx
+        const workbook = (entityName, formulas) => {
+            const room = ask("open#CalcDocument", {source: {type: "entity", entityName}}).out.roomId
+            ask("edit#CalcDocument", {roomId: room, ops: [{op: "addSheet"}, {op: "renameSheet", sheet: 1, name: "Summary"}]
+                .concat(formulas.map((value, at) => ({op: "input", sheet: 1, row: at + 1, column: 1, value})))})
+            const bytes = ask("export#CalcDocument", {roomId: room}).out.contentBytes
+            ask("close#CalcDocument", {roomId: room})
+            return bytes
+        }
+        const own = workbook("moqui.basic.EnumerationType", ["=COUNTA(Enumeration[enumId])", "=COUNTA(Enumeration!A:A)-1"])
+        const source = {type: "entity", entityName: "moqui.basic.Enumeration", conditions: {enumTypeId: "ArtifactType"}}
+        const expected = ask("open#CalcDocument", {source})
+        ask("close#CalcDocument", {roomId: expected.out.roomId})
+        // through the screen's template, as calcUpload calls it: the file, the entity and the profile
+        let binary = ""
+        for (const byte of own) binary += String.fromCharCode(byte)
+        const template = ec.resource.script("component://tools/template/CalcGrid.js")
+        for (const [name, value] of [["file", uploadedFile("Summary book.xlsx", binary, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", true)],
+            ["entityName", "moqui.basic.Enumeration"], ["conditionsJson", JSON.stringify({enumTypeId: "ArtifactType"})], ["profileId", PROFILE]])
+            ec.context.put(name, value)
+        const uploaded = template.upload()
+        for (const name of ["file", "entityName", "conditionsJson", "profileId"]) ec.context.remove(name)
+        const summary = room => {
+            const sheet = Array.from(room.sheets || []).find(one => one.name == "Summary") || {index: -1}
+            const block = ask("get#CalcCells", {roomId: room.roomId, profileId: PROFILE, sheet: sheet.index, row: 1, column: 1, width: 1, height: 2})
+            const texts = block.errors ? [] : Array.from(JSON.parse(String(block.out.blockJson)).texts || [])
+            return [1, 2].map(row => (texts.find(text => text.row === row) || {}).text || "")
+        }
+        const sheetNames = Array.from(uploaded.sheets || []).map(sheet => sheet.name + (sheet.data ? "*" : ""))
+        const read = summary(uploaded)
+        // saved, closed and opened again under the profile: the formulas still read the data
+        const saved = ask("save#CalcDocument", {roomId: uploaded.roomId, profileId: PROFILE, definitionId: "spec-calcgrid-upload", title: "Uploaded summary"})
+        ask("close#CalcDocument", {roomId: saved.out.roomId})
+        const again = ask("open#CalcDocument", {definitionId: "spec-calcgrid-upload", profileId: PROFILE})
+        const readAgain = summary(again.out)
+        ask("close#CalcDocument", {roomId: again.out.roomId})
+        ec.service.sync().name(REPORT + "delete#Definition").parameters({definitionId: "spec-calcgrid-upload"}).call()
+        ec.message.clearErrors()
+        // refused: a sheet of the data sheet's name, no source under a profile, a file that is not a workbook
+        const named = ask("open#CalcDocument", {profileId: PROFILE, source, workbookBytes: workbook("moqui.basic.Enumeration", ["=1"]), workbookName: "named.xlsx"})
+        const alone = ask("open#CalcDocument", {profileId: PROFILE, workbookBytes: own, workbookName: "alone.xlsx"})
+        const garbage = ask("open#CalcDocument", {profileId: PROFILE, source, workbookBytes: new Uint8Array([80, 75, 3, 4, 1, 2, 3]), workbookName: "bad.xlsx"})
+        ec.context.put("file", uploadedFile("none.xlsx", ""))
+        const empty = template.upload()
+        ec.context.remove("file")
+        ec.message.clearErrors()
+        return {expectedRows: (expected.out.sheets || [])[0].dataRows, uploaded, sheetNames, read, saved, readAgain, named, alone, garbage, empty}
+    },
+    then({expectedRows, uploaded, sheetNames, read, saved, readAgain, named, alone, garbage, empty}) {
+        !uploaded.errors
+        uploaded.title == "Summary book"
+        sheetNames.join(",") == "EnumerationType,Summary,Enumeration*"
+        expectedRows > 1
+        read[0] == String(expectedRows)
+        read[1] == String(expectedRows)
+        saved.errors == ""
+        readAgain[0] == String(expectedRows)
+        named.errors.includes("sheet named Enumeration")
+        !named.out.roomId
+        alone.errors.includes("opened over the data")
+        !!garbage.errors
+        !garbage.out.roomId
+        !!empty.errors
+    },
+})
+
+// A saved document's overlay is held to what a data sheet may be when it opens, whatever wrote the definition: here one
+// saved through save#Definition directly, its overlay holding a sheet of the data sheet's name with every Enumeration row
+// while its data sheet reads only ArtifactType's. The planted rows are taken out, so the formulas over the data read the
+// reader's rows alone (crates/moqui-calc/src/upload.rs saved_overlay). And a workbook uploaded alone under the Tools access
+// opens as a workbook file does, not held to the 8 MB a document over a source stores.
+feature("a saved overlay written without CalcGrid brings no row into a data sheet; a workbook alone is not held to a document's size", {
+    when() {
+        const CALC = "org.moqui.calc.CalcServices."
+        const ask = (verbNoun, parameters) => {
+            const out = ec.service.sync().name(CALC + verbNoun).parameters(parameters).call() || {}
+            const errors = ec.message.hasError() ? ec.message.getErrorsString() : ""
+            ec.message.clearErrors()
+            return {out, errors}
+        }
+        // every Enumeration row, and a Summary over the sheet of that name, as a workbook file, then as a saved document
+        // of plain sheets
+        const all = ask("open#CalcDocument", {source: {type: "entity", entityName: "moqui.basic.Enumeration", columns: ["enumId", "enumTypeId"]}}).out
+        ask("edit#CalcDocument", {roomId: all.roomId, ops: [{op: "addSheet"}, {op: "renameSheet", sheet: 1, name: "Summary"},
+            {op: "input", sheet: 1, row: 1, column: 1, value: "=COUNTA(Enumeration!A:A)-1"}]})
+        const bytes = ask("export#CalcDocument", {roomId: all.roomId}).out.contentBytes
+        ask("close#CalcDocument", {roomId: all.roomId})
+        const plain = ask("open#CalcDocument", {workbookBytes: bytes, workbookName: "all.xlsx"}).out
+        const plantedRows = Array.from(plain.sheets || []).find(sheet => sheet.name == "Enumeration").rows
+        // and a tab that only looks like it (a zero-width space), which no room of a document over the data would take
+        ask("edit#CalcDocument", {roomId: plain.roomId, ops: [{op: "addSheet"}, {op: "renameSheet", sheet: 2, name: "Enumeration\u200b"}]})
+        const definitionId = "spec-calcgrid-planted"
+        ask("save#CalcDocument", {roomId: plain.roomId, definitionId, title: "Planted"})
+        ask("close#CalcDocument", {roomId: plain.roomId})
+        // the body made to say that sheet is the data sheet of ArtifactType's rows, saved as any definition is
+        const definition = (ec.service.sync().name(REPORT + "get#Definition").parameters({definitionId}).call() || {}).definition
+        definition.body.dataSheets = [{name: "Enumeration", source: {type: "entity", entityName: "moqui.basic.Enumeration", conditions: {enumTypeId: "ArtifactType"}},
+            columns: ["enumId", "enumTypeId"]}]
+        ec.service.sync().name(REPORT + "save#Definition").parameters({definition, note: "a data sheet over the planted sheet"}).call()
+        const resaved = ec.message.hasError() ? ec.message.getErrorsString() : ""
+        ec.message.clearErrors()
+        const opened = ask("open#CalcDocument", {definitionId})
+        const sheets = Array.from(opened.out.sheets || [])
+        const sheetNames = sheets.map(sheet => sheet.name)
+        // in the room of that document, no sheet is renamed like the data sheet
+        const lookalikeRename = ask("edit#CalcDocument", {roomId: opened.out.roomId, ops: [{op: "renameSheet", sheet: sheetNames.indexOf("Summary"), name: "enumeration "}]})
+        // nor is a data sheet's column made too narrow to see
+        const dataIndex = (sheets.find(sheet => sheet.data) || {}).index
+        const narrowed = ask("edit#CalcDocument", {roomId: opened.out.roomId, ops: [{op: "width", sheet: dataIndex, column: 1, width: 0}]})
+        const narrowest = (Array.from(narrowed.out.sheets || []).find(sheet => sheet.data) || {widths: [0]}).widths[0]
+        const summary = sheets.find(sheet => sheet.name == "Summary") || {index: -1}, data = sheets.find(sheet => sheet.data) || {}
+        const block = ask("get#CalcCells", {roomId: opened.out.roomId, sheet: summary.index, row: 1, column: 1, width: 1, height: 1})
+        const counted = (Array.from(block.errors ? [] : JSON.parse(String(block.out.blockJson)).texts || [])[0] || {}).text
+        ask("close#CalcDocument", {roomId: opened.out.roomId})
+        ec.service.sync().name(REPORT + "delete#Definition").parameters({definitionId}).call()
+        ec.message.clearErrors()
+        // a workbook of over 8 MB without its data (2,000 distinct texts of 4,500 characters): alone it opens, over a source
+        // it is refused as a document would be at its save
+        const filler = "x".repeat(4500)
+        const big = ask("open#CalcDocument", {source: {type: "entity", entityName: "moqui.basic.EnumerationType"}}).out
+        const ops = [{op: "addSheet"}, {op: "renameSheet", sheet: 1, name: "Texts"}]
+        for (let at = 0; at < 1998; at++) ops.push({op: "input", sheet: 1, row: at + 1, column: 1, value: at + filler})
+        const filled = ask("edit#CalcDocument", {roomId: big.roomId, ops})
+        const bigBytes = ask("export#CalcDocument", {roomId: big.roomId}).out.contentBytes
+        ask("close#CalcDocument", {roomId: big.roomId})
+        const alone = ask("open#CalcDocument", {workbookBytes: bigBytes, workbookName: "big.xlsx"})
+        if (alone.out.roomId) ask("close#CalcDocument", {roomId: alone.out.roomId})
+        const over = ask("open#CalcDocument", {workbookBytes: bigBytes, workbookName: "big.xlsx", source: {type: "entity", entityName: "moqui.basic.Enumeration"}})
+        if (over.out.roomId) ask("close#CalcDocument", {roomId: over.out.roomId})
+        return {plantedRows, resaved, opened: opened.errors, sheetNames, lookalikeRename: lookalikeRename.errors, narrowed: narrowed.errors, narrowest,
+            dataRows: data.dataRows, dataName: data.name,
+            counted, filled: filled.errors, alone, over}
+    },
+    then({plantedRows, resaved, opened, sheetNames, lookalikeRename, narrowed, narrowest, dataRows, dataName, counted, filled, alone, over}) {
+        resaved == ""
+        opened == ""
+        dataName == "Enumeration"
+        plantedRows > dataRows + 1
+        counted == String(dataRows)
+        sheetNames.includes("Enumeration (renamed)")
+        !sheetNames.some(name => name == "Enumeration\u200b")
+        lookalikeRename.includes("is a data sheet's name")
+        narrowed == ""
+        narrowest >= 20
+        filled == ""
+        alone.errors == ""
+        !!alone.out.roomId
+        over.errors.includes("a document stores at most 8 MB")
     },
 })
 

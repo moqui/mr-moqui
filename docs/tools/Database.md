@@ -232,7 +232,7 @@ workbook on the server's spreadsheet engine (IronCalc; plan [IronCalc-DB](../../
 Dashboards › CalcGrid (`Dashboards/CalcGrid.xml`, `CalcGrid.qvue`, `template/CalcGrid.js`) is the same workbook for
 people who are not administrators: a list of the documents the viewer reads, one opened as a sheet, refreshed and
 exported, and for an author a new document over an entity or view, saved, shared with a group of their own and
-deleted. Its sources are entities and views only: no SQL, no file. Another app shows the screen under its own root
+deleted. Its sources are entities and views only: no SQL, no file as a source. Another app shows the screen under its own root
 ([Mounting the report screens](Monitoring.md#mounting-the-report-screens)); BOSS shows it under Insights.
 
 What a person reads there is set in the authorization data, not in a document. A call is made one of two ways:
@@ -262,8 +262,30 @@ What a person reads there is set in the authorization data, not in a document. A
   `org.moqui.calc.document`) is making, editing and saving documents. A holder of a profile without it opens the
   documents shared with them, refreshes and exports, and sees the authors' edits as they are made. An author edits a
   document they read, with the others who have it open; it is its owner's to save and delete.
+- **A workbook to start from.** New takes a workbook file (Start from a workbook: xlsx, xls, xlsb or ods, at most
+  32 MB, inflated within 64 MiB) beside the entity: the workbook's sheets, formulas and styles are the new document's,
+  and the entity is its data sheet, added after them and read as the author (`calcUpload`, `open#CalcDocument`
+  `workbookBytes`). A formula of the workbook names the data as one typed in CalcGrid does, by the entity's table
+  (`OrderPart[partTotal]`) or its sheet (`OrderPart!B:B`), though the workbook was made without it. Under a profile it is
+  an author's, and always over an entity; with the Tools app's own access a workbook alone opens as a file does. A
+  workbook with a sheet named as the data sheet, or a table or name of the data sheet's table name, is refused (rename it
+  first), and so is a tab that differs from it only by what a name may hold unseen (a trailing space, a zero-width,
+  bidirectional or other ignorable mark, an accent written apart); one of other letters that look alike is another
+  name. The data sheet holds only the rows its reader may read. Over an entity, without its data it is at most 8 MB,
+  as a saved document is. A saved document's workbook is held the same way when it opens, whatever wrote its
+  definition: what a data sheet holds below its header, and what is drawn over its rows or hides them (conditional
+  formats, merged cells, comments, drawings, links, hidden rows, columns or sheet, a width or height too small to
+  see or too large to see past), is taken off, its widths, heights and frozen panes kept; its cells are drawn in a plain style of their own,
+  never the workbook's first, and its dates in the workbook's date system (a 1904 workbook from Excel for Mac shows the
+  same days); a tab named like a data sheet is renamed (`Orders (renamed)`), with a warning, so the
+  document still opens; and a table or name of the data sheet's elsewhere refuses it. In a room no sheet is renamed
+  like a data sheet.
 - **Add to dashboard** puts the cells selected (or the sheet's used area) of a saved document on one of the viewer's
-  own dashboards, as a table, bars, a pie or a number: a panel over the dataset `calcgrid` (below).
+  own dashboards, as a table, bars, a pie or a number: a panel over the dataset `calcgrid` (below). For a document
+  with charts it also offers a chart of this document: the panel names the chart by its id and is drawn as the chart
+  is (a column chart as bars, a bar chart as bars across, a line, an area or a pie), its title the chart's. Read as names
+  the access profile the panel reads under, one the author holds (the panel's `profileId`); left at each person's own
+  access, the panel names none.
 - **A shared document shows each reader their own rows.** It stores its sources and its workbook without data; each
   person who opens it gets the rows their profile and scope give, in the room of their scope: the readers of one
   organization share a room, another's has its own, and an edit in either reaches both. A reader whose profile does
@@ -277,7 +299,15 @@ What a person reads there is set in the authorization data, not in a document. A
 - **On a dashboard and in a report.** The shipped dataset `calcgrid` (`tools/report/calcgrid.json`, a dataset whose
   source is the service `get#CalcFrame`) answers a range of a saved document as a table: a panel query names
   `datasetId: "calcgrid"` and the parameters `definitionId` and `range` (as in a formula, `Summary!A1:D20`; the first
-  row names the columns), and the table, chart and stat panels draw it, in playlists, the wall display, report
+  row names the columns), which the dataset declares, so the panel editors offer the documents and the profiles as
+  choices ([A dataset's parameters](Monitoring.md#the-dashboards-app)), and the table, chart and stat panels draw it.
+  With `chart` (a chart's id) in place of `range` it answers one of the document's charts as a table: a column
+  `Label` of its labels (a point past the last label is labelled by its place, from 1) and a column of numbers for each series, a row for
+  each point, with the chart's type and title (`chartType`, `chartTitle`); the bar, line, area and pie panels draw
+  it. Each chart has an id the server gives it when a `charts` edit arrives, kept while the views send it back with the
+  list (`crates/moqui-calc/src/charts.rs`); a document saved before charts had ids gives each `chart<n>` by its place
+  when it opens and keeps it at its next save, and `chart` also takes a chart's index (from 0). A chart panel follows
+  the document as a range panel does (its `live` room). Both are drawn in playlists, the wall display, report
   previews and scheduled reports as any panel. A panel is read as its viewer, under the profile its parameters name
   (`profileId`) or, with none, the viewer's current access: the one they chose while they hold it, else the Tools
   app's own when they have it, else the first profile they hold. A scheduled report runs as its owner, so under its
@@ -296,13 +326,15 @@ application that owns its entities: the group, its offers, and a grant with its 
 
 Specs: `mr-mantle/test/order/CalcGridSales.spec.js` (the profile's rules: own organization only, an entity not
 offered, one no filter applies to, no organization, an author and a viewer, a shared document, the scope a scheduled
-export may go to, two organizations editing one document), `tools/test/CalcGrid.spec.js` (the Dashboards screen, the
-edit log, undo and discard, a scheduled export), `mr-boss/test/Insights/InsightsCalcGrid.spec.js` (the BOSS grant and
+export may go to, two organizations editing one document, an author's uploaded workbook), `tools/test/CalcGrid.spec.js`
+(the Dashboards screen, the edit log, undo and discard, a scheduled export, the dataset's parameters, a chart panel, an
+upload and its refusals), `mr-boss/test/Insights/InsightsCalcGrid.spec.js` (the BOSS grant and
 mount), `crates/moqui-core/src/user/filter_tests.rs` (a profile frame gives its filters to the finds below),
 `cargo test -p moqui-calc` (rooms of two scopes following one log, every edit taken back, borders, merges and
-conditional formats among them), `webroot/test/client/WebrootCalc.spec.js` (the sheet's helpers and the Tabulator
-internals it takes over), the CalcGrid acceptance walk (`tools/test/acceptance/client/CalcGrid.spec.js`: the fill
-handle, pointing, a merge, a border and a rule in a browser) and the terminal's in
+conditional formats among them, chart ids and frames, an uploaded workbook's formulas and refusals, a saved overlay
+held at open), `webroot/test/client/WebrootCalc.spec.js` (the sheet's helpers and the Tabulator internals it takes
+over), the CalcGrid acceptance walk (`tools/test/acceptance/client/CalcGrid.spec.js`: the fill handle, pointing, a
+merge, a border and a rule in a browser) and the terminal's in
 `crates/moqui-tui` (`components/calc_tests.rs`) and `crates/moqui-host/tests/it/monitor_tui.rs`.
 
 **Saved views** (`moqui.database.GridView`).

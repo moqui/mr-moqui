@@ -230,9 +230,11 @@
         if((fields[x]?.type || fields[x]?.kind)==='time' && split.length)coordinates.sort((a,b)=>report.timeValue(a.value)-report.timeValue(b.value));
         const positions=new Map(coordinates.map((point,at)=>[point.key,at])),datasets=[];
         const visual=panel.visualization || panel.type || 'timeSeries',type=['pie','donut'].includes(visual)?(visual==='donut'?'doughnut':'pie'):visual==='bar'?'bar':'line';
+        // a bar panel's bars across (horizontal: a CalcGrid bar chart's), its categories down the side and its values along the bottom
+        const across=visual==='bar' && panel.horizontal===true;
         numeric.forEach(({field,at},metricIndex)=>{for(const group of groups.values()){
             const values=coordinates.map(()=>null),sourceRows=coordinates.map(()=>null);for(const point of group.points){const position=positions.get(point.key);values[position]=finite(rows[point.rowIndex][at])?Number(rows[point.rowIndex][at]):null;sourceRows[position]=point.rowIndex;}
-            const index=datasets.length;datasets.push({label:(field.displayName || field.name)+(group.label?' · '+group.label:''),data:values,_reportRows:sourceRows,_reportField:field,borderColor:report.color(index),backgroundColor:['pie','donut'].includes(visual)?coordinates.map((_,at)=>report.color(at)):field.thresholds?values.map(value=>report.thresholdColor(value,field) || report.color(index)):report.color(index),fill:visual==='area',spanGaps:false,tension:0,pointRadius:1,yAxisID:metricIndex>0 && panel.secondAxis?'y1':'y'});
+            const index=datasets.length;datasets.push({label:(field.displayName || field.name)+(group.label?' · '+group.label:''),data:values,_reportRows:sourceRows,_reportField:field,borderColor:report.color(index),backgroundColor:['pie','donut'].includes(visual)?coordinates.map((_,at)=>report.color(at)):field.thresholds?values.map(value=>report.thresholdColor(value,field) || report.color(index)):report.color(index),fill:visual==='area',spanGaps:false,tension:0,pointRadius:1,yAxisID:metricIndex>0 && panel.secondAxis && !across?'y1':'y'});
         }});
         const plotFrame={fields:[Object.assign({},fields[x] || {name:'row',type:'number'},{values:coordinates.map(point=>point.value)})]},annotations=report.annotationPositions(plotFrame,panel.annotations),sync=panel.syncGroup && !['pie','donut'].includes(visual)?[report.syncPlugin(plotFrame,panel.syncGroup)]:[];
         return { type, plugins: annotations.length ? [{ id: "moquiAnnotations", afterDraw(chart) {
@@ -250,7 +252,9 @@
             onClick(event,elements,chart){if(event.type && event.type!=='click' && event.type!=='contextmenu')return;if(chart && chart.$reportSuppressClick){chart.$reportSuppressClick=false;return;}if(!onFilter || !elements.length)return;const hit=elements[0],row=datasets[hit.datasetIndex || 0]?._reportRows[hit.index];if(row==null)return;const pills=[x,...split].map(at=>report.bucketPill(frame,panel,at,row,false)).filter(Boolean);if(!pills.length)return;const pill=pills[0],queries=[];for(const item of pills)if(item.datasetId===pill.datasetId && !queries.some(query=>JSON.stringify(query)===JSON.stringify(item.query)))queries.push(item.query);pill.query=queries.length===1?queries[0]:{bool:{all:queries}};pill.negated=!!((event.native || event).shiftKey);onFilter(pill);},
             events:['click','mousemove','mouseout','mousedown','mouseup','touchstart','touchmove','touchend','dblclick'],interaction:{mode:'index',intersect:false},
             plugins:{tooltip:{callbacks:{label:context=>context.dataset.label+': '+report.format(context.raw,context.dataset._reportField || {})}}},
-            scales:['pie','donut'].includes(visual)?undefined:{x:{stacked:!!panel.stacked,...timeAxis(coordinates,fields[x])},y:{stacked:!!panel.stacked,ticks:{callback:value=>report.format(value,numeric[0] && numeric[0].field || {})}},...(panel.secondAxis?{y1:{position:'right',grid:{drawOnChartArea:false},ticks:{callback:value=>report.format(value,numeric[1] && numeric[1].field || {})}}}:{})}}};
+            ...(across?{indexAxis:'y'}:{}),
+            scales:['pie','donut'].includes(visual)?undefined:across?{y:{stacked:!!panel.stacked,...timeAxis(coordinates,fields[x])},x:{stacked:!!panel.stacked,ticks:{callback:value=>report.format(value,numeric[0] && numeric[0].field || {})}}}:
+                {x:{stacked:!!panel.stacked,...timeAxis(coordinates,fields[x])},y:{stacked:!!panel.stacked,ticks:{callback:value=>report.format(value,numeric[0] && numeric[0].field || {})}},...(panel.secondAxis?{y1:{position:'right',grid:{drawOnChartArea:false},ticks:{callback:value=>report.format(value,numeric[1] && numeric[1].field || {})}}}:{})}}};
     };
     // An LLM call's model and token use from its OTel gen_ai.* attributes, for the waterfall and the AI screen.
     report.genAiLabel = (span) => {
@@ -358,7 +362,7 @@
         });
     };
     // ---- visualization suggestions ----
-    report.visualizationLabels = { timeSeries: "Time series", area: "Area chart", bar: "Bar chart", stat: "Stat", gauge: "Gauge", barGauge: "Bar gauge", table: "Table",
+    report.visualizationLabels = { timeSeries: "Time series", line: "Line chart", area: "Area chart", bar: "Bar chart", stat: "Stat", gauge: "Gauge", barGauge: "Bar gauge", table: "Table",
         pie: "Pie chart", donut: "Donut chart", heatmap: "Heatmap", stateTimeline: "State timeline", logs: "Logs", traceWaterfall: "Trace waterfall", text: "Text",
         funnel: "Funnel", nodeGraph: "Node graph", flameGraph: "Flame graph", geomap: "Geomap" };
     // What a frame holds, for the suggestions: time fields, numbers, categories, histogram buckets and rows.
@@ -1130,12 +1134,13 @@
             };
             const queryAt=Math.min(this.queryAt,Math.max(0,(panel.queries || []).length-1)),queryPrefix='queries.'+queryAt+'.';
             if(!this.queryOnly)input("Panel title", "title");
-            if(!this.queryOnly)input("Visualization", "visualization", "select", ["timeSeries", "area", "bar", "stat", "gauge", "barGauge", "table", "pie", "donut", "heatmap", "stateTimeline", "logs", "traceWaterfall", "text", "funnel", "nodeGraph", "flameGraph", "geomap"].map((value) => ({ value, text: T(report.visualizationLabels[value] || value) })));
+            if(!this.queryOnly)input("Visualization", "visualization", "select", ["timeSeries", "line", "area", "bar", "stat", "gauge", "barGauge", "table", "pie", "donut", "heatmap", "stateTimeline", "logs", "traceWaterfall", "text", "funnel", "nodeGraph", "flameGraph", "geomap"].map((value) => ({ value, text: T(report.visualizationLabels[value] || value) })));
             if(!this.queryOnly && !this.optionSearch && !panel.panelRef){const suggested=report.suggestVisualizations(this.previewFrame?report.frameShape(this.previewFrame):report.queryShape(panel)).slice(0,4);
                 options.push(h('div',{class:'m-report-suggestions col-12 row items-center q-gutter-xs',role:'group','aria-label':'Suggested visualizations'},[h('span',this.previewFrame?'Suggested from the data:':'Suggested from the query:'),
                     ...suggested.map(item=>h('button',{type:'button',class:'q-btn q-pa-xs',disabled:this.readOnly,'aria-pressed':(panel.visualization || 'table')===item.visualization?'true':'false','data-visualization':item.visualization,onClick:()=>this.update('visualization',item.visualization)},item.label+' ('+item.reason+')')),
                     E.button(this.previewing?'Checking the data…':'Check with the data',this.preview,this.previewing || !(panel.queries || []).length),this.previewError?h('span',{role:'alert',class:'text-negative'},this.previewError):null]));}
             if(!this.queryOnly && panel.visualization==='text'){options.push(E.control('Markdown text',panel.text || '',value=>this.update('text',value),'textarea',null,this.readOnly,'col-12'));options.push(h('p',{class:'col-12 text-caption'},'Variables: ${name} or $name, and ${__from} and ${__thru} for the time range. Values show as text.'));}
+            if(!this.queryOnly && panel.visualization==='bar')input('Bars across (categories down the side)','horizontal','checkbox');
             if(!this.queryOnly && (panel.visualization || 'table')==='table')options.push(E.control('Table footer calculations (comma separated: sum, mean, min, max, count, last)',panel.footer && panel.footer.calculations || [],value=>this.update('footer',value.length?{calculations:value}:undefined),'list',null,this.readOnly,'col-12'));
             if(!this.queryOnly && !this.panelOnly && !this.optionSearch){const names=(this.body.variables || []).map(variable=>variable.name).filter(Boolean);
                 options.push(E.control('Repeat for each value of',panel.repeat && panel.repeat.variable || '',value=>this.update('repeat',value?Object.assign({},panel.repeat,{variable:value}):undefined),'select',[{value:'',text:'No repeat'},...names],this.readOnly));
@@ -1144,6 +1149,18 @@
             options.push(h('h3',{class:'col-12 text-subtitle1 q-mb-none'},'Data queries'));
             options.push(h('div',{class:'col-12 row items-end q-gutter-sm'},[E.control('Selected query',queryAt,value=>{this.queryAt=Number(value);},'select',(panel.queries || []).map((query,at)=>({value:at,text:'Query '+(at+1)+' · '+(query.datasetId || 'choose dataset')}))),E.button('Add query',()=>this.queries('add'),this.readOnly),E.button('Duplicate query',()=>this.queries('duplicate'),this.readOnly || !(panel.queries || []).length),E.button('Remove query',()=>this.queries('remove'),this.readOnly || !(panel.queries || []).length),E.button('Move query up',()=>this.queries('up'),this.readOnly || !queryAt),E.button('Move query down',()=>this.queries('down'),this.readOnly || queryAt>=(panel.queries || []).length-1)]));
             input("Dataset", queryPrefix+"datasetId", "select", this.datasets.map((dataset) => ({ value: dataset.id, text: dataset.title || dataset.id })));
+            // the parameters the query's dataset declares (list#Datasets with parameterChoices), a field each and a select
+            // where it has choices; one left empty is taken out of the query (docs/tools/Monitoring.md, A dataset's parameters)
+            const queryDataset=this.datasets.find(dataset=>dataset.id===((panel.queries || [])[queryAt] || {}).datasetId);
+            for(const parameter of (queryDataset && Array.isArray(queryDataset.parameters) ? queryDataset.parameters : [])){
+                const label=(parameter.label || parameter.name)+(parameter.optional?' (optional)':''),path=queryPrefix+'parameters.'+parameter.name,current=read(path);
+                if(this.optionSearch && !label.toLowerCase().includes(this.optionSearch.toLowerCase()))continue;
+                let choices=null;
+                if(Array.isArray(parameter.choices)){choices=[{value:'',text:parameter.optional?T('None'):T('Choose')},...parameter.choices.map(choice=>({value:choice.value,text:choice.label || choice.value}))];
+                    if(current!=null && current!=='' && !choices.some(choice=>choice.value===String(current)))choices.push({value:String(current),text:String(current)});}
+                options.push(E.control(label,current==null?'':current,value=>this.update(path,value===''||value==null?undefined:parameter.kind==='number'?Number(value):value),
+                    choices?'select':parameter.kind==='number'?'number':undefined,choices,this.readOnly,'col-12 col-sm-6 col-lg-4 m-report-dataset-parameter'));
+            }
             input("Query string", queryPrefix+"queryString");
             input("Query mode", queryPrefix+"mode", "select", ["aggregations", "documents", { value: "serviceMap", text: "service map (spans)" }, { value: "flame", text: "flame graph (spans)" }]);
             const aggregationRows=((panel.queries || [])[queryAt] || {}).aggregations || [];

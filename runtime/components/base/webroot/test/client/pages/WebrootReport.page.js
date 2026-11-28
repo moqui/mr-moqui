@@ -189,6 +189,51 @@ test("panel option edits and unlinking a library reference update the draft unti
     assert.equal(form.fields.definitionJson, query, 'context labels do not change query data');
     app.unmount(); target.remove();
 });
+test("a dataset's declared parameters are fields of its query, a select where they have choices, an empty one taken out", async () => {
+    const target = document.createElement("div"); document.body.appendChild(target);
+    const form = { fields: Vue.reactive({ definitionJson: JSON.stringify({ panels: { first: { title: "Range", visualization: "table", queries: [{ datasetId: "calcgrid", parameters: { definitionId: "gone-doc" } }] } } }) }) };
+    const datasets = [{ id: "otel_logs" }, { id: "calcgrid", service: true, parameters: [
+        { name: "definitionId", label: "Document", kind: "text", optional: false, choices: [{ value: "doc-a", label: "Sales by month" }] },
+        { name: "range", label: "Range", kind: "text", optional: false },
+        { name: "profileId", label: "Read as", kind: "text", optional: true, choices: [{ value: "sales", label: "Sales" }] }] }];
+    const app = Vue.createApp({ provide() { return { mForm: form }; }, render() { return Vue.h(moqui.qvtComponents["m-report-definition-editor"], { datasets }); } });
+    app.mount(target);
+    const control = (text) => Array.from(target.querySelectorAll("label")).find((label) => label.querySelector("span")?.textContent === text);
+    const query = () => JSON.parse(form.fields.definitionJson).panels.first.queries[0];
+    try {
+        const documentSelect = control("Document").querySelector("select");
+        // a value not among the choices (a document no longer shared) is kept and shown
+        assert.deepEqual(Array.from(documentSelect.options).map((option) => option.textContent), ["Choose", "Sales by month", "gone-doc"]);
+        documentSelect.value = "doc-a"; documentSelect.dispatchEvent(new Event("change")); await Vue.nextTick();
+        assert.equal(query().parameters.definitionId, "doc-a");
+        const range = control("Range").querySelector("input");
+        range.value = "Summary!A1:C9"; range.dispatchEvent(new Event("change")); await Vue.nextTick();
+        assert.equal(query().parameters.range, "Summary!A1:C9");
+        const profile = control("Read as (optional)").querySelector("select");
+        assert.equal(profile.options[0].textContent, "None");
+        profile.value = "sales"; profile.dispatchEvent(new Event("change")); await Vue.nextTick();
+        assert.equal(query().parameters.profileId, "sales");
+        profile.value = ""; profile.dispatchEvent(new Event("change")); await Vue.nextTick();
+        assert.equal("profileId" in query().parameters, false);
+        // a dataset that declares none shows no such field
+        const dataset = control("Dataset").querySelector("select");
+        dataset.value = "otel_logs"; dataset.dispatchEvent(new Event("change")); await Vue.nextTick();
+        assert.equal(control("Document"), undefined);
+    } finally { app.unmount(); target.remove(); }
+});
+test("a bar panel's bars across put its categories down the side: a CalcGrid chart's frame, a label column and a series", () => {
+    const frame = { fields: [{ name: "Label", type: "string", values: ["North", "South"] }, { name: "Amount", type: "number", values: [10, null] }] };
+    const across = report.chart(frame, { visualization: "bar", horizontal: true });
+    assert.equal(across.type, "bar");
+    assert.equal(across.options.indexAxis, "y");
+    assert.deepEqual(across.data.labels, ["North", "South"]);
+    assert.deepEqual(across.data.datasets[0].data, [10, null]);
+    assert.equal(typeof across.options.scales.x.ticks.callback, "function", "the values along the bottom");
+    assert.equal(across.options.scales.y.ticks, undefined, "the categories down the side");
+    assert.equal(report.chart(frame, { visualization: "bar" }).options.indexAxis, undefined);
+    assert.equal(report.chart(frame, { visualization: "line", horizontal: true }).options.indexAxis, undefined, "only a bar panel");
+    assert.equal(report.chart(frame, { visualization: "line" }).type, "line");
+});
 test("annotations map to chart positions while out-of-range markers stay outside the view", () => {
     const frame = { fields: [{ name: "time", type: "time", values: [1000, 2000, 3000] }, { name: "requests", type: "number", values: [1, 2, 3] }] };
     const annotations = [{ time: 2000, time_end: 3000, text: "Deployment" }, { time: 500, text: "Earlier" }];

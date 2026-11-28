@@ -87,8 +87,100 @@ fn query() -> Value {
 fn panel() -> Value {
     json!({"title":"New panel","visualization":"table","queries":[query()],"transformations":[],"fieldConfig":{"defaults":{},"overrides":[]}})
 }
-fn add_options(row: &Row, kind: &str) -> Vec<(String, Value)> {
+/// The parameters the dataset of the query at `query` declares, as the editor's `datasets` have them (`list#Datasets`
+/// with `parameterChoices`: each `name`, `label`, `kind`, `optional` and its `choices`; docs/tools/Monitoring.md, A
+/// dataset's parameters).
+fn query_parameters(props: &Value, state: &ComponentState, query: &[String]) -> Vec<Value> {
+    let doc = document(props, state);
+    let Some(dataset) = doc
+        .pointer(&pointer(query))
+        .and_then(|found| found["datasetId"].as_str())
+    else {
+        return Vec::new();
+    };
+    props["datasets"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|item| item["id"] == dataset)
+        .and_then(|item| item["parameters"].as_array())
+        .cloned()
+        .unwrap_or_default()
+}
+/// The declaration of the parameter whose value `row` is: a field of a query's `parameters` its dataset declares.
+fn row_parameter(props: &Value, state: &ComponentState, row: &Row) -> Option<Value> {
+    let at = row.path.len().checked_sub(2)?;
+    if row.path[at] != "parameters" {
+        return None;
+    }
+    let name = row.path.last()?;
+    query_parameters(props, state, &row.path[..at])
+        .into_iter()
+        .find(|declared| declared["name"].as_str() == Some(name.as_str()))
+}
+/// The declared parameters an add on `row` offers: those of its query, for a query and for its `parameters`.
+fn add_parameters(props: &Value, state: &ComponentState, row: &Row) -> Vec<Value> {
+    if row.value.get("datasetId").is_some() {
+        return query_parameters(props, state, &row.path);
+    }
+    match row.path.split_last() {
+        Some((key, query)) if key == "parameters" && row.value.is_object() => query_parameters(props, state, query),
+        _ => Vec::new(),
+    }
+}
+/// A declared parameter's place to fill in: empty text, whatever its kind ([`commit_parameter`] takes a number's).
+fn parameter_value(_declared: &Value) -> Value {
+    json!("")
+}
+/// A declared parameter's value typed in: a number for a number, text else; left empty, the parameter is taken out of
+/// the query, as the browser's editor takes it out.
+fn commit_parameter(props: &Value, state: &mut ComponentState, row: &Row, declared: &Value) -> Vec<Act> {
+    let text = state.local["input"].as_str().unwrap_or("").trim().to_string();
+    let next = if text.is_empty() {
+        None
+    } else if declared["kind"] == "number" {
+        match text.parse::<serde_json::Number>() {
+            Ok(number) => Some(Value::Number(number)),
+            Err(_) => {
+                state.error = "Enter a finite number".into();
+                return Vec::new();
+            }
+        }
+    } else {
+        Some(json!(text))
+    };
+    let mut doc = document(props, state);
+    let (Some(key), parent) = (row.path.last(), &row.path[..row.path.len().saturating_sub(1)]) else {
+        return Vec::new();
+    };
+    if let Some(fields) = doc.pointer_mut(&pointer(parent)).and_then(Value::as_object_mut) {
+        match next {
+            Some(value) => {
+                fields.insert(key.clone(), value);
+            }
+            None => {
+                fields.remove(key);
+            }
+        }
+    }
+    state.closed.remove("__editor_input");
+    state.error.clear();
+    write_document(props, state, doc)
+}
+fn add_options(row: &Row, kind: &str, parameters: &[Value]) -> Vec<(String, Value)> {
     let key = row.path.last().map(String::as_str).unwrap_or("");
+    if key == "parameters" && row.value.is_object() && !parameters.is_empty() {
+        // each declared parameter the query does not set yet, by its name
+        let mut options: Vec<(String, Value)> = parameters
+            .iter()
+            .filter_map(|declared| {
+                let name = declared["name"].as_str()?;
+                (row.value.get(name).is_none()).then(|| (name.to_string(), parameter_value(declared)))
+            })
+            .collect();
+        options.push(("Add named field…".into(), Value::Null));
+        return options;
+    }
     if row.value.is_array() {
         return match key {
             "queries"=>vec![("Query".into(),query())],
@@ -152,6 +244,15 @@ fn add_options(row: &Row, kind: &str) -> Vec<(String, Value)> {
         value["from"] = json!("now-7d");
         value["thru"] = json!("now");
         value["transformations"] = json!([]);
+        // the parameters its dataset declares, each it needs set to be filled in
+        if !parameters.is_empty() {
+            value["parameters"] = parameters
+                .iter()
+                .filter(|declared| declared["optional"] != true)
+                .filter_map(|declared| Some((declared["name"].as_str()?.to_string(), parameter_value(declared))))
+                .collect::<serde_json::Map<String, Value>>()
+                .into();
+        }
         value
     } else if row.value.get("visualization").is_some() {
         let mut value = panel();
@@ -263,7 +364,14 @@ fn row_panel(props: &Value, state: &ComponentState, row: &Row) -> Value {
 
 fn scalar_choices(props: &Value, state: &ComponentState, row: &Row) -> Vec<String> {
     let key = row.path.last().map(String::as_str).unwrap_or("");
+    let declared = row_parameter(props, state, row);
     let choices: Vec<String> = match key {
+        // a declared parameter's choices, as its dataset's service answered them to the viewer
+        _ if declared.is_some() => declared
+            .iter()
+            .flat_map(|declared| declared["choices"].as_array().cloned().unwrap_or_default())
+            .filter_map(|choice| choice["value"].as_str().map(str::to_string))
+            .collect(),
         "datasetId" => props["datasets"]
             .as_array()
             .into_iter()
@@ -341,6 +449,9 @@ fn write_document(props: &Value, state: &mut ComponentState, value: Value) -> Ve
     }]
 }
 fn commit_scalar(props: &Value, state: &mut ComponentState, row: &Row) -> Vec<Act> {
+    if let Some(declared) = row_parameter(props, state, row) {
+        return commit_parameter(props, state, row, &declared);
+    }
     let text = state.local["input"].as_str().unwrap_or("");
     let next = match row.value {
         Value::Bool(_) => match text {
@@ -411,11 +522,24 @@ impl Component for ReportDefinitionEditor {
                 } else {
                     Vec::new()
                 };
+                // a declared parameter's choices show their labels beside their values
+                let labels = row_parameter(props, state, row)
+                    .and_then(|declared| declared["choices"].as_array().cloned())
+                    .unwrap_or_default();
                 for (index, value) in scalar_choices(props, state, row).iter().enumerate() {
                     let why = suggested
                         .iter()
                         .find(|(name, _)| name == value)
-                        .map_or_else(String::new, |(_, reason)| format!(" — suggested: {reason}"));
+                        .map(|(_, reason)| format!(" — suggested: {reason}"))
+                        .or_else(|| {
+                            labels
+                                .iter()
+                                .find(|choice| choice["value"].as_str() == Some(value.as_str()))
+                                .and_then(|choice| choice["label"].as_str())
+                                .filter(|label| label != value)
+                                .map(|label| format!(" — {label}"))
+                        })
+                        .unwrap_or_default();
                     lines.push(vec![Span::new(
                         format!(
                             "{} {value}{why} (Tab completes)",
@@ -441,12 +565,24 @@ impl Component for ReportDefinitionEditor {
             } else {
                 row.value.to_string()
             };
+            // a declared parameter by its label, and whether it may be left out
+            let label = row_parameter(props, state, row).map_or_else(
+                || row.label.clone(),
+                |declared| {
+                    format!(
+                        "{} ({}{})",
+                        declared["label"].as_str().unwrap_or(&row.label),
+                        row.label,
+                        if declared["optional"] == true { ", optional" } else { "" }
+                    )
+                },
+            );
             lines.push(vec![Span::new(
                 format!(
                     "{}{}{}: {}",
                     if index == at { "▶ " } else { "  " },
                     "  ".repeat(row.path.len().min(12)),
-                    row.label,
+                    label,
                     summary
                 ),
                 if index == at { Role::Primary } else { Role::Text },
@@ -461,6 +597,7 @@ impl Component for ReportDefinitionEditor {
                     } else {
                         "dashboard"
                     }),
+                    &add_parameters(props, state, row),
                 );
                 let chosen = state.choosing.unwrap_or(0);
                 for (index, (title, _)) in options.iter().enumerate().skip(chosen.saturating_sub(4)).take(10) {
@@ -551,6 +688,7 @@ impl Component for ReportDefinitionEditor {
                 } else {
                     "dashboard"
                 }),
+                &add_parameters(props, state, &row),
             );
             let chosen = state.choosing.unwrap_or(0).min(options.len().saturating_sub(1));
             match press.key {
@@ -863,135 +1001,5 @@ impl Component for ReportQueryEditor {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn visualization_choices_put_the_suggested_ones_first() {
-        let panel = json!({"queries":[{"aggregations":[{"id":"t","type":"date_histogram","role":"x-axis"},{"id":"n","type":"sum","role":"metric"}]}]});
-        assert_eq!(suggested_visualizations(&panel)[0], ("timeSeries", "Time and a number"));
-        let props = json!({"value":{"panels":{"p":panel.clone()}}});
-        let row = Row {
-            path: vec!["panels".into(), "p".into(), "visualization".into()],
-            label: "visualization".into(),
-            value: json!(""),
-        };
-        let choices = scalar_choices(&props, &ComponentState::default(), &row);
-        assert_eq!(&choices[..2], ["timeSeries", "stat"]);
-        assert_eq!(choices.iter().filter(|name| *name == "stat").count(), 1);
-        let map = json!({"queries":[{"mode":"serviceMap"}]});
-        assert_eq!(suggested_visualizations(&map)[0].0, "nodeGraph");
-    }
-    fn key(props: &Value, state: &mut ComponentState, key: Key) -> Vec<Act> {
-        ReportDefinitionEditor
-            .key(props, state, &KeyPress::plain(key), false)
-            .unwrap_or_default()
-    }
-    fn select(props: &Value, state: &mut ComponentState, path: &[&str]) {
-        let path: Vec<_> = path.iter().map(|s| s.to_string()).collect();
-        state.at = rows(props, state)
-            .iter()
-            .position(|row| row.path == path)
-            .expect("editable path");
-    }
-    #[test]
-    fn author_queries_join_pivot_overrides_variables_layout_and_reports_without_json_input() {
-        let props = json!({"kind":"dashboard","form":"EditDefinition","field":"definitionJson","value":{"panels":{"p":{"title":"Original","queries":[query()],"transformations":[],"fieldConfig":{"defaults":{},"overrides":[]}}},"variables":[],"layout":{"type":"tabs","items":[]}}});
-        let mut state = ComponentState::default();
-        select(&props, &mut state, &["panels", "p", "queries"]);
-        key(&props, &mut state, Key::Char('a'));
-        let acts = key(&props, &mut state, Key::Enter);
-        assert_eq!(
-            document(&props, &state)["panels"]["p"]["queries"]
-                .as_array()
-                .unwrap()
-                .len(),
-            2
-        );
-        assert!(matches!(&acts[0],Act::SetFormField{form,field,..}if form=="EditDefinition"&&field=="definitionJson"));
-        for wanted in ["Join frames", "Pivot", "Organize fields"] {
-            select(&props, &mut state, &["panels", "p", "transformations"]);
-            key(&props, &mut state, Key::Char('a'));
-            let row = rows(&props, &state)[state.at].clone();
-            state.choosing = Some(
-                add_options(&row, "dashboard")
-                    .iter()
-                    .position(|(label, _)| label == wanted)
-                    .unwrap(),
-            );
-            key(&props, &mut state, Key::Enter);
-        }
-        select(&props, &mut state, &["panels", "p", "fieldConfig", "overrides"]);
-        key(&props, &mut state, Key::Char('a'));
-        key(&props, &mut state, Key::Enter);
-        select(&props, &mut state, &["variables"]);
-        key(&props, &mut state, Key::Char('a'));
-        key(&props, &mut state, Key::Enter);
-        select(&props, &mut state, &["layout", "items"]);
-        key(&props, &mut state, Key::Char('a'));
-        state.choosing = Some(1);
-        key(&props, &mut state, Key::Enter);
-        let doc = document(&props, &state);
-        assert_eq!(doc["panels"]["p"]["title"], "Original");
-        assert_eq!(doc["panels"]["p"]["transformations"][0]["type"], "join");
-        assert_eq!(doc["panels"]["p"]["transformations"][1]["type"], "pivot");
-        assert_eq!(doc["layout"]["items"][0]["type"], "row");
-        let report = json!({"kind":"report","value":{"dashboards":[]}});
-        let mut state = ComponentState::default();
-        select(&report, &mut state, &["dashboards"]);
-        key(&report, &mut state, Key::Char('a'));
-        key(&report, &mut state, Key::Enter);
-        key(&report, &mut state, Key::Char('a'));
-        key(&report, &mut state, Key::Enter);
-        assert_eq!(document(&report, &state)["dashboards"].as_array().unwrap().len(), 2);
-    }
-    #[test]
-    fn readonly_definition_cannot_emit_mutations_and_typed_numbers_are_validated() {
-        let props = json!({"readOnly":true,"value":{"count":5}});
-        let mut state = ComponentState::default();
-        for press in [Key::Char('a'), Key::Char('d'), Key::Char('t'), Key::Enter] {
-            assert!(key(&props, &mut state, press).is_empty());
-        }
-        assert!(state.local.get("document").is_none());
-        let props = json!({"value":{"count":5}});
-        let mut state = ComponentState::default();
-        select(&props, &mut state, &["count"]);
-        key(&props, &mut state, Key::Enter);
-        key(&props, &mut state, Key::Backspace);
-        key(&props, &mut state, Key::Char('x'));
-        assert!(key(&props, &mut state, Key::Enter).is_empty());
-        assert_eq!(document(&props, &state)["count"], 5);
-        key(&props, &mut state, Key::Backspace);
-        key(&props, &mut state, Key::Char('0'));
-        key(&props, &mut state, Key::Enter);
-        assert_eq!(document(&props, &state)["count"], 0);
-    }
-    #[test]
-    fn query_completion_and_filter_pills_bind_real_form_fields() {
-        let props = json!({"value":"sev","fields":[{"name":"severity_text","searchable":true},{"name":"secret","searchable":false}],"values":{"severity_text":["ERROR","INFO"]},"filters":[{"label":"Errors","query":{"field":{"name":"severity_text","op":"eq","value":"ERROR"}}}],"form":"SearchOptions","field":"queryString","filtersField":"filtersJson"});
-        let mut state = ComponentState::default();
-        let acts = ReportQueryEditor
-            .key(&props, &mut state, &KeyPress::plain(Key::Tab), false)
-            .unwrap();
-        assert!(matches!(&acts[0],Act::SetFormField{value,..}if value=="severity_text:"));
-        ReportQueryEditor.key(&props, &mut state, &KeyPress::plain(Key::Char('E')), false);
-        ReportQueryEditor.key(&props, &mut state, &KeyPress::plain(Key::Tab), false);
-        assert_eq!(query_text(&props, &state), "severity_text:ERROR");
-        ReportQueryEditor.key(&props, &mut state, &KeyPress::plain(Key::F(2)), false);
-        let acts = ReportQueryEditor
-            .key(&props, &mut state, &KeyPress::plain(Key::Char('n')), false)
-            .unwrap();
-        assert!(
-            matches!(&acts[0],Act::SetFormField{field,value,..}if field=="filtersJson"&&value.contains("\"negated\":true"))
-        );
-    }
-    #[test]
-    fn query_completion_replaces_the_word_after_a_no_break_space() {
-        let props = json!({"value":"a\u{a0}sev","fields":[{"name":"severity_text"}]});
-        let mut state = ComponentState::default();
-        ReportQueryEditor.key(&props, &mut state, &KeyPress::plain(Key::Tab), false);
-        assert_eq!(query_text(&props, &state), "a\u{a0}severity_text:");
-        assert!(ReportQueryEditor
-            .key(&props, &mut state, &KeyPress::plain(Key::Tab), false)
-            .is_none());
-    }
-}
+#[path = "report_editor_tests.rs"]
+mod tests;

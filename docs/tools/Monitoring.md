@@ -362,6 +362,23 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   `currencyUomId`, with `USD` as the fallback `unit`): one currency in the frame is the field's unit, several give each
   row its own, and an aggregation without the column asks the same documents for their currencies, so a sum in one
   currency shows it and a sum across currencies shows a plain number.
+- **A dataset's parameters.** A service dataset (one whose `serviceName` answers a query with frames) is given the
+  values a panel query names in `parameters`. Its body declares them in `parameters`, a list of at most 16, each
+  `{name, label, kind, optional, choices}`: `kind` is `text` (the default) or `number`, `optional` true lets it be left
+  out, and `choices` names a service the viewer calls for them, `{service, parameters, list, value, label}` (the
+  service's parameters, the out-parameter that holds the list, and each item's value and label fields). `list#Datasets`
+  answers each dataset's declaration (with `parameterChoices` true, each one's choices too, each choices service
+  called once a listing for its parameters) and `get#Dataset` answers it with the choices; the definition editor asks for them, and both panel
+  editors, the browser's and the terminal's, show a field for each parameter of the query's dataset, a select where it
+  has choices, and take an emptied one out of the query (the terminal's adds the required ones to fill in when it adds
+  `parameters`). Choices are read as the viewer, at most 500, by the viewer's own grant of the choices service (a
+  screen's inherited grant does not call it); one that fails or that the viewer may not call gives none (the field is
+  a text field). A declaration is presentation only: the service checks every value it is given. A saved dataset names
+  only a choices service a shipped dataset names there with the same parameters, as its `serviceName`
+  (`crates/moqui-report/src/parameters.rs`). The shipped `calcgrid` declares the document (its choices the CalcGrid
+  documents the viewer reads, `list#Definitions`), the range or a chart of the document, and the access profile (optional, from
+  `get#CalcProfiles`) ([CalcGrid and access profiles](Database.md#calcgrid-and-access-profiles)). A dataset without
+  `parameters` is read and edited as before.
 - **The dataset screens** (Datasets, with the hidden DatasetDetail, DatasetFields and DatasetView) are the
   [business datasets](#business-datasets)' list and stewardship: the datasets the viewer reads, and a steward's waiting
   for review, each with its state, source, scope, index and last build; a new dataset over a registered feed's document;
@@ -384,8 +401,11 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   documents-mode panel query, which adds `first`, `last`, a `sparkline` of counts over time and the narrowing `query`.
   It reads at most 5,000 lines and keeps 200 patterns; the rest join an `(other)` pattern.
 - **Dashboards** are panels and a layout. Panels run report queries (aggregations by role: metric, x-axis, split
-  series, split rows), then transformations, then a visualization: time series, bar, stat, gauge, bar gauge, table,
-  pie and donut, heatmap, state timeline, text and the trace waterfall. Variables sync to the URL as `var-NAME`, along
+  series, split rows), then transformations, then a visualization: time series, line, area, bar, stat, gauge, bar
+  gauge, table, pie and donut, heatmap, state timeline, text and the trace waterfall. A bar panel with `horizontal`
+  true (the editor's Bars across) draws its bars across, the categories down the side, as a CalcGrid bar chart's
+  panel does ([CalcGrid and access profiles](Database.md#calcgrid-and-access-profiles)); the terminal draws bars as
+  it always does. Variables sync to the URL as `var-NAME`, along
   with the time range (`now-6h`, `now/d`, `now-1M/M`, `now/fy`; `<report week-start fiscal-start-month
   fiscal-start-day/>` in the conf sets the week and fiscal year). Keys: `t-` zooms out, `t←`/`t→` shift the range,
   `e` edits, `v` views a panel, `i` inspects, `d k` toggles kiosk mode, and Esc leaves kiosk mode, then the single-panel

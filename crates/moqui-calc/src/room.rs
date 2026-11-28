@@ -1156,6 +1156,20 @@ impl Room {
                 )));
             }
         }
+        // nor is another sheet named like one, which a reader would take for it and the next open renames (upload.rs)
+        if kind == "renameSheet" {
+            let wanted = text("name");
+            if let Some(data) = self
+                .data_sheets
+                .iter()
+                .find(|data| crate::upload::same(&data.name, &wanted))
+            {
+                return Err(Error::new(format!(
+                    "{} is a data sheet's name; choose another",
+                    data.name
+                )));
+            }
+        }
         let applied = match kind {
             "input" => self
                 .model
@@ -1205,7 +1219,8 @@ impl Room {
                     sheet,
                     column,
                     small("columnEnd", i64::from(column)),
-                    op["width"].as_f64().unwrap_or(90.0),
+                    // a data sheet's column is not hidden, nor its next ones pushed away, by its width (upload.rs)
+                    self.data_size(sheet, op["width"].as_f64().unwrap_or(90.0), true),
                 )
             }
             "height" => {
@@ -1214,7 +1229,7 @@ impl Room {
                     sheet,
                     row,
                     small("rowEnd", i64::from(row)),
-                    op["height"].as_f64().unwrap_or(25.0),
+                    self.data_size(sheet, op["height"].as_f64().unwrap_or(25.0), false),
                 )
             }
             "freeze" => self
@@ -1250,6 +1265,21 @@ impl Room {
         }
         self.sync_rule_ids();
         applied
+    }
+
+    /// A width or height edit's pixels, held to a data sheet's bounds (upload.rs `data_size`), as they are on others.
+    fn data_size(&self, sheet: u32, pixels: f64, width: bool) -> f64 {
+        use crate::upload::{data_size, MAX_DATA_HEIGHT, MAX_DATA_WIDTH, MIN_DATA_HEIGHT, MIN_DATA_WIDTH};
+        let (min, max, fallback) = if width {
+            (MIN_DATA_WIDTH, MAX_DATA_WIDTH, 90.0)
+        } else {
+            (MIN_DATA_HEIGHT, MAX_DATA_HEIGHT, 25.0)
+        };
+        if self.data_sheet_name(sheet).is_some() {
+            data_size(pixels, min, max, fallback)
+        } else {
+            pixels
+        }
     }
 
     /// A `restore` edit: each cell set as typed (an empty one cleared), then each cell's style.

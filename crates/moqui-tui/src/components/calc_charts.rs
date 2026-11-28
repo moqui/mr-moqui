@@ -49,7 +49,8 @@ pub(super) fn range_name(sheet: &str, row: i32, column: i32, last_row: i32, last
 }
 
 /// The document's charts as the `charts` edit takes them, the whole list (as the browser's `chartDefinitions`): each
-/// chart's `title`, `type`, `categories` and `series` of `name` and `values`, without what the room read for them.
+/// chart's `id` (which the server gave it, and keeps, so a dashboard panel of it still finds it), `title`, `type`,
+/// `categories` and `series` of `name` and `values`, without what the room read for them.
 pub(super) fn chart_definitions(view: &View) -> Vec<Value> {
     view.room["charts"]
         .as_array()
@@ -64,7 +65,11 @@ pub(super) fn chart_definitions(view: &View) -> Vec<Value> {
                 .iter()
                 .map(|one| json!({"name": one["name"], "values": one["values"]}))
                 .collect();
-            json!({"title": chart["title"], "type": chart["type"], "categories": chart["categories"], "series": series})
+            let mut definition = json!({"title": chart["title"], "type": chart["type"], "categories": chart["categories"], "series": series});
+            if let Some(id) = chart["id"].as_str() {
+                definition["id"] = json!(id);
+            }
+            definition
         })
         .collect()
 }

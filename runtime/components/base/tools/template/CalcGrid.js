@@ -118,6 +118,23 @@ function open() {
         title: text(ec.context.get("title")) || null
     })
 }
+// A new document from an uploaded workbook (the request's file) over an entity the viewer chose: the workbook its sheets
+// and formulas, the entity its data sheet (plans/IronCalc-DB2.md CG4.4). The file is held to 32 MB before it is read; the
+// engine checks the rest (an author only under a profile, the inflated size, the data sheet's names, the stored size).
+const MAX_UPLOAD_BYTES = 32 * 1024 * 1024
+function upload() {
+    const file = ec.context.get("file")
+    if (!file || typeof file.getSize !== "function") return {errors: ec.l10n.localize("Choose a workbook file")}
+    if (Number(file.getSize()) > MAX_UPLOAD_BYTES) return {errors: ec.l10n.localize("A workbook to open has at most 32 MB")}
+    const entityName = text(ec.context.get("entityName"))
+    return ask(CALC + ".open#CalcDocument", {
+        profileId: profileId(),
+        workbookBytes: file.getInputStream().readAllBytes(),
+        workbookName: String(file.getName() || ""),
+        source: entityName ? {type: "entity", entityName, conditions: parse("conditionsJson", {})} : null,
+        title: text(ec.context.get("title")) || null
+    })
+}
 const cells = () =>
     ask(CALC + ".get#CalcCells", {
         profileId: profileId(),
@@ -186,19 +203,31 @@ function dashboards() {
     }
 }
 // Add a range of a saved document to a dashboard of the viewer's own as a panel over the dataset calcgrid: the report
-// engine's table, bar or pie panel of the range, read by each viewer of the dashboard under their own current access.
-// The engine's save holds the dashboard to its owner.
+// engine's table, bar or pie panel of the range, read by each viewer of the dashboard under their own current access, or
+// under the access profile chosen (panelProfileId, one the viewer holds), which the panel's query then names. The
+// engine's save holds the dashboard to its owner. With a chart (its id) in place of a range, the document's chart as a
+// panel drawn as the chart is (CHART_PANELS: a bar chart's bars across), read the same way (plans/IronCalc-DB2.md CG4.2).
 const VISUALIZATIONS = ["table", "bar", "pie", "stat"]
+const CHART_PANELS = {column: {visualization: "bar"}, bar: {visualization: "bar", horizontal: true}, line: {visualization: "line"},
+    area: {visualization: "area"}, pie: {visualization: "pie"}}
 function addPanel() {
     const definitionId = text(ec.context.get("definitionId"))
     const dashboardId = text(ec.context.get("dashboardId"))
     const range = text(ec.context.get("range"))
+    const chart = text(ec.context.get("chart"))
     const visualization = text(ec.context.get("visualization")) || "table"
     if (!definitionId) return {errors: ec.l10n.localize("Save the document first: a panel reads a saved document")}
-    if (!dashboardId || !range) return {errors: ec.l10n.localize("Choose a dashboard and a range")}
-    if (!VISUALIZATIONS.includes(visualization)) return {errors: ec.l10n.localize("A panel of a range is a table, a bar chart, a pie chart or a number")}
+    if (!dashboardId || (!range && !chart)) return {errors: ec.l10n.localize("Choose a dashboard and a range or a chart")}
+    if (!chart && !VISUALIZATIONS.includes(visualization)) return {errors: ec.l10n.localize("A panel of a range is a table, a bar chart, a pie chart or a number")}
+    // a profile the panel reads under is one the viewer holds; each viewer of the dashboard must hold it too
+    const panelProfile = text(ec.context.get("panelProfileId"))
+    if (panelProfile && !Array.from(ask(CALC + ".get#CalcProfiles", {}).profiles || []).some(profile => profile.profileId === panelProfile))
+        return {errors: ec.l10n.localize("Choose an access profile you hold")}
     const document = ask(REPORT + ".get#Definition", {definitionId})
     if (document.errors || !document.definition || document.definition.type !== TYPE) return {errors: document.errors || "Not a CalcGrid document"}
+    // the chart as the panel reads it, as the author: it is there, and its type and title
+    const read = chart ? ask(CALC + ".get#CalcFrame", {definitionId, chart, profileId: panelProfile || null}) : null
+    if (read && (read.errors || !read.frame)) return {errors: read.errors || ec.l10n.localize("The document has no such chart")}
     const found = ask(REPORT + ".get#Definition", {definitionId: dashboardId})
     if (found.errors || !found.definition || found.definition.type !== "dashboard") return {errors: found.errors || "Choose a dashboard"}
     const dashboard = found.definition
@@ -206,12 +235,13 @@ function addPanel() {
     dashboard.body.panels = dashboard.body.panels || {}
     let panelId = "calc-" + definitionId.replace(/[^a-zA-Z0-9_.:-]/g, "-").slice(0, 60)
     for (let n = 2; dashboard.body.panels[panelId]; n++) panelId = panelId.replace(/(-\d+)?$/, "-" + n)
-    dashboard.body.panels[panelId] = {
-        title: text(ec.context.get("panelTitle")) || document.definition.title || "CalcGrid",
-        visualization,
-        queries: [{datasetId: "calcgrid", parameters: {definitionId, range}}]
-    }
-    const saved = ask(REPORT + ".save#Definition", {definition: dashboard, note: "Added a CalcGrid range"})
+    const source = chart ? {definitionId, chart} : {definitionId, range}
+    dashboard.body.panels[panelId] = Object.assign(
+        {title: text(ec.context.get("panelTitle")) || (read && text(read.chartTitle)) || document.definition.title || "CalcGrid"},
+        read ? CHART_PANELS[text(read.chartType)] || CHART_PANELS.column : {visualization},
+        {queries: [{datasetId: "calcgrid", parameters: Object.assign(source, panelProfile ? {profileId: panelProfile} : {})}]}
+    )
+    const saved = ask(REPORT + ".save#Definition", {definition: dashboard, note: chart ? "Added a CalcGrid chart" : "Added a CalcGrid range"})
     return {errors: saved.errors, dashboardId, panelId, link: mountLib.state().links.dashboard}
 }
 // The groups the viewer may share a document with: their own.
@@ -226,4 +256,4 @@ function shareGroups() {
     }
 }
 
-;({access, choose, entities, documents, dashboards, addPanel, open, cells, edit, content, refresh, revert, state, save, exported, close, remove, shareGroups, profileId})
+;({access, choose, entities, documents, dashboards, addPanel, open, upload, cells, edit, content, refresh, revert, state, save, exported, close, remove, shareGroups, profileId})

@@ -25,7 +25,7 @@ fn props(editable: bool) -> Value {
             {"index": 0, "name": "Orders", "rows": 4, "columns": 2, "widths": [80, 96], "frozenRows": 1, "frozenColumns": 0, "data": true, "dataRows": 3},
             {"index": 1, "name": "Sum", "rows": 2, "columns": 1, "widths": [120], "frozenRows": 0, "frozenColumns": 0, "data": false}
         ],
-        "charts": [{"title": "By order", "type": "bar", "categories": "Orders!A2:A3", "labels": ["O1", "O2"],
+        "charts": [{"id": "c1", "title": "By order", "type": "bar", "categories": "Orders!A2:A3", "labels": ["O1", "O2"],
             "series": [{"name": "Total", "values": "Orders!B2:B3", "data": [110, 220]}]}]
     }})
 }
@@ -503,7 +503,8 @@ fn type_text(props: &Value, state: &mut ComponentState, text: &str) {
 #[test]
 fn the_menu_adds_a_chart_of_the_selection_changes_its_type_and_removes_it() {
     let (props, mut state) = loaded(true);
-    let by_order = json!({"title": "By order", "type": "bar", "categories": "Orders!A2:A3",
+    // each chart keeps the id the server gave it, so a dashboard panel of it still finds it; a new one has none yet
+    let by_order = json!({"id": "c1", "title": "By order", "type": "bar", "categories": "Orders!A2:A3",
         "series": [{"name": "Total", "values": "Orders!B2:B3"}]});
     // one row selected is no chart
     assert!(menu(&props, &mut state, CHART_MENU).is_empty());
