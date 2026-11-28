@@ -167,3 +167,5 @@ body.body--light .m-calc-suggest { background: #fff; }
 .m-calc-suggest-item { padding: 2px 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; cursor: pointer; }
 .m-calc-suggest-on, .m-calc-suggest-item:hover { background: rgba(128, 128, 128, .25); }
 .m-calc-grid:focus { outline: none; }
+/* pointing at a reference for the formula bar */
+.m-calc-pointing .tabulator-cell { cursor: cell; }

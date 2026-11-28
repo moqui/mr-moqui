@@ -14,7 +14,8 @@
  *     to a far row loads nothing between. Sheet tabs are below it and the document's charts (m-chart) below those.
  *     With editUrl (the transition that applies edits: roomId, opsJson) and contentUrl (a cell's content as typed) the
  *     sheet is edited: a toolbar (undo, redo, font, colours, borders, alignment, number format, rows and columns, a chart), a
- *     formula bar that completes function and table names, a cell's editor on a double click, Delete, a paste of rows of
+ *     formula bar that completes function and table names and takes a reference clicked or dragged on the grid (on any
+ *     sheet; a data sheet's as its table's columns), a cell's editor on a double click, Delete, a paste of rows of
  *     cells, a column's width and a row's height, the fill handle dragged down, up or across (the engine's autofill),
  *     and sheets added, renamed and deleted. Each edit is sent to the server, which answers the
  *     room's new state (emitted as changed, for the holder of room to take); the cells are then asked again. A data
@@ -26,9 +27,10 @@
  *   - the pure helpers: columnName(n), cellCss(style, fill, cellType) and applyCss(element, css), blockRows(block),
  *     neededRange(have, first, last, rows, margin), chartConfig(chart), completions(text, caret, tables, functions),
  *     rangeName(range, sheetName), pasteRows(text), tableName(sheetName), peerColor(index), receive(peers, seq, frame)
- *     and peerCells(peers, sheet), fillOp(sheet, source, target, rowAt, columnAt); and takeFillHandle(table, onFill),
- *     rowHeight(row) and setRowHeight(row, height), which take Tabulator 6.7's fill handle and rows (its internals,
- *     pinned by the spec).
+ *     and peerCells(peers, sheet), fillOp(sheet, source, target, rowAt, columnAt), canPoint(text, caret),
+ *     referenceText(range, target, from), putReference(text, from, to, reference); and takeFillHandle(table, onFill),
+ *     holdFocus(table, holding), rowHeight(row) and setRowHeight(row, height), which take Tabulator 6.7's fill handle,
+ *     focus and rows (its internals, pinned by the spec).
  */
 (function (root) {
     "use strict";
@@ -187,6 +189,42 @@
             + (range.lastRow > range.row || range.lastColumn > range.column ? ":" + calc.columnName(range.lastColumn) + range.lastRow : "");
         if (!sheetName) return cells;
         return (/^[A-Za-z_][A-Za-z0-9_]*$/.test(sheetName) ? sheetName : "'" + sheetName.replace(/'/g, "''") + "'") + "!" + cells;
+    };
+    /**
+     * Whether a click on the grid while `text` is in the formula bar, its caret at `caret`, puts a reference into it
+     * (plans/IronCalc-DB2.md CG2.2): the text is a formula and the caret follows its =, an operator, an opening
+     * parenthesis, a comma or a colon, with spaces between.
+     */
+    calc.canPoint = (text, caret) => typeof text === "string" && text[0] === "=" && /[=(,:;+\-*/^&<>]\s*$/.test(text.slice(0, caret));
+    /**
+     * A reference to `range` (row, column, lastRow, lastColumn) of the sheet `target` (of the layout: index, name, data,
+     * headers) as a formula on the sheet `from` names it. A data sheet's columns are named as its table's, `Orders[amount]`
+     * or `Orders[[region]:[amount]]`, whatever rows are chosen: the edit log replays a formula as typed in the rooms of
+     * other scopes, whose data has other row counts, where cells of it would be other rows. Another sheet's cells are
+     * named with its name. Null for a data sheet's column with no name.
+     */
+    calc.referenceText = (range, target, from) => {
+        if (target && target.data) {
+            const headers = target.headers || [], first = headers[range.column - 1], last = headers[range.lastColumn - 1];
+            if (!first) return null;
+            const table = calc.tableName(target.name);
+            return range.lastColumn > range.column && last ? table + "[[" + first + "]:[" + last + "]]" : table + "[" + first + "]";
+        }
+        return calc.rangeName(range, target && target.index !== from ? target.name : "");
+    };
+    /** `text` with `reference` in place of its characters `from` to `to`: the text, and the caret after the reference. */
+    calc.putReference = (text, from, to, reference) => ({ text: text.slice(0, from) + reference + text.slice(to), caret: from + reference.length });
+    /**
+     * Keep a click on a table's cell from taking the focus while `holding()` (Tabulator 6.7's selectRange.initializeFocus,
+     * which a cell's click calls to focus the table): the formula bar keeps it while a reference is pointed at. False
+     * when the table has no range selection of that shape.
+     */
+    calc.holdFocus = (table, holding) => {
+        const ranges = table && table.modules && table.modules.selectRange;
+        if (!ranges || typeof ranges.initializeFocus !== "function") return false;
+        const own = ranges.initializeFocus.bind(ranges);
+        ranges.initializeFocus = (cell) => (holding() ? null : own(cell));
+        return true;
     };
     /** Clipboard text as rows of cells: lines of tab-separated values, a last empty line dropped. */
     calc.pasteRows = (text) => {
@@ -357,14 +395,14 @@
             + '<div v-if="editable || contentUrl" class="row items-center no-wrap q-mb-xs m-calc-bar">'
             + '<div class="m-calc-name text-caption q-px-sm">{{activeName}}</div>'
             + '<div class="col" style="position:relative">'
-            + '<input ref="bar" class="m-calc-formula" :readonly="!editable || activeIsData" :value="barText" aria-label="Cell content" spellcheck="false" autocomplete="off"'
+            + '<input ref="bar" class="m-calc-formula" :readonly="!editable || (activeIsData && !pointingOn)" :value="barText" aria-label="Cell content" spellcheck="false" autocomplete="off"'
             + ' @input="barInput" @keydown="barKey" @blur="suggestions = null">'
             + '<div v-if="suggestions" class="m-calc-suggest shadow-2"><div v-for="(name, index) in suggestions.names" :key="name" class="m-calc-suggest-item"'
             + ' :class="{\'m-calc-suggest-on\': index === suggestionIndex}" @mousedown.prevent="takeSuggestion(name)">{{name}}</div></div>'
             + '</div></div>'
-            + '<div ref="grid" class="m-data-grid m-calc-grid" tabindex="0" @keydown="gridKey" @paste="gridPaste"></div>'
+            + '<div ref="grid" class="m-data-grid m-calc-grid" :class="{\'m-calc-pointing\': pointingOn}" tabindex="0" @keydown="gridKey" @paste="gridPaste" @mousedown.capture="pointDown"></div>'
             + '<div class="row items-center no-wrap q-mt-xs">'
-            + '<q-tabs dense no-caps inline-label align="left" class="col" :model-value="sheetIndex" @update:model-value="showSheet">'
+            + '<q-tabs dense no-caps inline-label align="left" class="col" :model-value="sheetIndex" @update:model-value="showSheet" @mousedown.capture="tabDown">'
             + '<q-tab v-for="sheet in visibleSheets" :key="sheet.index" :name="sheet.index" :label="sheet.name" :icon="sheet.data ? \'table_rows\' : undefined">'
             + '<q-tooltip v-if="sheet.data">A data sheet: {{Number(sheet.dataRows).toLocaleString()}} rows from the database, read only</q-tooltip>'
             + '<q-menu v-if="editable && !sheet.data" context-menu><q-list dense>'
@@ -399,7 +437,8 @@
             + '</div>',
         data() {
             return { sheetIndex: 0, status: "", notice: "", active: { row: 1, column: 1, lastRow: 1, lastColumn: 1 }, barText: "", barOriginal: "", suggestions: null, suggestionIndex: 0,
-                chartOpen: false, chart: { title: "", type: "column", categories: "", values: "" }, peers: [], borderStyle: "thin", borderColor: "#000000" };
+                chartOpen: false, chart: { title: "", type: "column", categories: "", values: "" }, peers: [], borderStyle: "thin", borderColor: "#000000",
+                pointingOn: false };
         },
         computed: {
             sheets() { return (this.room && this.room.sheets) || []; },
@@ -429,6 +468,9 @@
         created() {
             this.cache = new Map(); this.table = null; this.busy = false; this.again = false; this.sheetIndex = this.firstSheet(); this.contentTimer = null;
             this.seq = Number((this.room && this.room.seq) || 0); this.socket = null; this.peerMap = new Map(); this.editingCell = false; this.rereadWaiting = false;
+            // a reference being pointed at into the formula bar: the cell typed into (sheet, row, column), and where in the
+            // bar's text the reference goes (from, to); armed once the grid of the sheet shown is pressed
+            this.pointing = null; this.reselect = null;
             this.clientId = "calc-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
         },
         mounted() {
@@ -520,7 +562,10 @@
             sheet() { return this.activeSheet; },
             showSheet(index) {
                 if (index === this.sheetIndex) return;
-                this.sheetIndex = index; this.active = { row: 1, column: 1, lastRow: 1, lastColumn: 1 };
+                this.sheetIndex = index;
+                // pointing at another sheet: the cell typed into and the bar's text stay as they are
+                if (this.pointing) { this.pointing.armed = false; this.peerMap = calc.peerCells(this.peers, index); this.$emit("sheet", index); this.build(); return; }
+                this.active = { row: 1, column: 1, lastRow: 1, lastColumn: 1 };
                 this.peerMap = calc.peerCells(this.peers, index);
                 this.$emit("sheet", index); this.build(); this.readContent(); this.sendSelection();
             },
@@ -568,7 +613,7 @@
                 const columns = [{ title: "", field: "id", width: 56, frozen: true, headerSort: false, resizable: false, hozAlign: "right", cssClass: "m-calc-row-header" }];
                 for (let c = 1; c <= columnCount; c++) columns.push({ title: calc.columnName(c), field: "c" + c, calcColumn: c, headerSort: false, resizable: true,
                     headerHozAlign: "center", width: Math.max(30, Number((sheet.widths || [])[c - 1]) || 90), frozen: c <= Number(sheet.frozenColumns || 0), formatter, accessorClipboard,
-                    editor: cellEdits ? vm.cellEditor : undefined });
+                    editor: cellEdits ? vm.cellEditor : undefined, editable: cellEdits ? () => !vm.pointing : undefined });
                 const data = new Array(rowCount);
                 for (let r = 0; r < rowCount; r++) data[r] = { id: r + 1 };
                 this.table = new root.Tabulator(element, { data, columns, index: "id", height: this.height, layout: "fitData", placeholder: "",
@@ -576,6 +621,8 @@
                     // a row's own height, after Tabulator measured it; a row is resized by dragging its lower edge
                     rowFormatter: (row) => calc.setRowHeight(row, vm.heights.get(row.getData().id)), resizableRows: this.editable,
                     selectableRange: 1, selectableRangeColumns: true, selectableRangeRows: true, selectableRangeClearCells: false, selectableRangeFill: cellEdits,
+                    // a table built while pointing (another sheet chosen) leaves the focus in the formula bar
+                    selectableRangeAutoFocus: !this.pointing,
                     clipboard: "copy", clipboardCopyStyled: false, clipboardCopyRowRange: "range", clipboardCopyConfig: { rowHeaders: false, columnHeaders: false } });
                 this.table.on("tableBuilt", () => {
                     vm.table.on("scrollVertical", () => vm.load());
@@ -588,6 +635,9 @@
                         const at = row.getData().id, height = calc.rowHeight(row);
                         if (at && height > 0) vm.edit([{ op: "height", sheet: vm.sheetIndex, row: at, height }]);
                     });
+                    // a click on a cell keeps the formula bar's focus while a reference is pointed at
+                    if (vm.editable) calc.holdFocus(vm.table, () => !!vm.pointing);
+                    if (vm.reselect) vm.selectAgain();
                     // the fill handle's drop is the engine's autofill, as Fill down is
                     if (cellEdits) calc.takeFillHandle(vm.table, (source, target) => vm.fillTo(source, target));
                     if (topRow && topRow > 1) vm.table.scrollToRow(Math.min(topRow, rowCount), "top", false).then(() => vm.load(), () => vm.load()); else vm.load();
@@ -644,6 +694,7 @@
                 const columnOf = (cell) => (cell.getColumn ? cell.getColumn().getDefinition() : cell.column.definition).calcColumn || 1;
                 const next = { row: Math.min(rowOf(bounds.start), rowOf(bounds.end)), column: Math.min(columnOf(bounds.start), columnOf(bounds.end)),
                     lastRow: Math.max(rowOf(bounds.start), rowOf(bounds.end)), lastColumn: Math.max(columnOf(bounds.start), columnOf(bounds.end)) };
+                if (this.pointing) { this.pointAt(next); return; }
                 const moved = next.row !== this.active.row || next.column !== this.active.column;
                 this.active = next;
                 this.$emit("selection", Object.assign({ sheet: this.sheetIndex, name: calc.rangeName(next, (this.sheet() || {}).name) }, next));
@@ -667,6 +718,8 @@
             },
             barInput(event) {
                 this.barText = event.target.value;
+                // what is typed after a reference keeps it: a click puts the next one at the caret
+                if (this.pointing) { this.pointing.from = event.target.selectionStart; this.pointing.to = this.pointing.from; }
                 this.suggestions = calc.completions(this.barText, event.target.selectionStart, this.tableNames, this.room.functions);
                 this.suggestionIndex = 0;
             },
@@ -677,7 +730,7 @@
                     event.preventDefault();
                 } else if (this.suggestions && event.key === "Tab") { this.takeSuggestion(this.suggestions.names[this.suggestionIndex]); event.preventDefault(); }
                 else if (event.key === "Enter") { event.preventDefault(); this.commitBar(); }
-                else if (event.key === "Escape") { this.barText = this.barOriginal; this.suggestions = null; }
+                else if (event.key === "Escape") { this.barText = this.barOriginal; this.suggestions = null; this.endPointing(); }
             },
             takeSuggestion(name) {
                 const input = this.$refs.bar, found = this.suggestions;
@@ -689,10 +742,86 @@
             },
             commitBar() {
                 this.suggestions = null;
+                // the cell pointed from, on its own sheet
+                const pointed = this.endPointing();
+                const at = pointed ? { sheet: pointed.sheet, row: pointed.row, column: pointed.column } : { sheet: this.sheetIndex, row: this.active.row, column: this.active.column };
                 if (!this.editable || this.barText === this.barOriginal) return;
                 // committed: no longer what is being typed, so the cell's content as the engine keeps it comes back
                 this.barOriginal = this.barText;
-                this.edit([{ op: "input", sheet: this.sheetIndex, row: this.active.row, column: this.active.column, value: this.barText }]);
+                this.edit([Object.assign({ op: "input", value: this.barText }, at)]);
+            },
+
+            // ---- pointing at references while a formula is typed (plans/IronCalc-DB2.md CG2.2) ----
+            // where in the bar a click on the grid puts a reference: the caret, or the reference just put there, which the
+            // click replaces; null when a click is not a pointing one
+            pointPlace() {
+                const bar = this.$refs.bar, session = this.pointing;
+                if (!bar || !this.editable) return null;
+                const focused = root.document && root.document.activeElement === bar;
+                if (!focused && !session) return null;
+                const caret = focused ? bar.selectionStart : session.to;
+                if (session && caret === session.to && session.from !== session.to) return { from: session.from, to: session.to };
+                return calc.canPoint(this.barText, caret) ? { from: caret, to: caret } : null;
+            },
+            // the grid pressed (in the capture phase, before Tabulator): a pointing press keeps the bar's focus and pins the
+            // cell typed into, and the range Tabulator then selects is put into the bar
+            pointDown(event) {
+                const place = this.pointPlace();
+                if (!place) {
+                    // a press elsewhere than at an operator ends the formula as Enter does; on another sheet than the
+                    // cell's, which is shown again, the press goes no further
+                    if (!this.pointing) return;
+                    if (this.pointing.sheet !== this.sheetIndex) { event.preventDefault(); event.stopPropagation(); }
+                    this.commitBar();
+                    return;
+                }
+                event.preventDefault();
+                this.startPointing(place, true);
+            },
+            // a sheet's tab pressed while pointing: the bar keeps its focus, and the sheet chosen is pointed into
+            tabDown(event) {
+                const place = this.pointPlace();
+                if (!place) return;
+                event.preventDefault();
+                this.startPointing(place, false);
+            },
+            startPointing(place, armed) {
+                if (!this.pointing) {
+                    this.pointing = { sheet: this.sheetIndex, row: this.active.row, column: this.active.column, from: place.from, to: place.to, armed };
+                    this.pointingOn = true;
+                    this.suggestions = null;
+                } else Object.assign(this.pointing, { from: place.from, to: place.to, armed: armed || this.pointing.armed });
+            },
+            pointAt(range) {
+                const session = this.pointing, target = this.activeSheet, bar = this.$refs.bar;
+                if (!session.armed || !target) return;
+                const reference = calc.referenceText(range, target, session.sheet);
+                if (!reference) return;
+                const put = calc.putReference(this.barText, session.from, session.to, reference);
+                this.barText = put.text; session.to = put.caret;
+                this.$nextTick(() => { if (bar) { bar.focus(); bar.setSelectionRange(put.caret, put.caret); } });
+            },
+            // pointing ends (Enter, Escape, a press that is not pointing): back to the sheet of the cell typed into
+            endPointing() {
+                const session = this.pointing;
+                if (!session) return null;
+                this.pointing = null; this.pointingOn = false;
+                // the cell typed into is selected again, in the table of its sheet
+                this.reselect = { row: session.row, column: session.column };
+                if (this.sheetIndex !== session.sheet) {
+                    this.showSheet(session.sheet);
+                    this.active = { row: session.row, column: session.column, lastRow: session.row, lastColumn: session.column };
+                } else this.selectAgain();
+                return session;
+            },
+            selectAgain() {
+                const at = this.reselect, table = this.table;
+                this.reselect = null;
+                if (!at || !table) return;
+                try {
+                    const row = table.getRow(at.row), cell = row && row.getCell("c" + at.column);
+                    if (cell) table.addRange(cell, cell);
+                } catch (_) { /* the row is not in the table */ }
             },
 
             // ---- edits ----

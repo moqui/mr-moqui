@@ -200,3 +200,47 @@ test("the sheet's template compiles, and its border menu names the engine's bord
     assert.deepEqual(calc.BORDER_KINDS.map((one) => one.kind), ["all", "outer", "inner", "top", "bottom", "left", "right", "none"]);
     assert.ok(calc.BORDER_STYLES.every((one) => /^[a-z]+$/.test(one.value)));
 });
+
+test("a click points at a reference only where a formula takes one, and a data sheet's is its table's columns", () => {
+    assert.equal(calc.canPoint("=SUM(", 5), true);
+    assert.equal(calc.canPoint("=", 1), true);
+    assert.equal(calc.canPoint("=A1+ ", 5), true);
+    assert.equal(calc.canPoint("=A1", 3), false);
+    assert.equal(calc.canPoint("=SUM(A1", 7), false);
+    assert.equal(calc.canPoint("12+", 3), false, "not a formula");
+    assert.equal(calc.canPoint("=IF(A1>", 7), true);
+    const orders = { index: 0, name: "Orders", data: true, headers: ["region", "amount", "placed"] };
+    const summary = { index: 1, name: "Summary" }, other = { index: 2, name: "Joe's sheet" };
+    // whatever rows are chosen: another scope's room has other rows
+    assert.equal(calc.referenceText({ row: 2, column: 2, lastRow: 9, lastColumn: 2 }, orders, 1), "Orders[amount]");
+    assert.equal(calc.referenceText({ row: 1, column: 1, lastRow: 1, lastColumn: 3 }, orders, 1), "Orders[[region]:[placed]]");
+    assert.equal(calc.referenceText({ row: 2, column: 5, lastRow: 2, lastColumn: 5 }, orders, 1), null, "a column the data has not");
+    assert.equal(calc.referenceText({ row: 2, column: 2, lastRow: 4, lastColumn: 3 }, summary, 1), "B2:C4");
+    assert.equal(calc.referenceText({ row: 1, column: 1, lastRow: 1, lastColumn: 1 }, other, 1), "'Joe''s sheet'!A1");
+    assert.deepEqual(calc.putReference("=SUM()", 5, 5, "B2:B5"), { text: "=SUM(B2:B5)", caret: 10 });
+    assert.deepEqual(calc.putReference("=SUM(B2)", 5, 7, "B2:B5"), { text: "=SUM(B2:B5)", caret: 10 });
+});
+
+test("a click on a cell selects it and leaves the focus where it is while holding", async () => {
+    const { table, done } = await sheetTable({});
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    try {
+        let holding = true;
+        assert.equal(calc.holdFocus(table, () => holding), true);
+        input.focus();
+        const cell = table.getRow(4).getCell("c2").getElement();
+        // the sheet's capture-phase press keeps the focus (its default prevented); Tabulator still selects
+        cell.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+        cell.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0 }));
+        cell.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.equal(document.activeElement, input, "the bar keeps the focus");
+        const bounds = table.getRanges()[0].getBounds();
+        assert.deepEqual([bounds.start.row.data.id, bounds.start.column.definition.calcColumn], [4, 2]);
+        holding = false;
+        cell.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+        assert.notEqual(document.activeElement, input, "not holding, the table takes it");
+        assert.equal(calc.holdFocus({ modules: {} }, () => true), false);
+    } finally { input.remove(); done(); }
+});
