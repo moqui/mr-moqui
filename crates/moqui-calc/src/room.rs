@@ -41,6 +41,10 @@ use serde_json::{json, Value as Json};
 use crate::fill::{self, SheetRows};
 use crate::log::{self, LogRow};
 
+#[path = "room_formats.rs"]
+mod formats;
+pub use formats::{range_cells, MAX_SHEET_RULES, MAX_VIEW_MERGES};
+
 /// A room not used for this long is dropped.
 pub const IDLE: Duration = Duration::from_secs(20 * 60);
 /// The most rooms one user holds; opening another drops the one used longest ago.
@@ -62,7 +66,7 @@ pub const SCOPE_RECHECK: Duration = Duration::from_secs(60);
 const SHEET_ROWS: i64 = 1_048_576;
 const SHEET_COLUMNS: i64 = 16_384;
 /// The edits over an area (`row`, `column`, `width`, `height`) that the engine walks cell by cell.
-const AREA_EDITS: [&str; 4] = ["clear", "clearFormatting", "style", "fill"];
+const AREA_EDITS: [&str; 6] = ["clear", "clearFormatting", "style", "fill", "border", "merge"];
 /// The newest edits a scratch room keeps for undo.
 const MAX_OWN_LOG: usize = 500;
 /// The most changed areas an evaluation tells the views of; past it they read everything again.
@@ -377,9 +381,13 @@ impl Room {
     ///   `count`).
     /// - `addSheet`, `renameSheet` (`sheet`, `name`), `moveSheet` (`sheet`, `to`), `deleteSheet` (`sheet`).
     /// - `charts` (`charts`: the document's charts, replaced).
+    /// - `border` (an area, `kind`, `style`, `color`), `merge` and `unmerge` (an area), and the conditional formats'
+    ///   `addRule`, `changeRule`, `deleteRule`, `moveRule` and `rules` ([`formats`], plans/IronCalc-DB2.md CG2.4 to
+    ///   CG2.6).
     /// - `undo`, `redo`, each alone: the person's own last edit taken back, or their last undo.
     ///
-    /// A data sheet's cells, rows, columns, place and name are not edited: its widths, heights and frozen panes are.
+    /// A data sheet's cells, rows, columns, place and name are not edited, nor its borders, merges and conditional
+    /// formats: its widths, heights and frozen panes are.
     ///
     /// # Errors
     ///
@@ -524,7 +532,10 @@ impl Room {
         };
         match op["op"].as_str().unwrap_or_default() {
             "input" => 1,
-            "clear" | "clearFormatting" | "style" => width.saturating_mul(height),
+            "clear" | "clearFormatting" | "style" | "merge" | "unmerge" => width.saturating_mul(height),
+            // and the ring around it, whose facing sides it changes
+            "border" => width.saturating_add(2).saturating_mul(height.saturating_add(2)),
+            "addRule" | "changeRule" => range_cells(op["range"].as_str().unwrap_or_default()).unwrap_or(0),
             "fill" => match (op["toRow"].as_i64(), op["toColumn"].as_i64()) {
                 (Some(to_row), _) => width.saturating_mul(span(row, height, to_row)),
                 (None, Some(to_column)) => height.saturating_mul(span(column, width, to_column)),
@@ -639,7 +650,11 @@ impl Room {
                 contents.push(Json::String(
                     self.model.get_cell_content(sheet, at_row, at_column).map_err(engine)?,
                 ));
-                let style = self.model.get_cell_style(sheet, at_row, at_column).map_err(engine)?;
+                // the cell's own style: not the one drawn, which takes its neighbours' facing borders too
+                let style = self
+                    .model()
+                    .get_style_for_cell(sheet, at_row, at_column)
+                    .map_err(engine)?;
                 row_styles.push(serde_json::to_value(style).map_err(|err| Error::new(err.to_string()))?);
             }
             cells.push(Json::Array(contents));
@@ -771,18 +786,32 @@ impl Room {
                 edits.extend(self.snapshot(sheet, row, column, width, height, false)?);
                 edits
             }
-            "fill" => match op["toRow"].as_i64() {
-                Some(to_row) => {
-                    let to_row = i32::try_from(to_row).unwrap_or(i32::MAX);
-                    let (top, bottom) = (row.min(to_row), (row + height - 1).max(to_row));
-                    self.snapshot(sheet, top, column, width, bottom - top + 1, true)?
-                }
-                None => {
-                    let to_column = small("toColumn", 1);
-                    let (left, right) = (column.min(to_column), (column + width - 1).max(to_column));
-                    self.snapshot(sheet, row, left, right - left + 1, height, true)?
-                }
-            },
+            "fill" => {
+                let (top, left, bottom, right) = match op["toRow"].as_i64() {
+                    Some(to_row) => {
+                        let to_row = i32::try_from(to_row).unwrap_or(i32::MAX);
+                        (
+                            row.min(to_row),
+                            column,
+                            (row + height - 1).max(to_row),
+                            column + width - 1,
+                        )
+                    }
+                    None => {
+                        let to_column = small("toColumn", 1);
+                        (
+                            row,
+                            column.min(to_column),
+                            row + height - 1,
+                            (column + width - 1).max(to_column),
+                        )
+                    }
+                };
+                let mut edits = self.snapshot(sheet, top, left, right - left + 1, bottom - top + 1, true)?;
+                // the source's merged cells are tiled into the target, over the merges there
+                edits.extend(self.merges_back(sheet, top, left, bottom, right)?);
+                edits
+            }
             "width" => self.sizes(sheet, column, small("columnEnd", i64::from(column)), true)?,
             "height" => self.sizes(sheet, row, small("rowEnd", i64::from(row)), false)?,
             "freeze" => vec![json!({
@@ -801,6 +830,10 @@ impl Room {
                 edits.extend(self.sizes(sheet, row, row + count - 1, false)?);
                 edits.extend(self.snapshot(sheet, row, 1, max_column, count, false)?);
                 edits.extend(self.formulas()?);
+                // the merges the rows cut or held, and the conditional formats whose ranges they moved
+                let last_column = i32::try_from(SHEET_COLUMNS).unwrap_or(i32::MAX);
+                edits.extend(self.merges_back(sheet, row, 1, row.saturating_add(count - 1), last_column)?);
+                edits.extend(self.rules_back(sheet, false)?);
                 edits
             }
             "deleteColumns" => {
@@ -810,6 +843,9 @@ impl Room {
                 edits.extend(self.sizes(sheet, column, column + count - 1, true)?);
                 edits.extend(self.snapshot(sheet, 1, column, count, max_row, false)?);
                 edits.extend(self.formulas()?);
+                let last_row = i32::try_from(SHEET_ROWS).unwrap_or(i32::MAX);
+                edits.extend(self.merges_back(sheet, 1, column, last_row, column.saturating_add(count - 1))?);
+                edits.extend(self.rules_back(sheet, false)?);
                 edits
             }
             "addSheet" => vec![json!({"op": "deleteSheet", "sheet": sheet_count})],
@@ -849,9 +885,21 @@ impl Room {
                     "rows": self.model.get_frozen_rows_count(sheet).map_err(engine)?,
                     "columns": self.model.get_frozen_columns_count(sheet).map_err(engine)?,
                 }));
+                if self.has_merges(sheet) {
+                    let (last_row, last_column) = (
+                        i32::try_from(SHEET_ROWS).unwrap_or(i32::MAX),
+                        i32::try_from(SHEET_COLUMNS).unwrap_or(i32::MAX),
+                    );
+                    edits.extend(self.merges_back(sheet, 1, 1, last_row, last_column)?);
+                }
+                edits.extend(self.rules_back(sheet, false)?);
                 edits
             }
             "charts" => vec![json!({"op": "charts", "charts": self.charts})],
+            "border" => self.border_inverse(op, sheet)?,
+            "merge" => self.merge_inverse(op, sheet)?,
+            "unmerge" => self.unmerge_inverse(op, sheet)?,
+            kind if formats::RULE_EDITS.contains(&kind) => self.rule_inverse(op, kind, sheet)?,
             // refused when it is applied
             _ => Vec::new(),
         })
@@ -888,6 +936,9 @@ impl Room {
                 | "restore"
                 | "style"
                 | "fill"
+                | "border"
+                | "merge"
+                | "unmerge"
                 | "insertRows"
                 | "deleteRows"
                 | "insertColumns"
@@ -900,6 +951,14 @@ impl Room {
             if let Some(name) = self.data_sheet_name(sheet) {
                 return Err(Error::new(format!(
                     "{name} is a data sheet: its rows come from the database and are not edited"
+                )));
+            }
+        }
+        // a rule's range is cells, which other scopes' rooms (other row counts) and a refresh would not follow
+        if formats::RULE_EDITS.contains(&kind) {
+            if let Some(name) = self.data_sheet_name(sheet) {
+                return Err(Error::new(format!(
+                    "{name} is a data sheet: conditional formats go on a sheet beside it"
                 )));
             }
         }
@@ -980,6 +1039,10 @@ impl Room {
                 self.charts = op["charts"].as_array().cloned().unwrap_or_default();
                 Ok(())
             }
+            "border" => self.apply_border(op, sheet),
+            "merge" => self.apply_merge(op, sheet, true),
+            "unmerge" => self.apply_merge(op, sheet, false),
+            kind if formats::RULE_EDITS.contains(&kind) => self.apply_rule(op, kind, sheet),
             "undo" | "redo" => Err(format!("{kind} is an edit of its own")),
             other => Err(format!("{other:?} is not an edit")),
         }
@@ -1072,14 +1135,28 @@ impl Room {
         Ok(json!({ "fields": fields }))
     }
 
-    /// The sheets as a view lays them out ([`fill::layout`]).
+    /// The sheets as a view lays them out ([`fill::layout`]), each with its merged cells (`merges`, at most
+    /// [`MAX_VIEW_MERGES`]) and the rules of its conditional formats (`rules`, [`Room::rules_view`]).
     #[must_use]
     pub fn layout(&self) -> Json {
-        fill::layout(self.model(), &self.data_rows)
+        let mut layout = fill::layout(self.model(), &self.data_rows);
+        if let Some(sheets) = layout.as_array_mut() {
+            for (index, sheet) in sheets.iter_mut().enumerate() {
+                let Ok(index) = u32::try_from(index) else { continue };
+                let (last_row, last_column) = (
+                    i32::try_from(SHEET_ROWS).unwrap_or(i32::MAX),
+                    i32::try_from(SHEET_COLUMNS).unwrap_or(i32::MAX),
+                );
+                sheet["merges"] = Json::Array(self.merges_of(index, 1, 1, last_row, last_column));
+                sheet["rules"] = Json::Array(self.rules_view(index));
+            }
+        }
+        layout
     }
 
     /// A rectangle of cells as JSON, the engine's block: the distinct styles, a style index for each cell, the texts
-    /// of the cells that have one, and the fills as runs.
+    /// of the cells that have one, and the fills as runs; and the merged cells that meet it (`merges`, each its anchor's
+    /// `row` and `column`, `width` and `height`), which a view draws as one box over the rows it has.
     ///
     /// # Errors
     ///
@@ -1092,6 +1169,14 @@ impl Room {
             .model
             .get_cells_block(sheet, row, column, width, height)
             .map_err(|message| Error::new(format!("Spreadsheet engine: {message}")))?;
+        let mut block = serde_json::to_value(&block).map_err(|err| Error::new(err.to_string()))?;
+        block["merges"] = Json::Array(self.merges_of(
+            sheet,
+            row,
+            column,
+            row.saturating_add(height - 1),
+            column.saturating_add(width - 1),
+        ));
         serde_json::to_string(&block).map_err(|err| Error::new(err.to_string()))
     }
 

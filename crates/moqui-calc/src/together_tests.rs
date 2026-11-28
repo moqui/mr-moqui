@@ -260,6 +260,60 @@ fn an_edit_and_a_save_follow_the_log_under_its_lock_and_evaluate_once_after_it()
     assert!(covers(4) && covers(5), "{changed:?}");
 }
 
+/// plans/IronCalc-DB2.md CG2.4 to CG2.6: a border, a merge and a conditional format are edits of the document's log,
+/// written by one room and followed by another scope's over its own rows, and taken back by their writer's undo in both.
+#[test]
+fn borders_merges_and_rules_go_through_the_log_and_their_undo_reaches_every_room() {
+    let (_ctx, facade) = log_context();
+    let rooms = Rooms::default();
+    let west = scope_room(&rooms, "ann", "west", orders(&[10.0, 20.0, 30.0], "West"));
+    let east = scope_room(&rooms, "otto", "east", orders(&[100.0, 200.0], "East"));
+    let summary = [
+        json!({"op": "addSheet"}),
+        json!({"op": "renameSheet", "sheet": 1, "name": "Summary"}),
+        json!({"op": "paste", "sheet": 1, "row": 1, "column": 1, "rows": [["Total", "=SUM(Orders[amount])"], ["Note"]]}),
+    ];
+    edit(&facade, &mut lock(&west), "ann", &summary).unwrap();
+    let formats = [
+        json!({"op": "border", "sheet": 1, "row": 1, "column": 1, "width": 2, "height": 1, "kind": "outer", "style": "medium"}),
+        json!({"op": "merge", "sheet": 1, "row": 2, "column": 1, "width": 2, "height": 1}),
+        json!({"op": "addRule", "sheet": 1, "range": "B1", "rule": {"type": "CellIs", "operator": "GreaterThan",
+            "formula": "100", "format": {"fill": {"color": "#FFC7CE"}}, "stop_if_true": false}}),
+    ];
+    let edited = edit(&facade, &mut lock(&west), "ann", &formats).unwrap();
+    assert!(edited.refused.is_none());
+    assert!(catch_up(&facade, &mut lock(&east)).unwrap());
+    let fill = |room: &SharedRoom| {
+        let block: serde_json::Value = serde_json::from_str(&lock(room).block(1, 1, 2, 1, 1).unwrap()).unwrap();
+        block["styles"][0]["style"]["fill"]["color"].clone()
+    };
+    // each room's rule over its own total: west's 60 is not over 100, east's 300 is
+    assert!(fill(&west).is_null());
+    assert_eq!(fill(&east), "#FFC7CE");
+    for room in [&west, &east] {
+        let room = lock(room);
+        assert_eq!(room.merges_of(1, 1, 1, 10, 10).len(), 1);
+        assert_eq!(room.layout()[1]["rules"].as_array().map(Vec::len), Some(1));
+        let style = room.model().get_style_for_cell(1, 1, 1).unwrap();
+        assert!(style.border.left.is_some() && style.border.right.is_none());
+    }
+    // the log holds the edits as sent, nothing of either room's data
+    let written = serde_json::to_string(&log::rows_after(&facade, "doc-1", 0).unwrap()[1].ops).unwrap();
+    assert!(written.contains("\"merge\"") && !written.contains("300") && !written.contains("customer"));
+
+    // Ann's undo takes all three back, in her room and in Otto's
+    edit(&facade, &mut lock(&west), "ann", &[json!({"op": "undo"})]).unwrap();
+    assert!(catch_up(&facade, &mut lock(&east)).unwrap());
+    for room in [&west, &east] {
+        let room = lock(room);
+        assert!(room.merges_of(1, 1, 1, 10, 10).is_empty());
+        assert_eq!(room.layout()[1]["rules"], json!([]));
+        assert!(room.model().get_style_for_cell(1, 1, 1).unwrap().border.left.is_none());
+        assert_eq!(room.cell_content(1, 2, 1).unwrap(), "Note");
+    }
+    assert!(fill(&east).is_null());
+}
+
 #[test]
 fn the_others_in_a_document_are_seen_by_name_and_place_and_one_who_left_is_not() {
     let presence = Presence::default();

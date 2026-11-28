@@ -907,8 +907,8 @@ fn open_document_with(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
     Ok(opened_out(facade, &held, &user_id))
 }
 
-/// `get#CalcCells`: a rectangle of a sheet's cells, as the engine's block in JSON text (`blockJson`), with the room's
-/// last edit (`seq`). With `since` at that edit the block is left out (`unchanged`): a view that polls asks so. With a
+/// `get#CalcCells`: a rectangle of a sheet's cells, as the engine's block in JSON text (`blockJson`) with the merged
+/// cells that meet it (`merges`, [`Room::block`]), with the room's last edit (`seq`). With `since` at that edit the block is left out (`unchanged`): a view that polls asks so. With a
 /// `client`, the view's place (`selection`: `row`, `column`, `width`, `height`) is kept for the others, and the others
 /// are answered (`peers`).
 fn get_calc_cells(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {

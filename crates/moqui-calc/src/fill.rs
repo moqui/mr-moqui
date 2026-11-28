@@ -503,7 +503,7 @@ fn row_heights(worksheet: &moqui_core::workbook::ironcalc::base::types::Workshee
 
 /// What a view needs of each sheet: its name, its used rows and columns, the width of each used column in pixels,
 /// the heights of the rows that have their own ([`row_heights`]), the frozen rows and columns, and whether it is one of
-/// `data` (a read-only data sheet).
+/// `data` (a read-only data sheet), with a data sheet's column names (`headers`, its first row).
 #[must_use]
 pub fn layout(model: &Model<'_>, data: &[(String, usize)]) -> Json {
     let sheets: Vec<Json> = model
@@ -521,7 +521,15 @@ pub fn layout(model: &Model<'_>, data: &[(String, usize)]) -> Json {
                 .iter()
                 .find(|(found, _)| found.eq_ignore_ascii_case(&name))
                 .map(|(_, rows)| *rows);
+            // a data sheet's columns by name, which a reference into it names (`Orders[amount]`)
+            let headers: Vec<String> = match (rows, u32::try_from(index)) {
+                (Some(_), Ok(sheet)) => (1..=dimension.max_column)
+                    .map(|column| model.get_formatted_cell_value(sheet, 1, column).unwrap_or_default())
+                    .collect(),
+                _ => Vec::new(),
+            };
             json!({
+                "headers": headers,
                 "index": index,
                 "name": name,
                 "rows": dimension.max_row.max(1),

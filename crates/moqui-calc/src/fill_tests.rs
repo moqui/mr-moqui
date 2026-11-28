@@ -88,6 +88,9 @@ fn a_data_sheet_is_a_typed_table_a_formula_names_by_column() {
     assert_eq!(sheets[1]["frozenRows"], 1);
     assert_eq!(sheets[1]["widths"].as_array().unwrap().len(), 3);
     assert_eq!(sheets[0]["heights"], json!([]));
+    // a data sheet's columns by name, for a reference into it; none for a sheet of the author's
+    assert_eq!(sheets[1]["headers"], json!(["customer", "amount", "placed"]));
+    assert_eq!(sheets[0]["headers"], json!([]));
 }
 
 /// plans/IronCalc-DB2.md CG2.3: a view is sent the rows that have a height of their own, in pixels.
