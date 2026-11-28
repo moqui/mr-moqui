@@ -69,8 +69,9 @@ onto its tab strip, puts it back in a pane; Close puts it back in
 the session list and ends nothing; End session and Pop out are on its title bar. Arrange › Gather terminals docks them
 all. Ctrl+\` is the quick terminal: the last floating terminal shown or hidden, else one floated, else a new one. The
 header's terminal button, while you have sessions, lists them, with a count of those that want you. Pop out opens the
-session in a browser window of its own with no shell around it. A terminal is never in Assist's reach, in a pane or a
-window. Nothing floats below 600 px.
+session in a browser window of its own with no shell around it. A floating terminal is the whole view, as in a pane:
+its menu, find bar, banners (taken, closed) and, on a touch screen, its key bar. A terminal is never in Assist's reach,
+in a pane or a window. Nothing floats below 600 px.
 
 ## Sessions that outlive the page
 
@@ -208,7 +209,9 @@ typo never turns it on (and `true` on a production instance is a warning in the 
   the device's login key. A key is never a recent sign-in, so a command line or a shell from another machine first asks
   for your password (and code) in the app: Confirm it is you, which answers a ticket for a few minutes.
 - On a phone the terminal has a key bar above the keyboard (Esc, Tab, Ctrl and Alt for the next key, the arrows, and
-  `| ~ / - \``), fits above the keyboard as it opens, takes a pinch for the font size, and a long press copies the line.
+  `| ~ / - \``), fits above the keyboard as it opens, and takes a pinch for the font size. A long press selects the line
+  and opens the terminal's menu at the finger, once; Copy there copies it (the tap is what a browser wants before it
+  writes the clipboard). A right click opens the same menu.
 - Through an edge node a terminal is from another machine, so the remote rules apply; a dropped link resumes by the
   count of what was drawn. Each session is one of the link's forwarded sockets.
 

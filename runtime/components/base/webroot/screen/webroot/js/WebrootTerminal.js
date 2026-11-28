@@ -154,6 +154,9 @@
         return true;
     }
 
+    // The event a long press sends from a session's element to the view holding it.
+    const LONG_PRESS = "m-terminal-long-press";
+
     function copyText(text) {
         const byHand = () => {
             state.copy.text = text;
@@ -448,7 +451,8 @@
         return text;
     }
 
-    // Touch (§12): two fingers pinch the font size; a long press selects the line under it and copies it.
+    // Touch (§12): two fingers pinch the font size; a long press selects the line under it and asks its view for the menu
+    // there (LONG_PRESS, on the element) without copying it: Copy in the menu is the tap a clipboard write wants.
     function touchGestures(session) {
         const el = session.el;
         let pinch = null;
@@ -465,7 +469,7 @@
                     const row = Math.floor(((touch.clientY - rect.top) / rect.height) * session.term.rows);
                     const line = session.term.buffer.active.viewportY + Math.max(0, Math.min(session.term.rows - 1, row));
                     session.term.selectLines(line, line);
-                    if (session.term.hasSelection()) copyText(session.term.getSelection().trim());
+                    el.dispatchEvent(new root.CustomEvent(LONG_PRESS, { bubbles: true, detail: { clientX: touch.clientX, clientY: touch.clientY } }));
                 }, 550);
             }
         }, { passive: true });
@@ -559,9 +563,10 @@
                 { id: "popout", icon: "sym_o_open_in_new", label: t("Pop out"), run: () => terminal.popOut(key) },
                 { id: "end", icon: "sym_o_power_settings_new", label: t("End session"), run: () => terminal.endFloating(key) }
             ],
-            // shown: the terminal is started there if it was not (a chip of a session attached elsewhere takes it here)
-            focus: (key, body) => {
-                terminal.showFloating(key, body);
+            // shown: its view (m-terminal-floats) starts the terminal there if it was not (a chip of a session attached
+            // elsewhere takes it here)
+            focus: (key) => {
+                terminal.showFloating(key);
                 return true;
             },
             // on the Terminal screen, dropped on its tab strip it docks into a pane; elsewhere it has no home to drag to
@@ -572,10 +577,10 @@
                 const box = strip.getBoundingClientRect();
                 return { rect: { x: box.left, y: box.top, w: box.width, h: box.height } };
             },
+            // its view leaves with the window, and takes the element with it
             dock: (shown, key) => {
                 delete state.floating[key];
                 if (state.lastFloat === key) state.lastFloat = "";
-                terminal.detach(key);
                 if (shown) terminal.showInScreen(key);
             }
         });
@@ -1117,8 +1122,8 @@
             }, () => {});
         },
 
-        // Show the session `key` in a floating window, its element moved there; answers the window's id, or false where
-        // nothing floats.
+        // Show the session `key` in a floating window, which holds its whole view (m-terminal-floats); answers the
+        // window's id, or false where nothing floats.
         float(key, options) {
             registerFloat();
             const floats = moqui.floats;
@@ -1128,18 +1133,16 @@
             state.floating[key] = true;
             state.lastFloat = key;
             floats.whenReady(FLOAT, key).then((body) => {
-                if (body && floats.shown(floats.find(FLOAT, key))) terminal.showFloating(key, body);
+                if (body && floats.shown(floats.find(FLOAT, key))) terminal.showFloating(key);
             });
             return id;
         },
 
-        showFloating(key, body) {
-            const target = body || (moqui.floats && moqui.floats.bodyOf(FLOAT, key));
-            if (!target) return;
+        // The floating session `key` shown: started, and focused once its view has its element.
+        showFloating(key) {
+            if (!moqui.floats || !moqui.floats.find(FLOAT, key)) return;
             terminal.start(key).then(() => {
-                if (!moqui.floats.find(FLOAT, key)) return;
-                terminal.attach(key, target);
-                terminal.focus(key);
+                if (moqui.floats.find(FLOAT, key)) root.setTimeout(() => terminal.focus(key), 0);
             }, () => {});
         },
 
@@ -1286,10 +1289,29 @@
         mounted() {
             terminal.setDark(this.dark);
             this.show();
+            // the menu opens by these alone (§4.1 of Terminal-Fancy2): a right click at the pointer, a long press at the
+            // finger; the hold of a touch is the long press's, so its own contextmenu (Android's) opens nothing more
+            const screen = this.$refs.screen;
+            this.onTouch = () => {
+                this.touchedAt = Date.now();
+            };
+            this.onContextMenu = (event) => {
+                event.preventDefault();
+                if (event.pointerType === "touch" || Date.now() - (this.touchedAt || 0) < 1500) return;
+                this.openMenu(event);
+            };
+            this.onLongPress = (event) => this.openMenu(new root.MouseEvent("contextmenu", event.detail || {}));
+            screen.addEventListener("touchstart", this.onTouch, { passive: true, capture: true });
+            screen.addEventListener("contextmenu", this.onContextMenu);
+            screen.addEventListener(LONG_PRESS, this.onLongPress);
         },
         beforeUnmount() {
             this.unmounted = true;
-            terminal.detach(this.sessionKey, this.$refs.screen);
+            const screen = this.$refs.screen;
+            screen.removeEventListener("touchstart", this.onTouch, { capture: true });
+            screen.removeEventListener("contextmenu", this.onContextMenu);
+            screen.removeEventListener(LONG_PRESS, this.onLongPress);
+            terminal.detach(this.sessionKey, screen);
         },
         methods: {
             show() {
@@ -1311,6 +1333,10 @@
             closeSearch() {
                 if (this.views[this.sessionKey]) this.views[this.sessionKey].searching = false;
                 terminal.endFind(this.sessionKey);
+            },
+            // The menu at the point of `event` (a right click, or a long press's).
+            openMenu(event) {
+                if (this.$refs.menu) this.$refs.menu.show(event);
             },
             menu(action) {
                 const key = this.sessionKey;
@@ -1348,7 +1374,7 @@
             '<q-btn flat dense round size="sm" icon="sym_o_keyboard_arrow_down" :aria-label="labels.next" @click="find(false)"></q-btn>' +
             '<q-btn flat dense round size="sm" icon="sym_o_close" :aria-label="labels.close" @click="closeSearch"></q-btn></div>' +
             '<div ref="screen" class="m-terminal-host col" style="min-height: 0; overflow: hidden" @click="focus"></div>' +
-            '<q-menu context-menu touch-position auto-close><q-list dense style="min-width: 160px">' +
+            '<q-menu ref="menu" no-parent-event touch-position auto-close><q-list dense style="min-width: 160px">' +
             '<q-item clickable @click="menu(\'copy\')"><q-item-section>{{labels.copy}}</q-item-section><q-item-section side class="text-caption">Ctrl+Shift+C</q-item-section></q-item>' +
             '<q-item clickable @click="menu(\'paste\')"><q-item-section>{{labels.paste}}</q-item-section><q-item-section side class="text-caption">Ctrl+Shift+V</q-item-section></q-item>' +
             '<q-item clickable @click="menu(\'selectAll\')"><q-item-section>{{labels.selectAll}}</q-item-section></q-item>' +
@@ -1522,6 +1548,29 @@
     };
 
     // The copy the browser refused, to select and copy by hand.
+    // The floating sessions' views, each in its window's body by a teleport (as Assist and the tray are): the whole view,
+    // with its menu, find bar, banners and key bar. Always mounted while the terminal is on, so a view goes only with its
+    // window.
+    components["m-terminal-floats"] = {
+        name: "mTerminalFloats",
+        data() {
+            return { floating: state.floating };
+        },
+        computed: {
+            keys() {
+                return Object.keys(this.floating).filter((key) => this.floating[key]);
+            }
+        },
+        methods: {
+            target(key) {
+                return moqui.floats ? moqui.floats.target(FLOAT, key) : null;
+            }
+        },
+        template:
+            '<template v-for="key in keys" :key="key"><teleport v-if="target(key)" :to="target(key)">' +
+            '<m-terminal-view :session-key="key" :data-float-terminal="key"></m-terminal-view></teleport></template>'
+    };
+
     components["m-terminal-copy"] = {
         name: "mTerminalCopy",
         data() {

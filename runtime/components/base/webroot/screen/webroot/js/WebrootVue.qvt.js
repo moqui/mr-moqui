@@ -10172,6 +10172,8 @@
         "<m-float-layer v-if=\"floatsOn\"></m-float-layer>\n" +
         // the copy a terminal's program made that the browser refused, to copy by hand (WebrootTerminal.js)
         "<m-terminal-copy v-if=\"terminalOn\"></m-terminal-copy>\n" +
+        // the floating terminals' views, each teleported into its window (WebrootTerminal.js, Terminal-Fancy2 §4.1)
+        "<m-terminal-floats v-if=\"terminalOn && floatsOn\"></m-terminal-floats>\n" +
         "\n" +
         "<m-dialog v-model=\"reLoginShow\" width=\"400\" :title=\"labels.reLogin\">\n" +
         "    <div v-if=\"reLoginMfaData\">\n" +
