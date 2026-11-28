@@ -161,6 +161,7 @@ body .tabulator-tooltip { background:var(--m-text); color:var(--m-panel-bg); bor
 .m-calc-cell-editor { width: 100%; height: 100%; border: 2px solid var(--q-primary); outline: 0; padding: 0 4px; font: inherit; background: var(--q-dark-page, #fff); color: inherit; box-sizing: border-box; }
 body.body--light .m-calc-cell-editor { background: #fff; }
 .m-calc-swatch { width: 20px; height: 20px; margin: 1px; border: 1px solid rgba(128, 128, 128, .5); cursor: pointer; }
+.m-calc-swatch-on { outline: 2px solid var(--q-primary); outline-offset: 1px; }
 .m-calc-suggest { position: absolute; left: 0; top: 100%; z-index: 20; min-width: 180px; background: var(--q-dark, #fff); border: 1px solid rgba(128, 128, 128, .4); }
 body.body--light .m-calc-suggest { background: #fff; }
 .m-calc-suggest-item { padding: 2px 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; cursor: pointer; }

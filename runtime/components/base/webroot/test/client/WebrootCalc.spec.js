@@ -5,6 +5,6 @@
 spec({ server: false, timeout: 60 })
 browser.runInPage({
     styles: ["/libs/tabulator/tabulator.min.css", "/css/DataGrid.css"],
-    scripts: ["/libs/tabulator/tabulator.min.js", "/js/MoquiLib.js", "/js/WebrootCalc.js"],
+    scripts: ["/libs/vue/vue.global.prod.js", "/libs/tabulator/tabulator.min.js", "/js/MoquiLib.js", "/js/WebrootCalc.js"],
     test: "/files/component/webroot/test/client/pages/WebrootCalc.page.js",
 })

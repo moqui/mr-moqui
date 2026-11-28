@@ -13,7 +13,7 @@
  *     draws each cell from the blocks the server sent, and a scroll asks for the rows in view and a margin, so a jump
  *     to a far row loads nothing between. Sheet tabs are below it and the document's charts (m-chart) below those.
  *     With editUrl (the transition that applies edits: roomId, opsJson) and contentUrl (a cell's content as typed) the
- *     sheet is edited: a toolbar (undo, redo, font, colours, alignment, number format, rows and columns, a chart), a
+ *     sheet is edited: a toolbar (undo, redo, font, colours, borders, alignment, number format, rows and columns, a chart), a
  *     formula bar that completes function and table names, a cell's editor on a double click, Delete, a paste of rows of
  *     cells, a column's width and a row's height, the fill handle dragged down, up or across (the engine's autofill),
  *     and sheets added, renamed and deleted. Each edit is sent to the server, which answers the
@@ -155,6 +155,13 @@
         "SWITCH", "TEXT", "TEXTJOIN", "TIME", "TODAY", "TRIM", "UNIQUE", "UPPER", "VALUE", "VLOOKUP", "WEEKDAY", "WEEKNUM", "XLOOKUP", "YEAR"];
     calc.NUMBER_FORMATS = [{ label: "General", value: "general" }, { label: "1234", value: "0" }, { label: "1234.50", value: "0.00" }, { label: "1,234.50", value: "#,##0.00" },
         { label: "12.5%", value: "0.0%" }, { label: "2026-11-13", value: "yyyy-mm-dd" }, { label: "2026-11-13 14:30", value: "yyyy-mm-dd hh:mm" }];
+    /** The borders of the toolbar's menu: where (the `border` edit's kind), its icon and its name. */
+    calc.BORDER_KINDS = [{ kind: "all", icon: "border_all", label: "All borders" }, { kind: "outer", icon: "border_outer", label: "Outside borders" },
+        { kind: "inner", icon: "border_inner", label: "Inside borders" }, { kind: "top", icon: "border_top", label: "Top border" },
+        { kind: "bottom", icon: "border_bottom", label: "Bottom border" }, { kind: "left", icon: "border_left", label: "Left border" },
+        { kind: "right", icon: "border_right", label: "Right border" }, { kind: "none", icon: "border_clear", label: "No borders" }];
+    calc.BORDER_STYLES = [{ label: "Thin", value: "thin" }, { label: "Medium", value: "medium" }, { label: "Thick", value: "thick" },
+        { label: "Dashed", value: "mediumdashed" }, { label: "Dotted", value: "dotted" }, { label: "Double", value: "double" }];
     calc.COLORS = ["#000000", "#C62828", "#EF6C00", "#F9A825", "#2E7D32", "#1565C0", "#6A1B9A", "#757575", "#FFFFFF", "#FFCDD2", "#FFE0B2", "#FFF9C4", "#C8E6C9", "#BBDEFB", "#E1BEE7", "#EEEEEE"];
 
     /**
@@ -322,6 +329,12 @@
             + '<div v-for="shade in colors" :key="shade" v-close-popup class="m-calc-swatch" :style="{backgroundColor: shade}" @click="style(\'font.color\', shade)"></div></div></q-menu></q-btn>'
             + '<q-btn flat dense round size="sm" icon="format_color_fill" aria-label="Fill colour"><q-tooltip>Fill colour</q-tooltip><q-menu><div class="row q-pa-xs" style="width:176px">'
             + '<div v-for="shade in colors" :key="shade" v-close-popup class="m-calc-swatch" :style="{backgroundColor: shade}" @click="style(\'fill.color\', shade)"></div></div></q-menu></q-btn>'
+            + '<q-btn flat dense round size="sm" icon="border_all" aria-label="Borders"><q-tooltip>Borders</q-tooltip><q-menu><div class="q-pa-xs" style="width:200px">'
+            + '<div class="row"><q-btn v-for="one in borderKinds" :key="one.kind" flat dense round size="sm" :icon="one.icon" :aria-label="one.label" v-close-popup @click="border(one.kind)">'
+            + '<q-tooltip>{{one.label}}</q-tooltip></q-btn></div>'
+            + '<q-select dense outlined options-dense emit-value map-options class="q-mt-xs" v-model="borderStyle" :options="borderStyles" label="Line"></q-select>'
+            + '<div class="row q-mt-xs"><div v-for="shade in colors" :key="shade" class="m-calc-swatch" :class="{\'m-calc-swatch-on\': shade === borderColor}" :style="{backgroundColor: shade}"'
+            + ' :aria-label="\'Line colour \' + shade" @click="borderColor = shade"></div></div></div></q-menu></q-btn>'
             + '<q-separator vertical></q-separator>'
             + '<q-btn flat dense round size="sm" icon="format_align_left" aria-label="Align left" @click="style(\'alignment.horizontal\', \'left\')"></q-btn>'
             + '<q-btn flat dense round size="sm" icon="format_align_center" aria-label="Align center" @click="style(\'alignment.horizontal\', \'center\')"></q-btn>'
@@ -386,7 +399,7 @@
             + '</div>',
         data() {
             return { sheetIndex: 0, status: "", notice: "", active: { row: 1, column: 1, lastRow: 1, lastColumn: 1 }, barText: "", barOriginal: "", suggestions: null, suggestionIndex: 0,
-                chartOpen: false, chart: { title: "", type: "column", categories: "", values: "" }, peers: [] };
+                chartOpen: false, chart: { title: "", type: "column", categories: "", values: "" }, peers: [], borderStyle: "thin", borderColor: "#000000" };
         },
         computed: {
             sheets() { return (this.room && this.room.sheets) || []; },
@@ -399,6 +412,8 @@
             activeName() { return calc.rangeName(this.active); },
             colors() { return calc.COLORS; },
             numberFormats() { return calc.NUMBER_FORMATS; },
+            borderKinds() { return calc.BORDER_KINDS; },
+            borderStyles() { return calc.BORDER_STYLES; },
             tableNames() { return this.sheets.filter((sheet) => sheet.data).map((sheet) => calc.tableName(sheet.name)); }
         },
         watch: {
@@ -720,6 +735,8 @@
             },
             selection() { return { sheet: this.sheetIndex, row: this.active.row, column: this.active.column, width: this.active.lastColumn - this.active.column + 1, height: this.active.lastRow - this.active.row + 1 }; },
             style(path, value) { return this.edit([Object.assign({ op: "style", path, value: String(value) }, this.selection())]); },
+            // a border of the selection, in the line and colour chosen in the menu
+            border(kind) { return this.edit([Object.assign({ op: "border", kind, style: this.borderStyle, color: this.borderColor }, this.selection())]); },
             // on when the active cell does not have it yet
             toggleStyle(path, cssName) {
                 const cells = this.rows().get(this.active.row), cell = cells && cells[this.active.column - 1];

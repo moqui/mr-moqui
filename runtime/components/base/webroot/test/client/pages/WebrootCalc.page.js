@@ -191,3 +191,12 @@ test("a row is given its own height, and the height it was given is read back", 
         assert.ok(table.getRow(3).getElement().querySelector(".tabulator-row-resize-handle"), "a row can be resized");
     } finally { done(); }
 });
+
+test("the sheet's template compiles, and its border menu names the engine's borders", () => {
+    const errors = [];
+    const render = Vue.compile(calc.sheet.template, { onError: (err) => errors.push(err.message), onWarn: (err) => errors.push(err.message) });
+    assert.deepEqual(errors, []);
+    assert.equal(typeof render, "function");
+    assert.deepEqual(calc.BORDER_KINDS.map((one) => one.kind), ["all", "outer", "inner", "top", "bottom", "left", "right", "none"]);
+    assert.ok(calc.BORDER_STYLES.every((one) => /^[a-z]+$/.test(one.value)));
+});
