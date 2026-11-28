@@ -1144,6 +1144,18 @@
             options.push(h('h3',{class:'col-12 text-subtitle1 q-mb-none'},'Data queries'));
             options.push(h('div',{class:'col-12 row items-end q-gutter-sm'},[E.control('Selected query',queryAt,value=>{this.queryAt=Number(value);},'select',(panel.queries || []).map((query,at)=>({value:at,text:'Query '+(at+1)+' · '+(query.datasetId || 'choose dataset')}))),E.button('Add query',()=>this.queries('add'),this.readOnly),E.button('Duplicate query',()=>this.queries('duplicate'),this.readOnly || !(panel.queries || []).length),E.button('Remove query',()=>this.queries('remove'),this.readOnly || !(panel.queries || []).length),E.button('Move query up',()=>this.queries('up'),this.readOnly || !queryAt),E.button('Move query down',()=>this.queries('down'),this.readOnly || queryAt>=(panel.queries || []).length-1)]));
             input("Dataset", queryPrefix+"datasetId", "select", this.datasets.map((dataset) => ({ value: dataset.id, text: dataset.title || dataset.id })));
+            // the parameters the query's dataset declares (list#Datasets with parameterChoices), a field each and a select
+            // where it has choices; one left empty is taken out of the query (docs/tools/Monitoring.md, A dataset's parameters)
+            const queryDataset=this.datasets.find(dataset=>dataset.id===((panel.queries || [])[queryAt] || {}).datasetId);
+            for(const parameter of (queryDataset && Array.isArray(queryDataset.parameters) ? queryDataset.parameters : [])){
+                const label=(parameter.label || parameter.name)+(parameter.optional?' (optional)':''),path=queryPrefix+'parameters.'+parameter.name,current=read(path);
+                if(this.optionSearch && !label.toLowerCase().includes(this.optionSearch.toLowerCase()))continue;
+                let choices=null;
+                if(Array.isArray(parameter.choices)){choices=[{value:'',text:parameter.optional?T('None'):T('Choose')},...parameter.choices.map(choice=>({value:choice.value,text:choice.label || choice.value}))];
+                    if(current!=null && current!=='' && !choices.some(choice=>choice.value===String(current)))choices.push({value:String(current),text:String(current)});}
+                options.push(E.control(label,current==null?'':current,value=>this.update(path,value===''||value==null?undefined:parameter.kind==='number'?Number(value):value),
+                    choices?'select':parameter.kind==='number'?'number':undefined,choices,this.readOnly,'col-12 col-sm-6 col-lg-4 m-report-dataset-parameter'));
+            }
             input("Query string", queryPrefix+"queryString");
             input("Query mode", queryPrefix+"mode", "select", ["aggregations", "documents", { value: "serviceMap", text: "service map (spans)" }, { value: "flame", text: "flame graph (spans)" }]);
             const aggregationRows=((panel.queries || [])[queryAt] || {}).aggregations || [];

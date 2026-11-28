@@ -52,6 +52,7 @@ pub mod incident;
 pub mod lock;
 mod lookup;
 pub mod monitor;
+mod parameters;
 pub mod patterns;
 pub mod recovery;
 pub mod regression;
@@ -2177,12 +2178,17 @@ fn add_subtotal_metrics(value: &mut Json) -> Result<serde_json::Map<String, Json
 }
 
 /// The datasets the viewer may read, each with its id, title and time field, and `service` for one whose service answers
-/// a report query with frames: it has no records to search, so Explore offers only the others.
+/// a report query with frames: it has no records to search, so Explore offers only the others. A saved or shipped
+/// dataset that declares `parameters` has them (parameters.rs), with each one's choices when `parameterChoices` is
+/// true: what the panel editors show for a query over it.
 pub fn list_datasets(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
-    _parameters: &Parameters,
+    params: &Parameters,
 ) -> Result<Parameters, Error> {
+    let with_choices = params
+        .get("parameterChoices")
+        .is_some_and(|value| moqui_lib::object::to_plain_string(value) == "true");
     let mut items = Vec::new();
     for id in search::telemetry::TELEMETRY_INDEXES {
         if let Ok(dataset) = resolve_dataset(ec, id, false) {
@@ -2192,7 +2198,9 @@ pub fn list_datasets(
     for definition in definitions::list(ec, Some("dataset"))? {
         let id = text(&definition, "id", "");
         if let Ok(dataset) = resolve_dataset(ec, id, false) {
-            items.push(json!({"id":id,"title":definition["title"],"timeField":dataset.time_field,"service":dataset.service.is_some()}));
+            let mut item = json!({"id":id,"title":definition["title"],"timeField":dataset.time_field,"service":dataset.service.is_some()});
+            parameters::add_to(&mut item, parameters::listed(ec, id, &definition["body"], with_choices));
+            items.push(item);
         }
     }
     if let Some(entity) = ec.factory().entity() {
@@ -2247,9 +2255,12 @@ pub fn get_dataset(
         let field = fields.entry(name.clone()).or_insert_with(|| json!({"name":name,"type":config["type"].as_str().unwrap_or("string"),"searchable":false,"aggregatable":false}));
         field["config"] = config;
     }
-    Ok(output(
-        json!({"dataset":{"id":id,"timeField":dataset.time_field,"service":dataset.service.is_some(),"fields":fields.into_values().collect::<Vec<_>>(),"capabilities":facade.capabilities().iter().map(|c|c.name()).collect::<Vec<_>>()}}),
-    ))
+    let mut out = json!({"id":id,"timeField":dataset.time_field,"service":dataset.service.is_some(),"fields":fields.into_values().collect::<Vec<_>>(),"capabilities":facade.capabilities().iter().map(|c|c.name()).collect::<Vec<_>>()});
+    // the parameters it declares, each with its choices as the viewer reads them (parameters.rs)
+    if let Some(definition) = definitions::read_optional(ec, id)? {
+        parameters::add_to(&mut out, parameters::listed(ec, id, &definition["body"], true));
+    }
+    Ok(output(json!({ "dataset": out })))
 }
 
 pub use alert::evaluate_rules;

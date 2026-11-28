@@ -63,6 +63,8 @@
                 <q-input dense outlined v-model="panel.range" label="Range" hint="Its first row names the columns: Summary!A1:D20"></q-input>
                 <q-input dense outlined v-model="panel.title" label="Panel title"></q-input>
                 <q-option-group v-model="panel.visualization" inline dense :options="[{label: 'Table', value: 'table'}, {label: 'Bars', value: 'bar'}, {label: 'Pie', value: 'pie'}, {label: 'Number', value: 'stat'}]"></q-option-group>
+                <q-select v-if="(access.profiles || []).length" dense outlined v-model="panel.profileId" :options="panelProfileOptions" emit-value map-options label="Read as"
+                        hint="An access profile the panel always reads under; each person who opens the dashboard must hold it"></q-select>
                 <div class="text-caption" :class="mutedClass">Each person who opens the dashboard sees the rows they may read. Edits show there once the document is saved.</div>
             </q-card-section>
             <q-card-actions align="right"><q-btn flat no-caps label="Cancel" v-close-popup></q-btn>
@@ -94,7 +96,7 @@ module.exports = {
             profileId: '', documents: [], documentId: null, room: null, opened: null, selected: null, unavailable: '',
             newOpen: false, newEntity: null, newTitle: '', entityOptions: [],
             saveOpen: false, saveTitle: '', saveGroup: null, shareGroups: [],
-            panelOpen: false, dashboardOptions: [], panel: { dashboardId: null, range: '', title: '', visualization: 'table' }
+            panelOpen: false, dashboardOptions: [], panel: { dashboardId: null, range: '', title: '', visualization: 'table', profileId: '' }
         };
     },
     computed: {
@@ -107,6 +109,10 @@ module.exports = {
             return options;
         },
         documentOptions() { return this.documents.map((doc) => ({ value: doc.definitionId, label: doc.title })); },
+        // what a panel reads under: each viewer's own current access, or a profile the author holds
+        panelProfileOptions() {
+            return [{ value: '', label: "Each person's own access" }].concat((this.access.profiles || []).map((profile) => ({ value: profile.profileId, label: profile.description || profile.profileId })));
+        },
         requestParams() { return this.profileId ? { profileId: this.profileId } : {}; },
         // an author edits a document of their own, or one not saved yet
         // an author edits a document they read with the others who have it open; its owner saves it
@@ -214,13 +220,13 @@ module.exports = {
             const sheet = (this.room.sheets || []).find((found) => found.index === (this.selected ? this.selected.sheet : 0)) || (this.room.sheets || [])[0] || {};
             const one = !this.selected || (this.selected.row === this.selected.lastRow && this.selected.column === this.selected.lastColumn);
             const range = one ? moqui.calc.rangeName({ row: 1, column: 1, lastRow: Math.min(Number(sheet.rows) || 1, 200), lastColumn: Number(sheet.columns) || 1 }, sheet.name) : this.selected.name;
-            this.panel = { dashboardId: this.panel.dashboardId, range, title: this.room.title || '', visualization: 'table' };
+            this.panel = { dashboardId: this.panel.dashboardId, range, title: this.room.title || '', visualization: 'table', profileId: this.panel.profileId || '' };
             this.panelOpen = true;
             this.call('calcDashboards').then((out) => { this.dashboardOptions = (out && out.dashboards) || []; });
         },
         addPanel() {
             this.call('calcAddPanel', { definitionId: this.room.definitionId, dashboardId: this.panel.dashboardId, range: this.panel.range, panelTitle: this.panel.title,
-                visualization: this.panel.visualization }, 'POST').then((out) => {
+                visualization: this.panel.visualization, panelProfileId: this.panel.profileId || '' }, 'POST').then((out) => {
                 if (!out || !out.panelId) return;
                 this.panelOpen = false;
                 moqui.notifyMessages('Added to the dashboard');

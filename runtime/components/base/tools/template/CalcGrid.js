@@ -186,8 +186,9 @@ function dashboards() {
     }
 }
 // Add a range of a saved document to a dashboard of the viewer's own as a panel over the dataset calcgrid: the report
-// engine's table, bar or pie panel of the range, read by each viewer of the dashboard under their own current access.
-// The engine's save holds the dashboard to its owner.
+// engine's table, bar or pie panel of the range, read by each viewer of the dashboard under their own current access, or
+// under the access profile chosen (panelProfileId, one the viewer holds), which the panel's query then names. The
+// engine's save holds the dashboard to its owner.
 const VISUALIZATIONS = ["table", "bar", "pie", "stat"]
 function addPanel() {
     const definitionId = text(ec.context.get("definitionId"))
@@ -197,6 +198,10 @@ function addPanel() {
     if (!definitionId) return {errors: ec.l10n.localize("Save the document first: a panel reads a saved document")}
     if (!dashboardId || !range) return {errors: ec.l10n.localize("Choose a dashboard and a range")}
     if (!VISUALIZATIONS.includes(visualization)) return {errors: ec.l10n.localize("A panel of a range is a table, a bar chart, a pie chart or a number")}
+    // a profile the panel reads under is one the viewer holds; each viewer of the dashboard must hold it too
+    const panelProfile = text(ec.context.get("panelProfileId"))
+    if (panelProfile && !Array.from(ask(CALC + ".get#CalcProfiles", {}).profiles || []).some(profile => profile.profileId === panelProfile))
+        return {errors: ec.l10n.localize("Choose an access profile you hold")}
     const document = ask(REPORT + ".get#Definition", {definitionId})
     if (document.errors || !document.definition || document.definition.type !== TYPE) return {errors: document.errors || "Not a CalcGrid document"}
     const found = ask(REPORT + ".get#Definition", {definitionId: dashboardId})
@@ -209,7 +214,7 @@ function addPanel() {
     dashboard.body.panels[panelId] = {
         title: text(ec.context.get("panelTitle")) || document.definition.title || "CalcGrid",
         visualization,
-        queries: [{datasetId: "calcgrid", parameters: {definitionId, range}}]
+        queries: [{datasetId: "calcgrid", parameters: Object.assign({definitionId, range}, panelProfile ? {profileId: panelProfile} : {})}]
     }
     const saved = ask(REPORT + ".save#Definition", {definition: dashboard, note: "Added a CalcGrid range"})
     return {errors: saved.errors, dashboardId, panelId, link: mountLib.state().links.dashboard}

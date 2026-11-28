@@ -4,7 +4,32 @@
   "title": "CalcGrid range",
   "body": {
     "folder": "CalcGrid",
-    "description": "A range of a CalcGrid document as a table: set the query parameters definitionId (the document) and range (as in a formula, Summary!A1:D20; its first row names the columns). Read as the viewer under their current CalcGrid access.",
-    "serviceName": "org.moqui.calc.CalcServices.get#CalcFrame"
+    "description": "A range of a CalcGrid document as a table: set the query parameters definitionId (the document) and range (as in a formula, Summary!A1:D20; its first row names the columns), and profileId to read under an access profile. Read as the viewer under their current CalcGrid access, or the profile named.",
+    "serviceName": "org.moqui.calc.CalcServices.get#CalcFrame",
+    "parameters": [
+      {
+        "name": "definitionId",
+        "label": "Document",
+        "choices": {
+          "service": "org.moqui.report.ReportServices.list#Definitions",
+          "parameters": {"definitionType": "calcgrid"},
+          "list": "definitions",
+          "value": "id",
+          "label": "title"
+        }
+      },
+      {"name": "range", "label": "Range, as in a formula (Summary!A1:D20)"},
+      {
+        "name": "profileId",
+        "label": "Read as (an access profile)",
+        "optional": true,
+        "choices": {
+          "service": "org.moqui.calc.CalcServices.get#CalcProfiles",
+          "list": "profiles",
+          "value": "profileId",
+          "label": "description"
+        }
+      }
+    ]
   }
 }

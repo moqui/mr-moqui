@@ -28,6 +28,11 @@ const OUTSIDER_ID = "SPEC_CALCGRID_OUTSIDER"
 const PEER = "spec.calcgrid.peer"
 const PEER_ID = "SPEC_CALCGRID_PEER"
 const SHARE_GROUP = "SPEC_CALCGRID_SHARE"
+const REPORT = "org.moqui.report.ReportServices."
+// an access profile john.doe and the peer hold through the share group, offering Enumeration with no filter
+// (crates/moqui-calc/src/profile.rs); made in setupSpec, since an authorization row is seen once its transaction commits
+const PROFILE = "specgrid"
+const PROFILE_GROUP = "SPEC_CALCGRID_PROFILE"
 
 spec({
     setupSpec() {
@@ -40,14 +45,23 @@ spec({
         ec.entity.makeValue("moqui.security.UserGroup").setAll({userGroupId: SHARE_GROUP, description: "Spec CalcGrid share"}).create()
         for (const [userGroupId, userId] of [["ADMIN", PEER_ID], [SHARE_GROUP, PEER_ID], [SHARE_GROUP, "EX_JOHN_DOE"]])
             ec.entity.makeValue("moqui.security.UserGroupMember").setAll({userGroupId, userId, fromDate: ec.user.nowTimestamp}).create()
+        ec.entity.makeValue("moqui.security.ArtifactGroup").setAll({artifactGroupId: PROFILE_GROUP, description: "Spec CalcGrid profile"}).create()
+        for (const [artifactName, inheritAuthz] of [["org.moqui.calc.profile." + PROFILE, "Y"], ["org.moqui.calc.entity.moqui.basic.Enumeration", "N"]])
+            ec.entity.makeValue("moqui.security.ArtifactGroupMember").setAll({artifactGroupId: PROFILE_GROUP, artifactName, nameIsPattern: "N",
+                artifactTypeEnumId: "AT_SERVICE", inheritAuthz}).create()
+        ec.entity.makeValue("moqui.security.ArtifactAuthz").setAll({artifactAuthzId: PROFILE_GROUP, userGroupId: SHARE_GROUP, artifactGroupId: PROFILE_GROUP,
+            authzTypeEnumId: "AUTHZT_ALWAYS", authzActionEnumId: "AUTHZA_VIEW"}).create()
         ec.artifactExecution.enableAuthz()
     },
     cleanupSpec() {
         // a document a failed feature left shared with the group goes first
-        for (const definitionId of ["spec-calcgrid-revoke", "spec-calcgrid-revoke-board"])
+        for (const definitionId of ["spec-calcgrid-revoke", "spec-calcgrid-revoke-board", "spec-calcgrid-params-board", "spec-calcgrid-ds", "spec-calcgrid-params"])
             ec.service.sync().name("org.moqui.report.ReportServices.delete#Definition").parameters({definitionId}).disableAuthz().call()
         ec.message.clearErrors()
         ec.artifactExecution.disableAuthz()
+        ec.entity.find("moqui.security.ArtifactAuthz").condition("artifactAuthzId", PROFILE_GROUP).deleteAll()
+        ec.entity.find("moqui.security.ArtifactGroupMember").condition("artifactGroupId", PROFILE_GROUP).deleteAll()
+        ec.entity.find("moqui.security.ArtifactGroup").condition("artifactGroupId", PROFILE_GROUP).deleteAll()
         ec.entity.find("moqui.security.UserGroupMember").condition("userId", PEER_ID).deleteAll()
         ec.entity.find("moqui.security.UserGroupMember").condition("userGroupId", SHARE_GROUP).deleteAll()
         ec.entity.find("moqui.security.UserGroup").condition("userGroupId", SHARE_GROUP).deleteAll()
@@ -497,6 +511,76 @@ feature("a range of a saved document is added to a dashboard of the viewer's own
         String(notSaved.json.errors).includes("Save the document first")
         String(notDashboard.json.errors).includes("Choose a dashboard")
         String(badKind.json.errors).includes("A panel of a range is")
+    },
+})
+
+// The dataset calcgrid declares its parameters (tools/report/calcgrid.json; docs/tools/Monitoring.md, A dataset's
+// parameters): list#Datasets lists them, with their choices as the viewer reads them when asked (what the panel editors
+// show), and get#Dataset always; a saved dataset names only a choices service a shipped one names. Add to dashboard writes
+// the profile chosen, only one the author holds, and the panel then reads under it.
+feature("the calcgrid dataset's parameters are listed with their choices for the panel editors, and a panel reads under the profile chosen", {
+    when() {
+        {
+            const opened = call("calcOpen", {sourceJson: JSON.stringify(source), columnsJson: JSON.stringify(["enumId", "sequenceNum"])}, "post")
+            call("calcSave", {roomId: opened.json.roomId, title: "Parameter types", definitionId: "spec-calcgrid-params"}, "post")
+            call("calcClose", {roomId: opened.json.roomId}, "post")
+            const listed = parameters => Array.from(ec.service.sync().name(REPORT + "list#Datasets").parameters(parameters).call().datasets || [])
+            const find = (list, id) => list.find(dataset => dataset.id === id) || {}
+            const plain = listed({}), chosen = listed({parameterChoices: true})
+            const got = (ec.service.sync().name(REPORT + "get#Dataset").parameters({datasetId: "calcgrid"}).call() || {}).dataset || {}
+            const byName = (dataset, name) => Array.from(dataset.parameters || []).find(parameter => parameter.name === name) || {}
+            const values = parameter => Array.from(parameter.choices || []).map(choice => choice.value)
+            const save = (id, parameters) => {
+                ec.service.sync().name(REPORT + "save#Definition").parameters({definition: {id, type: "dataset", title: id,
+                    body: {serviceName: "org.moqui.calc.CalcServices.get#CalcFrame", parameters}}}).call()
+                const errors = ec.message.hasError() ? ec.message.getErrorsString() : ""
+                ec.message.clearErrors()
+                return errors
+            }
+            const documents = {service: REPORT + "list#Definitions", parameters: {definitionType: "calcgrid"}, list: "definitions", value: "id", label: "title"}
+            const savedOwn = save("spec-calcgrid-ds", [{name: "definitionId", label: "Sheet", choices: documents}])
+            const savedListed = byName(find(listed({parameterChoices: true}), "spec-calcgrid-ds"), "definitionId")
+            const otherService = save("spec-calcgrid-ds-other", [{name: "x", choices: Object.assign({}, documents, {service: "org.moqui.calc.CalcServices.find#CalcEntities"})}])
+            const malformed = save("spec-calcgrid-ds-other", [{name: "x y"}])
+            // Add to dashboard under the profile, and under one not held
+            const board = "spec-calcgrid-params-board"
+            ec.service.sync().name(REPORT + "save#Definition").parameters({definition: {id: board, type: "dashboard", title: "Spec parameters board", body: {panels: {}}}}).call()
+            const added = dashboardsCall("calcAddPanel", {definitionId: "spec-calcgrid-params", dashboardId: board, range: "Enumeration!A1:B3", panelProfileId: PROFILE}, "post")
+            const notHeld = dashboardsCall("calcAddPanel", {definitionId: "spec-calcgrid-params", dashboardId: board, range: "Enumeration!A1:B3", panelProfileId: "nosuch"}, "post")
+            const panel = (((ec.service.sync().name(REPORT + "get#Definition").parameters({definitionId: board}).call() || {}).definition || {}).body || {}).panels || {}
+            const query = ((panel[added.json.panelId] || {}).queries || [])[0] || {}
+            const frames = (ec.service.sync().name(REPORT + "run#Query").parameters({query}).call() || {}).frames
+            const names = Array.from((Array.from(frames || [])[0] || {}).fields || []).map(field => field.name)
+            const queryErrors = ec.message.getErrorsString()
+            for (const definitionId of [board, "spec-calcgrid-ds", "spec-calcgrid-params"])
+                ec.service.sync().name(REPORT + "delete#Definition").parameters({definitionId}).call()
+            ec.message.clearErrors()
+            return {plain: find(plain, "calcgrid"), chosen: find(chosen, "calcgrid"), got, logs: find(plain, "otel_logs"), byName, values, savedOwn, savedListed,
+                otherService, malformed, added, notHeld, query, names, queryErrors}
+        }
+    },
+    then({plain, chosen, got, logs, byName, values, savedOwn, savedListed, otherService, malformed, added, notHeld, query, names, queryErrors}) {
+        Array.from(plain.parameters || []).map(parameter => parameter.name).join(",") == "definitionId,range,profileId"
+        byName(plain, "definitionId").label == "Document"
+        byName(plain, "profileId").optional === true
+        byName(plain, "range").optional === false
+        byName(plain, "definitionId").choices === undefined
+        values(byName(chosen, "definitionId")).includes("spec-calcgrid-params")
+        Array.from(byName(chosen, "definitionId").choices || []).some(choice => choice.label == "Parameter types")
+        values(byName(chosen, "profileId")).includes(PROFILE)
+        byName(chosen, "range").choices === undefined
+        values(byName(got, "definitionId")).includes("spec-calcgrid-params")
+        logs.parameters === undefined
+        savedOwn == ""
+        values(savedListed).includes("spec-calcgrid-params")
+        otherService.includes("choices service is one a shipped dataset's parameter names")
+        malformed.includes("starting with a letter")
+        !added.json.errors
+        query.parameters.profileId == PROFILE
+        query.parameters.definitionId == "spec-calcgrid-params"
+        names.join(",") == "enumId,sequenceNum"
+        queryErrors == ""
+        String(notHeld.json.errors).includes("Choose an access profile you hold")
     },
 })
 

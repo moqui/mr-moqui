@@ -69,8 +69,9 @@
         ]]></script></actions><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('import')}"/>
     </transition>
     <actions><script><![CDATA[
-        // The datasets the author may read (each dataset's own artifact), and the mount's links and types.
-        datasetOptions=ec.service.sync().name('org.moqui.report.ReportServices.list#Datasets').call().datasets || []
+        // The datasets the author may read (each dataset's own artifact), each with the parameters it declares and their
+        // choices as the author reads them (a field each in the panel editors), and the mount's links and types.
+        datasetOptions=ec.service.sync().name('org.moqui.report.ReportServices.list#Datasets').parameters({parameterChoices:true}).call().datasets || []
         const mountLinks=ec.resource.script('component://tools/template/ReportMount.js').state().links
         const allTypes=['dashboard','panel','dataset','search','alert','report']
         const mountTypes=ec.context.get('reportDefinitionTypes')

@@ -87,8 +87,69 @@ fn query() -> Value {
 fn panel() -> Value {
     json!({"title":"New panel","visualization":"table","queries":[query()],"transformations":[],"fieldConfig":{"defaults":{},"overrides":[]}})
 }
-fn add_options(row: &Row, kind: &str) -> Vec<(String, Value)> {
+/// The parameters the dataset of the query at `query` declares, as the editor's `datasets` have them (`list#Datasets`
+/// with `parameterChoices`: each `name`, `label`, `kind`, `optional` and its `choices`; docs/tools/Monitoring.md, A
+/// dataset's parameters).
+fn query_parameters(props: &Value, state: &ComponentState, query: &[String]) -> Vec<Value> {
+    let doc = document(props, state);
+    let Some(dataset) = doc
+        .pointer(&pointer(query))
+        .and_then(|found| found["datasetId"].as_str())
+    else {
+        return Vec::new();
+    };
+    props["datasets"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|item| item["id"] == dataset)
+        .and_then(|item| item["parameters"].as_array())
+        .cloned()
+        .unwrap_or_default()
+}
+/// The declaration of the parameter whose value `row` is: a field of a query's `parameters` its dataset declares.
+fn row_parameter(props: &Value, state: &ComponentState, row: &Row) -> Option<Value> {
+    let at = row.path.len().checked_sub(2)?;
+    if row.path[at] != "parameters" {
+        return None;
+    }
+    let name = row.path.last()?;
+    query_parameters(props, state, &row.path[..at])
+        .into_iter()
+        .find(|declared| declared["name"].as_str() == Some(name.as_str()))
+}
+/// The declared parameters an add on `row` offers: those of its query, for a query and for its `parameters`.
+fn add_parameters(props: &Value, state: &ComponentState, row: &Row) -> Vec<Value> {
+    if row.value.get("datasetId").is_some() {
+        return query_parameters(props, state, &row.path);
+    }
+    match row.path.split_last() {
+        Some((key, query)) if key == "parameters" && row.value.is_object() => query_parameters(props, state, query),
+        _ => Vec::new(),
+    }
+}
+/// A declared parameter's first value: a number for a number, else empty text.
+fn parameter_value(declared: &Value) -> Value {
+    if declared["kind"] == "number" {
+        json!(0)
+    } else {
+        json!("")
+    }
+}
+fn add_options(row: &Row, kind: &str, parameters: &[Value]) -> Vec<(String, Value)> {
     let key = row.path.last().map(String::as_str).unwrap_or("");
+    if key == "parameters" && row.value.is_object() && !parameters.is_empty() {
+        // each declared parameter the query does not set yet, by its name
+        let mut options: Vec<(String, Value)> = parameters
+            .iter()
+            .filter_map(|declared| {
+                let name = declared["name"].as_str()?;
+                (row.value.get(name).is_none()).then(|| (name.to_string(), parameter_value(declared)))
+            })
+            .collect();
+        options.push(("Add named field…".into(), Value::Null));
+        return options;
+    }
     if row.value.is_array() {
         return match key {
             "queries"=>vec![("Query".into(),query())],
@@ -152,6 +213,15 @@ fn add_options(row: &Row, kind: &str) -> Vec<(String, Value)> {
         value["from"] = json!("now-7d");
         value["thru"] = json!("now");
         value["transformations"] = json!([]);
+        // the parameters its dataset declares, each it needs set to be filled in
+        if !parameters.is_empty() {
+            value["parameters"] = parameters
+                .iter()
+                .filter(|declared| declared["optional"] != true)
+                .filter_map(|declared| Some((declared["name"].as_str()?.to_string(), parameter_value(declared))))
+                .collect::<serde_json::Map<String, Value>>()
+                .into();
+        }
         value
     } else if row.value.get("visualization").is_some() {
         let mut value = panel();
@@ -263,7 +333,14 @@ fn row_panel(props: &Value, state: &ComponentState, row: &Row) -> Value {
 
 fn scalar_choices(props: &Value, state: &ComponentState, row: &Row) -> Vec<String> {
     let key = row.path.last().map(String::as_str).unwrap_or("");
+    let declared = row_parameter(props, state, row);
     let choices: Vec<String> = match key {
+        // a declared parameter's choices, as its dataset's service answered them to the viewer
+        _ if declared.is_some() => declared
+            .iter()
+            .flat_map(|declared| declared["choices"].as_array().cloned().unwrap_or_default())
+            .filter_map(|choice| choice["value"].as_str().map(str::to_string))
+            .collect(),
         "datasetId" => props["datasets"]
             .as_array()
             .into_iter()
@@ -411,11 +488,24 @@ impl Component for ReportDefinitionEditor {
                 } else {
                     Vec::new()
                 };
+                // a declared parameter's choices show their labels beside their values
+                let labels = row_parameter(props, state, row)
+                    .and_then(|declared| declared["choices"].as_array().cloned())
+                    .unwrap_or_default();
                 for (index, value) in scalar_choices(props, state, row).iter().enumerate() {
                     let why = suggested
                         .iter()
                         .find(|(name, _)| name == value)
-                        .map_or_else(String::new, |(_, reason)| format!(" — suggested: {reason}"));
+                        .map(|(_, reason)| format!(" — suggested: {reason}"))
+                        .or_else(|| {
+                            labels
+                                .iter()
+                                .find(|choice| choice["value"].as_str() == Some(value.as_str()))
+                                .and_then(|choice| choice["label"].as_str())
+                                .filter(|label| label != value)
+                                .map(|label| format!(" — {label}"))
+                        })
+                        .unwrap_or_default();
                     lines.push(vec![Span::new(
                         format!(
                             "{} {value}{why} (Tab completes)",
@@ -441,12 +531,24 @@ impl Component for ReportDefinitionEditor {
             } else {
                 row.value.to_string()
             };
+            // a declared parameter by its label, and whether it may be left out
+            let label = row_parameter(props, state, row).map_or_else(
+                || row.label.clone(),
+                |declared| {
+                    format!(
+                        "{} ({}{})",
+                        declared["label"].as_str().unwrap_or(&row.label),
+                        row.label,
+                        if declared["optional"] == true { ", optional" } else { "" }
+                    )
+                },
+            );
             lines.push(vec![Span::new(
                 format!(
                     "{}{}{}: {}",
                     if index == at { "▶ " } else { "  " },
                     "  ".repeat(row.path.len().min(12)),
-                    row.label,
+                    label,
                     summary
                 ),
                 if index == at { Role::Primary } else { Role::Text },
@@ -461,6 +563,7 @@ impl Component for ReportDefinitionEditor {
                     } else {
                         "dashboard"
                     }),
+                    &add_parameters(props, state, row),
                 );
                 let chosen = state.choosing.unwrap_or(0);
                 for (index, (title, _)) in options.iter().enumerate().skip(chosen.saturating_sub(4)).take(10) {
@@ -551,6 +654,7 @@ impl Component for ReportDefinitionEditor {
                 } else {
                     "dashboard"
                 }),
+                &add_parameters(props, state, &row),
             );
             let chosen = state.choosing.unwrap_or(0).min(options.len().saturating_sub(1));
             match press.key {

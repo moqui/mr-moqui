@@ -49,7 +49,7 @@ fn author_queries_join_pivot_overrides_variables_layout_and_reports_without_json
         key(&props, &mut state, Key::Char('a'));
         let row = rows(&props, &state)[state.at].clone();
         state.choosing = Some(
-            add_options(&row, "dashboard")
+            add_options(&row, "dashboard", &[])
                 .iter()
                 .position(|(label, _)| label == wanted)
                 .unwrap(),
@@ -79,6 +79,72 @@ fn author_queries_join_pivot_overrides_variables_layout_and_reports_without_json
     key(&report, &mut state, Key::Char('a'));
     key(&report, &mut state, Key::Enter);
     assert_eq!(document(&report, &state)["dashboards"].as_array().unwrap().len(), 2);
+}
+/// A query over a dataset that declares parameters (list#Datasets with parameterChoices) is given a field for each
+/// it needs, an optional one when asked for, each shown by its label and chosen from its choices.
+#[test]
+fn a_datasets_declared_parameters_are_fields_of_its_query_chosen_from_their_choices() {
+    let props = json!({"kind":"dashboard","value":{"panels":{"p":{"title":"Range","queries":[{"datasetId":"calcgrid"}]}}},
+        "datasets":[{"id":"calcgrid","service":true,"parameters":[
+            {"name":"definitionId","label":"Document","kind":"text","optional":false,"choices":[{"value":"doc-a","label":"Sales by month"},{"value":"doc-b","label":"doc-b"}]},
+            {"name":"range","label":"Range","kind":"text","optional":false},
+            {"name":"profileId","label":"Read as","kind":"text","optional":true,"choices":[{"value":"sales","label":"Sales"}]}]}]});
+    let mut state = ComponentState::default();
+    select(&props, &mut state, &["panels", "p", "queries", "0"]);
+    key(&props, &mut state, Key::Char('a'));
+    let row = rows(&props, &state)[state.at].clone();
+    let options = add_options(&row, "dashboard", &add_parameters(&props, &state, &row));
+    state.choosing = options.iter().position(|(name, _)| name == "parameters");
+    key(&props, &mut state, Key::Enter);
+    assert_eq!(
+        document(&props, &state)["panels"]["p"]["queries"][0]["parameters"],
+        json!({"definitionId": "", "range": ""})
+    );
+    // the optional one is offered once the query has parameters, and the ones it has are not
+    select(&props, &mut state, &["panels", "p", "queries", "0", "parameters"]);
+    key(&props, &mut state, Key::Char('a'));
+    let row = rows(&props, &state)[state.at].clone();
+    let offered: Vec<String> = add_options(&row, "dashboard", &add_parameters(&props, &state, &row))
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(offered, ["profileId", "Add named field…"]);
+    key(&props, &mut state, Key::Enter);
+    assert_eq!(
+        document(&props, &state)["panels"]["p"]["queries"][0]["parameters"]["profileId"],
+        ""
+    );
+    // a field is shown by its label, and its choices by theirs
+    select(
+        &props,
+        &mut state,
+        &["panels", "p", "queries", "0", "parameters", "definitionId"],
+    );
+    key(&props, &mut state, Key::Enter);
+    let shown: String = ReportDefinitionEditor
+        .lines(&props, &state, 120, true)
+        .iter()
+        .flat_map(|line| line.iter().map(|span| span.text.clone()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(shown.contains("Document (definitionId)"), "{shown}");
+    assert!(shown.contains("doc-a — Sales by month"), "{shown}");
+    assert!(!shown.contains("doc-b — doc-b"), "{shown}");
+    key(&props, &mut state, Key::Tab);
+    key(&props, &mut state, Key::Enter);
+    assert_eq!(
+        document(&props, &state)["panels"]["p"]["queries"][0]["parameters"]["definitionId"],
+        "doc-a"
+    );
+    // a query over a dataset that declares none is added as before
+    let plain =
+        json!({"value":{"panels":{"p":{"queries":[{"datasetId":"otel_logs"}]}}},"datasets":[{"id":"otel_logs"}]});
+    let mut state = ComponentState::default();
+    select(&plain, &mut state, &["panels", "p", "queries", "0"]);
+    let row = rows(&plain, &state)[state.at].clone();
+    assert!(add_options(&row, "dashboard", &add_parameters(&plain, &state, &row))
+        .iter()
+        .all(|(name, _)| name != "parameters"));
 }
 #[test]
 fn readonly_definition_cannot_emit_mutations_and_typed_numbers_are_validated() {

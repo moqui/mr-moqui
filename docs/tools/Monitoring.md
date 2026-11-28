@@ -362,6 +362,21 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   `currencyUomId`, with `USD` as the fallback `unit`): one currency in the frame is the field's unit, several give each
   row its own, and an aggregation without the column asks the same documents for their currencies, so a sum in one
   currency shows it and a sum across currencies shows a plain number.
+- **A dataset's parameters.** A service dataset (one whose `serviceName` answers a query with frames) is given the
+  values a panel query names in `parameters`. Its body declares them in `parameters`, a list of at most 16, each
+  `{name, label, kind, optional, choices}`: `kind` is `text` (the default) or `number`, `optional` true lets it be left
+  out, and `choices` names a service the viewer calls for them, `{service, parameters, list, value, label}` (the
+  service's parameters, the out-parameter that holds the list, and each item's value and label fields). `list#Datasets`
+  answers each dataset's declaration (with `parameterChoices` true, each one's choices too) and `get#Dataset` answers
+  it with the choices; the definition editor asks for them, and both panel editors, the browser's and the terminal's,
+  show a field for each parameter of the query's dataset, a select where it has choices, and leave an empty one out of
+  the query. Choices are read as the viewer, at most 500, and a choices service that fails or that the viewer may not
+  call gives none (the field is a text field). A declaration is presentation only: the service checks every value it
+  is given. A saved dataset names only a choices service a shipped dataset names there, as its `serviceName`
+  (`crates/moqui-report/src/parameters.rs`). The shipped `calcgrid` declares the document (its choices the CalcGrid
+  documents the viewer reads, `list#Definitions`), the range, and the access profile (optional, from
+  `get#CalcProfiles`) ([CalcGrid and access profiles](Database.md#calcgrid-and-access-profiles)). A dataset without
+  `parameters` is read and edited as before.
 - **The dataset screens** (Datasets, with the hidden DatasetDetail, DatasetFields and DatasetView) are the
   [business datasets](#business-datasets)' list and stewardship: the datasets the viewer reads, and a steward's waiting
   for review, each with its state, source, scope, index and last build; a new dataset over a registered feed's document;
