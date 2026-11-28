@@ -36,12 +36,33 @@ pub(crate) struct Ring {
 }
 
 impl Ring {
+    #[cfg_attr(not(feature = "devtools"), allow(dead_code))]
     pub fn new(capacity: usize) -> Self {
+        Self::starting_at(capacity, 0)
+    }
+
+    /// An empty ring whose first byte will be count `start`: a held session taken back goes on in the holder's count
+    /// (plans/Terminal-Fancy2.md D17).
+    pub fn starting_at(capacity: usize, start: u64) -> Self {
         Self {
             capacity: capacity.max(1),
             bytes: VecDeque::new(),
-            start: 0,
-            rests: VecDeque::from([(0, Modes::default())]),
+            start,
+            rests: VecDeque::from([(start, Modes::default())]),
+        }
+    }
+
+    /// The most it keeps.
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// The ring from its first point at rest no more than `max` bytes before `count` (a window that wants at most that
+    /// much history, plans/Terminal-Fancy2.md §4.7); as [`Self::replay_from_rest`] when it holds less.
+    pub fn replay_within(&self, count: u64, current: Modes, max: u64) -> (u64, Vec<u8>, Modes) {
+        match self.rests.iter().find(|(at, _)| count.saturating_sub(*at) <= max) {
+            Some((from, modes)) => (*from, self.since(*from, count).unwrap_or_default(), *modes),
+            None => (count, Vec::new(), current),
         }
     }
 

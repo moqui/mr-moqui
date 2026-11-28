@@ -3062,7 +3062,17 @@
                 return !(list[list.length - 1] === "Call" && params.callSessionId === id);
             },
             onScreen() {
-                return this.onCallScreen || (this.panelShown && this.call.panel === this.call.current);
+                return this.onCallScreen || (this.panelShown && this.call.panel === this.call.current) || this.floatShown;
+            },
+            // the call off its screen and its panel in a window of the float layer (Terminal-Fancy2 §4.8), where windows
+            // float (600 px and wider); the small card below that
+            floating() {
+                return !!(this.call.current && !this.onCallScreen && !this.panelShown && this.call.pip !== "window" && moqui.floats && moqui.floats.canFloat());
+            },
+            floatTarget() { return this.floating && moqui.floats ? moqui.floats.target("call", this.call.current) : null; },
+            floatShown() {
+                const f = this.floating && moqui.floats ? moqui.floats.find("call", this.call.current) : null;
+                return !!(f && !f.minimized && !f.hidden);
             },
             current() {
                 return this.call.current ? this.call.calls[this.call.current] : null;
@@ -3084,6 +3094,10 @@
         watch: {
             // off the call's screen and its panel only the LiveCall window's speaker is shown: the others' video is not received
             onScreen: { immediate: true, handler(on) { moqui.call.setOffScreen(!on); } },
+            // the call's window opens off its screen and its panel, and goes when the call does or is shown elsewhere
+            floating: { immediate: true, handler(on) { this.syncFloat(on); } },
+            // a video moved into the window plays on (a move of a media element pauses it)
+            floatTarget(target) { if (target) this.$nextTick(() => this.playVideos()); },
             // the page's content keeps clear of the side panel
             panelShown: { immediate: true, handler(on) {
                 const el = root.document && root.document.documentElement;
@@ -3132,10 +3146,50 @@
             moveHere(view) { moqui.call.moveHere(view.callSessionId); },
             openLobby() { const id = this.call.lobbyNotice && this.call.lobbyNotice.callSessionId; this.call.lobbyNotice = null; if (id) moqui.call.open(id); },
             leaveElsewhere(view) { moqui.call.request("leaveCall", { callSessionId: view.callSessionId }); },
-            leave() { moqui.call.leave(); }
+            leave() { moqui.call.leave(); },
+            // the call's window: its kind once, and the window open while the call floats, ended when it does not
+            syncFloat(on) {
+                const floats = moqui.floats;
+                if (!floats) return;
+                if (!floats.kinds.call) {
+                    floats.register("call", {
+                        title: () => {
+                            const view = this.current;
+                            const names = view ? (view.participants || []).filter((p) => p.inCall && p.userId !== moqui.call.me).map((p) => p.displayName) : [];
+                            return names.join(", ") || t("Call");
+                        },
+                        icon: "sym_o_call",
+                        dot: () => (this.call.muted ? "warning" : "positive"),
+                        defaultSize: { w: 360, h: 440 },
+                        minSize: { w: 280, h: 300 },
+                        place: "right",
+                        // a call's media are never in Assist's reach
+                        inReach: false,
+                        // Close minimizes: the call goes on
+                        close: () => true,
+                        // Dock: the side panel where the page is wide, else the Call screen (moqui.call.show)
+                        dock: (shown, key) => { if (shown && this.call.current === key) moqui.call.show(key); },
+                        home: () => {
+                            const area = floats.state.area;
+                            const w = Math.min(380, area.w);
+                            return { edge: "right", rect: { x: area.x + area.w - w, y: area.y, w, h: area.h } };
+                        },
+                        actions: () => [{ id: "leave", icon: "sym_o_call_end", label: t("Leave"), run: () => this.leave() }]
+                    });
+                }
+                const open = floats.state.floats.filter((f) => f.kind === "call");
+                open.filter((f) => !on || f.key !== this.call.current).forEach((f) => floats.end(f.id, false));
+                if (on && !floats.find("call", this.call.current)) floats.open("call", this.call.current);
+            },
+            playVideos() {
+                const body = moqui.floats && moqui.floats.bodyOf("call", this.call.current);
+                if (body) body.querySelectorAll("video").forEach((video) => { if (video.paused) video.play().catch(() => {}); });
+            }
         },
         template:
             '<div class="m-call-dock">' +
+            // the call in its window (Terminal-Fancy2 §4.8): the compact call, teleported into the window's body
+            '<teleport v-if="floatTarget" :to="floatTarget"><m-call :call-session-id="call.current" float></m-call></teleport>' +
             '<m-call-audio v-for="r in remotes" :key="\'a\' + r.legId" :stream="r.stream" :sink-id="call.settings.audioOut"></m-call-audio>' +
             '<m-call-audio v-for="r in remotes" :key="\'s\' + r.legId" :stream="r.screen" :sink-id="call.settings.audioOut"></m-call-audio>' +
             '<q-page-sticky v-if="ringingCalls.length" position="top" :offset="[0, 8]" style="z-index:2600">' +
@@ -3187,7 +3241,7 @@
             '<m-call :call-session-id="call.panel" panel></m-call></div></q-page-sticky>' +
             // the floating window: the call off its screen and its panel (where the browser has no picture-in-picture
             // window, this is the small call window)
-            '<q-page-sticky v-if="call.current && !onCallScreen && !panelShown && call.pip !== \'window\'" position="bottom-right" :offset="[16, 16]" style="z-index:2000">' +
+            '<q-page-sticky v-if="call.current && !onCallScreen && !panelShown && call.pip !== \'window\' && !floating" position="bottom-right" :offset="[16, 16]" style="z-index:2000">' +
             '<q-card class="m-live-call" style="width:320px">' +
             '<div class="m-live-call-media cursor-pointer" style="height:180px;background:#000" @click="back">' +
             '<m-call-video v-if="speaker" :stream="speaker.stream" muted style="width:100%;height:100%;object-fit:cover"></m-call-video>' +
@@ -3209,7 +3263,7 @@
     components["m-call"] = {
         name: "mCall",
         // panel: shown in the side panel of a desktop (m-call-dock), in the compact layout a phone has full screen
-        props: { callSessionId: String, panel: Boolean },
+        props: { callSessionId: String, panel: Boolean, float: Boolean },
         data() {
             // video off when the screen's query asks (video=false: an app window's Answer with audio only, moqui.call.toShell)
             const query = (this.$root && this.$root.currentParameters) || {};
@@ -3222,7 +3276,7 @@
             known() { return this.call.calls[this.callSessionId] || this.view; },
             // a phone's width: the call in the compact layout, full screen; the side panel has the same layout
             phone() { return ((this.$q && this.$q.screen && this.$q.screen.width) || root.innerWidth || 0) < 600; },
-            compactLayout() { return this.panel || this.phone; },
+            compactLayout() { return this.panel || this.phone || this.float; },
             fullScreen() { return this.phone && !this.panel && this.inThis; },
             // the call's E2EE label (moqui.chat.e2eeLabel's call states, Comms-Messaging §6.2)
             label() { return callLabel(this.known); },
@@ -3516,7 +3570,7 @@
             '<q-btn v-else unelevated color="primary" icon="sym_o_call" :disable="e2eeUnsupported || offline" :label="known.myLegStatus === \'offered\' ? t(\'Answer\') : t(\'Join\')" @click="join"></q-btn></div></div>' +
             '<m-call-presentation v-if="inThis && !compactLayout" :view="known"></m-call-presentation>' +
             // in the call, a phone's width or the side panel: the compact call screen
-            '<m-call-compact v-if="inThis && compactLayout && known" :view="known" :panel="panel" :label="label"></m-call-compact>' +
+            '<m-call-compact v-if="inThis && compactLayout && known" :view="known" :panel="panel || float" :float="float" :label="label"></m-call-compact>' +
             // the call view: the grid, or the speaker (or a screen share) large over a strip of the rest
             '<div v-if="inThis && !compactLayout && mainTile && !(call.stage.kind === \'screen\' && call.stage.callLegId !== call.legId)" style="height:60vh" class="q-mb-sm">' +
             '<div v-for="tile in [mainTile]" :key="\'main\' + tile.key" class="fit">' + '<div class="m-call-tile" :style="tileStyle(tile)">' +
@@ -3575,7 +3629,7 @@
     // header and its menu.
     components["m-call-compact"] = {
         name: "mCallCompact",
-        props: { view: Object, panel: Boolean, label: Object },
+        props: { view: Object, panel: Boolean, float: Boolean, label: Object },
         data() { return { call: state, now: Date.now(), timer: null }; },
         computed: {
             others() { return (this.view.participants || []).filter((p) => p.userId !== moqui.call.me); },
@@ -3629,7 +3683,7 @@
             }
         },
         template:
-            '<div class="m-call-compact column no-wrap" :style="panel ? \'min-height:calc(100vh - 140px)\' : \'min-height:calc(100vh - 16px)\'">' +
+            '<div class="m-call-compact column no-wrap" :style="float ? \'min-height:100%\' : panel ? \'min-height:calc(100vh - 140px)\' : \'min-height:calc(100vh - 16px)\'">' +
             '<div v-show="!call.hostPip" class="row items-center no-wrap q-mb-xs">' +
             '<q-btn flat round dense :icon="panel ? \'sym_o_open_in_full\' : \'sym_o_keyboard_arrow_down\'" class="m-call-minimize" :aria-label="panel ? t(\'Open the call full size\') : t(\'Minimize the call\')" @click="panel ? moquiCall().open(view.callSessionId) : moquiCall().minimize()">' +
             '<q-tooltip>{{panel ? t(\'Open the call full size\') : t(\'Minimize the call\')}}</q-tooltip></q-btn>' +

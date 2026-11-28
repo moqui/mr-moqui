@@ -173,6 +173,7 @@ use crate::term::session::Kind;
 const ON: Switches = Switches {
     command: true,
     host: true,
+    thread: true,
     remote: false,
     reauth_millis: 3_600_000,
 };

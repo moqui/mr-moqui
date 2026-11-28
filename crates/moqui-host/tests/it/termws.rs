@@ -311,7 +311,50 @@ impl Page {
 
     /// Attach a socket to the kept session `id`, as a page that drew `have` of its bytes.
     pub(crate) fn attach(&self, id: &str, have: Option<u64>) -> Ws {
+        self.attach_query(&format!("session={id}"), have)
+    }
+
+    pub(crate) fn cookie(&self) -> &str {
+        &self.cookie
+    }
+
+    /// A GET of the Terminal screen's transition `name` (with its query), as text.
+    pub(crate) fn get_text(&self, name: &str) -> String {
+        let (status, _, text) = crate::common::exchange(
+            self.address,
+            &crate::common::http_request(
+                "GET",
+                &format!("/apps/Terminal/{name}"),
+                &[("Cookie", self.cookie.as_str())],
+                "",
+            ),
+        );
+        assert_eq!(status, 200, "{name}: {text}");
+        text
+    }
+
+    /// Attach a window that only watches the session `id` (`observe=1`).
+    pub(crate) fn observe(&self, id: &str) -> Ws {
+        self.attach_query(&format!("session={id}&observe=1"), None)
+    }
+
+    /// Attach to a thread terminal asking to start it again when its program ended (plans/Terminal-Fancy2.md §4.7).
+    pub(crate) fn attach_restart(&self, id: &str) -> Ws {
         let uri: tungstenite::http::Uri = format!("ws://{}/termws?session={id}", self.address).parse().unwrap();
+        let request = ClientRequestBuilder::new(uri)
+            .with_header("Cookie", &self.cookie)
+            .with_header("Origin", format!("http://{}", self.address));
+        let (mut socket, _) = connect(request).unwrap();
+        if let MaybeTlsStream::Plain(stream) = socket.get_mut() {
+            stream.set_read_timeout(Some(Duration::from_millis(200))).unwrap();
+        }
+        let attach = serde_json::json!({"type": "attach", "cols": 100, "rows": 30, "have": null, "restart": true});
+        socket.send(Message::Text(attach.to_string().into())).unwrap();
+        socket
+    }
+
+    fn attach_query(&self, query: &str, have: Option<u64>) -> Ws {
+        let uri: tungstenite::http::Uri = format!("ws://{}/termws?{query}", self.address).parse().unwrap();
         let request = ClientRequestBuilder::new(uri)
             .with_header("Cookie", &self.cookie)
             .with_header("Origin", format!("http://{}", self.address));
@@ -833,6 +876,456 @@ fn a_shell_is_driven_through_the_services_and_by_its_token() {
     );
 }
 
+/// Viewers and sharing (plans/Terminal-Fancy2.md §4.4): another user sees a shell only once its owner shares it, then
+/// watches it beside the window that types, and what they type is dropped; typing in it is refused to a user without
+/// TERMINAL_HOST; the owner's own second window may only watch; and a revoked share closes the user's window.
+#[test]
+fn a_shared_shell_is_watched_beside_its_writer_and_its_share_revoked() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let helper = helper_property();
+    let gate = crate::common::start_with_conf_files(
+        "termws-share",
+        Some(PLAIN_USER),
+        r#"<terminal><host-profile name="plain" title="Plain sh" command="sh"/></terminal>"#,
+        &[("moqui_conf__instance__purpose", "dev"), (helper.0, &helper.1)],
+        &[],
+    );
+    let address = gate.server.address();
+    let page = Page::signed_in(address, "john.doe");
+    let plain = Page::signed_in(address, "plain.user");
+    gate.server.factory().flush_sessions().unwrap();
+    let opened = page.call(
+        "open",
+        Some(serde_json::json!({"kind": "host", "profileName": "plain", "cols": 100, "rows": 30})),
+    );
+    let id = opened["sessionId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{opened}"))
+        .to_string();
+    let mut writer = page.attach(&id, None);
+    writer
+        .send(Message::Binary(b"echo first-$((1+1))\r".to_vec().into()))
+        .unwrap();
+    read_messages_until(&mut writer, "first-2").unwrap();
+
+    // not shared: another user's id is no session at all
+    let mut early = plain.attach(&id, None);
+    assert_eq!(
+        read_messages_until(&mut early, "never").unwrap_err(),
+        "no such terminal session"
+    );
+    // typing needs the kind's permission, which plain.user has not got; watching does not
+    let refused = page.call(
+        "share",
+        Some(serde_json::json!({"sessionId": id, "username": "plain.user", "write": "Y"})),
+    );
+    assert_eq!(refused["reasonCode"], "noPermission", "{refused}");
+    let shared = page.call(
+        "share",
+        Some(serde_json::json!({"sessionId": id, "username": "plain.user"})),
+    );
+    assert_eq!(shared["session"]["shares"][0]["username"], "plain.user", "{shared}");
+    let listed = plain.call("sessions", None);
+    assert!(
+        listed["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|session| session["id"] == id.as_str() && session["shared"] == true),
+        "{listed}"
+    );
+
+    // the user watches: the replay, then what the writer's program prints; what they type is dropped
+    let mut watcher = plain.attach(&id, None);
+    let (texts, _) = read_messages_until(&mut watcher, "first-2").unwrap();
+    assert!(
+        texts[0].contains(r#""viewer":true"#) && texts[0].contains(r#""owner":"john.doe""#),
+        "{texts:?}"
+    );
+    watcher
+        .send(Message::Binary(b"echo leaked-$((3+3))\r".to_vec().into()))
+        .unwrap();
+    writer
+        .send(Message::Binary(b"echo second-$((2+2))\r".to_vec().into()))
+        .unwrap();
+    read_messages_until(&mut watcher, "second-4").unwrap();
+    let (_, seen) = read_messages_until(&mut writer, "second-4").unwrap();
+    assert!(
+        !String::from_utf8_lossy(&seen).contains("leaked-6"),
+        "a watcher typed: {}",
+        String::from_utf8_lossy(&seen)
+    );
+    // the owner's own window that only watches
+    let mut own_view = page.observe(&id);
+    let (texts, _) = read_messages_until(&mut own_view, "second-4").unwrap();
+    assert!(texts[0].contains(r#""viewer":true"#), "{texts:?}");
+    drop(own_view);
+
+    // revoked: the user's window is let go, and the session is theirs no more
+    page.call(
+        "revoke",
+        Some(serde_json::json!({"sessionId": id, "username": "plain.user"})),
+    );
+    assert_eq!(
+        read_messages_until(&mut watcher, "never").unwrap_err(),
+        "the share was revoked"
+    );
+    let listed = plain.call("sessions", None);
+    assert!(
+        !listed["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|session| session["id"] == id.as_str()),
+        "{listed}"
+    );
+    writer.send(Message::Binary(b"exit\r".to_vec().into())).unwrap();
+}
+
+/// Recording forced by the conf (plans/Terminal-Fancy2.md §4.5, D2): every host session is recorded from its start, its
+/// owner cannot stop it, the file has its output and never what was typed beyond the echo, and nobody else plays it.
+#[test]
+fn a_forced_recording_cannot_be_stopped_and_plays_for_its_owner_alone() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let helper = helper_property();
+    let gate = crate::common::start_with_conf_files(
+        "termws-record",
+        Some(PLAIN_USER),
+        r#"<terminal recording="always"><host-profile name="plain" title="Plain sh" command="sh"/></terminal>"#,
+        &[("moqui_conf__instance__purpose", "dev"), (helper.0, &helper.1)],
+        &[],
+    );
+    let address = gate.server.address();
+    let page = Page::signed_in(address, "john.doe");
+    let plain = Page::signed_in(address, "plain.user");
+    gate.server.factory().flush_sessions().unwrap();
+    assert_eq!(page.call("options", None)["options"]["recording"], "always");
+    let opened = page.call(
+        "open",
+        Some(serde_json::json!({"kind": "host", "profileName": "plain"})),
+    );
+    assert_eq!(opened["session"]["recording"], true, "{opened}");
+    assert_eq!(opened["session"]["recordingForced"], true, "{opened}");
+    let id = opened["sessionId"].as_str().unwrap().to_string();
+    let mut socket = page.attach(&id, None);
+    // a query the program asks the terminal is left out of the recording
+    socket
+        .send(Message::Binary(
+            b"printf 'q\\033[6nq'; echo; echo rec-$((6*7))\r".to_vec().into(),
+        ))
+        .unwrap();
+    read_messages_until(&mut socket, "rec-42").unwrap();
+    let refused = page.call("rename", Some(serde_json::json!({"sessionId": id, "record": "N"})));
+    assert_eq!(refused["reasonCode"], "notStopped", "{refused}");
+    let recordings = page.call("recordings", None);
+    let recording = &recordings["recordings"][0];
+    assert_eq!(recording["forced"], true, "{recordings}");
+    let recording_id = recording["recordingId"].as_str().unwrap().to_string();
+    let cast = page.get_text(&format!("recording?recordingId={recording_id}"));
+    assert!(cast.contains("rec-42"), "{cast}");
+    assert!(!cast.contains("\\u001b[6n"), "the query is left out: {cast}");
+    // another user's request is as for none
+    let (status, _, _) = crate::common::exchange(
+        address,
+        &crate::common::http_request(
+            "GET",
+            &format!("/apps/Terminal/recording?recordingId={recording_id}"),
+            &[("Cookie", plain.cookie())],
+            "",
+        ),
+    );
+    assert_eq!(status, 404);
+    assert!(plain.call("recordings", None)["recordings"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    socket.send(Message::Binary(b"exit\r".to_vec().into())).unwrap();
+}
+
+/// A service of the terminal as `username`, in the server's process: its answer as JSON, and its errors.
+fn terminal_service(
+    gate: &crate::common::Gate,
+    username: &str,
+    service: &str,
+    parameters: &[(&str, &str)],
+) -> (serde_json::Value, String) {
+    let context = gate.server.factory().new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user(username).unwrap();
+    let parameters: std::collections::BTreeMap<String, moqui_lib::object::Value> = parameters
+        .iter()
+        .map(|(name, value)| (name.to_string(), moqui_lib::object::Value::string(*value)))
+        .collect();
+    let out = moqui_core::service::sync(&format!("org.moqui.terminal.TerminalServices.{service}"), &parameters);
+    let mut errors =
+        moqui_core::context::ExecutionContext::with_current(|ec| ec.message().errors().join("; ")).unwrap_or_default();
+    let out = match out {
+        Ok(out) => out,
+        Err(err) => {
+            errors.push_str(err.message());
+            Default::default()
+        }
+    };
+    (
+        moqui_lib::json::to_json(&moqui_lib::object::Value::Map(out.into_iter().collect())),
+        errors,
+    )
+}
+
+/// OS accounts (plans/Terminal-Fancy2.md §4.6): with run-as="person", a user with no account is refused host sessions;
+/// only an administrator with TERMINAL_HOST names one, and naming one again replaces it.
+#[test]
+fn run_as_person_refuses_a_user_with_no_os_account_and_an_administrator_names_one() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let helper = helper_property();
+    let gate = crate::common::start_with_conf_files(
+        "termws-runas",
+        Some(PLAIN_USER),
+        r#"<terminal run-as="person"><host-profile name="plain" title="Plain sh" command="sh"/></terminal>"#,
+        &[("moqui_conf__instance__purpose", "dev"), (helper.0, &helper.1)],
+        &[],
+    );
+    let page = Page::signed_in(gate.server.address(), "john.doe");
+    gate.server.factory().flush_sessions().unwrap();
+    let refused = page.call(
+        "open",
+        Some(serde_json::json!({"kind": "host", "profileName": "plain"})),
+    );
+    assert_eq!(refused["reasonCode"], "noOsAccount", "{refused}");
+    let (_, errors) = terminal_service(
+        &gate,
+        "plain.user",
+        "store#TerminalOsAccount",
+        &[("username", "plain.user"), ("osUsername", "plain")],
+    );
+    assert!(!errors.is_empty(), "not an administrator");
+    let (_, errors) = terminal_service(
+        &gate,
+        "john.doe",
+        "store#TerminalOsAccount",
+        &[("username", "john.doe"), ("osUsername", "root")],
+    );
+    assert!(errors.contains("never root"), "{errors}");
+    for account in ["jdoe", "johnd"] {
+        let (_, errors) = terminal_service(
+            &gate,
+            "john.doe",
+            "store#TerminalOsAccount",
+            &[("username", "john.doe"), ("osUsername", account)],
+        );
+        assert!(errors.is_empty(), "{errors}");
+    }
+    let (listed, _) = terminal_service(&gate, "john.doe", "find#TerminalOsAccounts", &[]);
+    let accounts = listed["accounts"].as_array().unwrap();
+    assert_eq!(accounts.len(), 1, "{listed}");
+    assert_eq!(accounts[0]["osUsername"], "johnd");
+    terminal_service(
+        &gate,
+        "john.doe",
+        "expire#TerminalOsAccount",
+        &[("username", "john.doe")],
+    );
+    let (listed, _) = terminal_service(&gate, "john.doe", "find#TerminalOsAccounts", &[]);
+    assert!(listed["accounts"].as_array().unwrap().is_empty(), "{listed}");
+}
+
+/// A host session as another OS account, live (plans/Terminal-Fancy2.md §4.6): on a Linux server set up for it
+/// (`moqui term-exec --print-setup`: the sudoers line for this test binary, and /etc/moqui/run-as.conf allowing the
+/// account MOQUI_RUNAS_TEST_ACCOUNT names), the program runs as that account, in its home, and ends when the session is
+/// ended. Opt-in: `cargo test -p moqui-host --test it -- --ignored termws::a_host_session_runs_as_another_account`.
+#[test]
+#[ignore = "needs a Linux server set up for run-as and MOQUI_RUNAS_TEST_ACCOUNT"]
+fn a_host_session_runs_as_another_account() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let Ok(account) = std::env::var("MOQUI_RUNAS_TEST_ACCOUNT") else {
+        panic!("MOQUI_RUNAS_TEST_ACCOUNT names the account /etc/moqui/run-as.conf allows");
+    };
+    let gate = crate::common::start_with_conf_files(
+        "termws-runas-live",
+        None,
+        r#"<terminal run-as="person"><host-profile name="plain" title="Plain sh" command="sh"/></terminal>"#,
+        &[("moqui_conf__instance__purpose", "dev")],
+        &[],
+    );
+    let page = Page::signed_in(gate.server.address(), "john.doe");
+    gate.server.factory().flush_sessions().unwrap();
+    let (_, errors) = terminal_service(
+        &gate,
+        "john.doe",
+        "store#TerminalOsAccount",
+        &[("username", "john.doe"), ("osUsername", &account)],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    let opened = page.call(
+        "open",
+        Some(serde_json::json!({"kind": "host", "profileName": "plain"})),
+    );
+    let id = opened["sessionId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{opened}"))
+        .to_string();
+    let mut socket = page.attach(&id, None);
+    socket
+        .send(Message::Binary(b"echo \"as=$(id -un) home=$HOME\"\r".to_vec().into()))
+        .unwrap();
+    read_messages_until(&mut socket, &format!("as={account} home=")).unwrap();
+    page.call("close", Some(serde_json::json!({"sessionId": id})));
+    assert!(read_messages_until(&mut socket, "never").is_err(), "it ends when ended");
+}
+
+/// The Terminal screen with the openings and actions of a thread terminal, as Agent Code's wire would call them.
+const THREAD_TRANSITIONS: &str = r#"<screen-extend>
+    <transition name="openThread" method="post" begin-transaction="false" authz-action="view">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'open#TerminalSession', names: ['kind', 'cols', 'rows', 'conversationId', 'clientTerminalId', 'label', 'directory', 'env']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="clearThread" method="post" begin-transaction="false" authz-action="view">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'clear#TerminalSession', names: ['sessionId']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+</screen-extend>
+"#;
+
+/// A test's policy for thread terminals: a conversation whose id starts with `allowed` may open one, a plain sh in a
+/// scratch directory with a variable of its own.
+struct TestThreadPolicy(std::path::PathBuf);
+
+impl moqui_core::terminal::ThreadTerminalPolicy for TestThreadPolicy {
+    fn plan(&self, opening: &moqui_core::terminal::ThreadOpening) -> Result<moqui_core::terminal::ThreadPlan, String> {
+        if !opening.conversation_id.starts_with("allowed") {
+            return Err("not this conversation".to_string());
+        }
+        Ok(moqui_core::terminal::ThreadPlan {
+            directory: self.0.clone(),
+            env: vec![("THREAD_TEST".to_string(), "from-the-policy".to_string())],
+            argv: vec!["sh".to_string()],
+            ..Default::default()
+        })
+    }
+}
+
+/// The thread kind (plans/Terminal-Fancy2.md §4.7): not available with no policy; under one, opened idempotently by its
+/// conversation and client id, refused where the policy says no, started again after its program ended with its
+/// history first, cleared, and 1000 columns wide at most.
+#[test]
+fn a_thread_terminal_opens_by_its_policy_restarts_with_its_history_and_clears() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let helper = helper_property();
+    let gate = crate::common::start_with_conf_files(
+        "termws-thread",
+        None,
+        "<terminal/>",
+        &[("moqui_conf__instance__purpose", "dev"), (helper.0, &helper.1)],
+        &[
+            (
+                "components/addon/term-thread/component.xml",
+                r#"<component name="term-thread"/>"#,
+            ),
+            (
+                "components/addon/term-thread/screen-extend/webroot/screen/webroot/apps/Terminal.xml",
+                THREAD_TRANSITIONS,
+            ),
+        ],
+    );
+    let page = Page::signed_in(gate.server.address(), "john.doe");
+    gate.server.factory().flush_sessions().unwrap();
+    let opening = |conversation: &str, cols: u32| {
+        page.call(
+            "openThread",
+            Some(
+                serde_json::json!({"kind": "thread", "cols": cols, "rows": 30, "conversationId": conversation,
+                "clientTerminalId": "t1", "label": "build", "env": "{\"EXTRA\":\"x\"}"}),
+            ),
+        )
+    };
+    let refused = opening("allowed-1", 100);
+    assert_eq!(
+        refused["reasonCode"], "notAvailable",
+        "no policy, no thread kind: {refused}"
+    );
+
+    let scratch = std::env::temp_dir().join(format!("moqui-thread-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).unwrap();
+    moqui_core::terminal::register_policy(
+        gate.server.factory(),
+        std::sync::Arc::new(TestThreadPolicy(scratch.clone())),
+    );
+    let opened = opening("allowed-1", 2000);
+    let id = opened["sessionId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{opened}"))
+        .to_string();
+    assert_eq!(opened["session"]["kind"], "thread");
+    assert_eq!(opened["session"]["cols"], 1000, "1000 columns at most");
+    assert_eq!(opened["session"]["thread"]["conversationId"], "allowed-1");
+    assert_eq!(
+        opening("allowed-1", 100)["sessionId"],
+        id.as_str(),
+        "an open of a live one answers it"
+    );
+    assert_eq!(opening("denied-1", 100)["reasonCode"], "notAllowed");
+
+    let mut socket = page.attach(&id, None);
+    socket
+        .send(Message::Binary(
+            b"echo \"$THREAD_TEST thread-$((2+3)) $EXTRA\"\r".to_vec().into(),
+        ))
+        .unwrap();
+    read_messages_until(&mut socket, "from-the-policy thread-5 x").unwrap();
+    socket.send(Message::Binary(b"exit 7\r".to_vec().into())).unwrap();
+    assert!(read_messages_until(&mut socket, "never")
+        .unwrap_err()
+        .contains("status 7"));
+
+    // started again: the same id, its history first, and a new shell
+    let mut again = page.attach_restart(&id);
+    let (texts, _) = read_messages_until(&mut again, "from-the-policy thread-5 x").unwrap();
+    assert!(
+        texts.iter().any(|text| text.contains(r#""type":"restarted""#)),
+        "{texts:?}"
+    );
+    again
+        .send(Message::Binary(b"echo second-$((3+4))\r".to_vec().into()))
+        .unwrap();
+    read_messages_until(&mut again, "second-7").unwrap();
+
+    // cleared: the windows are told, and a window that comes back gets none of what was before
+    let cleared = page.call("clearThread", Some(serde_json::json!({"sessionId": id})));
+    assert_eq!(cleared["session"]["id"], id.as_str(), "{cleared}");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut told = false;
+    while !told {
+        assert!(Instant::now() < deadline, "the window was not told it was cleared");
+        if let Ok(Message::Text(text)) = again.read() {
+            told = text.contains(r#""type":"cleared""#);
+        }
+    }
+    again
+        .send(Message::Binary(b"echo after-$((4+5))\r".to_vec().into()))
+        .unwrap();
+    read_messages_until(&mut again, "after-9").unwrap();
+    drop(again);
+    let mut back = page.attach(&id, None);
+    let (_, seen) = read_messages_until(&mut back, "after-9").unwrap();
+    assert!(
+        !String::from_utf8_lossy(&seen).contains("second-7"),
+        "{}",
+        String::from_utf8_lossy(&seen)
+    );
+    page.call("close", Some(serde_json::json!({"sessionId": id})));
+    let _ = std::fs::remove_dir_all(scratch);
+}
+
 /// The holder (plans/archive/Terminal-Fancy.md §7.5): a host session's program runs on through a restart of the server,
 /// and the next window gets its output again and goes on with it.
 #[test]
@@ -866,6 +1359,13 @@ fn a_host_session_outlives_a_restart_of_the_server() {
         .unwrap();
     read_messages_until(&mut socket, "before-42").unwrap();
     assert_eq!(page.call("options", None)["options"]["hostSessionsOutliveServer"], true);
+    // recorded from here (plans/Terminal-Fancy2.md §4.5): the holder writes it, so the restart loses nothing of it
+    let recorded = page.call("rename", Some(serde_json::json!({"sessionId": id, "record": "Y"})));
+    assert_eq!(recorded["session"]["recording"], true, "{recorded}");
+    socket
+        .send(Message::Binary(b"echo while-$((5*5))\r".to_vec().into()))
+        .unwrap();
+    read_messages_until(&mut socket, "while-25").unwrap();
 
     let gate = gate.restart();
     drop(socket);
@@ -887,6 +1387,34 @@ fn a_host_session_outlives_a_restart_of_the_server() {
     back.send(Message::Binary(b"echo still-$marker\r".to_vec().into()))
         .unwrap();
     read_messages_until(&mut back, "still-before-42").unwrap();
+    // still recording after the restart, said so again, and the file holds what came before and after it
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let listed = page.call("sessions", None);
+        let recording = listed["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["id"] == id.as_str() && s["recording"] == true);
+        if recording {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the recording is shown again: {listed}");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let stopped = page.call("rename", Some(serde_json::json!({"sessionId": id, "record": "N"})));
+    assert_eq!(stopped["session"]["recording"], false, "{stopped}");
+    let recordings = page.call("recordings", None);
+    let recording_id = recordings["recordings"][0]["recordingId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{recordings}"))
+        .to_string();
+    let cast = page.get_text(&format!("recording?recordingId={recording_id}"));
+    assert!(cast.contains("while-25") && cast.contains("still-before-42"), "{cast}");
+    assert!(
+        cast.lines().next().unwrap_or_default().contains(r#""version":2"#),
+        "{cast}"
+    );
     page.call("close", Some(serde_json::json!({"sessionId": id})));
     assert!(read_messages_until(&mut back, "never").is_err());
 }

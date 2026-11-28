@@ -169,6 +169,11 @@ pub(crate) async fn upgrade(
                     .as_deref()
                     .and_then(|query| query_value(query, "ticket"))
                     .unwrap_or_default(),
+                observe: query
+                    .as_deref()
+                    .and_then(|query| query_value(query, "observe"))
+                    .as_deref()
+                    == Some("1"),
                 listener,
             },
             closing,
@@ -236,6 +241,8 @@ struct Opened {
     key_hash: Option<String>,
     /// A ticket of a recent sign-in, from `confirm#TerminalUser`.
     ticket: String,
+    /// `observe=1`: to watch the session, not type in it (plans/Terminal-Fancy2.md §4.4).
+    observe: bool,
     /// The listener the upgrade request came over (`OnListener`), which a session of its own says its calls came over
     /// (plans/Runtime-Config.md §3.6).
     listener: Option<&'static str>,
@@ -284,7 +291,7 @@ fn parse_resize(text: &str) -> Option<(u16, u16)> {
     }
     let dimension = |name: &str, least: u16| {
         let number = u16::try_from(value.get(name)?.as_u64()?).ok()?;
-        Some(number.clamp(least, 500))
+        Some(number.clamp(least, if name == "cols" { 1000 } else { 500 }))
     };
     Some((dimension("cols", 20)?, dimension("rows", 10)?))
 }
@@ -312,6 +319,8 @@ struct Attach<'a> {
     by_key: bool,
     ticket: &'a str,
     username: &'a str,
+    /// The window only watches (plans/Terminal-Fancy2.md §4.4).
+    viewer: bool,
 }
 
 /// May the user attach to a session of `kind` from where `facts` say: their permission, and from anywhere but this
@@ -323,6 +332,7 @@ async fn may_attach(
     kind: Kind,
     facts: Facts,
 ) -> Result<(), Refusal> {
+    let viewer = attach.viewer;
     let session_id = attach.session_id.to_string();
     let (by_key, ticket, username) = (attach.by_key, attach.ticket.to_string(), attach.username.to_string());
     let https = facts.https;
@@ -336,7 +346,8 @@ async fn may_attach(
         } else {
             Some(moqui_core::user::session::bind_id(&strong, Some(&session_id), https)?)
         };
-        let permitted = |permission: &str| moqui_core::user::has_permission(permission).unwrap_or(false);
+        // a window that only watches needs the place's rules, not the kind's permission, which is for typing (D3)
+        let permitted = |permission: &str| viewer || moqui_core::user::has_permission(permission).unwrap_or(false);
         let recent = |millis: i64| {
             (!by_key && moqui_core::user::recent_auth(millis)) || registry.ticket_holds(&ticket, &username, millis)
         };
@@ -354,7 +365,7 @@ async fn may_attach(
 
 /// An attach message: `{"type":"attach","cols","rows","have"}`, or a first `resize`, taken as an attach of a page that
 /// drew nothing.
-fn parse_attach(text: &str) -> Option<(u16, u16, Option<u64>)> {
+fn parse_attach(text: &str) -> Option<AttachAsk> {
     let value: serde_json::Value = serde_json::from_str(text).ok()?;
     let kind = value.get("type")?.as_str()?;
     if kind != "attach" && kind != "resize" {
@@ -362,10 +373,29 @@ fn parse_attach(text: &str) -> Option<(u16, u16, Option<u64>)> {
     }
     let dimension = |name: &str, least: u16| {
         let number = u16::try_from(value.get(name)?.as_u64()?).ok()?;
-        Some(number.clamp(least, 500))
+        Some(number.clamp(least, if name == "cols" { 1000 } else { 500 }))
     };
-    let have = value.get("have").and_then(serde_json::Value::as_u64);
-    Some((dimension("cols", 20)?, dimension("rows", 10)?, have))
+    Some(AttachAsk {
+        cols: dimension("cols", 20)?,
+        rows: dimension("rows", 10)?,
+        have: value.get("have").and_then(serde_json::Value::as_u64),
+        restart: value
+            .get("restart")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        max_history: value.get("maxHistory").and_then(serde_json::Value::as_u64),
+    })
+}
+
+/// An attach: the page's size and what it drew; for a thread terminal (plans/Terminal-Fancy2.md §4.7) whether to start
+/// an ended one again, and the most history it wants replayed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AttachAsk {
+    cols: u16,
+    rows: u16,
+    have: Option<u64>,
+    restart: bool,
+    max_history: Option<u64>,
 }
 
 /// Whether the page looks at the session: `{"type":"view","visible":true}`.
@@ -424,6 +454,7 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
         facts,
         key_hash,
         ticket,
+        observe,
         listener,
     } = opened;
     let by_key = key_hash.is_some();
@@ -437,15 +468,23 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
     let label = format!("browser terminal {id} of {username}");
     // a session the holder kept from the server before is found once it is taken back
     #[cfg(all(feature = "devtools", unix))]
-    if Registry::of(&factory).find(&id, &username).is_none() {
+    if Registry::of(&factory).find_for(&id, &username).is_none() {
         let holder = crate::term::held::Holder::of(&factory);
         holder.adopt(Arc::downgrade(&factory)).await;
     }
-    // Another user's id answers as one that does not exist.
-    let Some(kept) = Registry::of(&factory).find(&id, &username) else {
+    // Another user's id answers as one that does not exist, unless the owner shared it with this user (§4.4).
+    let Some((kept, may_type)) = Registry::of(&factory).find_for(&id, &username) else {
         close(&mut socket, "no such terminal session").await;
         return;
     };
+    // a share that does not let the user type watches; an apps session, with no ring, cannot be watched
+    let viewer = observe || !may_type;
+    if viewer && kept.kind == Kind::Apps {
+        close(&mut socket, "no such terminal session").await;
+        return;
+    }
+    #[cfg(all(feature = "devtools", unix))]
+    let facts_for_restart = facts.clone();
     // an attach to a running command line or shell is worth as much as a new one: asked again (§8.2)
     if kept.kind != Kind::Apps {
         let attach = Attach {
@@ -453,6 +492,7 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
             by_key,
             ticket: &ticket,
             username: &username,
+            viewer,
         };
         if let Err(refusal) = may_attach(&factory, &attach, kept.kind, facts).await {
             tracing::info!("{label}: attach refused: {refusal:?}");
@@ -460,8 +500,6 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
             return;
         }
     }
-    // its calls came over this page's listener from now on, until another page attaches
-    kept.origin.set(listener);
     let first = match first_message(&mut socket, &mut shutdown, parse_attach).await {
         Ok(Some(first)) => first,
         Ok(None) => {
@@ -473,12 +511,60 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
             return;
         }
     };
-    let (cols, rows, have) = first;
-    let Some(attached) = kept.attach(have, cols, rows).await else {
+    let AttachAsk {
+        cols,
+        rows,
+        have,
+        restart,
+        max_history,
+    } = first;
+    // a thread terminal whose program ended, asked to start again: under the same id, its history first (§4.7)
+    #[cfg(all(feature = "devtools", unix))]
+    let kept = if restart && kept.kind == Kind::Thread && kept.info().ended.is_some() && !viewer {
+        let (id, user, facts) = (id.clone(), username.clone(), facts_for_restart.clone());
+        let restarted = crate::worker::on_pool(&Arc::downgrade(&factory), move |factory| {
+            moqui_core::user::internal_login_user(&user)?;
+            let strong = ExecutionContext::with_current(|ec| Arc::clone(ec.factory()))
+                .ok_or_else(|| CoreError::new("no execution context is entered"))?;
+            let registry = Registry::of(factory);
+            Ok(crate::term::thread::restart(&strong, &registry, &user, &id, &facts))
+        })
+        .await;
+        match restarted {
+            Ok(Ok(session)) => {
+                let _ = crate::notws::send_within(&mut socket, Message::Text(r#"{"type":"restarted"}"#.into())).await;
+                session
+            }
+            Ok(Err((_, why))) => {
+                close(&mut socket, &why).await;
+                return;
+            }
+            Err(err) => {
+                close(&mut socket, err.message()).await;
+                return;
+            }
+        }
+    } else {
+        kept
+    };
+    #[cfg(not(all(feature = "devtools", unix)))]
+    let _ = restart;
+    // its calls came over this page's listener from now on, until another page that types attaches (a window that only
+    // watches makes no calls of the session's, plans/Terminal-Fancy2.md §4.4)
+    if !viewer {
+        kept.origin.set(listener);
+    }
+    let joining = crate::term::session::Joining {
+        observe: viewer,
+        username: username.clone(),
+        max_history,
+    };
+    let Some(attached) = kept.attach_as(have, cols, rows, joining).await else {
         close(&mut socket, "the session ended").await;
         return;
     };
     let client = attached.client;
+    let mut viewer = attached.viewer;
     let mut out = attached.out;
     let mut ping = tokio::time::interval(PING_EVERY);
     ping.tick().await;
@@ -510,12 +596,22 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
                     reason = why;
                     break;
                 }
+                // another window took it (D7): this one watches on, and the page offers Take it back
+                Some(Out::Viewer(watching)) => {
+                    viewer = watching;
+                    let role = serde_json::json!({"type": "role", "viewer": watching, "reason": "opened elsewhere"});
+                    if !crate::notws::send_within(&mut socket, Message::Text(role.to_string().into())).await {
+                        break;
+                    }
+                }
                 None => {
                     reason = "the window fell behind".to_string();
                     break;
                 }
             },
             incoming = socket.recv() => match incoming {
+                // what a watching window types is dropped
+                Some(Ok(Message::Binary(_))) if viewer => {}
                 Some(Ok(Message::Binary(bytes))) => {
                     typed = true;
                     if !kept.write(bytes.to_vec()).await {
@@ -707,17 +803,22 @@ mod tests {
 
     #[test]
     fn an_attach_names_its_size_and_what_it_drew() {
+        let sized = |text: &str| parse_attach(text).map(|ask| (ask.cols, ask.rows, ask.have));
         assert_eq!(
-            parse_attach(r#"{"type":"attach","cols":100,"rows":30,"have":4096}"#),
+            sized(r#"{"type":"attach","cols":100,"rows":30,"have":4096}"#),
             Some((100, 30, Some(4096)))
         );
         assert_eq!(
-            parse_attach(r#"{"type":"attach","cols":100,"rows":30,"have":null}"#),
+            sized(r#"{"type":"attach","cols":100,"rows":30,"have":null}"#),
             Some((100, 30, None))
         );
+        assert_eq!(sized(r#"{"type":"resize","cols":80,"rows":24}"#), Some((80, 24, None)));
+        // a thread terminal's attach: 1000 columns at most, a restart and the history wanted (§4.7)
+        let thread =
+            parse_attach(r#"{"type":"attach","cols":2000,"rows":900,"restart":true,"maxHistory":4096}"#).unwrap();
         assert_eq!(
-            parse_attach(r#"{"type":"resize","cols":80,"rows":24}"#),
-            Some((80, 24, None))
+            (thread.cols, thread.rows, thread.restart, thread.max_history),
+            (1000, 500, true, Some(4096))
         );
         assert_eq!(parse_attach(r#"{"type":"ack","count":1}"#), None);
         assert_eq!(parse_ack(r#"{"type":"ack","count":100000}"#), Some(100_000));

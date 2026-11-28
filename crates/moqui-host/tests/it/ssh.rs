@@ -1562,9 +1562,13 @@ fn attach_at_the_ssh_prompt_takes_a_kept_session() {
             .any(|line| line.contains(&id) && line.contains("running")),
         "the session goes on after the detach: {attached}"
     );
-    // the browser's window was let go when SSH took the session
-    let closed = crate::termws::read_messages_until(&mut browser, "never").unwrap_err();
-    assert!(closed.contains("opened elsewhere"), "{closed}");
+    // the browser's window watches on when SSH took the session (plans/Terminal-Fancy2.md D7): told so, and it saw what
+    // was typed over SSH
+    let (texts, _) = crate::termws::read_messages_until(&mut browser, "y-9").unwrap();
+    assert!(
+        texts.iter().any(|text| text.contains(r#""type":"role""#) && text.contains(r#""viewer":true"#)),
+        "{texts:?}"
+    );
     page.call("close", Some(serde_json::json!({"sessionId": id})));
 }
 

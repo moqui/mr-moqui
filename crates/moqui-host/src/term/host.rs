@@ -54,6 +54,8 @@ pub(crate) struct Profile {
     pub integration: bool,
     /// A coding agent: quiet output reads as done (§11.1).
     pub agent: bool,
+    /// Its sessions start recorded (plans/Terminal-Fancy2.md §4.5), where the conf offers recording.
+    pub record: bool,
     pub env: Vec<(String, String)>,
     /// The user's own, not the conf's.
     pub own: bool,
@@ -104,6 +106,7 @@ pub(crate) fn conf_profiles(conf_text: &str) -> Vec<Profile> {
                 login: truthy(node.attribute("login")),
                 integration: truthy(node.attribute("integration")),
                 agent: truthy(node.attribute("agent")),
+                record: truthy(node.attribute("record")),
                 env,
                 own: false,
             });
@@ -152,6 +155,7 @@ pub(crate) fn own_profiles(json: &str) -> Vec<Profile> {
                     .and_then(serde_json::Value::as_bool)
                     .unwrap_or(false),
                 agent: item.get("agent").and_then(serde_json::Value::as_bool).unwrap_or(false),
+                record: item.get("record").and_then(serde_json::Value::as_bool).unwrap_or(false),
                 env: item
                     .get("env")
                     .and_then(serde_json::Value::as_object)
@@ -205,6 +209,7 @@ pub(crate) fn available(conf_text: &str, own_json: Option<&str>) -> Vec<Profile>
             if let Some(shell) = profiles.first_mut() {
                 shell.title.clone_from(&profile.title);
                 shell.integration = profile.integration;
+                shell.record = profile.record;
                 shell.env.clone_from(&profile.env);
                 shell.directory = profile.directory.clone().or(shell.directory.take());
             }
@@ -241,6 +246,17 @@ pub(crate) fn argv(profile: &Profile, resume: bool) -> (Vec<String>, Option<Stri
 
 /// Where a host session starts: the given directory, else the profile's, else `host-directory`, else the directory
 /// above the runtime (the checkout that holds `moq`), else the runtime.
+/// A directory as a profile or an opening names it: `~/...` in the home, a relative one in the checkout.
+fn directory_of(text: &str, runtime: &Path) -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let checkout = runtime.parent().unwrap_or(runtime);
+    match text.strip_prefix("~/") {
+        Some(rest) if !home.is_empty() => PathBuf::from(&home).join(rest),
+        _ if text == "~" && !home.is_empty() => PathBuf::from(&home),
+        _ => checkout.join(text),
+    }
+}
+
 pub(crate) fn directory(requested: Option<&str>, profile: &Profile, host_directory: &str, runtime: &Path) -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_default();
     // a relative directory is the checkout's (the directory above the runtime), as the Dev AIDE names its roots
@@ -336,10 +352,18 @@ fn integrate(launch: &mut Launch, runtime: &Path) {
         "bash" => (dir.join("moqui.bash"), BASH_INTEGRATION),
         _ => (dir.join("zsh").join(".zshenv"), ZSH_INTEGRATION),
     };
+    // readable by all, as another account's shell reads it (plans/Terminal-Fancy2.md §4.6): it holds nothing secret
+    let readable = |path: &Path, mode: u32| {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+    };
     let written = file
         .parent()
         .map_or(Ok(()), std::fs::create_dir_all)
-        .and_then(|()| std::fs::write(&file, text));
+        .and_then(|()| std::fs::write(&file, text))
+        .and_then(|()| readable(&file, 0o644))
+        .and_then(|()| file.parent().map_or(Ok(()), |parent| readable(parent, 0o755)))
+        .and_then(|()| readable(&dir, 0o755));
     if let Err(err) = written {
         tracing::warn!(
             "the terminal's shell integration was not written to {}: {err}",
@@ -386,6 +410,49 @@ fn local_url(factory: &ExecutionContextFactory) -> Option<String> {
     }
 }
 
+/// The account `username`'s host programs run as (plans/Terminal-Fancy2.md §4.6): none (the server's own) when
+/// `terminal@run-as` is `server`, the default; with `person`, their `moqui.terminal.TerminalOsAccount`, and `Err` with
+/// `noOsAccount` when they have none. Read with authorization off.
+pub(crate) fn run_as_for(factory: &ExecutionContextFactory, username: &str) -> Result<Option<RunAs>, &'static str> {
+    match factory.conf_setting("terminal", "run-as").trim() {
+        "" | "server" => return Ok(None),
+        "person" => {}
+        other => {
+            tracing::error!("terminal@run-as {other:?} is not server or person: host sessions are refused");
+            return Err("noOsAccount");
+        }
+    }
+    let account = factory.entity().and_then(|facade| {
+        facade
+            .find("moqui.terminal.TerminalOsAccount")
+            .ok()?
+            .eq("username", moqui_lib::object::Value::string(username))
+            .eq("thruDate", moqui_lib::object::Value::Null)
+            .disable_authz()
+            .list()
+            .ok()?
+            .values()
+            .first()
+            .and_then(|row| row.get("osUsername").map(moqui_lib::object::to_plain_string))
+            .filter(|account| !account.is_empty())
+    });
+    let sudo = Some(factory.conf_setting("terminal", "run-as-sudo"))
+        .map(|sudo| sudo.trim().to_string())
+        .filter(|sudo| !sudo.is_empty())
+        .unwrap_or_else(|| "sudo".to_string());
+    account
+        .map(|account| Some(RunAs { sudo, account }))
+        .ok_or("noOsAccount")
+}
+
+/// Another OS account a host program runs as (plans/Terminal-Fancy2.md §4.6): started through `sudo`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RunAs {
+    /// The sudo program (`terminal@run-as-sudo`).
+    pub sudo: String,
+    pub account: String,
+}
+
 /// What a host program is started with.
 #[derive(Clone)]
 pub(crate) struct Launch {
@@ -395,10 +462,18 @@ pub(crate) struct Launch {
     pub env: Vec<(String, String)>,
     pub cols: u16,
     pub rows: u16,
+    /// As another account, by `sudo` and `term-exec --run-as`: the program, its environment and its directory then go
+    /// in the helper's arguments, and the account's own shell stands for the shell profile's.
+    pub run_as: Option<RunAs>,
+    /// The directory the profile or the opening asked for, for another account (whose home it is otherwise).
+    pub asked_directory: Option<PathBuf>,
+    /// The profile names no program: the shell of the account it runs as.
+    pub account_shell: bool,
 }
 
 impl Launch {
-    /// The launch of `profile` for `username`'s session `session_id` on `factory`'s server.
+    /// The launch of `profile` for `username`'s session `session_id` on `factory`'s server, as `run_as` when given.
+    #[allow(clippy::too_many_arguments)]
     pub fn of(
         factory: &ExecutionContextFactory,
         profile: &Profile,
@@ -407,6 +482,7 @@ impl Launch {
         requested_directory: Option<&str>,
         resume: bool,
         size: (u16, u16),
+        run_as: Option<RunAs>,
     ) -> Self {
         let runtime = factory.runtime_dir();
         let (argv, arg0) = argv(profile, resume);
@@ -416,8 +492,19 @@ impl Launch {
             &factory.conf_setting("terminal", "host-directory"),
             runtime,
         );
+        let asked_directory = [requested_directory, profile.directory.as_deref()]
+            .into_iter()
+            .flatten()
+            .map(str::trim)
+            .find(|text| !text.is_empty())
+            .map(|text| directory_of(text, runtime));
         let env = environment(&EnvFor {
-            server: std::env::vars().collect(),
+            // another account's program gets nothing of the server's own environment (§4.6)
+            server: if run_as.is_some() {
+                Vec::new()
+            } else {
+                std::env::vars().collect()
+            },
             session_id,
             runtime,
             username,
@@ -431,6 +518,9 @@ impl Launch {
             env,
             cols: size.0,
             rows: size.1,
+            account_shell: run_as.is_some() && profile.command.is_none(),
+            run_as,
+            asked_directory,
         };
         if profile.integration {
             integrate(&mut launch, runtime);
@@ -444,9 +534,30 @@ impl Launch {
     }
 
     /// Start it on a pty, as a session's program.
+    /// The helper that starts the program: `term-exec` itself, or `sudo` and `term-exec --run-as` for another account.
+    pub fn helper(&self) -> std::io::Result<(String, Vec<String>)> {
+        match &self.run_as {
+            None => exec::helper("term-exec"),
+            Some(run_as) => {
+                let spec = super::runas::RunSpec {
+                    argv: self.argv.clone(),
+                    arg0: self.arg0.clone(),
+                    env: self.env.clone(),
+                    directory: self
+                        .asked_directory
+                        .as_ref()
+                        .map(|dir| dir.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    account_shell: self.account_shell,
+                };
+                super::runas::helper(&run_as.sudo, &run_as.account, &spec)
+            }
+        }
+    }
+
     pub fn start(&self) -> std::io::Result<Program> {
         let _runtime = crate::edge::handle().enter();
-        let helper = exec::helper("term-exec")?;
+        let helper = self.helper()?;
         let started = exec::start(
             &helper,
             &self.argv,

@@ -123,7 +123,10 @@
     let dark = null;
 
     function view(key) {
-        if (!state.views[key]) state.views[key] = { closed: false, reason: "", failed: "", taken: false, reauth: false, reconnecting: false, searching: false };
+        // watching: this window only watches (Terminal-Fancy2 §4.4), takenAway when another window took the typing
+        if (!state.views[key])
+            state.views[key] = { closed: false, reason: "", failed: "", taken: false, reauth: false, reconnecting: false, searching: false,
+                watching: false, takenAway: false, owner: "" };
         return state.views[key];
     }
 
@@ -170,12 +173,25 @@
         return moqui.webrootVue || {};
     }
 
-    function socketUrl(key) {
+    function socketUrl(key, observe) {
         const shell = shellVm();
         const scheme = root.location.protocol === "https:" ? "wss://" : "ws://";
         const host = shell.appHost || root.location.host;
         const ticket = currentTicket();
-        return scheme + host + (shell.appRootPath || "") + "/termws?session=" + encodeURIComponent(key) + (ticket ? "&ticket=" + ticket : "");
+        return scheme + host + (shell.appRootPath || "") + "/termws?session=" + encodeURIComponent(key) + (ticket ? "&ticket=" + ticket : "") +
+            (observe ? "&observe=1" : "");
+    }
+
+    // A session shared with this user that does not let them type: its windows only watch (§4.4).
+    function watchOnly(key) {
+        const info = state.sessions[key];
+        return !!(info && info.shared && !info.write);
+    }
+
+    // A watching window shows the session at its own size, scrolled in its box, rather than fitting it.
+    function sizeToSession(session, cols, rows) {
+        const c = Number(cols), r = Number(rows);
+        if (session.viewer && c > 0 && r > 0 && (session.term.cols !== c || session.term.rows !== r)) session.term.resize(c, r);
     }
 
     // ---- a recent sign-in in the Desktop and Mobile apps (§12) ----
@@ -268,7 +284,7 @@
     }
 
     function fit(session) {
-        if (!session.fit || !session.el.isConnected) return;
+        if (!session.fit || !session.el.isConnected || session.viewer) return;
         try {
             session.fit.fit();
         } catch (e) {
@@ -297,14 +313,32 @@
         if (message.type === "attached") {
             session.attached = true;
             session.everAttached = true;
+            session.viewer = !!message.viewer;
+            Object.assign(view(session.key), { watching: session.viewer, takenAway: false, owner: message.owner || "" });
             if (message.reset) {
                 session.term.reset();
                 session.received = session.drawn = session.acked = Number(message.from) || 0;
             }
+            sizeToSession(session, message.cols, message.rows);
+            if (!session.viewer) fit(session);
             if (info) Object.assign(info, { title: message.title, cwd: message.cwd, attached: true });
             session.visibleSent = null;
             reportView(session);
+        } else if (message.type === "cleared") {
+            // a thread terminal's Clear (Terminal-Fancy2 §4.7): its kept output is gone, and so is this screen's
+            session.term.reset();
+        } else if (message.type === "restarted") {
+            // a thread terminal started again: its history comes first, then the new program
+            if (info) Object.assign(info, { state: "running", exitStatus: null, reason: "" });
+        } else if (message.type === "role") {
+            // another window took the typing (D7): this one watches on, and offers Take it back
+            session.viewer = !!message.viewer;
+            Object.assign(view(session.key), { watching: session.viewer, takenAway: session.viewer });
+            if (!session.viewer) fit(session);
         } else if (message.type === "state") {
+            sizeToSession(session, message.cols, message.rows);
+            if (info && Array.isArray(message.viewers)) info.viewers = message.viewers;
+            if (info && message.recording !== undefined) info.recording = !!message.recording;
             if (info) {
                 info.title = message.title;
                 info.cwd = message.cwd;
@@ -550,7 +584,7 @@
         const floats = moqui.floats;
         if (!floats || floats.kinds[FLOAT]) return;
         floats.register(FLOAT, {
-            title: (key) => (state.sessions[key] && state.sessions[key].title) || t("Terminal"),
+            title: (key) => ((state.sessions[key] && state.sessions[key].title) || t("Terminal")) + (state.sessions[key] && state.sessions[key].recording ? " · REC" : ""),
             icon: "sym_o_terminal",
             dot: (key) => DOT_COLORS[statusOf(state.sessions[key])] || "",
             defaultSize: { w: 760, h: 440 },
@@ -783,7 +817,8 @@
             }, true);
             const encoder = new TextEncoder();
             const out = opts.send || ((bytes) => send(session, bytes));
-            session.out = (data) => out(encoder.encode(data));
+            // what a watching window types goes nowhere (the server drops it too)
+            session.out = (data) => (session.viewer ? undefined : out(encoder.encode(data)));
             // the key bar's Ctrl and Alt (§12) apply to the next key typed
             term.onData((data) => session.out(applyModifiers(session, data)));
             touchGestures(session);
@@ -943,10 +978,13 @@
             if (session) fit(session);
         },
 
-        // Attach to the session: a new socket that says how far this page got.
-        connect(key) {
+        // Attach to the session: a new socket that says how far this page got. `options.observe` watches only; a
+        // session shared to watch always does.
+        connect(key, options) {
             const session = sessions.get(key);
             if (!session) return;
+            if (options && options.observe !== undefined) session.observe = !!options.observe;
+            const observe = !!session.observe || watchOnly(key);
             const shown = view(key);
             Object.assign(shown, { closed: false, reason: "", taken: false, reauth: false, reconnecting: false });
             clearTimeout(session.retryTimer);
@@ -957,7 +995,7 @@
             session.attached = false;
             session.attachSent = false;
             // the host's socket in a desktop client (moqui.openSocket); readyState 1 is open in either
-            const socket = moqui.openSocket(socketUrl(key));
+            const socket = moqui.openSocket(socketUrl(key, observe));
             socket.binaryType = "arraybuffer";
             socket.onopen = () => {
                 session.retries = 0;
@@ -1003,6 +1041,62 @@
                 if (reason === "no such terminal session" && info) info.state = "ended";
             };
             session.socket = socket;
+        },
+
+        // Start or stop recording the session (Terminal-Fancy2 §4.5): what it shows, never what is typed.
+        setRecording(key, on) {
+            return request("rename", { sessionId: key, record: on ? "Y" : "N" })
+                .then((out) => {
+                    if (out.session && state.sessions[key]) Object.assign(state.sessions[key], { recording: !!out.session.recording, recordingForced: !!out.session.recordingForced });
+                })
+                .catch(notifyError);
+        },
+
+        // The user's recordings, newest first.
+        recordings() {
+            return request("recordings").then((out) => (Array.isArray(out.recordings) ? out.recordings : []));
+        },
+
+        // Where a recording's asciicast file is: inline for the player, or to download.
+        recordingUrl(recordingId, download) {
+            return (shellVm().appRootPath || "") + "/apps/Terminal/recording?recordingId=" + encodeURIComponent(recordingId) + (download ? "&download=true" : "");
+        },
+
+        // This window types again: it attaches as the one that types, and the window that typed watches (D7).
+        takeBack(key) {
+            terminal.connect(key, { observe: false });
+        },
+
+        // Share the session with another user (§4.4): to watch it, or to type in it too.
+        share(key) {
+            const dialog = dialogOf();
+            if (!dialog) return Promise.resolve(null);
+            return ask(t("Share this session"), t("The username of who may watch it"), "text")
+                .then((username) =>
+                    new Promise((resolve) =>
+                        dialog({ title: t("Share this session"), message: t("May they type in it too? Only a user with its permission may."),
+                            ok: t("Let them type"), cancel: t("Watch only"), persistent: true })
+                            .onOk(() => resolve({ username, write: "Y" }))
+                            .onCancel(() => resolve({ username, write: "N" }))
+                    )
+                )
+                .then((asked) => request("share", { sessionId: key, username: asked.username, write: asked.write }))
+                .then((out) => {
+                    if (out.session && state.sessions[key]) Object.assign(state.sessions[key], { shares: out.session.shares || [] });
+                    return out;
+                })
+                .catch((err) => {
+                    if (!err || err.reasonCode !== "cancelled") notifyError(err);
+                });
+        },
+
+        // Take a user's share of the session back: their windows on it are let go.
+        revoke(key, username) {
+            return request("revoke", { sessionId: key, username })
+                .then((out) => {
+                    if (out.session && state.sessions[key]) Object.assign(state.sessions[key], { shares: out.session.shares || [] });
+                })
+                .catch(notifyError);
         },
 
         // Let go of the session's terminal here: its socket closed, its terminal disposed. The session goes on.
@@ -1281,11 +1375,25 @@
             return { views: state.views, query: "", found: true,
                 labels: { reconnect: t("Reconnect"), takeBack: t("Take it back"), confirm: t("Confirm it is you"), reconnecting: t("Connecting again…"),
                     find: t("Find"), previous: t("Previous match"), next: t("Next match"), close: t("Close"), copy: t("Copy"),
-                    paste: t("Paste"), selectAll: t("Select all"), clear: t("Clear scrollback") } };
+                    paste: t("Paste"), selectAll: t("Select all"), clear: t("Clear scrollback"),
+                    takenAway: t("Opened in another window: this one watches."), watchingOwn: t("This window watches."),
+                    watching: t("Watching {owner}'s session") } };
         },
         computed: {
             shown() {
                 return this.views[this.sessionKey] || { closed: false, reason: "", failed: "" };
+            },
+            // what a watching window says (Terminal-Fancy2 §4.4)
+            watchingText() {
+                const owner = this.shown.owner || "";
+                const info = state.sessions[this.sessionKey];
+                if (info && info.shared) return this.labels.watching.replace("{owner}", owner);
+                return this.shown.takenAway ? this.labels.takenAway : this.labels.watchingOwn;
+            },
+            // the window may type: the owner's, or one a share lets type
+            mayType() {
+                const info = state.sessions[this.sessionKey];
+                return !info || !info.shared || !!info.write;
             },
             // a phone or a tablet: the key bar (§12)
             touch() {
@@ -1355,6 +1463,9 @@
                 else if (action === "find") terminal.openSearch(key);
                 else if (action === "clear") terminal.clearScrollback(key);
             },
+            takeBack() {
+                terminal.takeBack(this.sessionKey);
+            },
             reconnect() {
                 // a remote attach to a command line or a shell wants a recent sign-in first (§8.2): a ticket in an app
                 if (this.shown.reauth && inApp()) confirmTicket().then(() => terminal.connect(this.sessionKey), () => {});
@@ -1396,6 +1507,9 @@
             '<q-icon name="sym_o_link_off"></q-icon><span class="col">{{shown.reason}}</span>' +
             '<q-btn dense unelevated no-caps color="primary" :label="shown.taken ? labels.takeBack : shown.reauth ? labels.confirm : labels.reconnect" @click="reconnect"></q-btn></div>' +
             '<div v-else-if="shown.failed" class="m-terminal-closed q-pa-sm text-negative">{{shown.failed}}</div>' +
+            '<div v-else-if="shown.watching" class="m-terminal-closed row items-center no-wrap q-pa-xs q-gutter-sm text-caption" id="TerminalWatching">' +
+            '<q-icon name="sym_o_visibility"></q-icon><span class="col">{{watchingText}}</span>' +
+            '<q-btn v-if="mayType" dense flat no-caps color="primary" :label="labels.takeBack" @click="takeBack"></q-btn></div>' +
             '<m-terminal-keys v-if="touch" :session-key="sessionKey"></m-terminal-keys>' +
             "</div>"
     };
@@ -1410,7 +1524,9 @@
             return { sessions: state.sessions, labels: { splitRight: t("Split right"), splitDown: t("Split down"), zoom: t("Zoom"),
                 unzoom: t("Restore"), close: t("Close pane"), end: t("End session"), float: t("Float"),
                 gone: t("This session ended with the server."), startAgain: t("Start again"),
-                floating: t("This session is in a floating window."), showHere: t("Show here") } };
+                floating: t("This session is in a floating window."), showHere: t("Show here"), watchers: t("Watching"),
+                revoke: t("Revoke"), mayType: t("may type"), mayWatch: t("may watch"),
+                recordingHint: t("What this session shows is being recorded") } };
         },
         computed: {
             info() {
@@ -1419,6 +1535,12 @@
             },
             focused() {
                 return this.workspace.focusedPane === this.node.id;
+            },
+            watchers() {
+                return Array.isArray(this.info.viewers) ? this.info.viewers : [];
+            },
+            shares() {
+                return Array.isArray(this.info.shares) ? this.info.shares : [];
             },
             zoomed() {
                 return this.workspace.zoomedPane === this.node.id;
@@ -1431,6 +1553,9 @@
             }
         },
         methods: {
+            revoke(username) {
+                terminal.revoke(this.node.session, username);
+            },
             startDrag(event) {
                 const box = this.$el.getBoundingClientRect();
                 const row = this.node.dir === "row";
@@ -1454,7 +1579,17 @@
             '<span class="m-terminal-dot" :class="\'m-terminal-dot-\' + dot" :title="dot"></span>' +
             '<span class="ellipsis q-ml-xs">{{info.title || node.session}}</span>' +
             '<span v-if="info.cwd" class="ellipsis q-ml-sm text-caption m-terminal-muted">{{info.cwd}}</span>' +
+            '<q-badge v-if="info.recording" color="negative" class="q-ml-sm" :title="labels.recordingHint">REC</q-badge>' +
             "<q-space></q-space>" +
+            // who watches it, and the shares to take back (Terminal-Fancy2 §4.4)
+            '<q-btn v-if="watchers.length || shares.length" flat dense no-caps size="sm" icon="sym_o_visibility" :label="String(watchers.length)" ' +
+            ':aria-label="labels.watchers" @click.stop><q-tooltip>{{labels.watchers}}</q-tooltip><q-menu><q-list dense style="min-width: 200px">' +
+            '<q-item v-for="(name, at) in watchers" :key="\'w\' + at"><q-item-section>{{name}}</q-item-section></q-item>' +
+            '<q-separator v-if="watchers.length && shares.length"></q-separator>' +
+            '<q-item v-for="share in shares" :key="share.username"><q-item-section>{{share.username}}' +
+            '<q-item-label caption>{{share.write ? labels.mayType : labels.mayWatch}}</q-item-label></q-item-section>' +
+            '<q-item-section side><q-btn flat dense no-caps size="sm" color="negative" :label="labels.revoke" @click="revoke(share.username)"></q-btn></q-item-section></q-item>' +
+            "</q-list></q-menu></q-btn>" +
             '<q-btn v-if="!workspace.narrow" flat dense round size="sm" icon="sym_o_vertical_split" :aria-label="labels.splitRight" @click.stop="workspace.splitPane(node.id, \'row\')"><q-tooltip>{{labels.splitRight}}</q-tooltip></q-btn>' +
             '<q-btn v-if="!workspace.narrow" flat dense round size="sm" icon="sym_o_horizontal_split" :aria-label="labels.splitDown" @click.stop="workspace.splitPane(node.id, \'column\')"><q-tooltip>{{labels.splitDown}}</q-tooltip></q-btn>' +
             '<q-btn flat dense round size="sm" :icon="zoomed ? \'sym_o_close_fullscreen\' : \'sym_o_open_in_full\'" :aria-label="zoomed ? labels.unzoom : labels.zoom" @click.stop="workspace.zoomPane(node.id)"><q-tooltip>{{zoomed ? labels.unzoom : labels.zoom}}</q-tooltip></q-btn>' +
@@ -1578,6 +1713,99 @@
         template:
             '<template v-for="key in keys" :key="key"><teleport v-if="target(key)" :to="target(key)">' +
             '<m-terminal-view :session-key="key" :data-float-terminal="key"></m-terminal-view></teleport></template>'
+    };
+
+    // A recording played (Terminal-Fancy2 §4.5): xterm.js fed the asciicast's output at its times, with play, pause,
+    // speed, and seek by feeding again from the start. It answers nothing: its terminal sends nowhere.
+    components["m-terminal-player"] = {
+        name: "mTerminalPlayer",
+        props: { recordingId: { type: String, required: true } },
+        data() {
+            return { loaded: false, failed: "", playing: false, speed: 1, at: 0, duration: 0,
+                labels: { play: t("Play"), pause: t("Pause"), download: t("Download"), failed: t("The recording could not be read.") } };
+        },
+        mounted() {
+            terminal.loadLibs().then(() => this.load(), () => (this.failed = this.labels.failed));
+        },
+        beforeUnmount() {
+            this.stop();
+            if (this.term) this.term.dispose();
+        },
+        methods: {
+            load() {
+                root.fetch(terminal.recordingUrl(this.recordingId, false), { credentials: "same-origin" })
+                    .then((response) => (response.ok ? response.text() : Promise.reject(response.status)))
+                    .then((text) => {
+                        const lines = text.split("\n").filter((line) => line.trim());
+                        const header = JSON.parse(lines[0] || "{}");
+                        this.events = lines.slice(1).map((line) => JSON.parse(line)).filter((event) => Array.isArray(event));
+                        this.duration = this.events.length ? Number(this.events[this.events.length - 1][0]) || 0 : 0;
+                        this.term = new root.Terminal({ cols: header.width || 80, rows: header.height || 24, disableStdin: true, scrollback: 1000,
+                            fontFamily: state.settings.fontFamily || FONT, fontSize: Number(state.settings.fontSize) || 14, theme: themeOf() });
+                        this.term.open(this.$refs.screen);
+                        this.loaded = true;
+                        this.seek(0);
+                    })
+                    .catch(() => (this.failed = this.labels.failed));
+            },
+            // feed every event up to `to` seconds, from the start
+            seek(to) {
+                if (!this.term) return;
+                const playing = this.playing;
+                this.stop();
+                this.term.reset();
+                this.next = 0;
+                this.at = Math.max(0, Math.min(Number(to) || 0, this.duration));
+                while (this.next < this.events.length && Number(this.events[this.next][0]) <= this.at) this.apply(this.events[this.next++]);
+                if (playing) this.play();
+            },
+            apply(event) {
+                if (event[1] === "o") this.term.write(String(event[2]));
+                else if (event[1] === "r") {
+                    const size = String(event[2]).split("x").map(Number);
+                    if (size[0] > 0 && size[1] > 0) this.term.resize(size[0], size[1]);
+                }
+            },
+            play() {
+                if (!this.term) return;
+                if (this.at >= this.duration) this.seek(0);
+                this.playing = true;
+                this.started = Date.now() - (this.at * 1000) / this.speed;
+                const step = () => {
+                    if (!this.playing) return;
+                    this.at = Math.min(this.duration, ((Date.now() - this.started) * this.speed) / 1000);
+                    while (this.next < this.events.length && Number(this.events[this.next][0]) <= this.at) this.apply(this.events[this.next++]);
+                    if (this.next >= this.events.length) this.playing = false;
+                    else this.timer = root.setTimeout(step, 30);
+                };
+                step();
+            },
+            stop() {
+                this.playing = false;
+                clearTimeout(this.timer);
+            },
+            setSpeed(speed) {
+                const playing = this.playing;
+                this.stop();
+                this.speed = speed;
+                if (playing) this.play();
+            }
+        },
+        template:
+            '<div class="column no-wrap q-gutter-y-xs m-terminal-player">' +
+            '<div v-if="failed" class="text-negative">{{failed}}</div>' +
+            '<div ref="screen" class="m-terminal-player-screen" style="overflow: auto"></div>' +
+            '<div v-if="loaded" class="row items-center no-wrap q-gutter-x-sm">' +
+            '<q-btn dense flat round :icon="playing ? \'sym_o_pause\' : \'sym_o_play_arrow\'" :aria-label="playing ? labels.pause : labels.play" @click="playing ? stop() : play()"></q-btn>' +
+            '<q-slider class="col" dense :min="0" :max="duration || 1" :step="0.1" :model-value="at" @update:model-value="seek"></q-slider>' +
+            '<q-btn-toggle dense flat no-caps size="sm" :model-value="speed" @update:model-value="setSpeed" :options="[{label: \'1×\', value: 1}, {label: \'2×\', value: 2}, {label: \'4×\', value: 4}]"></q-btn-toggle>' +
+            '<q-btn dense flat no-caps size="sm" icon="sym_o_download" :label="labels.download" :href="downloadUrl" target="_blank"></q-btn>' +
+            "</div></div>",
+        computed: {
+            downloadUrl() {
+                return terminal.recordingUrl(this.recordingId, true);
+            }
+        }
     };
 
     components["m-terminal-copy"] = {

@@ -69,6 +69,12 @@ pub(crate) fn session_ids(factory: &Weak<ExecutionContextFactory>, username: &st
 
 /// Whether the user may attach to a session of `kind` from where the prompt was opened: run on the pool as the user.
 pub(super) async fn may_attach(access: &HostAccess, kind: Kind) -> Result<(), String> {
+    may_join(access, kind, false).await
+}
+
+/// [`may_attach`], for a window that only watches when `viewer`: the place, the switch and a recent sign-in, but not
+/// the kind's own permission, which is for typing (plans/Terminal-Fancy2.md D3).
+pub(super) async fn may_join(access: &HostAccess, kind: Kind, viewer: bool) -> Result<(), String> {
     if kind == Kind::Apps {
         return Ok(());
     }
@@ -77,7 +83,7 @@ pub(super) async fn may_attach(access: &HostAccess, kind: Kind) -> Result<(), St
     let signed_in = access.signed_in;
     let checked = crate::worker::on_pool(&access.factory, move |factory| {
         moqui_core::user::internal_login_user(&username)?;
-        let permitted = |permission: &str| moqui_core::user::has_permission(permission).unwrap_or(false);
+        let permitted = |permission: &str| viewer || moqui_core::user::has_permission(permission).unwrap_or(false);
         // the SSH sign-in is the recent one while it is recent, as for `sh` (SEC-FIL-97)
         let recent = |millis: i64| crate::command::host::signed_in_within(signed_in, millis);
         Ok(access::check(
@@ -96,8 +102,9 @@ pub(super) async fn may_attach(access: &HostAccess, kind: Kind) -> Result<(), St
     }
 }
 
-/// `attach <id>`: the stream is the session's client until a detach, its end, or another window taking it. Returns
-/// what the prompt prints after.
+/// `attach [--view] <id>`: the stream is the session's client until a detach, or its end; another window taking it
+/// leaves it watching. With `--view`, or for a session shared with the user that does not let them type, it watches:
+/// what is typed is dropped but Ctrl+\\. Returns what the prompt prints after.
 pub(crate) async fn run<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
     stream: &mut S,
     access: &mut HostAccess,
@@ -106,6 +113,10 @@ pub(crate) async fn run<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>
     if !access.facts.ssh {
         return "attach: over SSH only; the Terminal's session list shows a session here".to_string();
     }
+    let (mut viewer, id) = match id.strip_prefix("--view") {
+        Some(rest) => (true, rest.trim()),
+        None => (false, id),
+    };
     if id.is_empty() {
         return "attach: which session? sessions lists them".to_string();
     }
@@ -120,19 +131,35 @@ pub(crate) async fn run<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>
     }
     let kept = match find(&factory, id, &access.username) {
         Ok(kept) => kept,
-        Err(reason) => return format!("attach: {reason}"),
+        Err(reason) => match Registry::of(&factory).find_for(id, &access.username) {
+            // a session shared with the user, by its whole id
+            Some((shared, write)) => {
+                viewer |= !write;
+                shared
+            }
+            None => return format!("attach: {reason}"),
+        },
     };
     drop(factory);
-    if let Err(reason) = may_attach(access, kept.kind).await {
+    if viewer && kept.kind == Kind::Apps {
+        return "attach: an apps session cannot be watched".to_string();
+    }
+    if let Err(reason) = may_join(access, kept.kind, viewer).await {
         tracing::info!("attach {} by {} over SSH refused: {reason}", kept.id, access.username);
         return format!("attach: {reason}");
     }
     let (cols, rows) = *access.size.borrow_and_update();
-    let Some(attached) = kept.attach(None, cols, rows).await else {
+    let joining = crate::term::session::Joining {
+        observe: viewer,
+        username: access.username.clone(),
+        max_history: None,
+    };
+    let Some(attached) = kept.attach_as(None, cols, rows, joining).await else {
         return format!("attach: {} has ended", kept.id);
     };
     tracing::info!("{} attached {} over SSH", access.username, kept.id);
     let client = attached.client;
+    let mut viewer = attached.viewer;
     let mut out = attached.out;
     // how far this client has drawn, from the session's count at the attach: acknowledged so it is never paused
     let mut drawn: u64 = 0;
@@ -165,6 +192,8 @@ pub(crate) async fn run<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>
                     reason = why;
                     break;
                 }
+                // another window took it: this one watches on, and Ctrl+\\ still detaches
+                Some(Out::Viewer(watching)) => viewer = watching,
                 None => {
                     reason = "the window fell behind".to_string();
                     break;
@@ -178,7 +207,7 @@ pub(crate) async fn run<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>
                         Some(at) => (&typed[..at], true),
                         None => (typed, false),
                     };
-                    if !before.is_empty() {
+                    if !before.is_empty() && !viewer {
                         // the program no longer reads: its end comes through `out`
                         let _ = kept.write(before.to_vec()).await;
                     }
@@ -191,6 +220,7 @@ pub(crate) async fn run<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>
             changed = access.size.changed(), if sizing => {
                 if changed.is_ok() {
                     let (cols, rows) = *access.size.borrow_and_update();
+                    // a watcher's size is not the session's: the pump takes only the typing window's
                     kept.resize(client, cols, rows).await;
                 } else {
                     sizing = false;

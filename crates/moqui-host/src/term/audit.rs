@@ -14,7 +14,8 @@
 
 //! The terminal's audit (plans/archive/Terminal-Fancy.md §5.7): a `moqui.terminal.TerminalSession` row for each command
 //! line and host session, written when it is opened and when it ends, with an INFO line each. What is typed and shown
-//! is never recorded. A row that cannot be written is logged and the session goes on.
+//! is never recorded here; what a session shows is recorded only as plans/Terminal-Fancy2.md §4.5 says (opt-in, shown,
+//! bounded, its owner's to play: [`super::recording`]). A row that cannot be written is logged and the session goes on.
 
 use std::sync::Weak;
 
@@ -99,9 +100,46 @@ pub(crate) fn record_open(opened: &Opened<'_>) {
     }
 }
 
+/// A thread terminal's opening row gets its conversation, its client's id of it, what its component keeps, and where
+/// its history is (plans/Terminal-Fancy2.md §4.7). A row that cannot be written is logged.
+#[cfg(unix)]
+pub(crate) fn record_thread(id: &str, meta: &super::session::ThreadMeta) {
+    let written = ExecutionContext::with_current(|ec| -> Result<(), moqui_core::context::Error> {
+        let _authz = ec.disable_authz();
+        let facade = ec
+            .factory()
+            .entity()
+            .ok_or_else(|| moqui_core::context::Error::new("the entity facade is not installed"))?;
+        let mut row = facade.make_value(ENTITY)?;
+        row.set("terminalSessionId", Value::string(id));
+        row.set("conversationId", Value::string(&meta.conversation_id));
+        row.set("clientTerminalId", Value::string(&meta.client_terminal_id));
+        row.set("label", Value::string(&meta.label));
+        row.set("workRootId", Value::string(&meta.work_root_id));
+        row.set("providerInstanceId", Value::string(&meta.provider_instance_id));
+        row.set("stopOnSettle", flag(meta.stop_on_settle));
+        row.set(
+            "historyLocation",
+            Value::string(format!("{}/{}", meta.history_dir, meta.history_stem)),
+        );
+        row.update(&facade)?;
+        Ok(())
+    });
+    if let Some(Err(err)) = written {
+        tracing::error!(
+            "thread terminal {id}: its audit row's thread was not written: {}",
+            err.message()
+        );
+    }
+}
+
 /// What writes the ending of session `id` when it ends: its exit status and the reason, on the request pool.
 pub(crate) fn on_end(factory: Weak<ExecutionContextFactory>, id: String) -> Box<dyn FnOnce(u32, String) + Send> {
     Box::new(move |status, reason| {
+        // its shares end with it (plans/Terminal-Fancy2.md §4.4)
+        super::share::close_on_end(factory.clone(), id.clone());
+        #[cfg(unix)]
+        super::recording::close_on_end(factory.clone(), id.clone());
         crate::edge::handle().spawn(async move {
             let row_id = id.clone();
             let written = crate::worker::on_pool_without_authz(&factory, move |factory| {
