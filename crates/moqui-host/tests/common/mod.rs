@@ -489,10 +489,16 @@ pub const TEST_LISTENERS_OFF: [(&str, &str); 1] = [(
     "false",
 )];
 
-/// Set each of [`TEST_LISTENERS_OFF`] the test has not set itself, by the properties it gave the gate or set before:
-/// called before each boot, after the test's own properties.
+/// The cluster port of a test's server, unless the test names `cluster-member@listen` (plans/Runtime-Config.md §8.2,
+/// RC6): on, as before the switch, so a gate and the members a test starts beside it post to each other from their
+/// start rather than once one has noticed the other (`auto`, the default, opens it only while another member is live).
+/// The one test of `auto` names it (`it/cluster_port.rs`).
+pub const TEST_CLUSTER_LISTEN: (&str, &str) = ("moqui_conf__cluster_member__listen", "on");
+
+/// Set each of [`TEST_LISTENERS_OFF`], and [`TEST_CLUSTER_LISTEN`], the test has not set itself, by the properties it
+/// gave the gate or set before: called before each boot, after the test's own properties.
 pub fn listeners_off() {
-    for (name, value) in TEST_LISTENERS_OFF {
+    for (name, value) in TEST_LISTENERS_OFF.into_iter().chain([TEST_CLUSTER_LISTEN]) {
         if moqui_lib::env::get_property(name).is_none() {
             moqui_lib::env::set_property(name, value);
         }

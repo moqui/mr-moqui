@@ -64,30 +64,42 @@ const STOP_WAIT: Duration = Duration::from_secs(5);
 /// test's stand-in.
 pub(super) type Apply = Arc<dyn Fn(&str, &[u8]) -> u16 + Send + Sync>;
 
-/// Bind the cluster listener. Call after [`moqui_core::cluster::start`] so the member row exists.
+/// Serve the cluster port on `listener`, which the listener registry bound (its address read from the running conf,
+/// plans/Runtime-Config.md §3.5). Call after [`moqui_core::cluster::start`] so the member row exists.
 ///
 /// # Errors
 ///
-/// When the cluster material or a cluster property is not usable, or the port cannot be bound.
+/// When the cluster material or a cluster property is not usable.
 pub(crate) fn listen(
     factory: Arc<ExecutionContextFactory>,
     posts: Arc<Mutex<Vec<String>>>,
+    listener: std::net::TcpListener,
 ) -> Result<ClusterEdge, HostError> {
     let material = super::load_material()?;
     let config = super::server_config(&material)?;
-    let port = super::listen_port(&moqui_core::context::conf_env::setting("cluster-member@https-port"))?;
-    let bind = SocketAddr::from((super::bind_address()?, port));
+    let protocol = super::protocol()?;
     let members = Members::default();
-    crate::edge::handle().spawn(refresh_members(Arc::downgrade(&factory), Arc::clone(&members)));
+    let weak = Arc::downgrade(&factory);
     let apply: Apply = Arc::new(move |topic, body| super::apply_topic(&factory, &posts, topic, body));
-    listen_with(bind, config, super::protocol()?, apply, members)
+    let edge = serve(listener, config, protocol, apply, Arc::clone(&members))?;
+    // read for as long as this bind serves: one that stops ends it, so a port opened and closed while the server runs
+    // leaves no reader behind
+    crate::edge::handle().spawn(refresh_members(weak, members, edge.stop.subscribe()));
+    Ok(edge)
 }
 
-/// Read the members' addresses now and every [`MEMBERS_EVERY`], while the factory runs.
-async fn refresh_members(factory: std::sync::Weak<ExecutionContextFactory>, members: Members) {
+/// Read the members' addresses now and every [`MEMBERS_EVERY`], while the factory runs and the listener serves.
+async fn refresh_members(
+    factory: std::sync::Weak<ExecutionContextFactory>,
+    members: Members,
+    mut stopped: watch::Receiver<bool>,
+) {
     let mut every = tokio::time::interval(MEMBERS_EVERY);
     loop {
-        every.tick().await;
+        tokio::select! {
+            () = stop_asked(&mut stopped) => return,
+            _ = every.tick() => {}
+        }
         let factory = factory.clone();
         let read =
             tokio::task::spawn_blocking(move || factory.upgrade().map(|factory| super::member_addresses(&factory)))
@@ -102,16 +114,28 @@ async fn refresh_members(factory: std::sync::Weak<ExecutionContextFactory>, memb
 
 /// Bind `bind` and serve the cluster port with `config` (its ALPN set here for `protocol`), each message through
 /// `apply`.
+#[cfg(test)]
 pub(super) fn listen_with(
     bind: SocketAddr,
+    config: rustls::ServerConfig,
+    protocol: Protocol,
+    apply: Apply,
+    members: Members,
+) -> Result<ClusterEdge, HostError> {
+    let listener =
+        std::net::TcpListener::bind(bind).map_err(|err| HostError::new(format!("could not bind {bind}: {err}")))?;
+    serve(listener, config, protocol, apply, members)
+}
+
+/// Serve the cluster port on `listener` with `config` (its ALPN set here for `protocol`), each message through `apply`.
+fn serve(
+    listener: std::net::TcpListener,
     mut config: rustls::ServerConfig,
     protocol: Protocol,
     apply: Apply,
     members: Members,
 ) -> Result<ClusterEdge, HostError> {
     config.alpn_protocols = super::alpn_protocols(protocol);
-    let listener =
-        std::net::TcpListener::bind(bind).map_err(|err| HostError::new(format!("could not bind {bind}: {err}")))?;
     let address = listener
         .local_addr()
         .map_err(|err| HostError::new(format!("cluster listener has no address: {err}")))?;
@@ -124,26 +148,72 @@ pub(super) fn listen_with(
         grpc: super::grpc::Server::new(Arc::clone(&apply)),
         apply,
     });
-    let task = crate::edge::handle().spawn(accept_loop(listener, Arc::new(config), app, members, stopped));
+    // each dropped by the loop as a signal: `released` once it has let go of its port, `ended` once it has ended
+    // (or panicked, or was aborted)
+    let (released_tx, released) = std::sync::mpsc::sync_channel(0);
+    let (ended_tx, ended) = std::sync::mpsc::sync_channel(0);
+    let task = crate::edge::handle().spawn(async move {
+        let _ended = ended_tx;
+        accept_loop(listener, Arc::new(config), app, members, stopped, released_tx).await;
+    });
     Ok(ClusterEdge {
         address,
         stop,
         task: Some(task),
+        released,
+        ended,
     })
 }
 
-/// The running listener. Dropping it stops accepting, lets the open connections finish for up to [`STOP_WAIT`], and
-/// waits for that.
+/// The running listener. Its stop begins with [`ClusterEdge::begin_stop`]: it stops accepting, lets its port go, and
+/// lets the open connections finish for up to [`STOP_WAIT`]. Dropping it begins the stop, if nothing did, and waits
+/// for that.
 pub(crate) struct ClusterEdge {
     address: SocketAddr,
     stop: watch::Sender<bool>,
     task: Option<tokio::task::JoinHandle<()>>,
+    /// Disconnected once the accept loop has let go of its port.
+    released: std::sync::mpsc::Receiver<()>,
+    /// Disconnected once the accept loop has ended.
+    ended: std::sync::mpsc::Receiver<()>,
 }
 
 impl ClusterEdge {
     pub(crate) fn address(&self) -> SocketAddr {
         self.address
     }
+
+    /// Stop accepting, let the port go, and let the open connections finish for up to [`STOP_WAIT`]; never waits.
+    pub(crate) fn begin_stop(&self) {
+        let _ = self.stop.send(true);
+    }
+
+    /// Stop at once: the accept loop and every connection it serves end now.
+    pub(crate) fn end_now(&self) {
+        let _ = self.stop.send(true);
+        if let Some(task) = &self.task {
+            task.abort();
+        }
+    }
+
+    /// Wait up to `wait`, its stop begun, until its port is let go; false when it was not by then.
+    pub(crate) fn released(&self, wait: Duration) -> bool {
+        signalled(&self.released, wait)
+    }
+
+    /// Wait up to `wait`, its stop begun, until the accept loop and its connections have ended; false when they had
+    /// not by then.
+    pub(crate) fn finished(&self, wait: Duration) -> bool {
+        signalled(&self.ended, wait)
+    }
+}
+
+/// Whether the loop dropped the sender of `signal` within `wait`.
+fn signalled(signal: &std::sync::mpsc::Receiver<()>, wait: Duration) -> bool {
+    !matches!(
+        signal.recv_timeout(wait),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+    )
 }
 
 impl Drop for ClusterEdge {
@@ -171,12 +241,15 @@ struct App {
     grpc: super::grpc::Server,
 }
 
+/// Accept until told to stop; then let the port go (dropping `released`) and wait up to [`STOP_WAIT`] for the open
+/// connections.
 async fn accept_loop(
     listener: std::net::TcpListener,
     config: Arc<rustls::ServerConfig>,
     app: Arc<App>,
     members: Members,
     mut stopped: watch::Receiver<bool>,
+    released: std::sync::mpsc::SyncSender<()>,
 ) {
     let listener = match tokio::net::TcpListener::from_std(listener) {
         Ok(listener) => listener,
@@ -213,6 +286,7 @@ async fn accept_loop(
         });
     }
     drop(listener);
+    drop(released);
     // the open connections were told to stop: HTTP/1.1 after its exchange, HTTP/2 with a GOAWAY
     let finished = tokio::time::timeout(STOP_WAIT, async { while connections.join_next().await.is_some() {} }).await;
     if finished.is_err() {

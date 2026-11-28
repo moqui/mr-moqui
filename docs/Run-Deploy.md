@@ -234,8 +234,9 @@ what is not built ([Edge-Node2 §3](../plans/Edge-Node2.md#3-topologies)).
 - **HTTPS**: a certificate in `runtime/cert`, or a proxy in front with `webapp-list/webapp[webroot]@trusted-proxies` set
   ([HTTPS](#https-ports-and-proxies)).
 - **Ports**: firewall 8080. `webapp-list/webapp[webroot]@http-bind` sets the address of both HTTP and HTTPS, so `127.0.0.1` suits only a
-  server behind a proxy on the same machine. The cluster listener (8444) starts on every server, on every address, so
-  firewall it unless cluster members use it ([ports](#ports)).
+  server behind a proxy on the same machine. The cluster listener (8444) opens only while another cluster member is
+  live in the database (`cluster-member@listen="auto"`), on every address; firewall it to the members, or set
+  `cluster-member@listen="off"` on a server that is never one ([ports](#ports)).
 - **Backups**: run the embedded database's backup job, or back up the external database
   ([backups](#backups)).
 - **Disk and memory**: the thresholds at which the System home warns are `resource-watch`'s; copy the disk, memory
@@ -1048,7 +1049,7 @@ local or the shared runtime. Windows supports checkout-local operation.
 | 8080 | HTTP | Off in dev (`http-listen-enabled` false), otherwise on every address | `webapp-list/webapp[webroot]@http-listen-enabled`, `webapp-list/webapp[webroot]@http-listen-port`, `webapp-list/webapp[webroot]@http-bind` |
 | 8443 | HTTPS, certificates from `runtime/cert`; HTTP/2 or HTTP/1.1 by ALPN, and gRPC over HTTP/2 when a gRPC service is on | On when there is a certificate (dev makes one) or a name set up with ACME | `webapp-list/webapp[webroot]@https-listen-enabled`, `webapp-list/webapp[webroot]@https-listen-port`, `webapp-list/webapp[webroot]@http2` |
 | 4317 | Dedicated gRPC | Off in dev, otherwise opened when a gRPC service is enabled | Webroot `grpc-listen-enabled`, `grpc-listen-port`, `grpc-listen-bind` |
-| 8444 | Cluster: TLS with the cluster certificate, client certificate required; gRPC on HTTP/2, or HTTP/1.1 | On in every serving process, every address | `cluster-member@https-port`, `cluster-member@bind-address`, `cluster-member@protocol` |
+| 8444 | Cluster: TLS with the cluster certificate, client certificate required; gRPC on HTTP/2, or HTTP/1.1 | `auto`: open only while another member with the same session key and cluster certificate is live in the member table, every address | `cluster-member@listen` (`auto`, `on`, `off`), `cluster-member@https-port`, `cluster-member@bind-address`, `cluster-member@protocol` |
 | 2222 (`ssh-server@port`) | SSH: SFTP, git, admin shell, the apps (`ssh -p 2222 john.doe@localhost` in dev) | Off (`ssh-server@enabled`); on 127.0.0.1 in the dev conf | `ssh-server@enabled`, `ssh-server@port`, `ssh-server@host` |
 | 2525 (`smtp-server@listen-port`) | Inbound SMTP behind a mail gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)) | Off (`smtp-server@enabled`); Maximal and Enterprise only | `smtp-server@enabled`, `smtp-server@listen-port`, `smtp-server@listen-host` |
 | 10000 (`media-server@port`, UDP) | Call media: every browser leg of a call through the SFU ([WebRTC](interfaces/WebRTC.md)); with `media-server@cascade-enabled`, the relay links between the media nodes of a call too, so the nodes must reach each other's | Off (`media-server@enabled`); Maximal, Enterprise and Debug only | `media-server@enabled`, `media-server@port`, `media-server@host`, `media-server@public-address`, `media-server@cascade-enabled` |
@@ -1069,13 +1070,14 @@ The gRPC listener (webroot `grpc-listen-port`, default 4317, at `grpc-listen-bin
 ports (`edge@ssh-tunnel-port`, `edge@xmpp-port`, `edge@xmpp-tls-port`) also open only when they are configured.
 
 Before the database opens, a start checks every port it will bind, over TCP or UDP as the listener uses it, and logs
-`Ports checked free: …`. If the cluster port is busy, the start stops, and the error names each busy port and the
-process that holds it. HTTP, HTTPS and SSH try a busy port anyway: their row says it failed, naming the holder, and it
-is tried again every 30 seconds. If one of the other listeners has a busy port, the start logs a warning and goes on
-without that listener. When the server is ready it logs one report: the instance purpose, every listener and its
-address (or why it is off, failed or skipped), every integration, the tool factories, and what the build leaves out.
-The report is a warning when something that was configured did not start. The instance purpose also has a line of
-its own once the properties are set (`Instance purpose dev (from the conf), node role all`).
+`Ports checked free: …`; a busy port is a warning naming the process that holds it, and the start goes on. HTTP, HTTPS,
+SSH and the cluster port try a busy port anyway when they open: their row says it failed, naming the holder, and it is
+tried again every 30 seconds. One of the other listeners with a busy port is left out. When the server is ready it logs
+one report: the instance purpose, every listener and its address (or why it is off, failed or skipped; a member alone
+under `cluster-member@listen="auto"` says "off: no other member" for its cluster port), every integration, the tool
+factories, and what the build leaves out. The report is a warning when something that was configured did not start.
+The instance purpose also has a line of its own once the properties are set (`Instance purpose dev (from the conf),
+node role all`).
 
 ### HTTP/2
 
@@ -2025,7 +2027,17 @@ node](#a-local-cluster-with-an-edge-node).
 2. Copy that `.env` to each other member before its first start.
 3. Set `moqui_conf__cluster_member__base_url=https://<this member's private address>:8444` on each member. Empty is
    `https://127.0.0.1:8444`, which logs an error once other members are live.
-4. Open port 8444 between the members only.
+4. Open port 8444 between the members only. A member opens it only while another is live
+   (`cluster-member@listen="auto"`): the first member alone has none, a member that starts into the cluster opens it
+   before it reports ready, and one alone opens it within `cluster-member@lone-check-seconds` (15) of a second
+   member's start, reading the member table that often while alone. When it notices the newcomer it clears its own
+   entity caches, since the newcomer's writes could not be told to it before. The newcomer's messages to it fail until
+   its port is open; the newcomer then backs off for 5 seconds and sends it a clear of every entity cache within
+   `lone-check-seconds` after that (or with its next message), so a value the first member cached between noticing
+   the newcomer and opening its port may be stale until then. The port closes once the last other member's row is
+   deleted as dead (ten liveness windows). `cluster-member@listen="on"` keeps it open from the start; `off` never
+   opens it. A member on `cluster-member@transport` `ssh` or `notify`, whose peers do not use the port, opens none
+   under `auto`; set `off` to say so.
 5. The conf writes each session change before the response (`<session-config flush="guarantee"/>`), for a load
    balancer that does not keep a client on one member. With sticky sessions it can go.
 6. Set `webapp-list/webapp[webroot]@trusted-proxies` and `webapp-list/webapp[webroot]@client-ip-header` for the load balancer, then start the other members.

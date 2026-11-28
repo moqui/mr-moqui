@@ -202,7 +202,6 @@ pub(crate) const STANDBY: &str =
 pub(crate) struct ListenReport {
     pub http: SocketAddr,
     pub https: Option<SocketAddr>,
-    pub cluster: SocketAddr,
     pub factory: Arc<ExecutionContextFactory>,
     pub posts: Arc<std::sync::Mutex<Vec<String>>>,
     pub in_process: crate::in_process::InProcess,
@@ -249,7 +248,6 @@ type TokenRoutes = Arc<dyn Fn() -> Arc<moqui_core::screen::token_route::Redactio
 pub(crate) async fn listen(
     factory: Arc<ExecutionContextFactory>,
     tls: Option<crate::tls::Material>,
-    cluster: SocketAddr,
     posts: Arc<std::sync::Mutex<Vec<String>>>,
     listeners: crate::listeners::Registry,
     stop: tokio::sync::oneshot::Receiver<()>,
@@ -521,7 +519,6 @@ pub(crate) async fn listen(
     let _ = ready.send(Ok(ListenReport {
         http: address,
         https: https_address,
-        cluster,
         factory: Arc::clone(&link_factory),
         posts,
         in_process: in_process.clone(),

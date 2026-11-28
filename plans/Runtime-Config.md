@@ -2,7 +2,7 @@
 
 Status 2026-11-27: reviewed against the code and being built, RC0 to RC10 in one run. Its open points were decided
 with the user the same day (§6). The review's corrections are in place below, and the implementation design is §8.
-Built so far: RC0 to RC5.
+Built so far: RC0 to RC6.
 
 Goal: an administrator turns services and ports on and off while the server runs, from a dialog on System Home, from
 the terminal, or by editing the conf, and no listener setting waits for a restart. It serves two tasks: setting a
@@ -191,7 +191,7 @@ never (for `transport="ssh"` or `notify`). It and `lone-check-seconds` come in R
   fingerprints (`has_live_peers`) mean a cluster; the port opens before the server reports ready.
 - **Later**: the heartbeat's `refresh_peers` and the re-read in `current_peers` call a membership hook when the first
   peer appears; the host's reconcile opens the port. While a member is alone the heartbeat thread reads the member
-  table every `cluster-member@lone-check-seconds` (15; one indexed read, the setting read on each pass), and at the
+  table every `cluster-member@lone-check-seconds` (15; a clock query and one read of the member table, the setting read on each pass), and at the
   heartbeat's own interval once it has a peer.
 - **Closing**: under `auto` the port closes when the last peer's row is deleted as dead (10 windows).
 - **The joiner's side**: its first posts to a member whose port is still closed fail and back off (`PEER_BACKOFF`);
@@ -204,6 +204,37 @@ on Home and a Needs attention item, and the boot goes on). Nothing may use a clu
 process only" any more (RC0 moved the Cluster row from `record_web_listeners`, now gone, to the cluster entry). The startup report says "off: no other member" for a lone member. A forged `ClusterMember` row
 with copied fingerprints can make a member open the port; what it exposes is the mTLS handshake pinned to the shared
 certificate, as today (SEC-CLU-89 in [Security-Review-Low](archive/Security-Review-Low.md)).
+
+As built (RC6): "a cluster is detected" (`moqui_core::cluster::cluster_detected`, beside `has_live_peers`; the code is
+`cluster/membership.rs`) holds from a read of the member table that finds a live peer with this member's fingerprints
+until one that finds no other member's row left (a row with no heartbeat is not counted, since no cleanup deletes it,
+nor a row with this member's own base URL, a previous run of it, other than the shared `pg-notify:`); rows whose
+heartbeats fell behind keep it as it was, so the port closes when the last peer's row is deleted, not when its heartbeat
+first falls behind. Every read sets it: `start` (one read after the row is written, which leaves the fan-out's own list
+for its first send, so a peer that joins in the 250 ms after a start is not missed), the heartbeat, a send's re-read,
+and the short check. Reads are numbered as they begin and one applied after a later one is dropped. A read that fails,
+and a row left out (other material, this member's own address), are logged once while they last. The hook is
+`cluster::on_membership(factory, Fn(bool))`, kept on the cluster's factory state and called outside every lock when it
+changes; the host installs it (`listeners::follow_cluster_membership`, a weak registry) before `cluster::start`, and it
+only queues a pass (`Signal("cluster member")`). Joining (the flag false to true), a member clears its own entity caches
+and retires sessions ended elsewhere (`recover_missed`, on a thread of its own): while it was alone the newcomer's
+writes could not be told to it. The heartbeat thread wakes every `lone-check-seconds` (read on each pass; a value that
+is not whole seconds of 1 or more is logged once and 15 taken) for a short check: under `auto` while alone, a clock
+query and one read of the member table; then the resync, which sends a peer owed a clear of every entity cache (newly
+seen, or one whose posts failed and whose backoff is over) its clear without waiting for a write or the heartbeat; with
+nothing to do a wake reads nothing. Tests set the peer backoff (`cluster::set_peer_backoff`, hidden). The entry's bind
+is a `SocketAddr` from the pass's reading of `listen`, `https-port` and `bind-address`; `listen` takes the XSD's three
+values exactly (trimmed, as an `xs:token`; left out is `auto`), and anything else, or a port or address that is not one,
+is Off naming it. Under `auto` a member peers reach elsewhere (`transport` `ssh` or `notify`, or a `base-url` that is not
+`https://`) opens none. It binds the socket itself so a busy port is explained by the port check's text, and
+`cluster_edge::listen` takes it; the start check looks at the port only under `on`, so a lone `auto` server is not
+warned of a busy 8444 at every boot. Each start rewrites this member's row on a thread of its own
+(`cluster::refresh_member`, one rewrite at a time, writing only what changed), so the default base URL, made from the
+factory's running conf, names the port after a live `https-port` change; an explicit `https://` `base-url` naming
+another port is said on the row and in the log (it waits for a restart). The bind stops with the registry's grace
+(`begin_stop`, `released`, `finished` on `ClusterEdge`; `Now` aborts its loop), and its member-address reader ends with
+it. The tests' servers run the port `on` unless a test names it (`tests/common` `TEST_CLUSTER_LISTEN`, set with
+`TEST_LISTENERS_OFF` before every fixture boot, members and gates alike); `it/cluster_port.rs` runs `auto`.
 
 ### 3.6 Services, authorization and the ways back
 

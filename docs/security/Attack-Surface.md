@@ -54,7 +54,7 @@ A production install keeps the default conf's closed switches and does not publi
 - Leave SSH off unless you want it. The default port is empty. The dev conf sets `2222` on `127.0.0.1`.
 - Leave A2A, MCP, and the gateway off unless a client is configured. The model facade can stay on without those servers.
 - Leave git `allow-http` false, and DAV `account-password` false.
-- The cluster listener binds every interface on 8444 and requires a client certificate. Keep it on a private network.
+- The cluster listener binds every interface on 8444 while another cluster member is live (`cluster-member@listen="auto"`) and requires a client certificate. Keep it on a private network, and set `cluster-member@listen="off"` on a server that is never a member.
 - Leave inbound SMTP off unless a gateway and a non-empty allow-list are in place. An empty allow-list does not start the listener.
 - Per-client web protection is off until `webapp-list/webapp[webroot]@trusted-proxies` is set or `webapp-list/webapp[webroot]/web-protection@enabled` is `true`. Set the proxy list when a reverse proxy is in front, so the client address and the per-client rules see the client rather than the proxy.
 

@@ -1796,3 +1796,208 @@ fn a_heartbeat_in_the_future_is_not_live() {
     assert!(!super::is_live(Some(i64::MAX), now, window));
     assert!(!super::is_live(None, now, window));
 }
+
+/// A cluster is detected from a read that finds a live peer until one that finds no other member's row left
+/// (plans/Runtime-Config.md §3.5): rows whose heartbeats fell behind keep it as it was, so the cluster port does not
+/// close under a peer that is late, nor open for rows of members long gone. A read that began before the last one
+/// applied is dropped.
+#[test]
+fn a_cluster_lasts_from_the_first_live_peer_until_no_row_is_left() {
+    use super::membership::{cluster_after, newest, set_cluster};
+    for was in [false, true] {
+        assert!(cluster_after(was, true, true), "a live peer makes one");
+        assert!(!cluster_after(was, false, false), "no row left ends it");
+        assert_eq!(cluster_after(was, false, true), was, "rows behind keep it as it was");
+    }
+    let mut peers = super::PeerCache::default();
+    assert_eq!(set_cluster(&mut peers, false, true), None, "stale rows alone make none");
+    assert_eq!(set_cluster(&mut peers, true, true), Some(true));
+    assert_eq!(set_cluster(&mut peers, true, true), None, "told once");
+    assert_eq!(set_cluster(&mut peers, false, true), None);
+    assert_eq!(set_cluster(&mut peers, false, false), Some(false));
+    assert_eq!(set_cluster(&mut peers, false, false), None);
+    // reads 1 and 2 begin; 2 is applied first, so 1, older, is dropped
+    assert!(newest(&mut peers, 2));
+    assert!(!newest(&mut peers, 1), "an older read applied last is dropped");
+    assert!(!newest(&mut peers, 2));
+    assert!(newest(&mut peers, 3));
+}
+
+/// The heartbeat thread wakes for a short check every `lone-check-seconds`, or for the heartbeat when that is sooner.
+/// The setting is whole seconds, 1 or more, and empty is 15.
+#[test]
+fn the_heartbeat_thread_wakes_for_a_short_check_at_its_own_interval() {
+    use super::membership::{lone_check_seconds, next_wake};
+    let (minute, second) = (Duration::from_secs(60), Duration::from_secs(1));
+    assert_eq!(next_wake(minute, Duration::from_secs(15)), Duration::from_secs(15));
+    assert_eq!(next_wake(second, Duration::from_secs(15)), second);
+    assert_eq!(lone_check_seconds(""), Ok(Duration::from_secs(15)));
+    assert_eq!(lone_check_seconds(" 1 "), Ok(second));
+    for refused in ["0", "-1", "1.5", "soon"] {
+        let err = lone_check_seconds(refused).unwrap_err();
+        assert!(err.contains("cluster-member@lone-check-seconds"), "{err}");
+    }
+}
+
+/// A short check reads the member table only while this member is alone under `auto` (here `on`, so it reads nothing for
+/// a second member), and sends a peer that is owed a clear of every entity cache its clear whatever the mode, with no
+/// write to carry it.
+#[test]
+fn a_short_check_sends_an_owed_clear_and_reads_the_table_only_alone_under_auto() {
+    let _lock = lock();
+    let _clean = Clean;
+    preset("inst-short");
+    let fingerprints = super::configured_fingerprints().unwrap();
+    let ctx =
+        ExecutionContextFactory::test_context_with_conf(r#"<moqui-conf><cluster-member listen="on"/></moqui-conf>"#);
+    let facade = crate::testing::open();
+    ctx.factory().set_entity(facade.clone());
+    let recording = install_recording(ctx.factory());
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    super::start(ctx.factory()).unwrap();
+    put_member(
+        &facade,
+        "inst-short-peer",
+        "https://short.example:8444",
+        now_value(),
+        &fingerprints.session,
+        &fingerprints.cert,
+    );
+    super::membership::short_check(ctx.factory());
+    assert!(
+        !super::cluster_detected(ctx.factory()),
+        "under on no read for a second member"
+    );
+    super::heartbeat(ctx.factory());
+    assert!(
+        super::cluster_detected(ctx.factory()),
+        "the heartbeat reads it in every mode"
+    );
+    assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
+    assert!(sync::lock(&recording.calls).is_empty(), "nothing owed, nothing sent");
+    // a post to it failed: it is owed a clear, which the next short check sends
+    let state = super::ClusterState::of(ctx.factory());
+    sync::lock(&state.peers).mark_dirty("https://short.example:8444");
+    super::membership::short_check(ctx.factory());
+    assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
+    let calls = sync::lock(&recording.calls);
+    let bodies: Vec<serde_json::Value> = calls
+        .iter()
+        .map(|call| serde_json::from_slice::<serde_json::Value>(&call.payload).unwrap()["body"].clone())
+        .collect();
+    assert_eq!(bodies, [serde_json::json!({ "clearAll": true })]);
+    assert_eq!(calls[0].base, "https://short.example:8444");
+}
+
+/// A row with this member's own base URL is not a peer (a previous run of it under another id), except the one NOTIFY
+/// address every notify member shares.
+#[test]
+fn a_row_with_this_members_own_address_is_not_a_peer() {
+    use super::membership::is_own_address;
+    assert!(is_own_address("https://10.0.0.1:8444", "https://10.0.0.1:8444"));
+    assert!(!is_own_address("https://10.0.0.2:8444", "https://10.0.0.1:8444"));
+    assert!(!is_own_address("pg-notify:", "pg-notify:"));
+    assert!(
+        !is_own_address("https://10.0.0.1:8444", ""),
+        "before this member has a base URL"
+    );
+}
+
+/// The membership hook is told when a read of the member table changes whether this member is in a cluster, and only
+/// then: not at a start alone, once when a live peer appears, not while its row is behind, once when its row is gone. A
+/// live row with this member's own base URL makes none. Joining a cluster clears this member's own caches, since a
+/// write the other member made meanwhile could not be told to it.
+#[test]
+fn the_membership_hook_is_told_of_each_change_only() {
+    let _lock = lock();
+    let _clean = Clean;
+    preset("inst-membership");
+    let fingerprints = super::configured_fingerprints().unwrap();
+    let (ctx, facade) = open_facade();
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    let told = Arc::new(Mutex::new(Vec::new()));
+    {
+        let told = Arc::clone(&told);
+        super::on_membership(ctx.factory(), Arc::new(move |cluster| sync::lock(&told).push(cluster)));
+    }
+    let taken = || std::mem::take(&mut *sync::lock(&told));
+    super::start(ctx.factory()).unwrap();
+    assert!(!super::cluster_detected(ctx.factory()));
+    assert_eq!(taken(), Vec::<bool>::new(), "alone at the start");
+    let row = |id: &str, base_url: &str, heartbeat: Value| {
+        put_member(
+            &facade,
+            id,
+            base_url,
+            heartbeat,
+            &fingerprints.session,
+            &fingerprints.cert,
+        );
+    };
+    // a previous run of this member, under another id, at its own address: not a peer
+    row("inst-membership-before", "https://127.0.0.1:8444", now_value());
+    super::heartbeat(ctx.factory());
+    assert!(
+        !super::cluster_detected(ctx.factory()),
+        "this member's own address is no peer"
+    );
+    delete_member_row(&facade, "inst-membership-before");
+    // what this member cached while alone, changed meanwhile without its knowing
+    let local = Remote { facade: facade.clone() };
+    local.put("MEMBERSHIP-1", "old");
+    assert_eq!(local.cached("MEMBERSHIP-1").as_deref(), Some("old"));
+    local.put("MEMBERSHIP-1", "new");
+    assert_eq!(local.cached("MEMBERSHIP-1").as_deref(), Some("old"), "cached");
+    let peer = |heartbeat: Value| row("inst-membership-peer", "https://peer.example:8444", heartbeat);
+    peer(now_value());
+    super::heartbeat(ctx.factory());
+    assert!(super::cluster_detected(ctx.factory()));
+    assert_eq!(taken(), [true]);
+    let until = std::time::Instant::now() + Duration::from_secs(5);
+    while local.cached("MEMBERSHIP-1").as_deref() != Some("new") {
+        assert!(
+            std::time::Instant::now() < until,
+            "joining cleared this member's caches"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    super::membership::short_check(ctx.factory());
+    super::heartbeat(ctx.factory());
+    assert_eq!(taken(), Vec::<bool>::new(), "no change, nothing told");
+    // its heartbeat falls behind, its row is still there
+    peer(stamp_value(now_millis() - 4 * 60 * 1000));
+    super::heartbeat(ctx.factory());
+    assert!(super::cluster_detected(ctx.factory()));
+    assert_eq!(taken(), Vec::<bool>::new());
+    delete_member_row(&facade, "inst-membership-peer");
+    super::heartbeat(ctx.factory());
+    assert!(!super::cluster_detected(ctx.factory()));
+    assert_eq!(taken(), [false]);
+    // a member that starts with a live peer is in a cluster from its start, which is told too
+    peer(now_value());
+    super::start(ctx.factory()).unwrap();
+    assert!(super::cluster_detected(ctx.factory()));
+    assert_eq!(taken(), [true]);
+}
+
+/// A peer whose posts failed is skipped for the backoff a test sets in place of five seconds, then posted to again.
+#[test]
+fn a_test_sets_the_backoff_of_a_peer_whose_posts_failed() {
+    let _lock = lock();
+    let _clean = Clean;
+    preset("inst-backoff");
+    let (ctx, _facade) = open_facade();
+    let state = super::ClusterState::of(ctx.factory());
+    super::mark_peer_down(&state, "https://down.example:8444");
+    assert!(
+        super::peer_down(&state, "https://down.example:8444"),
+        "five seconds by default"
+    );
+    super::set_peer_backoff(ctx.factory(), Duration::from_millis(50));
+    super::mark_peer_down(&state, "https://down.example:8444");
+    assert!(super::peer_down(&state, "https://down.example:8444"));
+    std::thread::sleep(Duration::from_millis(80));
+    assert!(!super::peer_down(&state, "https://down.example:8444"));
+}
