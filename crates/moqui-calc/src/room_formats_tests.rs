@@ -946,10 +946,34 @@ fn a_files_colours_that_are_not_rrggbb_are_set_to_none_when_it_opens() {
         color: Color::Rgb("#2E7D32".to_string()),
     });
     base.workbook.worksheets[0].color = bad();
+    // the theme: a colour slot the engine would fail to read (and the export would write as it is), and its name
+    base.workbook.theme.accent1 = "#12\"/><x a=\"".to_string();
+    base.workbook.theme.name = "Evil\"><x".to_string();
+    // the rules' own colours: a data bar's, a colour scale's, an icon set's and a rating's
+    let evil = "#00\"/><x a=\"";
+    for rule in [
+        json!({"type": "DataBar", "min": null, "max": null, "positive_color": evil, "negative_color": "#FF0000",
+            "is_gradient": false, "show_value": true}),
+        json!({"type": "ColorScale", "thresholds": [{"cfvo": "Min", "color": evil}, {"cfvo": "Max", "color": "#63BE7B"}]}),
+        json!({"type": "IconSet", "thresholds": [{"icon": "Circle", "cfvo": {"Number": 1.0}, "color": evil, "is_strict": false}],
+            "show_value": true}),
+        json!({"type": "IconRating", "icon": "Star", "color": evil, "thresholds": [[{"Number": 1.0}, false]], "show_value": true}),
+    ] {
+        let rule: moqui_core::workbook::ironcalc::base::cf_types::CfRuleInput = serde_json::from_value(rule).unwrap();
+        base.add_conditional_formatting(0, "A1:A3", rule).unwrap();
+    }
+    base.set_user_input(0, 1, 1, "5".to_string()).unwrap();
     let rooms = Rooms::default();
     let room = opened(&rooms, base);
     let room = lock(&room);
     let workbook = &room.model().workbook;
+    assert_eq!(
+        (workbook.theme.accent1.as_str(), workbook.theme.name.as_str()),
+        ("#4472C4", "Office")
+    );
+    let rules = serde_json::to_string(&room.rules_of(0).unwrap()).unwrap();
+    assert_eq!(room.rules_of(0).unwrap().len(), 4, "kept, their colours set to none");
+    assert!(!rules.contains("<x"), "{rules}");
     let all = serde_json::to_string(&(
         &workbook.styles.fonts,
         &workbook.styles.fills,
@@ -960,4 +984,174 @@ fn a_files_colours_that_are_not_rrggbb_are_set_to_none_when_it_opens() {
     assert!(!all.contains("<x"), "{all}");
     assert!(all.contains("#2E7D32"), "a colour that is one is kept");
     assert_eq!(workbook.worksheets[0].color, Color::None);
+}
+
+/// An added rule's removal compares how often it was changed, not its content: another's insertion of rows above
+/// rewrites its formula and moves its range, and it is still taken back; a redo after an undo that passed an added
+/// rule by does not add it again beside the rule another changed; a change set back over a range another's rows moved
+/// is told as passed by in part.
+#[test]
+fn an_added_rule_is_found_by_its_changes_and_a_redo_leaves_out_what_its_undo_passed_by() {
+    let rooms = Rooms::default();
+    let room = room(&rooms, "ann", 3);
+    let mut room = lock(&room);
+    let rule = |range: &str, formula: &str, fill: &str| json!({"op": "addRule", "sheet": 1, "range": range, "rule": cell_is("GreaterThan", formula, fill)});
+    let named = |room: &Room, at: usize| {
+        let rule = room.rules_of(1).unwrap()[at].clone();
+        json!({"range": rule["range"], "rule": rule["rule"]})
+    };
+    room.edit("ann", &[json!({"op": "addSheet"})]).unwrap();
+    room.edit("ann", &[rule("B5:B8", "$A$5", "#FFC7CE")]).unwrap();
+    room.edit("bob", &[json!({"op": "insertRows", "sheet": 1, "row": 1, "count": 2})])
+        .unwrap();
+    assert_eq!(
+        room.rules_of(1).unwrap()[0]["rule"]["formula"],
+        "$A$7",
+        "Bob's rows rewrote its formula"
+    );
+    room.edit("ann", &[json!({"op": "undo"})]).unwrap();
+    assert_eq!(room.take_rules_passed(), 0);
+    assert!(room.rules_of(1).unwrap().is_empty(), "Ann's rule taken back");
+
+    // Ann adds R, Bob changes it, Ann's undo passes it by, and her redo does not add R again
+    room.edit("ann", &[rule("C1:C3", "1", "#FFC7CE")]).unwrap();
+    let expect = named(&room, 0);
+    room.edit(
+        "bob",
+        &[
+            json!({"op": "changeRule", "sheet": 1, "index": 0, "expect": expect, "range": "C1:C3",
+        "rule": cell_is("GreaterThan", "1", "#BBDEFB")}),
+        ],
+    )
+    .unwrap();
+    room.edit("ann", &[json!({"op": "undo"})]).unwrap();
+    assert_eq!(room.take_rules_passed(), 1);
+    room.edit("ann", &[json!({"op": "redo"})]).unwrap();
+    assert_eq!(
+        room.rules_of(1).unwrap().len(),
+        1,
+        "Bob's rule alone, no copy of Ann's beside it"
+    );
+    assert_eq!(
+        room.rules_of(1).unwrap()[0]["rule"]["format"]["fill"]["color"],
+        "#BBDEFB"
+    );
+
+    // Ann changes a rule's colour, Bob inserts rows above it: her undo sets the colour back and keeps the moved range,
+    // and says so
+    room.edit("bob", &[rule("D5:D8", "1", "#FFC7CE")]).unwrap();
+    let expect = named(&room, 1);
+    room.edit(
+        "ann",
+        &[
+            json!({"op": "changeRule", "sheet": 1, "index": 1, "expect": expect, "range": "D5:D8",
+        "rule": cell_is("GreaterThan", "1", "#C8E6C9")}),
+        ],
+    )
+    .unwrap();
+    room.edit("bob", &[json!({"op": "insertRows", "sheet": 1, "row": 1, "count": 1})])
+        .unwrap();
+    room.edit("ann", &[json!({"op": "undo"})]).unwrap();
+    assert_eq!(room.take_rules_passed(), 1, "set back in part");
+    let back = room.rules_of(1).unwrap()[1].clone();
+    assert_eq!(
+        (back["range"].as_str(), back["rule"]["format"]["fill"]["color"].as_str()),
+        (Some("D6:D9"), Some("#FFC7CE"))
+    );
+}
+
+/// A step the engine refuses is passed by, logged, and the rest of the undo applied; a step whose sheet is gone, or is
+/// a data sheet now, is passed by too, of any kind.
+#[test]
+fn an_undo_passes_by_a_step_that_fails_or_whose_sheet_is_gone() {
+    let rooms = Rooms::default();
+    let mut pair = Pair::new(&rooms);
+    pair.write(&[
+        json!({"op": "addRule", "sheet": 1, "range": "A1:A3", "rule": cell_is("GreaterThan", "1", "#FFC7CE")}),
+    ]);
+    let id = lock(&pair.writer).rule_ids[1][0];
+    {
+        let mut room = lock(&pair.writer);
+        room.record(
+            90,
+            vec![
+                json!({"op": "setRule", "sheet": 1, "id": id, "range": "A1:A3", "rule": {"type": "Nope"},
+                "expect": {"range": "A1:A3", "rule": cell_is("GreaterThan", "1", "#FFC7CE")}, "edits": 0, "part": 0}),
+                json!({"op": "input", "sheet": 1, "row": 9, "column": 1, "value": "after", "part": 1}),
+            ],
+        );
+        assert_eq!(
+            room.undo_row(90).unwrap(),
+            vec![0],
+            "the refused step's op passed by whole"
+        );
+        assert_eq!(room.rules_passed(), 1);
+        assert_eq!(room.cell_content(1, 9, 1).unwrap(), "after", "the rest applied");
+    }
+    // Ann styles a cell of Summary, Bob moves Summary before the data sheet: her undo's step on sheet 1 is the data
+    // sheet's now, and is passed by
+    let styled = pair.write(&[
+        json!({"op": "style", "sheet": 1, "row": 1, "column": 1, "width": 1, "height": 1,
+        "path": "font.b", "value": "true"}),
+    ]);
+    pair.write(&[json!({"op": "moveSheet", "sheet": 1, "to": 0})]);
+    pair.undo(styled);
+    assert!(lock(&pair.writer).rules_passed() > 0);
+    assert!(
+        lock(&pair.writer).model().get_style_for_cell(0, 1, 1).unwrap().font.b,
+        "Summary's cell as it is"
+    );
+    // the rule, now on sheet 0, is found by its id: its removal still takes it back
+    assert_eq!(lock(&pair.writer).rules_of(0).unwrap().len(), 1);
+    pair.undo(1 + 1);
+    assert!(lock(&pair.writer).rules_of(0).unwrap().is_empty());
+    assert!(lock(&pair.follower).rules_of(0).unwrap().is_empty());
+}
+
+/// An insertion of rows inside a rule's range is held to the rules' bounds (every room decides it alike); a file's
+/// rules on a data sheet are left out when it opens.
+#[test]
+fn an_insertion_is_held_to_the_rules_bounds_and_a_data_sheets_rules_are_left_out() {
+    let rooms = Rooms::default();
+    let room = room(&rooms, "ann", 3);
+    let mut room = lock(&room);
+    room.edit(
+        "ann",
+        &[
+            json!({"op": "addSheet"}),
+            json!({"op": "addRule", "sheet": 1, "range": "A1:J10000", "rule": cell_is("GreaterThan", "1", "#FFC7CE")}),
+        ],
+    )
+    .unwrap();
+    let err = room
+        .edit("ann", &[json!({"op": "insertRows", "sheet": 1, "row": 5, "count": 1})])
+        .expect_err("past the bound");
+    assert!(err.message().contains("more than 100000 cells"), "{}", err.message());
+    room.edit("ann", &[json!({"op": "insertRows", "sheet": 1, "row": 1, "count": 1})])
+        .unwrap();
+    room.edit(
+        "ann",
+        &[json!({"op": "insertColumns", "sheet": 1, "column": 20, "count": 1})],
+    )
+    .unwrap();
+
+    let mut base = fill::new_model("Orders").unwrap();
+    let rule: moqui_core::workbook::ironcalc::base::cf_types::CfRuleInput =
+        serde_json::from_value(cell_is("GreaterThan", "1", "#FFC7CE")).unwrap();
+    base.add_conditional_formatting(0, "B2:B4", rule).unwrap();
+    let data = rooms
+        .open(Opening {
+            user_id: "ann".to_string(),
+            shared: None,
+            profile_id: None,
+            definition_id: None,
+            version: None,
+            title: "Orders".to_string(),
+            data_sheets: Vec::new(),
+            charts: Vec::new(),
+            base,
+            rows: vec![orders(3)],
+        })
+        .unwrap();
+    assert!(lock(&data).rules_of(0).unwrap().is_empty());
 }

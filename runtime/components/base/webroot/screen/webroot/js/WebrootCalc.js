@@ -251,8 +251,8 @@
         if (rule.type === "DataBar") return Object.assign(form, { kind: "bar", bar: color(rule.positive_color) || form.bar });
         return null;
     };
-    /** What the sheet says when an undo passed by rules another changed or deleted since. */
-    calc.passedText = (count) => count + " formatting rule " + (count === 1 ? "change was" : "changes were") + " changed by others since and not undone";
+    /** What the sheet says when an undo passed by what another changed or deleted since (a conditional format, a sheet). */
+    calc.passedText = (count) => count + " " + (count === 1 ? "change was" : "changes were") + " changed by others since and not undone";
     /** What an edit of a rule of the layout names it by, beside its place: its range and rule as the layout gave them. */
     calc.ruleExpect = (one) => ({ range: one.range, rule: one.rule });
     /** A rule as the dialog lists it. */
@@ -1085,7 +1085,7 @@
                     }
                     // what changed is this edit's alone when the room did not follow another's edit first
                     if (json.roomId) this.applied(json, !json.shared || Number(json.seq) === before + 1 ? json.changed : null);
-                    // an undo passed by conditional formats another changed or deleted since: said, not an error
+                    // an undo passed by what another changed or deleted since: said, not an error
                     if (Number(json.rulesPassed) > 0) this.tell(calc.passedText(Number(json.rulesPassed)));
                     return json;
                 }, (err) => { moqui.handleAjaxError(err); return null; });

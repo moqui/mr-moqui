@@ -188,9 +188,10 @@ pub fn edit(facade: &EntityFacade, room: &mut Room, user_id: &str, ops: &[Json])
                 // a rule another changed or deleted since is passed by and the rest applied (Room::take_rules_passed);
                 // a step that fails leaves the room ahead of the log, so it is opened anew
                 touched = true;
-                room.undo_row(target)?;
+                let skipped = room.undo_row(target)?;
                 let seq = log.append(log::UNDO, &[], Some(target))?;
                 log.mark_undone(target, seq)?;
+                room.record_skipped(seq, skipped);
                 room.seq = seq;
                 Ok(Edited {
                     seq,
@@ -208,6 +209,8 @@ pub fn edit(facade: &EntityFacade, room: &mut Room, user_id: &str, ops: &[Json])
                     .find(|row| Some(row.seq) == undo.target)
                     .map(|row| row.ops.clone())
                     .unwrap_or_default();
+                // the ops its undo passed by whole are not applied again (every room passed by the same)
+                let original = room.redone_ops(undo.seq, original);
                 touched = true;
                 let (applied, inverse, refused) = room.apply_ops(&original);
                 let seq = log.append(log::REDO, &applied, Some(undo.seq))?;

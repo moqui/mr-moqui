@@ -153,12 +153,16 @@ fn named(view: &Json) -> Json {
 }
 
 /// Take off the rules of a workbook just opened past the bounds an edit is held to (each rule's, a sheet's and the
-/// workbook's in all), logging what each sheet lost: a file can hold any number, of any size.
-pub(super) fn trim_rules(model: &mut Model<'static>, room: &str) {
+/// workbook's in all), and those of its data sheets (`data`: no edit sets one there, and a fill moves them by each
+/// scope's rows), logging what each sheet lost: a file can hold any number, of any size, anywhere.
+pub(super) fn trim_rules(model: &mut Model<'static>, room: &str, data: &[String]) {
     let dxfs = model.workbook.styles.dxfs.clone();
     let (mut rules, mut cells) = (0_usize, 0_i64);
     for worksheet in &mut model.workbook.worksheets {
         let before = worksheet.conditional_formatting.len();
+        if data.iter().any(|name| name.eq_ignore_ascii_case(&worksheet.get_name())) {
+            worksheet.conditional_formatting.clear();
+        }
         let (mut sheet_rules, mut sheet_cells) = (0_usize, 0_i64);
         worksheet.conditional_formatting.retain(|rule| {
             let size = range_cells(&rule.range).unwrap_or(i64::MAX);
@@ -189,6 +193,19 @@ pub(super) fn trim_rules(model: &mut Model<'static>, room: &str) {
                 "A CalcGrid workbook's sheet had conditional formats past the bounds an edit is held to; they are left out");
         }
     }
+}
+
+/// The rows (or columns) a range part spans, and its size the other way: `first`, `last`, `across`.
+fn part_span(part: &str, rows: bool) -> Option<(i64, i64, i64)> {
+    let (first, last) = part.split_once(':').unwrap_or((part, part));
+    let ((row, column), (last_row, last_column)) = (parse_cell(first)?, parse_cell(last)?);
+    let (rows_from, rows_to) = (i64::from(row.min(last_row)), i64::from(row.max(last_row)));
+    let (columns_from, columns_to) = (i64::from(column.min(last_column)), i64::from(column.max(last_column)));
+    Some(if rows {
+        (rows_from, rows_to, columns_to - columns_from + 1)
+    } else {
+        (columns_from, columns_to, rows_to - rows_from + 1)
+    })
 }
 
 /// The rule id a step names.
@@ -231,7 +248,7 @@ impl Room {
         self.rule_ids.resize_with(counts.len(), Vec::new);
         for (sheet, count) in counts.into_iter().enumerate() {
             if self.rule_ids[sheet].len() != count {
-                tracing::debug!(room = %self.id, sheet, "A CalcGrid sheet's conditional formats are given new ids");
+                tracing::warn!(room = %self.id, sheet, "A CalcGrid sheet's conditional formats are given new ids");
                 let fresh: Vec<u64> = (0..count).map(|_| self.fresh_rule_id()).collect();
                 self.rule_ids[sheet] = fresh;
             }
@@ -279,6 +296,7 @@ impl Room {
     /// A step of an undo passes its rule by: another changed or deleted it since.
     fn pass_by(&mut self, kind: &str, id: Option<u64>) {
         self.rules_passed += 1;
+        self.steps_skipped += 1;
         tracing::debug!(room = %self.id, step = kind, rule = id, "An undo passed by a conditional format changed since");
     }
 
@@ -357,7 +375,7 @@ impl Room {
         }
         if kind == "addRule" {
             return Ok(vec![
-                json!({"op": "removeRule", "sheet": sheet, "id": null, "expect": null}),
+                json!({"op": "removeRule", "sheet": sheet, "id": null, "edits": null}),
             ]);
         }
         // the edit's own refusal is its error when it is applied
@@ -367,9 +385,11 @@ impl Room {
         let (views, id) = (self.rules_of(sheet)?, self.rule_id(sheet, at));
         let view = &views[at];
         let priority = view["priority"].as_u64().unwrap_or(0);
+        // how many times it was changed before the edit: what its undo sets back
+        let edits = id.map_or(0, |id| self.rule_edits(id));
         Ok(match kind {
             "changeRule" => vec![json!({"op": "setRule", "sheet": sheet, "id": id,
-                "range": view["range"], "rule": view["rule"], "expect": null})],
+                "range": view["range"], "rule": view["rule"], "expect": null, "edits": edits})],
             "deleteRule" => {
                 // the rule applied just before it, and how many were, for its place when it is put back
                 let lower: Vec<(u64, usize)> = views
@@ -386,7 +406,7 @@ impl Room {
                     .and_then(|(_, index)| self.rule_id(sheet, *index));
                 vec![
                     json!({"op": "putRule", "sheet": sheet, "id": id, "range": view["range"], "rule": view["rule"],
-                    "after": after, "below": lower.len()}),
+                    "after": after, "below": lower.len(), "edits": edits}),
                 ]
             }
             _ => {
@@ -418,7 +438,7 @@ impl Room {
                 "removeRule" if step["id"].is_null() => {
                     if let Some(id) = self.rule_ids.get(sheet as usize).and_then(|ids| ids.last().copied()) {
                         step["id"] = json!(id);
-                        step["expect"] = self.rule_named(sheet, id).unwrap_or(Json::Null);
+                        step["edits"] = json!(self.rule_edits(id));
                     }
                 }
                 "setRule" if step["expect"].is_null() => {
@@ -428,10 +448,16 @@ impl Room {
                 }
                 "ruleCheck" => {
                     if let Some(entries) = step["rules"].as_array_mut() {
-                        for entry in entries {
+                        for entry in entries.iter_mut() {
                             if let Some(id) = step_id(entry) {
                                 entry["after"] = self.rule_named(sheet, id).unwrap_or(Json::Null);
                             }
+                        }
+                        // a rule the deletion did not move or rewrite (its corner row deleted, or none of its rows):
+                        // set back still, since the rows coming back move it, but not told as passed by when another
+                        // changed it since, as nothing of the deletion is in it
+                        for entry in entries.iter_mut() {
+                            entry["touched"] = json!(entry["after"] != entry["before"]);
                         }
                     }
                 }
@@ -487,6 +513,52 @@ impl Room {
         Ok(())
     }
 
+    /// Refuse an insertion of `count` rows (or columns) at `at` of `sheet` that would grow a rule past the bounds a
+    /// rule's edit is held to (a rule's cells, a sheet's and the workbook's in all): the engine grows each range the
+    /// insertion falls inside. Every room decides it alike, from the same rules.
+    ///
+    /// # Errors
+    ///
+    /// The refusal.
+    pub(super) fn check_insert_rules(&self, sheet: u32, rows: bool, at: i32, count: i32) -> Result<(), Error> {
+        let (at, count) = (i64::from(at), i64::from(count.max(1)));
+        let (mut sheet_cells, mut cells, mut grows) = (0_i64, 0_i64, false);
+        for (index, worksheet) in self.model().workbook.worksheets.iter().enumerate() {
+            let this = u32::try_from(index).ok() == Some(sheet);
+            for rule in &worksheet.conditional_formatting {
+                let mut size = range_cells(&rule.range).unwrap_or(0);
+                if this {
+                    for part in rule.range.split_whitespace() {
+                        if let Some((first, last, across)) = part_span(part, rows) {
+                            if first < at && at <= last {
+                                size = size.saturating_add(count.saturating_mul(across));
+                                grows = true;
+                            }
+                        }
+                    }
+                    if size > MAX_EDIT_CELLS {
+                        return Err(Error::new(format!(
+                            "The insertion would make a conditional format cover more than {MAX_EDIT_CELLS} cells"
+                        )));
+                    }
+                    sheet_cells = sheet_cells.saturating_add(size);
+                }
+                cells = cells.saturating_add(size);
+            }
+        }
+        if grows && sheet_cells > MAX_SHEET_RULE_CELLS {
+            return Err(Error::new(format!(
+                "The insertion would make the conditional formats of a sheet cover more than {MAX_SHEET_RULE_CELLS} cells"
+            )));
+        }
+        if grows && cells > MAX_WORKBOOK_RULE_CELLS {
+            return Err(Error::new(format!(
+                "The insertion would make the conditional formats of a workbook cover more than {MAX_WORKBOOK_RULE_CELLS} cells"
+            )));
+        }
+        Ok(())
+    }
+
     fn priorities(&self, sheet: u32) -> Vec<u32> {
         self.model()
             .workbook
@@ -538,7 +610,11 @@ impl Room {
                 let (range, rule) = (range(&op["range"])?, checked_rule(&op["rule"])?);
                 self.check_room_for(sheet, &range, Some(at))?;
                 self.model
-                    .update_conditional_formatting(sheet, place(at)?, &range, rule)
+                    .update_conditional_formatting(sheet, place(at)?, &range, rule)?;
+                if let Some(id) = self.rule_id(sheet, at) {
+                    self.bump(id);
+                }
+                Ok(())
             }
             "deleteRule" => {
                 let at = self.find_rule(sheet, op)?;
@@ -576,109 +652,159 @@ impl Room {
         }
     }
 
-    /// The steps of an undo of rules, each passing its rule by ([`Room::pass_by`]) when it is gone or not as its edit
-    /// left it.
+    /// The sheet and place of the rule `id`, on whichever sheet it now is (ids are unique across the workbook, and a
+    /// sheet may have moved since the step was taken).
+    fn locate(&self, id: u64) -> Option<(u32, usize)> {
+        self.rule_ids.iter().enumerate().find_map(|(sheet, ids)| {
+            let at = ids.iter().position(|found| *found == id)?;
+            Some((u32::try_from(sheet).ok()?, at))
+        })
+    }
+
+    /// How many times the rule `id` was changed by a call's change (an undo sets it back to what it was before the edit
+    /// it takes back): what an added rule's removal compares, since a rule's formulas are rewritten by any insertion or
+    /// deletion of rows or columns of its sheet, so its content does not say whether another changed it.
+    fn rule_edits(&self, id: u64) -> u64 {
+        self.rule_edits.get(&id).copied().unwrap_or(0)
+    }
+
+    fn bump(&mut self, id: u64) {
+        *self.rule_edits.entry(id).or_insert(0) += 1;
+    }
+
+    /// An undo sets a rule back as it was before an edit, with the count of its changes then: an earlier edit's undo
+    /// then finds it as that edit left it.
+    fn set_edits(&mut self, id: Option<u64>, edits: &Json) {
+        if let Some(id) = id {
+            self.rule_edits.insert(id, edits.as_u64().unwrap_or(0));
+        }
+    }
+
+    /// A step of an undo that failed in the engine: passed by and logged, the rest of the undo applied.
+    fn failed_step(&mut self, kind: &str, id: Option<u64>, err: &str) {
+        tracing::warn!(room = %self.id, step = kind, rule = id, error = err, "A step of an undo of a conditional format failed; it is passed by");
+        self.pass_by(kind, id);
+    }
+
+    /// The steps of an undo of rules, each finding its rule by id on whichever sheet it is, and passing it by
+    /// ([`Room::pass_by`]) when it is gone or not as its edit left it, or the engine refuses the step.
     fn apply_rule_undo(&mut self, op: &Json, kind: &str, sheet: u32) -> Result<(), String> {
         let id = step_id(op);
-        let found = id.and_then(|id| self.rule_at(sheet, id));
-        let now = id.and_then(|id| self.rule_named(sheet, id));
+        let located = id.and_then(|id| self.locate(id));
+        let now = located.and_then(|(sheet, at)| self.rules_of(sheet).ok()?.get(at).map(named));
         let place = |at: usize| u32::try_from(at).map_err(|err| err.to_string());
-        match kind {
-            // an added rule, still as it was added (where it is: another's insertion of rows may have moved it)
-            "removeRule" => match (found, now) {
-                (Some(at), Some(now)) if same_json(&now["rule"], &op["expect"]["rule"]) => self.delete_rule(sheet, at),
-                _ => {
-                    self.pass_by(kind, id);
-                    Ok(())
-                }
-            },
-            // a changed rule, still as the change left it: its rule back, and its range when that is as the change
-            // left it too
-            "setRule" => match (found, now) {
-                (Some(at), Some(now)) if same_json(&now["rule"], &op["expect"]["rule"]) => {
-                    let range = if now["range"] == op["expect"]["range"] {
-                        &op["range"]
-                    } else {
-                        &now["range"]
-                    };
-                    let rule = input(&op["rule"])?;
+        let outcome = match (kind, located, now) {
+            // an added rule no one changed since (where it is: another's rows may have moved it and its formulas)
+            ("removeRule", Some((sheet, at)), Some(_))
+                if Some(self.rule_edits(id.unwrap_or(0))) == op["edits"].as_u64() =>
+            {
+                self.delete_rule(sheet, at)
+            }
+            // a changed rule, still as the change left it: its rule back, and its range when that is as the change left
+            // it too; with the range another's rows moved kept, it is set back only in part, and told as passed by
+            ("setRule", Some((sheet, at)), Some(now)) if same_json(&now["rule"], &op["expect"]["rule"]) => {
+                let whole = now["range"] == op["expect"]["range"];
+                let range = if whole { &op["range"] } else { &now["range"] };
+                let set = input(&op["rule"]).and_then(|rule| {
                     self.model.update_conditional_formatting(
                         sheet,
                         place(at)?,
                         range.as_str().unwrap_or_default(),
                         rule,
                     )
+                });
+                if set.is_ok() {
+                    self.set_edits(id, &op["edits"]);
+                    if !whole {
+                        // told, but not passed by: its redo changes it again
+                        self.rules_passed += 1;
+                    }
                 }
-                _ => {
-                    self.pass_by(kind, id);
-                    Ok(())
-                }
-            },
-            "shiftRule" => match found {
-                Some(at) => self.move_rule(sheet, place(at)?, op["up"].as_bool().unwrap_or(true)),
-                None => {
-                    self.pass_by(kind, id);
-                    Ok(())
-                }
-            },
-            "putRule" => self.put_rule(op, sheet, id, found),
-            "ruleCheck" => {
+                set
+            }
+            ("shiftRule", Some((sheet, at)), _) => {
+                self.move_rule(sheet, place(at)?, op["up"].as_bool().unwrap_or(true))
+            }
+            ("putRule", _, _) => {
+                self.put_rule(op, sheet, id, located);
+                Ok(())
+            }
+            ("ruleCheck", _, _) => {
                 // which rules are as the deletion left them, before the rows come back and move them again
                 self.rule_restore.clear();
                 for entry in op["rules"].as_array().map(Vec::as_slice).unwrap_or_default() {
                     let id = step_id(entry);
-                    let now = id.and_then(|id| self.rule_named(sheet, id));
+                    let now = id
+                        .and_then(|id| self.locate(id))
+                        .and_then(|(sheet, at)| self.rules_of(sheet).ok()?.get(at).map(named));
                     match (id, now) {
                         (Some(id), Some(now)) if entry["after"].is_object() && is_rule(&now, &entry["after"]) => {
                             self.rule_restore.push((id, entry["before"].clone()));
                         }
+                        _ if entry["touched"] == false => {}
                         _ => self.pass_by(kind, id),
                     }
                 }
                 Ok(())
             }
-            // those rules' ranges and rules (formulas the deletion made #REF! among them) as they were before it
-            _ => {
+            // those rules' ranges and rules (formulas the deletion made #REF! among them) as they were before it,
+            // each on its own: one the engine refuses is passed by
+            ("ruleRanges", _, _) => {
                 let restore = std::mem::take(&mut self.rule_restore);
                 for (id, before) in restore {
-                    let Some(at) = self.rule_at(sheet, id) else {
+                    let Some((sheet, at)) = self.locate(id) else {
                         self.pass_by(kind, Some(id));
                         continue;
                     };
-                    let rule = input(&before["rule"])?;
                     let range = before["range"].as_str().unwrap_or_default();
-                    self.model
-                        .update_conditional_formatting(sheet, place(at)?, range, rule)?;
+                    let set = input(&before["rule"])
+                        .and_then(|rule| self.model.update_conditional_formatting(sheet, place(at)?, range, rule));
+                    match set {
+                        Ok(()) => {}
+                        Err(err) => self.failed_step(kind, Some(id), &err),
+                    }
                 }
                 Ok(())
             }
+            _ => {
+                self.pass_by(kind, id);
+                Ok(())
+            }
+        };
+        if let Err(err) = outcome {
+            self.failed_step(kind, id, &err);
         }
+        Ok(())
     }
 
-    /// A `putRule` step: a deleted rule added again under its id and moved down to its place among the rules (just
-    /// after the rule applied before it, when that is still there, else above as many as were below it); passed by
-    /// when it is there already or the sheet or workbook has no room for it.
-    fn put_rule(&mut self, op: &Json, sheet: u32, id: Option<u64>, found: Option<usize>) -> Result<(), String> {
+    /// A `putRule` step: a deleted rule added again under its id on its sheet and moved down to its place among the
+    /// rules (just after the rule applied before it, when that is still there, else above as many as were below it);
+    /// passed by when it is there already, the sheet or workbook has no room for it, or the engine refuses it.
+    fn put_rule(&mut self, op: &Json, sheet: u32, id: Option<u64>, located: Option<(u32, usize)>) {
         let range = op["range"].as_str().unwrap_or_default();
-        let (Some(id), None) = (id, found) else {
+        let (Some(id), None) = (id, located) else {
             self.pass_by("putRule", id);
-            return Ok(());
+            return;
         };
         if self.check_room_for(sheet, range, None).is_err() {
             self.pass_by("putRule", Some(id));
-            return Ok(());
+            return;
         }
-        self.model
-            .add_conditional_formatting(sheet, range, input(&op["rule"])?)?;
+        let added = input(&op["rule"]).and_then(|rule| self.model.add_conditional_formatting(sheet, range, rule));
+        if let Err(err) = added {
+            self.failed_step("putRule", Some(id), &err);
+            return;
+        }
         self.push_rule_id(sheet, id);
+        self.set_edits(Some(id), &op["edits"]);
         let at = self.rule_at(sheet, id).unwrap_or(0);
-        let place = u32::try_from(at).map_err(|err| err.to_string())?;
+        let Ok(place) = u32::try_from(at) else { return };
         let after = op["after"].as_u64().and_then(|after| self.rule_at(sheet, after));
         let below = usize::try_from(op["below"].as_u64().unwrap_or(0)).unwrap_or(usize::MAX);
         let count = self.priorities(sheet).len();
         for _ in 0..count {
             let priorities = self.priorities(sheet);
-            let mine = priorities[at];
+            let Some(&mine) = priorities.get(at) else { return };
             let lower: Vec<usize> = (0..priorities.len())
                 .filter(|other| priorities[*other] < mine)
                 .collect();
@@ -689,11 +815,14 @@ impl Room {
                 (None, Some(_)) => lower.len() <= below,
             };
             if done {
-                break;
+                return;
             }
-            self.model.lower_conditional_formatting_priority(sheet, place)?;
+            if let Err(err) = self.model.lower_conditional_formatting_priority(sheet, place) {
+                // in, but not at its place: logged, the rest of the undo applied
+                tracing::warn!(room = %self.id, rule = id, error = %err, "A conditional format put back was not moved to its place");
+                return;
+            }
         }
-        Ok(())
     }
 
     /// The steps that set back a sheet's rules after a deletion of its rows or columns moves their ranges and
@@ -728,8 +857,9 @@ impl Room {
             .iter()
             .map(|at| {
                 let view = &views[*at];
-                json!({"op": "putRule", "sheet": sheet, "id": self.rule_id(sheet, *at), "range": view["range"],
-                    "rule": view["rule"], "after": null, "below": usize::MAX})
+                let id = self.rule_id(sheet, *at);
+                json!({"op": "putRule", "sheet": sheet, "id": id, "range": view["range"],
+                    "rule": view["rule"], "after": null, "below": usize::MAX, "edits": id.map_or(0, |id| self.rule_edits(id))})
             })
             .collect())
     }

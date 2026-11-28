@@ -325,8 +325,8 @@ test("a data sheet's column is escaped in its reference, a rating's icons are he
     assert.equal(calc.cellNode({ text: "", decor: { rating } }).textContent.length, calc.MAX_RATING);
     const one = { index: 2, range: "B1:B5", priority: 3, rule: { type: "Top10", rank: 1 } };
     assert.deepEqual(calc.ruleExpect(one), { range: "B1:B5", rule: { type: "Top10", rank: 1 } });
-    assert.equal(calc.passedText(1), "1 formatting rule change was changed by others since and not undone");
-    assert.equal(calc.passedText(2), "2 formatting rule changes were changed by others since and not undone");
+    assert.equal(calc.passedText(1), "1 change was changed by others since and not undone");
+    assert.equal(calc.passedText(2), "2 changes were changed by others since and not undone");
 });
 
 test("a fill handle not taken over is taken away", async () => {

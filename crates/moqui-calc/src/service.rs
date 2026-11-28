@@ -1350,11 +1350,11 @@ fn edit_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
     } else if let Err(err) = held.edit(&user, &ops) {
         add_error(err.message());
     }
-    // an undo passes by the conditional formats another changed or deleted since, and says so
+    // an undo passes by what another changed or deleted since (a conditional format, a sheet), and says so
     let passed = held.take_rules_passed();
     if passed > 0 {
         let message = format!(
-            "{passed} formatting rule {} changed by others since and not undone",
+            "{passed} {} changed by others since and not undone",
             if passed == 1 { "change was" } else { "changes were" }
         );
         ExecutionContext::with_current(|ec| ec.message().add_message(message));

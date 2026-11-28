@@ -355,6 +355,103 @@ fn an_undo_of_a_rule_deleted_since_passes_it_by_and_the_stack_goes_on() {
     }
 }
 
+/// A room opened after a save numbers the rules of the saved version afresh, and follows another person's rule edit,
+/// its undo and a redo from the log as the older rooms do, each by its own ids; a redo leaves out an add its undo
+/// passed by, in every room.
+#[test]
+fn a_room_opened_after_a_save_follows_rule_edits_and_their_undo_by_its_own_ids() {
+    let (_ctx, facade) = log_context();
+    let rooms = Rooms::default();
+    let west = scope_room(&rooms, "ann", "west", orders(&[10.0, 20.0, 30.0], "West"));
+    let east = scope_room(&rooms, "otto", "east", orders(&[100.0, 200.0], "East"));
+    let rule = |range: &str, fill: &str| {
+        json!({"op": "addRule", "sheet": 1, "range": range, "rule": {"type": "CellIs",
+        "operator": "GreaterThan", "formula": "1", "format": {"fill": {"color": fill}}, "stop_if_true": false}})
+    };
+    edit(
+        &facade,
+        &mut lock(&west),
+        "ann",
+        &[
+            json!({"op": "addSheet"}),
+            rule("A1:A3", "#FFC7CE"),
+            rule("B1:B3", "#C8E6C9"),
+        ],
+    )
+    .unwrap();
+    save(&facade, &mut lock(&west), "ann", |_, version| {
+        Ok(Some(version.unwrap_or(1) + 1))
+    })
+    .unwrap();
+    let saved_seq = lock(&west).seq;
+    let stored = lock(&west).stored_form().unwrap();
+    let north = rooms
+        .open(Opening {
+            user_id: "nina".to_string(),
+            shared: Some((
+                crate::room::document_room_id("doc-1", Some("sales"), "north"),
+                saved_seq,
+            )),
+            profile_id: Some("sales".to_string()),
+            definition_id: Some("doc-1".to_string()),
+            version: Some(2),
+            title: "Orders".to_string(),
+            data_sheets: vec![DataSheet {
+                name: "Orders".to_string(),
+                spec: json!({"name": "Orders", "source": {"type": "entity", "entityName": "test.Order"}}),
+            }],
+            charts: Vec::new(),
+            base: fill::open_stored(&stored).unwrap(),
+            rows: vec![orders(&[1.0], "North")],
+        })
+        .unwrap();
+    // Otto changes the second rule and takes it back; Ann adds a rule, Otto changes it, Ann's undo passes it by and her
+    // redo does not add it again
+    catch_up(&facade, &mut lock(&east)).unwrap();
+    let shown = |room: &SharedRoom, at: usize| {
+        let views = lock(room).rules_view(1);
+        let rule = views.iter().find(|rule| rule["index"] == at).unwrap().clone();
+        json!({"range": rule["range"], "rule": rule["rule"]})
+    };
+    let change = |expect: Json, fill: &str| {
+        json!({"op": "changeRule", "sheet": 1, "index": 1, "expect": expect, "range": "B1:B3",
+        "rule": {"type": "CellIs", "operator": "GreaterThan", "formula": "1", "format": {"fill": {"color": fill}}, "stop_if_true": false}})
+    };
+    let blue = change(shown(&east, 1), "#BBDEFB");
+    edit(&facade, &mut lock(&east), "otto", &[blue]).unwrap();
+    edit(&facade, &mut lock(&east), "otto", &[json!({"op": "undo"})]).unwrap();
+    edit(&facade, &mut lock(&west), "ann", &[rule("C1:C3", "#FFE0B2")]).unwrap();
+    catch_up(&facade, &mut lock(&east)).unwrap();
+    let mut third = change(shown(&east, 2), "#E1BEE7");
+    third["index"] = json!(2);
+    third["range"] = json!("C1:C3");
+    edit(&facade, &mut lock(&east), "otto", &[third]).unwrap();
+    edit(&facade, &mut lock(&west), "ann", &[json!({"op": "undo"})]).unwrap();
+    assert_eq!(lock(&west).take_rules_passed(), 1);
+    edit(&facade, &mut lock(&west), "ann", &[json!({"op": "redo"})]).unwrap();
+    for room in [&east, &north] {
+        catch_up(&facade, &mut lock(room)).unwrap();
+    }
+    let rules = |room: &SharedRoom| {
+        let mut rules = lock(room).rules_view(1);
+        rules.reverse();
+        rules
+            .iter()
+            .map(|rule| {
+                format!(
+                    "{} {}",
+                    rule["range"].as_str().unwrap(),
+                    rule["rule"]["format"]["fill"]["color"].as_str().unwrap()
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let expected = ["A1:A3 #FFC7CE", "B1:B3 #C8E6C9", "C1:C3 #E1BEE7"];
+    for room in [&west, &east, &north] {
+        assert_eq!(rules(room), expected);
+    }
+}
+
 #[test]
 fn the_others_in_a_document_are_seen_by_name_and_place_and_one_who_left_is_not() {
     let presence = Presence::default();

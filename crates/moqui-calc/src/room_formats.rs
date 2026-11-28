@@ -354,13 +354,18 @@ macro_rules! clean_each {
         let mut cleaned = 0;
         for item in $items.iter_mut() {
             let Ok(mut value) = serde_json::to_value(&*item) else {
+                tracing::warn!(kind = stringify!($kind), "A CalcGrid workbook's style could not be read to check its colours");
                 continue;
             };
             let count = clean_json(&mut value);
             if count > 0 {
-                if let Ok(fixed) = serde_json::from_value::<$kind>(value) {
-                    *item = fixed;
-                    cleaned += count;
+                match serde_json::from_value::<$kind>(value) {
+                    Ok(fixed) => {
+                        *item = fixed;
+                        cleaned += count;
+                    }
+                    Err(err) => tracing::warn!(kind = stringify!($kind), error = %err,
+                        "A CalcGrid workbook's style with colours that are not #RRGGBB could not be set right"),
                 }
             }
         }
@@ -369,13 +374,42 @@ macro_rules! clean_each {
 }
 
 /// Set to none every colour of a workbook just opened that is not `#RRGGBB` (or a theme's), logged: in its fonts,
-/// fills, borders, the conditional formats' formats and rules, and the sheets' tabs. A file's colour is kept as the
-/// file has it, and goes into an exported file's XML as it is.
+/// fills, borders, the conditional formats' formats and rules, and the sheets' tabs; and set its theme's colours that
+/// are not `#RRGGBB` to the default theme's, and a theme name of other than letters, digits, spaces and `-_.` to
+/// Office. A file's colour is kept as the file has it, and goes into an exported file's XML as it is (and a theme's
+/// that is not a colour fails the engine's reading of it).
 pub(super) fn clean_colors(model: &mut Model<'static>, room: &str) {
     use moqui_core::workbook::ironcalc::base::cf_types::CfRule;
-    use moqui_core::workbook::ironcalc::base::types::{Border, Color, Dxf, Fill, Font};
+    use moqui_core::workbook::ironcalc::base::types::{Border, Color, Dxf, Fill, Font, Theme};
+    let mut cleaned = 0;
+    let (theme, default) = (&mut model.workbook.theme, Theme::default());
+    let slots = [
+        (&mut theme.dk1, default.dk1),
+        (&mut theme.lt1, default.lt1),
+        (&mut theme.dk2, default.dk2),
+        (&mut theme.lt2, default.lt2),
+        (&mut theme.accent1, default.accent1),
+        (&mut theme.accent2, default.accent2),
+        (&mut theme.accent3, default.accent3),
+        (&mut theme.accent4, default.accent4),
+        (&mut theme.accent5, default.accent5),
+        (&mut theme.accent6, default.accent6),
+        (&mut theme.hlink, default.hlink),
+        (&mut theme.fol_hlink, default.fol_hlink),
+    ];
+    for (slot, fallback) in slots {
+        if !hex_color(slot) {
+            *slot = fallback;
+            cleaned += 1;
+        }
+    }
+    let safe = |ch: char| ch.is_ascii_alphanumeric() || matches!(ch, ' ' | '-' | '_' | '.');
+    if !theme.name.chars().all(safe) {
+        theme.name = default.name;
+        cleaned += 1;
+    }
     let styles = &mut model.workbook.styles;
-    let mut cleaned = clean_each!(styles.fonts, Font)
+    cleaned += clean_each!(styles.fonts, Font)
         + clean_each!(styles.fills, Fill)
         + clean_each!(styles.borders, Border)
         + clean_each!(styles.dxfs, Dxf);
