@@ -18,6 +18,8 @@
 //! ec.llm.complete({prompt, system, messages, model, feature, tier, schema, schemaName, reasoning, maxOutput,
 //!         timeoutSeconds, allowInTransaction})
 //!     -> {text, json, modelId, finish, inputTokens, cachedInputTokens, outputTokens, cost, callIds}
+//! ec.llm.stream(options, onText)    options as complete; onText(textSoFar) runs each time more text comes
+//!     -> as complete; onText returning false stops the call: then the text so far, finish "canceled" and no json
 //! ec.llm.embed(texts, {model, feature, allowInTransaction}) -> {vectors, dimension, modelId, modelName}
 //! ec.llm.isEnabled() -> boolean
 //! ec.llm.summarize(text, {maxWords, allowInTransaction}) -> string
@@ -52,6 +54,7 @@ static LLM: HostClass = HostClass {
     name: "host:Llm",
     methods: &[
         host_method!("ec.llm", "complete", [Value], None, complete),
+        host_method!("ec.llm", "stream", [Value, Callback], None, leaf, stream),
         host_method!("ec.llm", "embed", [Value, OptValue], None, embed),
         host_method!("ec.llm", "isEnabled", [], is_enabled),
         host_method!("ec.llm", "summarize", [Text, OptValue], None, summarize),
@@ -215,9 +218,50 @@ fn text_option(map: &moqui_lib::object::ValueMap, key: &str) -> Option<String> {
 }
 
 fn complete(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let ask = complete_request(call, "complete")?;
+    let (factory, facade) = (factory()?, entity()?);
+    let completion = crate::facade(&factory)
+        .complete(&facade, &ask)
+        .map_err(HostError::Lib)?;
+    Ok(Ret::Value(completion_value(completion)))
+}
+
+/// `ec.llm.stream(options, onText)`: [`complete`] with `onText` called with the text so far as it comes. A leaf, so it
+/// can call back: the checks before the call (the model, the quota, which may run nested scripts) run with the engine
+/// lent, then the call runs and calls back on this thread. A callback that throws stops the call, and the error is
+/// thrown.
+fn stream(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let ask = complete_request(call, "stream")?;
+    let (factory, facade) = (factory()?, entity()?);
+    let llm = crate::facade(&factory);
+    let mut prepared = None;
+    call.ops
+        .lend(&mut || prepared = Some(llm.prepare_complete(&facade, &ask)))?;
+    let prepared = prepared
+        .ok_or_else(|| HostError::message("ec.llm.stream did not prepare the call"))?
+        .map_err(HostError::Lib)?;
+    let mut failed = None;
+    let ops = &mut *call.ops;
+    let mut on_text = |text: &str| match ops.call_back(0, vec![Value::String(text.to_string())]) {
+        Ok(Value::Bool(false)) => false,
+        Ok(_) => true,
+        Err(error) => {
+            failed = Some(error);
+            false
+        }
+    };
+    let completion = llm.run_complete(&facade, &ask, prepared, Some(&mut on_text));
+    if let Some(error) = failed {
+        return Err(error);
+    }
+    Ok(Ret::Value(completion_value(completion.map_err(HostError::Lib)?)))
+}
+
+/// The [`crate::CompleteRequest`] of `ec.llm.complete`'s (or `stream`'s) options map.
+fn complete_request(call: &Call<'_>, name: &str) -> Result<CompleteRequest, HostError> {
     {
         let Value::Map(map) = call.value_or_null(0) else {
-            return Err(HostError::message("ec.llm.complete takes an options map"));
+            return Err(HostError::message(format!("ec.llm.{name} takes an options map")));
         };
         let mut ask = CompleteRequest {
             model: text_option(&map, "model"),
@@ -265,10 +309,13 @@ fn complete(call: &mut Call<'_>) -> Result<Ret, HostError> {
                 });
             }
         }
-        let (factory, facade) = (factory()?, entity()?);
-        let completion = crate::facade(&factory)
-            .complete(&facade, &ask)
-            .map_err(HostError::Lib)?;
+        Ok(ask)
+    }
+}
+
+/// A completion as the script sees it.
+fn completion_value(completion: crate::Completion) -> Value {
+    {
         let mut out = indexmap::IndexMap::default();
         let count = |value: u64| moqui_lib::object::Value::I64(i64::try_from(value).unwrap_or(i64::MAX));
         out.insert("text".to_string(), moqui_lib::object::Value::String(completion.text));
@@ -306,7 +353,7 @@ fn complete(call: &mut Call<'_>) -> Result<Ret, HostError> {
                     .collect(),
             ),
         );
-        Ok(Ret::Value(Value::Map(out)))
+        Value::Map(out)
     }
 }
 

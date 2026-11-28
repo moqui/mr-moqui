@@ -280,3 +280,49 @@ fn ec_llm_embed_returns_the_vectors_in_the_order_of_the_texts() {
         limit(&seen[1])
     );
 }
+
+/// `ec.llm.stream` calls back with the text so far as it comes, and gives what `complete` gives; a callback that returns
+/// false stops the call with the text so far, and one that throws stops it with the error.
+#[test]
+fn ec_llm_stream_calls_back_with_the_text_so_far_and_can_stop() {
+    clear_context_stack();
+    let context = ExecutionContextFactory::test_context_with_conf(&CONF.replace("script-fake", "stream-fake"));
+    context.factory().set_entity(moqui_core::testing::open());
+    let _entered = context.enter();
+    crate::provider::fake::clear("stream-fake");
+    let holds = |expression: &str| assert!(eval_condition(expression).unwrap(), "{expression}");
+    holds(
+        r#"(function () {
+            const seen = [];
+            const answer = ec.llm.stream({model: "script-model", prompt: "Say hi"}, (text) => { seen.push(text); });
+            return seen.length > 1 && seen[seen.length - 1] === answer.text && answer.text === "Fake reply to: Say hi"
+                && seen.every((text, i) => i === 0 || text.startsWith(seen[i - 1])) && answer.finish === "stop"
+                && answer.callIds.length === 1;
+        })()"#,
+    );
+    holds(
+        r#"(function () {
+            const seen = [];
+            const answer = ec.llm.stream({model: "script-model", prompt: "Say hi"}, (text) => { seen.push(text); return false; });
+            return seen.length === 1 && answer.text === seen[0] && answer.text.length < "Fake reply to: Say hi".length
+                && answer.finish === "canceled" && answer.json === null;
+        })()"#,
+    );
+    holds(
+        r#"(function () {
+            const answer = ec.llm.stream({feature: "classify", prompt: "Invoice #12",
+                schema: {type: "object", required: ["label"], properties: {label: {enum: ["invoice", "other"]}}}}, () => true);
+            return answer.json.label === "invoice" && answer.finish === "stop";
+        })()"#,
+    );
+    let error = run_script(
+        r#"ec.llm.stream({model: "script-model", prompt: "Say hi"}, () => { throw new Error("no more"); })"#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("no more"), "{error}");
+    let error = run_script(r#"ec.llm.stream("Say hi", () => true)"#)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("ec.llm.stream takes an options map"), "{error}");
+}
