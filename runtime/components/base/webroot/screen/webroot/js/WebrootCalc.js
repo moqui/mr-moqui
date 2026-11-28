@@ -15,7 +15,8 @@
  *     With editUrl (the transition that applies edits: roomId, opsJson) and contentUrl (a cell's content as typed) the
  *     sheet is edited: a toolbar (undo, redo, font, colours, alignment, number format, rows and columns, a chart), a
  *     formula bar that completes function and table names, a cell's editor on a double click, Delete, a paste of rows of
- *     cells, a column's width, and sheets added, renamed and deleted. Each edit is sent to the server, which answers the
+ *     cells, a column's width, the fill handle dragged down, up or across (the engine's autofill), and sheets added,
+ *     renamed and deleted. Each edit is sent to the server, which answers the
  *     room's new state (emitted as changed, for the holder of room to take); the cells are then asked again. A data
  *     sheet is not edited. It also emits selection (sheet, row, column, lastRow, lastColumn and the range's name).
  *     A saved document's room (room.shared) is edited together: the sheet joins it on the notification socket
@@ -25,7 +26,8 @@
  *   - the pure helpers: columnName(n), cellCss(style, fill, cellType) and applyCss(element, css), blockRows(block),
  *     neededRange(have, first, last, rows, margin), chartConfig(chart), completions(text, caret, tables, functions),
  *     rangeName(range, sheetName), pasteRows(text), tableName(sheetName), peerColor(index), receive(peers, seq, frame)
- *     and peerCells(peers, sheet).
+ *     and peerCells(peers, sheet), fillOp(sheet, source, target, rowAt, columnAt); and takeFillHandle(table, onFill),
+ *     which takes Tabulator 6.7's fill handle (its internals, pinned by the spec).
  */
 (function (root) {
     "use strict";
@@ -228,6 +230,52 @@
         return true;
     };
     calc.MAX_FORGET_ROWS = 5000;
+
+    /**
+     * The `fill` edit of a drag of the fill handle (plans/IronCalc-DB2.md CG2.1): `source` the range dragged from and
+     * `target` the range it was stretched to along one axis, both as Tabulator's range rects (top, bottom, left, right:
+     * positions among the table's rows and columns, from 0); `rowAt` and `columnAt` give a position's sheet row and
+     * column. Null when the range did not grow.
+     */
+    calc.fillOp = (sheet, source, target, rowAt, columnAt) => {
+        const top = rowAt(source.top), bottom = rowAt(source.bottom), left = columnAt(source.left), right = columnAt(source.right);
+        if (!top || !bottom || !left || !right) return null;
+        const op = { op: "fill", sheet, row: top, column: left, width: right - left + 1, height: bottom - top + 1 };
+        if (target.top < source.top) op.toRow = rowAt(target.top);
+        else if (target.bottom > source.bottom) op.toRow = rowAt(target.bottom);
+        else if (target.left < source.left) op.toColumn = columnAt(target.left);
+        else if (target.right > source.right) op.toColumn = columnAt(target.right);
+        else return null;
+        return op.toRow || op.toColumn ? op : null;
+    };
+    /**
+     * Take the drop of a table's fill handle (Tabulator 6.7's `selectRange.fillHandle`, with `selectableRangeFill`):
+     * in place of setting the cells' data in the browser, `onFill(source, target)` is given the range dragged from and
+     * the range it reached (the rects of calc.fillOp), and the range reached is selected. The handle's own mousedown and
+     * moves draw the preview as before. False when the table has no fill handle of that shape (another Tabulator).
+     */
+    calc.takeFillHandle = (table, onFill) => {
+        const ranges = table && table.modules && table.modules.selectRange, handle = ranges && ranges.fillHandle;
+        const extend = handle && handle.constructor && handle.constructor.extendAlongAxis;
+        if (!handle || typeof handle.handleMouseUp !== "function" || typeof extend !== "function") return false;
+        // bound once: the handle adds and removes this same function as the document's mouseup listener
+        handle.handleMouseUp = function handleMouseUp() {
+            this.isActive = false;
+            this.unsubscribe("cell-mousemove", this.handleCellMouseMove);
+            document.removeEventListener("mouseup", this.handleMouseUp);
+            const preview = this.preview, source = this.source;
+            this.preview = null;
+            if (!preview || !source) return;
+            const target = extend(source, this.pointerRow, this.pointerCol);
+            try {
+                this.rangeManager.clearRanges();
+                this.rangeManager.addRange(preview.getStartCell(), preview.getEndCell());
+            } catch (_) { /* the table changed meanwhile */ }
+            preview.destroy();
+            onFill(source, target);
+        }.bind(handle);
+        return true;
+    };
     /** The cells of `sheet` the others are on: "row:column" to the colour of whoever is there. */
     calc.peerCells = (peers, sheet) => {
         const cells = new Map();
@@ -497,7 +545,7 @@
                 for (let r = 0; r < rowCount; r++) data[r] = { id: r + 1 };
                 this.table = new root.Tabulator(element, { data, columns, index: "id", height: this.height, layout: "fitData", placeholder: "",
                     frozenRows: Number(sheet.frozenRows || 0), columnDefaults: { tooltip: false }, editTriggerEvent: "dblclick",
-                    selectableRange: 1, selectableRangeColumns: true, selectableRangeRows: true, selectableRangeClearCells: false,
+                    selectableRange: 1, selectableRangeColumns: true, selectableRangeRows: true, selectableRangeClearCells: false, selectableRangeFill: cellEdits,
                     clipboard: "copy", clipboardCopyStyled: false, clipboardCopyRowRange: "range", clipboardCopyConfig: { rowHeaders: false, columnHeaders: false } });
                 this.table.on("tableBuilt", () => {
                     vm.table.on("scrollVertical", () => vm.load());
@@ -506,6 +554,8 @@
                         const at = column.getDefinition().calcColumn;
                         if (at) vm.edit([{ op: "width", sheet: vm.sheetIndex, column: at, width: Math.round(column.getWidth()) }]);
                     });
+                    // the fill handle's drop is the engine's autofill, as Fill down is
+                    if (cellEdits) calc.takeFillHandle(vm.table, (source, target) => vm.fillTo(source, target));
                     if (topRow && topRow > 1) vm.table.scrollToRow(Math.min(topRow, rowCount), "top", false).then(() => vm.load(), () => vm.load()); else vm.load();
                 });
             },
@@ -667,6 +717,17 @@
             fillDown() {
                 if (this.active.lastRow <= this.active.row) return null;
                 return this.edit([{ op: "fill", sheet: this.sheetIndex, row: this.active.row, column: this.active.column, width: this.active.lastColumn - this.active.column + 1, height: 1, toRow: this.active.lastRow }]);
+            },
+            // a drag of the fill handle (calc.takeFillHandle): positions among the table's rows and columns
+            fillTo(source, target) {
+                const table = this.table;
+                if (!table) return null;
+                const ranges = table.modules.selectRange, rows = ranges.getTableRows(), columns = ranges.getTableColumns();
+                const rowAt = (at) => (rows[at] && rows[at].getData().id) || null;
+                // the row numbers' column is the first: a drag onto it stops at column A
+                const columnAt = (at) => (columns[at] ? columns[at].getDefinition().calcColumn || 1 : null);
+                const op = calc.fillOp(this.sheetIndex, source, target, rowAt, columnAt);
+                return op ? this.edit([op]) : null;
             },
             clearSelection() { return this.edit([Object.assign({ op: "clear" }, this.selection())]); },
             // a cell's editor: what was typed into it (asked when it opens), set on Enter, Tab or leaving it

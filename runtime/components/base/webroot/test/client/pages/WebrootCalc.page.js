@@ -127,3 +127,53 @@ test("the others' places are the cells of the sheet shown, in each one's colour,
     assert.equal(cells.get("10:1"), calc.peerColor(2));
     assert.notEqual(calc.peerColor(0), calc.peerColor(1));
 });
+
+/** A table as the sheet builds one: the row numbers, then columns A to C, ten rows of no data. */
+async function sheetTable(options) {
+    const element = document.createElement("div");
+    document.body.appendChild(element);
+    const columns = [{ title: "", field: "id", width: 56, frozen: true, headerSort: false }]
+        .concat([1, 2, 3].map((c) => ({ title: calc.columnName(c), field: "c" + c, calcColumn: c, headerSort: false })));
+    const data = Array.from({ length: 10 }, (unused, at) => ({ id: at + 1 }));
+    // calcColumn is the sheet's own column option, which Tabulator does not know
+    const table = new Tabulator(element, Object.assign({ data, columns, index: "id", height: "320px", layout: "fitData", debugInvalidOptions: false,
+        selectableRange: 1, selectableRangeColumns: true, selectableRangeRows: true }, options));
+    await new Promise((resolve) => table.on("tableBuilt", resolve));
+    return { table, done: () => { table.destroy(); element.remove(); } };
+}
+
+test("a drag of the fill handle is the engine's fill, down, up or across", () => {
+    const rowAt = (at) => at + 1, columnAt = (at) => at;
+    assert.deepEqual(calc.fillOp(1, { top: 0, bottom: 1, left: 1, right: 2 }, { top: 0, bottom: 4, left: 1, right: 2 }, rowAt, columnAt),
+        { op: "fill", sheet: 1, row: 1, column: 1, width: 2, height: 2, toRow: 5 });
+    assert.equal(calc.fillOp(1, { top: 3, bottom: 3, left: 2, right: 2 }, { top: 1, bottom: 3, left: 2, right: 2 }, rowAt, columnAt).toRow, 2);
+    assert.equal(calc.fillOp(1, { top: 3, bottom: 3, left: 2, right: 2 }, { top: 3, bottom: 3, left: 2, right: 5 }, rowAt, columnAt).toColumn, 5);
+    assert.equal(calc.fillOp(1, { top: 3, bottom: 3, left: 2, right: 2 }, { top: 3, bottom: 3, left: 1, right: 2 }, rowAt, columnAt).toColumn, 1);
+    assert.equal(calc.fillOp(1, { top: 3, bottom: 3, left: 2, right: 2 }, { top: 3, bottom: 3, left: 2, right: 2 }, rowAt, columnAt), null);
+});
+
+// Tabulator 6.7's internals the sheet uses: the fill handle of selectRange (its mousedown, the cell moves, the document's
+// mouseup it listens for, extendAlongAxis), and a row's setHeight
+test("the fill handle's drop is taken from Tabulator and the range reached is selected", async () => {
+    const { table, done } = await sheetTable({ selectableRangeFill: true });
+    try {
+        let dropped = null;
+        assert.equal(calc.takeFillHandle(table, (source, target) => { dropped = { source, target }; }), true);
+        table.addRange(table.getRow(2).getCell("c1"), table.getRow(3).getCell("c1"));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const handle = table.modules.selectRange.fillHandle;
+        handle.handleMouseDown({ button: 0, preventDefault() {}, stopPropagation() {} });
+        handle.handleCellMouseMove(null, table.getRow(6).getCell("c1")._cell);
+        document.dispatchEvent(new MouseEvent("mouseup"));
+        assert.ok(dropped, "the drop was taken");
+        assert.deepEqual([dropped.source.top, dropped.source.bottom, dropped.target.top, dropped.target.bottom], [1, 2, 1, 5]);
+        const ranges = table.modules.selectRange, rows = ranges.getTableRows(), columns = ranges.getTableColumns();
+        assert.deepEqual(calc.fillOp(0, dropped.source, dropped.target, (at) => rows[at].getData().id, (at) => columns[at].getDefinition().calcColumn),
+            { op: "fill", sheet: 0, row: 2, column: 1, width: 1, height: 2, toRow: 6 });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const bounds = table.getRanges()[0].getBounds();
+        assert.deepEqual([bounds.start.row.data.id, bounds.end.row.data.id], [2, 6]);
+        assert.equal(handle.preview, null, "the preview is gone");
+        assert.equal(calc.takeFillHandle({ modules: {} }, () => null), false, "a table with no fill handle");
+    } finally { done(); }
+});
