@@ -160,8 +160,12 @@ workbook on the server's spreadsheet engine (IronCalc; plan [IronCalc-DB](../../
   order and calculated once), which answers the cells again. A data sheet's cells, rows, columns and name are not
   edited, nor its borders and merges; its column widths, row heights and frozen panes are. It takes no conditional
   formats either: a rule's range is cells, which other scopes' rooms and a refresh with another row count would not
-  follow, so a rule goes on a sheet beside it, over formulas that read it. A sheet has at most 500 rules, each over at
-  most 100,000 cells and a million in all, since every calculation walks them.
+  follow, so a rule goes on a sheet beside it, over formulas that read it. Every calculation walks every rule's cells,
+  so a rule covers at most 100,000 cells, a sheet's rules 500 and a million cells in all, a workbook's 2,000 and two
+  million; a rule is at most 4 KB, with at most three thresholds for a colour scale, five for icons and nine for a
+  rating, and its colours are `#RRGGBB` (as a border's are). A workbook opened with more keeps what fits, and a sheet
+  at most 2,000 merged cells; what is left out is logged. A rule is named by its place and, from the dialog, by what it
+  is, so an edit made after another person's changes of the rules finds its rule or is refused.
 - **Editing together.** Everyone who has a saved document open edits the same workbook. An edit is the next row of
   the document's edit log (`moqui.calc.CalcDocumentEdit`), written under a lock of its head row, so the edits of every
   room and server are one order; every room of the document applies them in it, each over its own data (a formula
@@ -172,8 +176,10 @@ workbook on the server's spreadsheet engine (IronCalc; plan [IronCalc-DB](../../
 - **Undo is each person's own** (Ctrl+Z, Ctrl+Y): it takes back the person's own last edit since the document was
   saved, whoever edited after it, with what the room took of the cells before the edit (their contents as typed and
   their own styles, the widths and heights, the sheet; for a border, the ring of cells around it too, whose facing
-  sides it changes; the merged cells a merge, an unmerge, a fill or a deletion of rows, columns or a sheet met; the
-  sheet's conditional formats as they were).
+  sides it changes; the merged cells a merge, an unmerge, a fill or a deletion of rows, columns or a sheet met; the one
+  conditional format the edit touched, found by what the edit left it as, and for a deletion of rows or columns the
+  rules' ranges it moved). Another person's later edits of the rules stay; an undo whose rule was changed or deleted
+  since is refused, with nothing taken back.
 - **Unsaved edits are kept** in the log until the document is saved: they outlast a restart and everyone leaving, and
   the status line says how many there are. Save document makes a version of everything up to then; Discard takes
   every unsaved edit back, everyone's. A version saved outside CalcGrid (a definition restored, a git pull) begins the

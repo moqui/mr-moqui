@@ -314,6 +314,36 @@ fn borders_merges_and_rules_go_through_the_log_and_their_undo_reaches_every_room
     assert!(fill(&east).is_null());
 }
 
+/// An undo of a rule another has deleted since is refused under the log's lock before any step is applied: nothing is
+/// written, and the room is not opened anew.
+#[test]
+fn an_undo_of_a_rule_deleted_since_is_refused_and_the_room_goes_on() {
+    let (_ctx, facade) = log_context();
+    let rooms = Rooms::default();
+    let west = scope_room(&rooms, "ann", "west", orders(&[10.0, 20.0, 30.0], "West"));
+    let east = scope_room(&rooms, "otto", "east", orders(&[100.0, 200.0], "East"));
+    let rule = json!({"op": "addRule", "sheet": 1, "range": "A1:A3", "rule": {"type": "CellIs", "operator": "GreaterThan",
+        "formula": "1", "format": {"fill": {"color": "#FFC7CE"}}, "stop_if_true": false}});
+    edit(&facade, &mut lock(&west), "ann", &[json!({"op": "addSheet"}), rule]).unwrap();
+    // Otto deletes Ann's rule, named by what his view shows of it
+    catch_up(&facade, &mut lock(&east)).unwrap();
+    let shown = lock(&east).rules_view(1)[0].clone();
+    let expect = json!({"range": shown["range"], "rule": shown["rule"]});
+    edit(&facade, &mut lock(&east), "otto", &[json!({"op": "deleteRule", "sheet": 1, "index": 0, "expect": expect})])
+        .unwrap();
+    let Err(err) = edit(&facade, &mut lock(&west), "ann", &[json!({"op": "undo"})]) else {
+        panic!("an undo of a rule deleted since");
+    };
+    assert!(err.message().contains("changed or deleted since"), "{}", err.message());
+    assert!(!err.message().contains(REOPEN));
+    // nothing written: the room is at the log, and goes on with the next edit
+    assert_eq!(log::head(&facade, "doc-1").unwrap().unwrap().last_seq, 2);
+    assert_eq!(lock(&west).seq, 2);
+    assert_eq!(lock(&west).model().workbook.worksheets.len(), 2, "the sheet stays");
+    edit(&facade, &mut lock(&west), "ann", &[json!({"op": "input", "sheet": 1, "row": 1, "column": 1, "value": "5"})])
+        .unwrap();
+}
+
 #[test]
 fn the_others_in_a_document_are_seen_by_name_and_place_and_one_who_left_is_not() {
     let presence = Presence::default();

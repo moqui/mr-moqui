@@ -17,7 +17,7 @@ use serde_json::{json, Value as Json};
 use super::*;
 use crate::fill::{self, CellData, SheetRows};
 use crate::log::{self, LogRow};
-use crate::room::{DataSheet, Opening, Rooms, SharedRoom};
+use crate::room::{range_cells, DataSheet, Opening, Rooms, SharedRoom};
 use moqui_lib::sync::lock;
 
 fn orders(count: usize) -> SheetRows {
@@ -150,7 +150,12 @@ fn state(room: &Room) -> Json {
     // the merges as a set: one taken back is put back at the end of the sheet's list
     let mut merges = room.merges_of(1, 1, 1, 1_048_576, 16_384);
     merges.sort_by_key(Json::to_string);
-    json!({"cells": cells, "merges": merges, "rules": room.rules_of(1).unwrap()})
+    // the rules in the order they apply, each its range and rule: an undo puts a rule back in that order, not at its
+    // place in the sheet's list
+    let mut rules = room.rules_of(1).unwrap();
+    rules.sort_by_key(|rule| rule["priority"].as_u64());
+    let rules: Vec<Json> = rules.iter().map(|rule| json!([rule["range"], rule["rule"]])).collect();
+    json!({"cells": cells, "merges": merges, "rules": rules})
 }
 
 /// The style a view draws a cell in: its extended style from the room's block.
@@ -208,6 +213,10 @@ fn a_border_changes_its_ring_and_its_undo_restores_both_in_every_room() {
     assert!(refusal(&pair.writer, area(1, 16_384, 1, "all")).contains("not whole rows or columns"));
     assert!(refusal(&pair.writer, area(1, 1, 1, "diagonal")).contains("is not a border"));
     assert!(refusal(&pair.writer, area(1, 400, 400, "all")).contains("at most"));
+    // a colour goes into the styles, and an export's XML, as it is: only #RRGGBB
+    let mut injected = area(1, 1, 1, "all");
+    injected["color"] = json!("000000\"/><x a=\"");
+    assert!(refusal(&pair.writer, injected).contains("is not a colour"));
 }
 
 #[test]
@@ -409,11 +418,34 @@ fn conditional_formats_are_added_changed_moved_and_deleted_each_taken_back_in_ev
             .contains("Not a conditional format")
     );
     assert!(refusal(&pair.writer, json!({"op": "deleteRule", "sheet": 1, "index": 9})).contains("out of bounds"));
-    let restore = json!({"op": "rules", "sheet": 1, "rules": []});
-    assert!(
-        refusal(&pair.writer, restore).contains("only by an undo"),
-        "an undo's edit, not a call's"
-    );
+    // an undo's edits are refused from a call
+    for op in [
+        json!({"op": "removeRule", "sheet": 1, "index": 0, "expect": {"range": "B1:B5"}}),
+        json!({"op": "putRule", "sheet": 1, "range": "A1", "rule": cell_is("GreaterThan", "1", "#FFC7CE"), "higher": 0}),
+        json!({"op": "ruleRanges", "sheet": 1, "rules": []}),
+        json!({"op": "restore", "sheet": 1, "row": 1, "column": 1, "cells": [["x"]], "styles": [[{"fill": {"color": "x\"/>"}}]]}),
+    ] {
+        assert!(
+            refusal(&pair.writer, op.clone()).contains("an undo's edit alone"),
+            "{op}"
+        );
+    }
+    // a rule past its bounds: thresholds, size, a colour that is not one (it goes into an export's XML as it is)
+    let icons: Vec<Json> = (0..6)
+        .map(|at| json!({"icon": "Circle", "cfvo": {"Number": at}, "color": "#63BE7B", "is_strict": false}))
+        .collect();
+    let many = json!({"type": "IconSet", "thresholds": icons, "show_value": true});
+    assert!(refusal(&pair.writer, rule_op("addRule", "B1:B5", many)).contains("at most 5 thresholds"));
+    let rating = json!({"type": "IconRating", "icon": "Star", "color": "#FFC000",
+        "thresholds": vec![json!([{"Number": 1.0}, false]); 10], "show_value": true});
+    assert!(refusal(&pair.writer, rule_op("addRule", "B1:B5", rating)).contains("at most 9 thresholds"));
+    let long = json!({"type": "Text", "operator": "Contains", "value": "x".repeat(5_000), "format": {}, "stop_if_true": false});
+    assert!(refusal(&pair.writer, rule_op("addRule", "B1:B5", long)).contains("bytes"));
+    let injected = cell_is("GreaterThan", "1", "FF0000\"/><x a=\"");
+    assert!(refusal(&pair.writer, rule_op("addRule", "B1:B5", injected)).contains("is not a colour"));
+    let bar = json!({"type": "DataBar", "min": null, "max": null, "positive_color": "red", "negative_color": "#FF0000",
+        "is_gradient": false, "show_value": true});
+    assert!(refusal(&pair.writer, rule_op("addRule", "B1:B5", bar)).contains("is not a colour"));
     // the sheet's rules in all: ten of 100,000 cells, then no more
     let wide = |rows: i64| {
         rule_op(
@@ -443,4 +475,222 @@ fn a_range_of_cells_is_counted_as_the_engine_reads_it() {
     assert_eq!(range_cells("$C$3:A1"), Some(9));
     assert_eq!(range_cells(""), None);
     assert_eq!(range_cells("Orders[amount]"), None);
+}
+
+/// The rule a view names: its range and rule as the layout gives them.
+fn view_of(room: &SharedRoom, index: usize) -> Json {
+    let rules = lock(room).rules_of(1).unwrap();
+    json!({"range": rules[index]["range"], "rule": rules[index]["rule"]})
+}
+
+fn kinds(room: &SharedRoom) -> Vec<String> {
+    let mut rules = lock(room).rules_of(1).unwrap();
+    rules.sort_by_key(|rule| rule["priority"].as_u64());
+    rules
+        .iter()
+        .map(|rule| {
+            format!(
+                "{} {}",
+                rule["rule"]["type"].as_str().unwrap(),
+                rule["range"].as_str().unwrap()
+            )
+        })
+        .collect()
+}
+
+/// Two people edit one sheet's rules: an undo takes back only its own edit's rule, found by what that edit left; one
+/// changed or deleted since is refused with nothing applied; and the undo of a deletion of rows sets back only the
+/// ranges it moved, keeping another's later change of a rule.
+#[test]
+fn a_rules_undo_takes_back_only_its_own_rule_and_refuses_one_changed_since() {
+    let rooms = Rooms::default();
+    let mut pair = Pair::new(&rooms);
+    let rule_op = |kind: &str, range: &str, rule: Json| json!({"op": kind, "sheet": 1, "range": range, "rule": rule});
+    pair.write(&[json!({"op": "paste", "sheet": 1, "row": 1, "column": 1,
+        "rows": [["West", "1"], ["East", "5"], ["West", "10"], ["North", "20"], ["West", "3"]]})]);
+    // Bob's rule, then Ann's, then Bob's; Bob deletes his first
+    pair.write(&[rule_op("addRule", "B1:B5", cell_is("GreaterThan", "5", "#FFC7CE"))]);
+    let ann = pair.write(&[rule_op(
+        "addRule",
+        "A1:A5",
+        json!({"type": "Text", "operator": "Contains", "value": "West",
+        "format": {"font": {"b": true}}, "stop_if_true": false}),
+    )]);
+    pair.write(&[rule_op(
+        "addRule",
+        "B1:B5",
+        json!({"type": "Top10", "rank": 1, "percent": false,
+        "format": {"fill": {"color": "#C8E6C9"}}, "stop_if_true": false}),
+    )]);
+    let first = view_of(&pair.writer, 0);
+    pair.write(&[json!({"op": "deleteRule", "sheet": 1, "index": 0, "expect": first})]);
+    assert_eq!(kinds(&pair.writer), ["Text A1:A5", "Top10 B1:B5"]);
+    // Ann's undo takes her rule back, not Bob's that is now at its place
+    pair.undo(ann);
+    assert_eq!(kinds(&pair.writer), ["Top10 B1:B5"]);
+    assert_eq!(kinds(&pair.follower), ["Top10 B1:B5"]);
+
+    // Ann changes Bob's rule, Bob deletes it: Ann's undo is refused before anything is applied
+    let top = view_of(&pair.writer, 0);
+    let changed = pair.write(&[
+        json!({"op": "changeRule", "sheet": 1, "index": 0, "expect": top, "range": "B1:B4",
+        "rule": {"type": "Bottom10", "rank": 1, "percent": false, "format": {}, "stop_if_true": false}}),
+    ]);
+    let bottom = view_of(&pair.writer, 0);
+    pair.write(&[json!({"op": "deleteRule", "sheet": 1, "index": 0, "expect": bottom})]);
+    let before = pair.states();
+    let refused = lock(&pair.writer).check_undo(changed).expect_err("changed since");
+    assert!(
+        refused.message().contains("changed or deleted since"),
+        "{}",
+        refused.message()
+    );
+    assert_eq!(pair.states(), before);
+    // an edit naming a rule that is gone is refused too
+    let gone = json!({"op": "deleteRule", "sheet": 1, "index": 0, "expect": bottom});
+    assert!(refusal(&pair.writer, gone).contains("changed or deleted since"));
+
+    // Ann deletes rows 2 and 3, Bob then changes the rule they moved; Ann's undo sets its range back and keeps Bob's
+    pair.write(&[rule_op("addRule", "A1:A5", cell_is("GreaterThan", "1", "#FFC7CE"))]);
+    let rows = pair.write(&[json!({"op": "deleteRows", "sheet": 1, "row": 2, "count": 2})]);
+    assert_eq!(kinds(&pair.writer), ["CellIs A1:A3"]);
+    let moved = view_of(&pair.writer, 0);
+    pair.write(&[
+        json!({"op": "changeRule", "sheet": 1, "index": 0, "expect": moved, "range": "A1:A3",
+        "rule": cell_is("GreaterThan", "1", "#BBDEFB")}),
+    ]);
+    pair.undo(rows);
+    for room in [&pair.writer, &pair.follower] {
+        assert_eq!(kinds(room), ["CellIs A1:A5"]);
+        assert_eq!(
+            view_of(room, 0)["rule"]["format"]["fill"]["color"],
+            "#BBDEFB",
+            "Bob's change stays"
+        );
+    }
+}
+
+/// A room over `base`, a workbook as a file gives one, beside the data sheet.
+fn opened(rooms: &Rooms, base: moqui_core::workbook::ironcalc::base::Model<'static>) -> SharedRoom {
+    rooms
+        .open(Opening {
+            user_id: "ann".to_string(),
+            shared: None,
+            profile_id: None,
+            definition_id: None,
+            version: None,
+            title: "File".to_string(),
+            data_sheets: Vec::new(),
+            charts: Vec::new(),
+            base,
+            rows: Vec::new(),
+        })
+        .unwrap()
+}
+
+/// A workbook opened with more merged cells and rules than the edits are held to keeps what fits, and the bounds of
+/// a sheet and of the workbook hold for the edits after.
+#[test]
+fn a_workbook_opened_past_the_bounds_keeps_what_fits() {
+    use moqui_core::workbook::ironcalc::base::cf_types::CfRuleInput;
+    use moqui_core::workbook::ironcalc::base::expressions::types::Area;
+    let mut base = fill::new_model("Notes").unwrap();
+    for name in ["Two", "Three", "Four", "Five"] {
+        base.add_sheet(name).unwrap();
+    }
+    for row in 1..=2_001 {
+        base.merge_cells(&Area {
+            sheet: 0,
+            row,
+            column: 1,
+            width: 2,
+            height: 1,
+        })
+        .unwrap();
+    }
+    let rule = |fill: &str| -> CfRuleInput { serde_json::from_value(cell_is("GreaterThan", "1", fill)).unwrap() };
+    // a rule whose colour would go into an export's XML as it is, and one with more thresholds than a set has icons
+    base.add_conditional_formatting(0, "D1", rule("FF0000\"/><x a=\""))
+        .unwrap();
+    let icons: Vec<Json> = (0..7)
+        .map(|at| json!({"icon": "Circle", "cfvo": {"Number": at}, "color": "#63BE7B", "is_strict": false}))
+        .collect();
+    let many: CfRuleInput =
+        serde_json::from_value(json!({"type": "IconSet", "thresholds": icons, "show_value": true})).unwrap();
+    base.add_conditional_formatting(0, "D2", many).unwrap();
+    // 2,001 rules of one cell over five sheets, 401 a sheet
+    for at in 0..2_001_u32 {
+        let row = i32::try_from(at / 5 + 1).unwrap();
+        base.add_conditional_formatting(at % 5, &format!("C{row}"), rule("#FFC7CE"))
+            .unwrap();
+    }
+    let rooms = Rooms::default();
+    let room = opened(&rooms, base);
+    let mut room = lock(&room);
+    assert_eq!(room.merges_of(0, 1, 1, 3_000, 10).len(), 2_000);
+    let all: usize = (0..5).map(|sheet| room.rules_of(sheet).unwrap().len()).sum();
+    assert_eq!(all, 2_000, "the bad two left out, and the workbook's last");
+    assert!(room
+        .rules_of(0)
+        .unwrap()
+        .iter()
+        .all(|rule| rule["range"].as_str().unwrap().starts_with('C')));
+
+    let err = room
+        .edit(
+            "ann",
+            &[json!({"op": "merge", "sheet": 0, "row": 3_000, "column": 1, "width": 2, "height": 1})],
+        )
+        .expect_err("past the merges of a sheet");
+    assert!(err.message().contains("at most 2000 merged cells"), "{}", err.message());
+    let err = room
+        .edit(
+            "ann",
+            &[json!({"op": "addRule", "sheet": 1, "range": "E1", "rule": cell_is("GreaterThan", "1", "#FFC7CE")})],
+        )
+        .expect_err("past the rules of a workbook");
+    assert!(
+        err.message().contains("A workbook has at most 2000"),
+        "{}",
+        err.message()
+    );
+    // an unmerge of a whole column counts the merges it takes off, not the column's cells; its undo sets them back
+    room.edit(
+        "ann",
+        &[json!({"op": "unmerge", "sheet": 0, "row": 1, "column": 1, "width": 1, "height": 1_048_576})],
+    )
+    .unwrap();
+    assert!(room.merges_of(0, 1, 1, 3_000, 10).is_empty());
+    room.edit("ann", &[json!({"op": "undo"})]).unwrap();
+    assert_eq!(room.merges_of(0, 1, 1, 3_000, 10).len(), 2_000);
+}
+
+/// A data sheet's column named with the characters a structured reference escapes is read by a formula that escapes
+/// them, as the sheet's pointing writes it (WebrootCalc.js calc.columnReference).
+#[test]
+fn a_column_named_with_brackets_is_read_by_its_escaped_reference() {
+    let rooms = Rooms::default();
+    let mut sheet = orders(3);
+    sheet.columns = vec!["region[x]".to_string(), "amount#1".to_string()];
+    let room = rooms
+        .open(Opening {
+            user_id: "ann".to_string(),
+            shared: None,
+            profile_id: None,
+            definition_id: None,
+            version: None,
+            title: "Orders".to_string(),
+            data_sheets: Vec::new(),
+            charts: Vec::new(),
+            base: fill::new_model("Orders").unwrap(),
+            rows: vec![sheet],
+        })
+        .unwrap();
+    let mut room = lock(&room);
+    room.edit("ann", &[json!({"op": "addSheet"}),
+        json!({"op": "input", "sheet": 1, "row": 1, "column": 1, "value": "=SUM(Orders[amount'#1])"}),
+        json!({"op": "input", "sheet": 1, "row": 2, "column": 1, "value": "=COUNTA(Orders[[region'[x']]:[amount'#1]])"})])
+        .unwrap();
+    assert_eq!(room.model().get_formatted_cell_value(1, 1, 1).unwrap(), "6");
+    assert_eq!(room.model().get_formatted_cell_value(1, 2, 1).unwrap(), "6");
 }

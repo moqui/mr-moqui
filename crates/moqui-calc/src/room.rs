@@ -43,7 +43,10 @@ use crate::log::{self, LogRow};
 
 #[path = "room_formats.rs"]
 mod formats;
-pub use formats::{range_cells, MAX_SHEET_RULES, MAX_VIEW_MERGES};
+#[path = "room_rules.rs"]
+mod rules;
+pub use formats::{hex_color, MAX_SHEET_MERGES, MAX_VIEW_MERGES};
+pub use rules::{range_cells, MAX_SHEET_RULES, MAX_WORKBOOK_RULES};
 
 /// A room not used for this long is dropped.
 pub const IDLE: Duration = Duration::from_secs(20 * 60);
@@ -192,6 +195,9 @@ impl Room {
             .map(|sheet| sheet.name.clone())
             .collect();
         let mut model = fill::fill(opening.base, &opening.rows)?;
+        // a file can hold any number of merges and rules, of any size: what an edit is held to is kept
+        formats::trim_merges(&mut model, &id);
+        rules::trim_rules(&mut model, &id);
         let started = Instant::now();
         model.evaluate();
         let took = elapsed_ms(started);
@@ -406,6 +412,7 @@ impl Room {
                 let target = log::undo_target(&self.own_log, user_id, 0)
                     .map(|row| row.seq)
                     .ok_or_else(|| Error::new(NOTHING_TO_UNDO))?;
+                self.check_undo(target)?;
                 self.undo_row(target)?;
                 let seq = self.push_own(user_id, log::UNDO, Vec::new(), Some(target));
                 self.mark_own(target, seq);
@@ -493,7 +500,13 @@ impl Room {
                 )));
                 break;
             }
-            match self.inverse(op).and_then(|inverse| self.apply(op).map(|()| inverse)) {
+            let taken = self.inverse(op).and_then(|mut inverse| {
+                self.apply(op)?;
+                // what an undo of a rule's edit finds is the rule as the edit left it
+                self.settle_rule(op, &mut inverse);
+                Ok(inverse)
+            });
+            match taken {
                 Ok(inverse) => {
                     applied.push(op.clone());
                     parts.push(inverse);
@@ -533,7 +546,9 @@ impl Room {
         };
         match op["op"].as_str().unwrap_or_default() {
             "input" => 1,
-            "clear" | "clearFormatting" | "style" | "merge" | "unmerge" => width.saturating_mul(height),
+            "clear" | "clearFormatting" | "style" | "merge" => width.saturating_mul(height),
+            // the engine only takes the merges off its list; their boxes are set again by its undo
+            "unmerge" => self.unmerge_cells(op, sheet),
             // and the ring around it, whose facing sides it changes
             "border" => width.saturating_add(2).saturating_mul(height.saturating_add(2)),
             "addRule" | "changeRule" => range_cells(op["range"].as_str().unwrap_or_default()).unwrap_or(0),
@@ -554,6 +569,20 @@ impl Room {
     /// Keep what the edit of row `seq` took, for its undo.
     pub fn record(&mut self, seq: i64, inverse: Vec<Json>) {
         self.inverses.insert(seq, inverse);
+    }
+
+    /// Refuse to take back the edit of row `target` when a step of it would find what it takes back changed since (a
+    /// conditional format another changed or deleted), before any step is applied.
+    ///
+    /// # Errors
+    ///
+    /// The refusal; an error too when this room did not apply that edit.
+    pub fn check_undo(&self, target: i64) -> Result<(), Error> {
+        let inverse = self
+            .inverses
+            .get(&target)
+            .ok_or_else(|| Error::new("That edit is no longer undone here"))?;
+        self.check_rule_undo(inverse)
     }
 
     /// Take back the edit of row `target` with what this room took of it.
@@ -767,7 +796,9 @@ impl Room {
                     true,
                 )?
             }
-            "clear" | "clearFormatting" | "restore" => {
+            // what sets cells back as they were is an undo's alone: from a call it would write any style as it is
+            "restore" => return Err(Error::new("restore is an undo's edit alone")),
+            "clear" | "clearFormatting" => {
                 let (width, height) = if op["op"] == "restore" {
                     let cells = op["cells"].as_array().map(Vec::as_slice).unwrap_or_default();
                     (
@@ -834,7 +865,7 @@ impl Room {
                 // the merges the rows cut or held, and the conditional formats whose ranges they moved
                 let last_column = i32::try_from(SHEET_COLUMNS).unwrap_or(i32::MAX);
                 edits.extend(self.merges_back(sheet, row, 1, row.saturating_add(count - 1), last_column)?);
-                edits.extend(self.rules_back(sheet, false)?);
+                edits.extend(self.rule_ranges_back(sheet)?);
                 edits
             }
             "deleteColumns" => {
@@ -846,7 +877,7 @@ impl Room {
                 edits.extend(self.formulas()?);
                 let last_row = i32::try_from(SHEET_ROWS).unwrap_or(i32::MAX);
                 edits.extend(self.merges_back(sheet, 1, column, last_row, column.saturating_add(count - 1))?);
-                edits.extend(self.rules_back(sheet, false)?);
+                edits.extend(self.rule_ranges_back(sheet)?);
                 edits
             }
             "addSheet" => vec![json!({"op": "deleteSheet", "sheet": sheet_count})],
@@ -893,14 +924,16 @@ impl Room {
                     );
                     edits.extend(self.merges_back(sheet, 1, 1, last_row, last_column)?);
                 }
-                edits.extend(self.rules_back(sheet, false)?);
+                edits.extend(self.rules_put_back(sheet)?);
                 edits
             }
             "charts" => vec![json!({"op": "charts", "charts": self.charts})],
             "border" => self.border_inverse(op, sheet)?,
             "merge" => self.merge_inverse(op, sheet)?,
             "unmerge" => self.unmerge_inverse(op, sheet)?,
-            kind if formats::RULE_EDITS.contains(&kind) => self.rule_inverse(op, kind, sheet)?,
+            kind if rules::RULE_EDITS.contains(&kind) || rules::RULE_UNDO_EDITS.contains(&kind) => {
+                self.rule_inverse(op, kind, sheet)?
+            }
             // refused when it is applied
             _ => Vec::new(),
         })
@@ -956,7 +989,7 @@ impl Room {
             }
         }
         // a rule's range is cells, which other scopes' rooms (other row counts) and a refresh would not follow
-        if formats::RULE_EDITS.contains(&kind) {
+        if rules::RULE_EDITS.contains(&kind) || rules::RULE_UNDO_EDITS.contains(&kind) {
             if let Some(name) = self.data_sheet_name(sheet) {
                 return Err(Error::new(format!(
                     "{name} is a data sheet: conditional formats go on a sheet beside it"
@@ -998,11 +1031,13 @@ impl Room {
             "clear" => self.model.range_clear_contents(&area()),
             "clearFormatting" => self.model.range_clear_formatting(&area()),
             "style" => self.model.update_range_style(&area(), &text("path"), &text("value")),
-            "fill" => match op["toRow"].as_i64() {
-                Some(to_row) => self
+            // the source's merges are tiled into the target: held to a sheet's bound first
+            "fill" => match self.check_fill_merges(op, sheet).map(|()| op["toRow"].as_i64()) {
+                Err(refused) => Err(refused),
+                Ok(Some(to_row)) => self
                     .model
                     .auto_fill_rows(&area(), i32::try_from(to_row).unwrap_or(i32::MAX)),
-                None => self.model.auto_fill_columns(&area(), small("toColumn", 1)),
+                Ok(None) => self.model.auto_fill_columns(&area(), small("toColumn", 1)),
             },
             "width" => {
                 let column = small("column", 1);
@@ -1043,7 +1078,9 @@ impl Room {
             "border" => self.apply_border(op, sheet),
             "merge" => self.apply_merge(op, sheet, true),
             "unmerge" => self.apply_merge(op, sheet, false),
-            kind if formats::RULE_EDITS.contains(&kind) => self.apply_rule(op, kind, sheet),
+            kind if rules::RULE_EDITS.contains(&kind) || rules::RULE_UNDO_EDITS.contains(&kind) => {
+                self.apply_rule(op, kind, sheet)
+            }
             "undo" | "redo" => Err(format!("{kind} is an edit of its own")),
             other => Err(format!("{other:?} is not an edit")),
         }

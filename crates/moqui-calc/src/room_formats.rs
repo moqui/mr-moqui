@@ -21,30 +21,23 @@
 //! - A `merge` moves the one cell with content to the anchor and stamps the anchor's style on the box; its undo is an
 //!   unmerge and the box as it was. An `unmerge`, a `fill` (which tiles the source's merges into its target) and a
 //!   deletion of rows, columns or a sheet are taken back with the merges they met put back ([`Room::merges_back`]).
-//! - The rules of a sheet's conditional formats are addressed by their place in the sheet's list, which is the same in
-//!   every room of a document, since every room applies the same edits in the same order. Their undo sets the sheet's
-//!   rules back as they were ([`Room::rules_back`]). They are not set on a data sheet: a rule's range is cells, which
-//!   the log replays in rooms whose data has other row counts, and a refresh with another count moves them.
+//! - A sheet has at most [`MAX_SHEET_MERGES`] merged cells; a workbook opened with more keeps that many
+//!   ([`trim_merges`]).
+//!
+//! The conditional formats are in `room_rules.rs`; the tests of both are in `room_formats_tests.rs`.
 
 use moqui_core::context::Error;
-use moqui_core::workbook::ironcalc::base::cf_types::CfRuleInput;
 use moqui_core::workbook::ironcalc::base::expressions::types::Area;
 use moqui_core::workbook::ironcalc::base::types::MergedCell;
 use moqui_core::workbook::ironcalc::base::BorderArea;
-use moqui_core::workbook::parse_cell;
 use serde_json::{json, Value as Json};
 
-use super::{engine, Room, MAX_EDIT_CELLS, SHEET_COLUMNS, SHEET_ROWS};
+use super::{Room, MAX_EDIT_CELLS, SHEET_COLUMNS, SHEET_ROWS};
 
-/// The most rules of one sheet's conditional formats: each is evaluated over its cells at every evaluation.
-pub const MAX_SHEET_RULES: usize = 500;
-/// The most cells the rules of one sheet cover in all, each counted once for each rule over it: what an evaluation
-/// walks for them.
-pub const MAX_SHEET_RULE_CELLS: i64 = 10 * MAX_EDIT_CELLS;
-/// The most merged cells a view is sent of a sheet ([`Room::merges_of`]).
-pub const MAX_VIEW_MERGES: usize = 2_000;
-/// The edits of a sheet's conditional formats.
-pub const RULE_EDITS: [&str; 5] = ["addRule", "changeRule", "deleteRule", "moveRule", "rules"];
+/// The most merged cells of a sheet: a view looks each cell it draws up among them.
+pub const MAX_SHEET_MERGES: usize = 2_000;
+/// The most merged cells a view is sent of a sheet ([`Room::merges_of`]): all of them.
+pub const MAX_VIEW_MERGES: usize = MAX_SHEET_MERGES;
 
 /// The engine's name of a border's place: all, outer, inner, top, bottom, left, right, none, and the inner lines one
 /// way (centerH, centerV).
@@ -62,23 +55,6 @@ fn border_type(kind: &str) -> Option<&'static str> {
         "none" => "None",
         _ => return None,
     })
-}
-
-/// The cells of a conditional format's range (`A1:B5 D2`, as the engine keeps it), or None for a range it does not
-/// read: what an evaluation walks for the rule.
-#[must_use]
-pub fn range_cells(range: &str) -> Option<i64> {
-    let mut cells: i64 = 0;
-    let mut parts = 0;
-    for part in range.split_whitespace() {
-        let (first, last) = part.split_once(':').unwrap_or((part, part));
-        let ((row, column), (last_row, last_column)) = (parse_cell(first)?, parse_cell(last)?);
-        let rows = i64::from((last_row - row).abs() + 1);
-        let columns = i64::from((last_column - column).abs() + 1);
-        cells = cells.saturating_add(rows.saturating_mul(columns));
-        parts += 1;
-    }
-    (parts > 0).then_some(cells)
 }
 
 /// An area of an edit as the engine takes it, from its `row`, `column`, `width` and `height`.
@@ -229,6 +205,9 @@ impl Room {
         let kind = border_type(kind).ok_or_else(|| format!("{kind:?} is not a border"))?;
         let style = op["style"].as_str().unwrap_or("thin");
         let color = op["color"].as_str().unwrap_or("#000000");
+        if !hex_color(color) {
+            return Err(format!("{color:?} is not a colour (#RRGGBB)"));
+        }
         let border: BorderArea =
             serde_json::from_value(json!({"item": {"style": style, "color": color}, "type": kind}))
                 .map_err(|err| format!("Not a border: {err}"))?;
@@ -263,266 +242,89 @@ impl Room {
     pub(super) fn apply_merge(&mut self, op: &Json, sheet: u32, merge: bool) -> Result<(), String> {
         let area = area_of(op, sheet);
         if merge {
+            if self.merge_count(sheet) >= MAX_SHEET_MERGES {
+                return Err(format!("A sheet has at most {MAX_SHEET_MERGES} merged cells"));
+            }
             self.model.merge_cells(&area)
         } else {
             inside_sheet(&area)?;
             self.model.unmerge_cells(&area)
         }
     }
-
-    /// The rules of a sheet's conditional formats as a `rules` edit sets them (each `range`, `rule` as the engine takes
-    /// one, with its format, and `priority`), in the sheet's order; none for a sheet the workbook does not have.
-    pub(super) fn rules_of(&self, sheet: u32) -> Result<Vec<Json>, Error> {
-        let Ok(list) = self.model.get_conditional_formatting_list(sheet) else {
-            return Ok(Vec::new());
-        };
-        let mut list = list;
-        list.sort_by_key(|view| view.index);
-        let mut rules = Vec::with_capacity(list.len());
-        for view in list {
-            let mut rule = serde_json::to_value(&view.cf_rule).map_err(|err| Error::new(err.to_string()))?;
-            if let Some(fields) = rule.as_object_mut() {
-                if fields.remove("dxf_id").is_some() {
-                    let index = u32::try_from(view.index).map_err(|err| Error::new(err.to_string()))?;
-                    let format = self
-                        .model
-                        .get_dxf_for_conditional_formatting(sheet, index)
-                        .map_err(engine)?
-                        .unwrap_or_default();
-                    fields.insert(
-                        "format".to_string(),
-                        serde_json::to_value(format).map_err(|err| Error::new(err.to_string()))?,
-                    );
-                }
-            }
-            rules.push(json!({"range": view.range, "rule": rule, "priority": view.priority}));
+    /// The cells of the merged cells an `unmerge` over `op`'s area takes off, for the budget of a call: the engine only
+    /// takes them off its list, and its undo sets their boxes again.
+    pub(super) fn unmerge_cells(&self, op: &Json, sheet: u32) -> i64 {
+        let area = area_of(op, sheet);
+        if inside_sheet(&area).is_err() {
+            return 0;
         }
-        Ok(rules)
+        self.merges_meeting(
+            sheet,
+            area.row,
+            area.column,
+            area.row + area.height - 1,
+            area.column + area.width - 1,
+        )
+        .iter()
+        .map(|merged| i64::from(merged.width) * i64::from(merged.height))
+        .sum()
     }
 
-    /// The rules of a sheet's conditional formats for a view: each with its place in the sheet's list (`index`, which
-    /// an edit names), `range`, `priority` and `rule` (with its format), the one applied last (which wins) first.
-    #[must_use]
-    pub fn rules_view(&self, sheet: u32) -> Vec<Json> {
-        let mut rules: Vec<Json> = self
-            .rules_of(sheet)
-            .unwrap_or_default()
-            .into_iter()
-            .enumerate()
-            .map(|(index, mut rule)| {
-                rule["index"] = json!(index);
-                rule
-            })
-            .collect();
-        rules.sort_by_key(|rule| std::cmp::Reverse(rule["priority"].as_u64().unwrap_or(0)));
-        rules
-    }
-
-    /// The edits that set the rules of `sheet` back as they are now: one `rules` edit, or nothing when the sheet has
-    /// none and `always` is not asked (a deletion of rows or columns, which changes only the ranges there are).
-    pub(super) fn rules_back(&self, sheet: u32, always: bool) -> Result<Vec<Json>, Error> {
-        let rules = self.rules_of(sheet)?;
-        if rules.is_empty() && !always {
-            return Ok(Vec::new());
-        }
-        Ok(vec![json!({"op": "rules", "sheet": sheet, "rules": rules})])
-    }
-
-    /// The edits that take back an edit of a sheet's conditional formats: an added rule deleted, a rule moved back,
-    /// and the sheet's rules set back as they were for a change or a deletion.
-    pub(super) fn rule_inverse(&self, op: &Json, kind: &str, sheet: u32) -> Result<Vec<Json>, Error> {
-        let count = self
-            .model()
+    /// The merged cells of `sheet`.
+    fn merge_count(&self, sheet: u32) -> usize {
+        self.model()
             .workbook
             .worksheets
             .get(sheet as usize)
-            .map_or(0, |worksheet| worksheet.conditional_formatting.len());
-        match kind {
-            "addRule" => Ok(vec![json!({"op": "deleteRule", "sheet": sheet, "index": count})]),
-            "moveRule" => {
-                let index = op["index"]
-                    .as_u64()
-                    .and_then(|at| usize::try_from(at).ok())
-                    .unwrap_or(usize::MAX);
-                let up = op["up"].as_bool().unwrap_or(true);
-                // a move past the first or last rule changes nothing, and nothing is to be moved back
-                let moves = self
-                    .model()
-                    .workbook
-                    .worksheets
-                    .get(sheet as usize)
-                    .is_some_and(|worksheet| {
-                        worksheet.conditional_formatting.get(index).is_some_and(|rule| {
-                            worksheet.conditional_formatting.iter().any(|other| {
-                                if up {
-                                    other.priority > rule.priority
-                                } else {
-                                    other.priority < rule.priority
-                                }
-                            })
-                        })
-                    });
-                Ok(if moves {
-                    vec![json!({"op": "moveRule", "sheet": sheet, "index": index, "up": !up})]
-                } else {
-                    Vec::new()
-                })
-            }
-            "rules" => Err(Error::new("A sheet's rules are set back only by an undo")),
-            _ => self.rules_back(sheet, true),
-        }
+            .map_or(0, |worksheet| worksheet.merged_cells.len())
     }
 
-    /// An edit of a sheet's conditional formats (plans/IronCalc-DB2.md CG2.5):
-    /// - `addRule` (`range`, `rule`), at the end of the list, applied last;
-    /// - `changeRule` (`index`, `range`, `rule`), keeping its place;
-    /// - `deleteRule` (`index`);
-    /// - `moveRule` (`index`, `up`): applied one later (up, so it wins over the next) or one earlier;
-    /// - `rules` (`rules`: each `range`, `rule`, `priority`): the sheet's rules set to these, in this order, applied in
-    ///   the order of their priorities, which is how an edit of them is taken back; an undo's alone, refused as an
-    ///   edit of a call ([`Room::rule_inverse`]).
-    ///
-    /// A `rule` is the engine's: `type` (CellIs, Text, Top10, Bottom10, ColorScale, DataBar, IconSet, ...) and its
-    /// fields, with `format` (font, fill) for those that format; a range is held to [`MAX_EDIT_CELLS`] cells, and the
-    /// sheet's rules to [`MAX_SHEET_RULE_CELLS`] in all.
-    pub(super) fn apply_rule(&mut self, op: &Json, kind: &str, sheet: u32) -> Result<(), String> {
-        let rule = |value: &Json| -> Result<CfRuleInput, String> {
-            serde_json::from_value(value.clone()).map_err(|err| format!("Not a conditional format: {err}"))
-        };
-        let range = |value: &Json| -> Result<String, String> {
-            let text = value.as_str().unwrap_or_default().trim().to_string();
-            match range_cells(&text) {
-                Some(cells) if cells <= MAX_EDIT_CELLS => Ok(text),
-                Some(_) => Err(format!("A conditional format covers at most {MAX_EDIT_CELLS} cells")),
-                None => Err(format!("{text:?} is not a range of cells (B2:B20)")),
-            }
-        };
-        let index = || {
-            op["index"]
-                .as_u64()
-                .and_then(|at| u32::try_from(at).ok())
-                .ok_or_else(|| "A rule is named by its index".to_string())
-        };
-        let ranges: Vec<i64> = self
-            .model()
-            .workbook
-            .worksheets
-            .get(sheet as usize)
-            .map(|worksheet| {
-                worksheet
-                    .conditional_formatting
-                    .iter()
-                    .map(|rule| range_cells(&rule.range).unwrap_or(0))
-                    .collect()
-            })
-            .unwrap_or_default();
-        // the cells the sheet's rules cover with this range in place of the rule at `replacing`
-        let total = |text: &str, replacing: Option<usize>| -> Result<(), String> {
-            let others: i64 = ranges
-                .iter()
-                .enumerate()
-                .filter(|(at, _)| Some(*at) != replacing)
-                .map(|(_, cells)| *cells)
-                .sum();
-            if others.saturating_add(range_cells(text).unwrap_or(0)) > MAX_SHEET_RULE_CELLS {
-                return Err(format!(
-                    "The conditional formats of a sheet cover at most {MAX_SHEET_RULE_CELLS} cells in all"
-                ));
-            }
-            Ok(())
-        };
-        match kind {
-            "addRule" => {
-                if ranges.len() >= MAX_SHEET_RULES {
-                    return Err(format!("A sheet has at most {MAX_SHEET_RULES} conditional formats"));
-                }
-                let (range, rule) = (range(&op["range"])?, rule(&op["rule"])?);
-                total(&range, None)?;
-                self.model.add_conditional_formatting(sheet, &range, rule)
-            }
-            "changeRule" => {
-                let (index, range, rule) = (index()?, range(&op["range"])?, rule(&op["rule"])?);
-                total(&range, usize::try_from(index).ok())?;
-                self.model.update_conditional_formatting(sheet, index, &range, rule)
-            }
-            "deleteRule" => self.model.delete_conditional_formatting(sheet, index()?),
-            "moveRule" => {
-                let index = index()?;
-                if op["up"].as_bool().unwrap_or(true) {
-                    self.model.raise_conditional_formatting_priority(sheet, index)
-                } else {
-                    self.model.lower_conditional_formatting_priority(sheet, index)
-                }
-            }
-            _ => self.set_rules(op, sheet),
+    /// Refuse a `fill` that would leave its sheet with more than [`MAX_SHEET_MERGES`] merged cells: the engine tiles
+    /// the source's merges into the target, once for each time the source goes into it.
+    pub(super) fn check_fill_merges(&self, op: &Json, sheet: u32) -> Result<(), String> {
+        let area = area_of(op, sheet);
+        let last_row = area.row.saturating_add(area.height - 1);
+        let last_column = area.column.saturating_add(area.width - 1);
+        let source = self
+            .merges_meeting(sheet, area.row, area.column, last_row, last_column)
+            .len();
+        if source == 0 {
+            return Ok(());
         }
-    }
-
-    /// A `rules` edit: the sheet's rules taken off, each added again in its order, then moved until the order they are
-    /// applied in is that of their priorities.
-    fn set_rules(&mut self, op: &Json, sheet: u32) -> Result<(), String> {
-        let rules = op["rules"].as_array().map(Vec::as_slice).unwrap_or_default();
-        if rules.len() > MAX_SHEET_RULES {
-            return Err(format!("A sheet has at most {MAX_SHEET_RULES} conditional formats"));
-        }
-        let mut parsed = Vec::with_capacity(rules.len());
-        for one in rules {
-            let range = one["range"].as_str().unwrap_or_default().to_string();
-            let rule: CfRuleInput = serde_json::from_value(one["rule"].clone())
-                .map_err(|err| format!("Not a conditional format: {err}"))?;
-            parsed.push((range, rule, one["priority"].as_u64().unwrap_or(0)));
-        }
-        let count = self
-            .model()
-            .workbook
-            .worksheets
-            .get(sheet as usize)
-            .map_or(0, |worksheet| worksheet.conditional_formatting.len());
-        for index in (0..count).rev() {
-            self.model
-                .delete_conditional_formatting(sheet, u32::try_from(index).map_err(|err| err.to_string())?)?;
-        }
-        let wanted: Vec<u64> = parsed.iter().map(|(_, _, priority)| *priority).collect();
-        for (range, rule, _) in parsed {
-            self.model.add_conditional_formatting(sheet, &range, rule)?;
-        }
-        // the rules were given priorities in the list's order: swap neighbours in the order they are applied until it
-        // is that of the priorities asked for (a few rules, so a bubble of swaps)
-        let priorities = |room: &Self| -> Vec<u32> {
-            room.model()
-                .workbook
-                .worksheets
-                .get(sheet as usize)
-                .map(|worksheet| {
-                    worksheet
-                        .conditional_formatting
-                        .iter()
-                        .map(|rule| rule.priority)
-                        .collect()
-                })
-                .unwrap_or_default()
+        // how many times the source goes into the span it is filled over, at most
+        let span = |first: i32, last: i32, to: i64, size: i32| {
+            (i64::from(last).max(to) - i64::from(first).min(to) + 1) / i64::from(size.max(1)) + 1
         };
-        for _ in 0..wanted.len().saturating_mul(wanted.len()) {
-            let now = priorities(self);
-            let mut swapped = false;
-            for (index, priority) in now.iter().enumerate() {
-                let Some(next) = now.iter().position(|other| *other == priority + 1) else {
-                    continue;
-                };
-                if wanted.get(index) > wanted.get(next) {
-                    self.model.raise_conditional_formatting_priority(
-                        sheet,
-                        u32::try_from(index).map_err(|err| err.to_string())?,
-                    )?;
-                    swapped = true;
-                    break;
-                }
-            }
-            if !swapped {
-                break;
-            }
+        let reach = match (op["toRow"].as_i64(), op["toColumn"].as_i64()) {
+            (Some(to), _) => span(area.row, last_row, to, area.height),
+            (None, Some(to)) => span(area.column, last_column, to, area.width),
+            _ => 1,
+        };
+        let tiles = usize::try_from(reach).unwrap_or(usize::MAX);
+        if self.merge_count(sheet).saturating_add(source.saturating_mul(tiles)) > MAX_SHEET_MERGES {
+            return Err(format!("A sheet has at most {MAX_SHEET_MERGES} merged cells"));
         }
         Ok(())
+    }
+}
+
+/// Whether `text` is a colour as the edits take one: `#RRGGBB`. A colour goes into the workbook's styles as it is
+/// sent, and from there into an exported file's XML.
+#[must_use]
+pub fn hex_color(text: &str) -> bool {
+    text.strip_prefix('#')
+        .is_some_and(|hex| hex.len() == 6 && hex.chars().all(|ch| ch.is_ascii_hexdigit()))
+}
+
+/// Take off the merged cells of a workbook just opened past [`MAX_SHEET_MERGES`] on a sheet, logging each sheet's, so a
+/// view's search of them stays short (a file can hold any number).
+pub(super) fn trim_merges(model: &mut moqui_core::workbook::ironcalc::base::Model<'static>, room: &str) {
+    for worksheet in &mut model.workbook.worksheets {
+        if worksheet.merged_cells.len() > MAX_SHEET_MERGES {
+            tracing::warn!(room, sheet = %worksheet.get_name(), merges = worksheet.merged_cells.len(), kept = MAX_SHEET_MERGES,
+                "A CalcGrid workbook's sheet had more merged cells than are kept; the rest are unmerged");
+            worksheet.merged_cells.truncate(MAX_SHEET_MERGES);
+        }
     }
 }
 
