@@ -2902,7 +2902,7 @@ P8 left this open: "a working tree knows no hosted repository id".
 - **Runs.** A pipeline job's log shows in Output and follows a running job. The tests that failed are listed with
   their files and lines, which open in the editor as the Terminal's file and line links do. Re-run, for a user who may.
 - **Run locally** runs one job's steps of the working tree's `ci.xml` in a host session of the Terminal
-  ([Terminal-Fancy](../Terminal-Fancy.md)), under that session's permission. It is the developer's machine, not the
+  ([Terminal-Fancy](Terminal-Fancy.md)), under that session's permission. It is the developer's machine, not the
   job's image (question 20). The run in the job's image was built Nov 25, 2026 (see §18).
 - **`ci.xml`** is edited with the schema's completion and checked by `moqui check` (F19).
 
@@ -2934,7 +2934,7 @@ For a repository whose agreement is on (docs/dev/Contributions.md; Dogfood §10)
 - **Unsigned merge requests.** The tool gives the description of an unsigned merge request and refuses its diff and
   commits, as the server's tools do (Dogfood §10).
 - **Worktrees.** An agent's session may work in a git worktree of a repository, on a branch of its own, so sessions
-  do not share uncommitted changes ([Terminal-Fancy](../Terminal-Fancy.md) §15 names it). The worktree shows as a
+  do not share uncommitted changes ([Terminal-Fancy](Terminal-Fancy.md) §15 names it). The worktree shows as a
   temporary root, "worktree of X". It is not loaded (question 19): its files are checked by `moqui check` and
   committed, and merged or proposed from there.
 - **Review agents on the server** are the hosting app's (D22).

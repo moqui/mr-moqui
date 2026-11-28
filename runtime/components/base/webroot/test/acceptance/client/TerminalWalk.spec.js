@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-// The browser terminal's walk (plans/Terminal-Fancy.md §14): a shell on the server, floated, through another app and a
-// reload, and back in a pane, the same shell all along.
+// The browser terminal's walk (plans/archive/Terminal-Fancy.md §14): a shell on the server, floated, through another
+// app and a reload, and back in a pane, the same shell all along.
 spec({ setupSpec() { login("john.doe") }, timeout: 60 })
 
 const shown = (selector) => `[...document.querySelectorAll('${selector} .xterm-rows')].map(rows => rows.textContent).join('\\n')`

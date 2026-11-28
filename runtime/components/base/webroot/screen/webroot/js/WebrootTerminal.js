@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 /*
- * The browser terminal's store (moqui.terminal, plans/Terminal-Fancy.md §9) and its views.
+ * The browser terminal's store (moqui.terminal, plans/archive/Terminal-Fancy.md §9) and its views.
  *
  * Sessions are the server's: the Terminal screen opens one by a transition (open#TerminalSession), which answers its id,
  * and the socket attaches to it by that id (/termws?session=, crates/moqui-host/src/termws.rs). A session outlives the
@@ -710,7 +710,8 @@
             const kind = opts.kind || (info && info.kind) || "apps";
             const el = root.document.createElement("div");
             el.className = "m-terminal-screen";
-            // never in Assist's reach (plans/Terminal-Fancy.md D18): an agent does not type into a shell through the page
+            // never in Assist's reach (plans/archive/Terminal-Fancy.md D18): an agent does not type into a shell
+            // through the page
             el.setAttribute("data-assist-self", "terminal");
             el.style.cssText = "width: 100%; height: 100%; overflow: hidden";
             const term = new root.Terminal(

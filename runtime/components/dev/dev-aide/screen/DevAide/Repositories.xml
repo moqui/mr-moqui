@@ -91,7 +91,8 @@ along with this software (see the LICENSE.md file). If not, see
             <field name="changes"><default-field title="Changes"><display text="${changes == null ? '' : changes}"/></default-field></field>
             <field name="lastFetch"><default-field title="Last fetch"><display text="${lastFetch ? new Date(lastFetch * 1000).toISOString().slice(0, 16).replace('T', ' ') : ''}"/></default-field></field>
             <field name="path"><default-field title="Path"><display/></default-field></field>
-            <!-- a shell on the server in the root's directory (plans/Terminal-Fancy.md §7.1, P9), for a user who may open one -->
+            <!-- a shell on the server in the root's directory (plans/archive/Terminal-Fancy.md §7.1, P9), for a user
+                 who may open one -->
             <field name="terminal"><conditional-field condition="kind == 'hosted'" title="">
                 <link url="removeHostedRoot" text="Remove" link-type="hidden-form" btn-type="danger" parameter-map="{rootId: rootId}"
                         confirmation="Take ${label} out of the Workspace? The repository stays as it is."/></conditional-field>

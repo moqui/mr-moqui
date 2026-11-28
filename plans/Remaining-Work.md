@@ -224,14 +224,15 @@ The activity-based review of the framework apps ([UI-Refinement](archive/UI-Refi
 
 ## Browser terminal
 
-Built Nov 11, 2026 ([Terminal-Fancy](Terminal-Fancy.md), guide [Terminal](../docs/ui/Terminal.md)); what is left:
+Built Nov 11, 2026 ([Terminal-Fancy](archive/Terminal-Fancy.md), guide [Terminal](../docs/ui/Terminal.md)); what is
+left:
 
 | Item | Source |
 |---|---|
 | Hand checks on installed apps, a real phone and the Android app against a remote dev server over HTTPS, and a shell through a deployed edge node in both modes across a dropped link (the emulator, the Desktop app's development run and the in-process edge node have run these paths) | [Mobile-Desktop-Exit-Checks](Mobile-Desktop-Exit-Checks.md#the-browser-terminal-the-apps-and-the-edge-node) |
 | Codex's hook line run against Codex (Claude Code's were, Nov 11, 2026) | Terminal-Fancy §11.1, guide "Hooks for agents" |
-| A long press on a phone opens the terminal's context menu beside copying the line | Terminal-Fancy §13.1 |
-| Later (§15): Windows host sessions (ConPTY); a server-side emulator for the screen as text; sessions driven by a program; answering Claude Code's `OSC 7501 ; ?`; the kitty keyboard protocol; mirrored viewers; a per-person OS account; named workspaces; images, ligatures, WebGL; a native window per terminal in the Desktop app; recording; more kinds of float (worktrees per agent were built Nov 14, 2026, [design-dev-aide](archive/design-dev-aide.md) §21.8, P13) | Terminal-Fancy §15 |
+| The next batch, planned and not built: the phone's long press (TF1), the screen as text on the server (TF2), sessions driven by a program (TF3), mirrored viewers and sharing (TF4), recording and Agent Code's history (TF5), host sessions as the person's OS account and Agent Code's run-as (TF6), the `thread` kind (TF7), the call, screen and record-panel floats (TF8) | [Terminal-Fancy2](Terminal-Fancy2.md) |
+| Later: Windows host sessions (ConPTY); answering Claude Code's `OSC 7501 ; ?`; the kitty keyboard protocol; named workspaces; images, ligatures, WebGL; a native window per terminal in the Desktop app (worktrees per agent were built Nov 14, 2026, [design-dev-aide](archive/design-dev-aide.md) §21.8, P13) | Terminal-Fancy §15, Terminal-Fancy2 §7 |
 
 ## Tooling: lint and XSD
 

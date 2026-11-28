@@ -12,11 +12,11 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A program on a pseudo-terminal (plans/Terminal-Fancy.md §7.2, D8), on `rustix` with no `unsafe`. The server opens
-//! the pty and starts this binary as `moqui term-exec` with the pty's slave as its stdin, stdout and stderr; the helper
-//! makes itself a session leader with the pty as its controlling terminal and then becomes the program, so the pid the
-//! server holds is the program's. The program's argv comes in [`EXEC_ENV`], not in the helper's own arguments: the
-//! Desktop app's binary reads any `--type=` argument as a browser helper process. The master is read and written on
+//! A program on a pseudo-terminal (plans/archive/Terminal-Fancy.md §7.2, D8), on `rustix` with no `unsafe`. The server
+//! opens the pty and starts this binary as `moqui term-exec` with the pty's slave as its stdin, stdout and stderr; the
+//! helper makes itself a session leader with the pty as its controlling terminal and then becomes the program, so the
+//! pid the server holds is the program's. The program's argv comes in [`EXEC_ENV`], not in the helper's own arguments:
+//! the Desktop app's binary reads any `--type=` argument as a browser helper process. The master is read and written on
 //! the edge runtime, non-blocking; the program's end is a read of 0 or `EIO`, after what was left is read out.
 
 use std::io;

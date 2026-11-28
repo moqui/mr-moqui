@@ -633,7 +633,8 @@ test("the shell's hooks: the palette's Ask row and record rows, the form answers
     assert.match(shell, /<m-assist-button v-if="assistOn && !handheld"><\/m-assist-button>\n {4}<\/q-toolbar><\/q-header>/);
     assert.match(shell, /<m-shell-assist v-if="assistOn"><\/m-shell-assist>/);
     // the stable ids and data attributes the browser smoke drives; the drawer holds the body (m-assist-body) in a teleport that
-    // moves it into a float while undocked (plans/Terminal-Fancy.md §10.5), and the body has the mark that keeps it out of reach
+    // moves it into a float while undocked (plans/archive/Terminal-Fancy.md §10.5), and the body has the mark that
+    // keeps it out of reach
     const drawer = assist.components["m-shell-assist"].template + assist.components["m-assist-body"].template + assist.components["m-assist-composer"].template +
         assist.components["m-assist-card"].template;
     assert.match(assist.components["m-shell-assist"].template, /<q-drawer [^>]* id="m-assist-drawer" data-assist-drawer><teleport :to="floatTarget \|\| 'body'" :disabled="!floatTarget"><m-assist-body v-if="s.mounted" :floated="!!floatTarget"><\/m-assist-body><\/teleport><\/q-drawer>/);

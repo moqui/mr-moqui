@@ -1412,9 +1412,9 @@ fn the_login_dialog_lets_in_a_client_with_no_key() {
     .unwrap();
 }
 
-/// `sh` at the SSH prompt (plans/Terminal-Fancy.md §6): a program on the server's operating system for a user with
-/// SSH_SHELL and TERMINAL_HOST on a dev instance, from this machine; the prompt comes back when it ends. A user with
-/// SSH_SHELL alone is refused it.
+/// `sh` at the SSH prompt (plans/archive/Terminal-Fancy.md §6): a program on the server's operating system for a user
+/// with SSH_SHELL and TERMINAL_HOST on a dev instance, from this machine; the prompt comes back when it ends. A user
+/// with SSH_SHELL alone is refused it.
 #[cfg(all(feature = "tui", feature = "devtools"))]
 #[test]
 fn sh_at_the_ssh_prompt_runs_a_host_program() {
@@ -1469,9 +1469,9 @@ fn sh_at_the_ssh_prompt_runs_a_host_program() {
     .unwrap();
 }
 
-/// `attach <id>` at the SSH prompt (plans/Terminal-Fancy.md §15): the SSH window takes a session the browser opened,
-/// with its output replayed, and gives it up on Ctrl+\ with the session still running. Another user's id, or none, is
-/// no such session.
+/// `attach <id>` at the SSH prompt (plans/archive/Terminal-Fancy.md §15): the SSH window takes a session the browser
+/// opened, with its output replayed, and gives it up on Ctrl+\ with the session still running. Another user's id, or
+/// none, is no such session.
 #[cfg(all(feature = "tui", feature = "devtools"))]
 #[test]
 fn attach_at_the_ssh_prompt_takes_a_kept_session() {

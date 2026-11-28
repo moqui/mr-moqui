@@ -559,7 +559,7 @@ SIL Open Font License 1.1 (the fonts): the full text is in licenses/OFL-1.1.txt,
   },
   {
     // The terminal's search, plain URLs as links, and wide characters and emoji at the right width
-    // (plans/Terminal-Fancy.md §9.4). Pinned Nov 11, 2026, the releases that go with xterm.js 6.0.0.
+    // (plans/archive/Terminal-Fancy.md §9.4). Pinned Nov 11, 2026, the releases that go with xterm.js 6.0.0.
     id: 'xterm-addon-search', name: '@xterm/addon-search', npm: '@xterm/addon-search', license: 'MIT',
     copy: [['lib/addon-search.js', 'xterm/addon-search.js']],
     licenseFiles: ['LICENSE'],

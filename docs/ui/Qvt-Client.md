@@ -475,8 +475,8 @@ history, so the browser's Back does not close them.
 ## Floats
 
 Windows over the shell that are not dialogs: not modal, several at once, moved and resized by mouse, touch, pen and keys
-(`js/WebrootFloats.js`, plans/Terminal-Fancy.md §10). It loads before `WebrootVue.qvt.js` in `qapps.xml` and the desktop
-shell, so its components are precompiled; its tests are `test/client/WebrootFloats.spec.js`.
+(`js/WebrootFloats.js`, plans/archive/Terminal-Fancy.md §10). It loads before `WebrootVue.qvt.js` in `qapps.xml` and the
+desktop shell, so its components are precompiled; its tests are `test/client/WebrootFloats.spec.js`.
 
 - **The layer** (`m-float-layer`, in the root after `q-layout`, outside `#m-canvas`): fixed over the page, the header and the
   docked drawers (z-index 2050), below the call's ring bar, an overlay drawer, dialogs, menus and notices, except while a

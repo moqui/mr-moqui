@@ -134,8 +134,9 @@ T3 is one user per environment. MR Moqui servers have many users. This section i
 - Providers: an instance is environment-wide (admin sets it up), each user signs in with their own provider
   account (`AgentProviderAccount`, own home directory per user, [03 §1](03-Providers.md#1-drivers-and-instances)).
   A shared provider account per instance is allowed only when the admin marks it so.
-- Work roots, terminals and harness processes run as the server's OS user. Isolation between users is the process
-  sandbox ([14 §5](14-Security.md#5-process-isolation)).
+- Work roots, terminals and harness processes run as the server's OS user, or as `agent-code@run-as` when it is set
+  ([Terminal-Fancy2](../Terminal-Fancy2.md) TF6). Isolation between users is the process sandbox
+  ([14 §5](14-Security.md#5-process-isolation)).
 - Settings: client settings per user; server settings per environment (admin).
 - Peer links are environment-wide, made by an admin; each link has an access level and a list of users who may use
   it (default: the user who made it).
@@ -178,7 +179,7 @@ Start or reuse an MR Moqui server on a remote host over SSH, as T3 does for `t3 
    the host's OS and arch (Linux x86_64, aarch64; macOS arm64) from the release URL, checks SHA-256 (download 240 s,
    checksum 30 s). When the host cannot download, the script prints the install command and stops.
 3. Finds or makes a runtime directory `~/.moqui/ssh-launch/<stateKey>/runtime` (SQLite or the default embedded
-   database, `instance_purpose=dev` unless set).
+   database, `instance@purpose` dev unless set).
 4. Reads `server-runtime.json`. If a server with that runtime runs and answers `/health`, reuses it
    (`serverKind: external` when this launcher did not start it).
 5. Else picks a free port from 3773 within 200 ports (`moqui __ssh-helper pick-port`), starts
@@ -194,7 +195,7 @@ Start or reuse an MR Moqui server on a remote host over SSH, as T3 does for `t3 
   `AgentCodeHost`, and no password (sign-in only by pairing over SSH). This is a dev or personal host, so this is
   safe: who can SSH in as that OS user already owns the files.
 - Launching against an existing shared server (the runtime directory belongs to another user or is a production
-  instance) is refused. The script stops when `instance_purpose` is `production`.
+  instance) is refused. The script stops when `instance@purpose` is `production`.
 
 ### 7.3 Forward and helpers
 

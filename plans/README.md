@@ -59,14 +59,13 @@ results. The [shared review protocol](ui-review-shared-gallery.md#common-review-
   interview and design boards in `hemp/` whose elements link to artifacts, and stories and the screen flow opened on a
   board; editing stories on a board waits for the whiteboard plan's process editing.
 
-- [Terminal-Fancy.md](Terminal-Fancy.md): the Terminal screen as the terminal form of the development environment: many
-  sessions with tabs and splits that outlive a page, the `moqui>` command line in the browser and shells on the server's
-  operating system (bash, zsh, any program on a pty) behind permissions on a dev instance, floating panels as a layer of
-  the shell (terminals, and the Assist drawer and the tray's tabs undocked) that stay across screens, attention from
-  agents' sessions, and the Desktop and Mobile apps and the edge node as ways in. Built Nov 11, 2026 (P0–P9; guide
-  [Terminal](../docs/ui/Terminal.md)), and a second round the same evening (§13.1: SSH `attach`, dialogs by touch,
-  dock by drag, live runs); the hand checks are in Mobile-Desktop-Exit-Checks, and the rest of §15 waits for a
-  focused effort (Remaining-Work).
+- [Terminal-Fancy2.md](Terminal-Fancy2.md): the browser terminal's next batch (design, Nov 27, 2026, not built): one
+  long press on a phone, the screen as text on the server (`vt100`), sessions driven by a program (services, `moqui
+  term`, the dev tools' `terminal` tool with approvals), mirrored viewers and read-only sharing, recording as asciicast,
+  host sessions as the person's own OS account and Agent Code's run-as by one sudo-gated `term-exec` supervisor, the
+  `thread` kind for Agent Code, and the call, screen and record-panel floats. It follows
+  [Terminal-Fancy](archive/Terminal-Fancy.md) (built Nov 11, 2026, archived Nov 27; guide
+  [Terminal](../docs/ui/Terminal.md)).
 
 
 **Security**

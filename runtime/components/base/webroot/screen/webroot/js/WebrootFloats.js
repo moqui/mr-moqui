@@ -1,10 +1,10 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * Floats in the /qapps shell (plans/Terminal-Fancy.md §10, D12, D13, D17): windows over the shell that are not dialogs. They
- * are not modal, several are open at once, they move and resize by pointer events (mouse, touch and pen) and by keys, snap to
- * halves and quarters, tile, cascade and minimize. The word is float: "panel" already names the tray panel, the record panels
- * and the layout panels.
+ * Floats in the /qapps shell (plans/archive/Terminal-Fancy.md §10, D12, D13, D17): windows over the shell that are not
+ * dialogs. They are not modal, several are open at once, they move and resize by pointer events (mouse, touch and pen)
+ * and by keys, snap to halves and quarters, tile, cascade and minimize. The word is float: "panel" already names the
+ * tray panel, the record panels and the layout panels.
  *
  *   - moqui.floats, the store: the kinds of content that float (register), the windows (state.floats: id, kind, key, title,
  *     x, y, w, h, z, minimized, maximized, hidden), what opens, docks, closes, raises and arranges them, and the places kept

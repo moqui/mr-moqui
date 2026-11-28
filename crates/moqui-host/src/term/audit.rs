@@ -12,9 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The terminal's audit (plans/Terminal-Fancy.md §5.7): a `moqui.terminal.TerminalSession` row for each command line
-//! and host session, written when it is opened and when it ends, with an INFO line each. What is typed and shown is
-//! never recorded. A row that cannot be written is logged and the session goes on.
+//! The terminal's audit (plans/archive/Terminal-Fancy.md §5.7): a `moqui.terminal.TerminalSession` row for each command
+//! line and host session, written when it is opened and when it ends, with an INFO line each. What is typed and shown
+//! is never recorded. A row that cannot be written is logged and the session goes on.
 
 use std::sync::Weak;
 

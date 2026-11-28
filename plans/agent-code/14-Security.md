@@ -150,11 +150,11 @@ is written, the `code:*` rules above are T3's and not a storage format.
 |---|---|---|
 | Landlock (Linux 5.13+) | Write only to the work root, `<agent-code@home>/homes/<user>`, `/tmp/<thread>`; read deny for `runtime/conf`, `runtime/db`, `.env` | Small; no root; per process at spawn. Needs a fallback on older kernels and macOS. |
 | bubblewrap namespaces | Own mount view: only the work root, the home, system dirs read-only; no `runtime/` at all | Needs `bwrap` installed; harder with provider CLIs that need `~/.config`. |
-| Separate OS user (`agent-code@run-as`, setuid helper `moqui-code-runas`) | Real OS boundary from the server's files | Needs root setup; file ownership of work roots. |
+| Separate OS user (`agent-code@run-as`, started by [Terminal-Fancy2](../Terminal-Fancy2.md) TF6's sudo-gated `moqui term-exec` supervisor, the same path as a person's own OS account for host sessions) | Real OS boundary from the server's files | Needs root setup (a sudoers line and a root-owned `/etc/moqui/run-as.conf`); file ownership of work roots. |
 | Container per thread | Strongest | Heavy; not for desktop. |
 
-Recommendation: Landlock on Linux in phase 2, the separate OS user as an admin option in phase 5. macOS and Windows
-desktops stay on the baseline (one user owns the machine there).
+Recommendation: Landlock on Linux in P2, the separate OS user as an admin option in P6 ([16](16-Phases.md) O7). macOS
+and Windows desktops stay on the baseline (one user owns the machine there).
 
 ### 5.3 Network
 

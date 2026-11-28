@@ -660,7 +660,7 @@ a new conversation; the tier unless the agent fixes it; New, History, Tasks with
 page, Close), the status line, "Following in another tab" with Follow here, the chips, then `m-assist-thread`,
 `m-assist-card`s and `m-assist-composer`, or `m-assist-history` or `m-assist-tasks`.
 
-**Undocked** (plans/Terminal-Fancy.md §10.5, the floats of [Qvt-Client](../ui/Qvt-Client.md#floats)). Undock
+**Undocked** (plans/archive/Terminal-Fancy.md §10.5, the floats of [Qvt-Client](../ui/Qvt-Client.md#floats)). Undock
 (`#m-assist-undock`, beside Close; not below 600 px nor on a handheld screen) shuts the drawer and shows the body in a
 float of kind `assist`, 420 by 640 at the right to start. The body is one instance in both places: the teleport moves it,
 so a run, the draft and the panes stay, and the thread's scroll is put back after the move. The float's Dock puts it back

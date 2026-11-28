@@ -1837,7 +1837,7 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/Settings/Localization.xml` | XML widgets | S09 | Replaces the Localization screens S09 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A4), whose lists are its instance administrator's part (`rows=Y`); not walked here since |
 | `System/Settings/SettingsHome.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A6; not walked here |
 | `System/Settings.xml` | Container → InstanceSettings | S09 | Replaces the Localization screens S09 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A4); not walked here since |
-| `System/TerminalSessions.xml` | XML widgets | — | New with [Terminal-Fancy](../Terminal-Fancy.md) P9; not walked here |
+| `System/TerminalSessions.xml` | XML widgets | — | New with [Terminal-Fancy](Terminal-Fancy.md) P9; not walked here |
 | `System/ThreadList.xml` | XML widgets | S01 | V/P: unavailable state/localized scheduler verified at 1920 light/dark and 390; Linux details pending |
 | `System/Visit/VisitDetail.xml` | hidden menu | S06 | P |
 | `System/Visit/VisitList.xml` | XML widgets | S06 | P |

@@ -12,12 +12,13 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Which session needs its user (plans/Terminal-Fancy.md §11.1): a session's status, in the words Rex's protocol and
-//! herdr both use (working, blocked, done, idle, error), from the best source the session gives: the program's own
-//! word (OSC 7501), else a bell or a notification (blocked, with its text, until the user types), else shell marks (OSC
-//! 133: working while a command runs, then done or error by its exit status), else the output alone (working while it
-//! flows; an agent's quiet reads as done, anything else's as idle). The server reads no screen, so it cannot tell a
-//! question from an end: the text says "quiet". A change that wants the user, while nobody looks, is an attention.
+//! Which session needs its user (plans/archive/Terminal-Fancy.md §11.1): a session's status, in the words Rex's
+//! protocol and herdr both use (working, blocked, done, idle, error), from the best source the session gives: the
+//! program's own word (OSC 7501), else a bell or a notification (blocked, with its text, until the user types), else
+//! shell marks (OSC 133: working while a command runs, then done or error by its exit status), else the output alone
+//! (working while it flows; an agent's quiet reads as done, anything else's as idle). The server reads no screen, so it
+//! cannot tell a question from an end: the text says "quiet". A change that wants the user, while nobody looks, is an
+//! attention.
 
 use std::time::{Duration, Instant};
 

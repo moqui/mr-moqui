@@ -1,7 +1,8 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
-// Assist undocked (plans/Terminal-Fancy.md §10.5, §10.7), in the page: Vue and Quasar, the shell's root options, the drawer in a
-// q-layout and the float layer. The body is one instance in the drawer and in the float: its run, its draft and the thread's
-// scroll stay across Undock and Dock; Mod+J and Esc act on whichever form is current; Assist never reaches its own body.
+// Assist undocked (plans/archive/Terminal-Fancy.md §10.5, §10.7), in the page: Vue and Quasar, the shell's root
+// options, the drawer in a q-layout and the float layer. The body is one instance in the drawer and in the float: its
+// run, its draft and the thread's scroll stay across Undock and Dock; Mod+J and Esc act on whichever form is current;
+// Assist never reaches its own body.
 "use strict";
 const assist = moqui.assist;
 const floats = moqui.floats;

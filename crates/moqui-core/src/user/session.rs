@@ -2042,8 +2042,8 @@ fn touch_session(factory: &ExecutionContextFactory, id: &str) {
 }
 
 /// Count use of the session `id` that came without a request, such as typing in a browser terminal whose socket is the
-/// only traffic (plans/Terminal-Fancy.md §5.2), so the session does not time out while its user works. Only a session
-/// this node holds live is touched.
+/// only traffic (plans/archive/Terminal-Fancy.md §5.2), so the session does not time out while its user works. Only a
+/// session this node holds live is touched.
 pub fn note_use(factory: &ExecutionContextFactory, id: &str) {
     touch_session(factory, id);
 }

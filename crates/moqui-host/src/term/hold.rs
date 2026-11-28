@@ -12,11 +12,11 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The holder (plans/Terminal-Fancy.md §7.5, D14): `moqui term-hold`, a process the server starts on its first host
-//! session, one per runtime and protocol version, in a process group of its own so it outlives the server: a restart
-//! of the server (`./moq run` again, Restart Now, a rebuild) finds it and its sessions. It owns the ptys, a ring of
-//! each session's output and its tracker; the server keeps the limits, the permissions and the audit, and the holder
-//! trusts the owner of its socket and nothing else (`0600`, in a `0700` directory under the runtime's `tmp`).
+//! The holder (plans/archive/Terminal-Fancy.md §7.5, D14): `moqui term-hold`, a process the server starts on its first
+//! host session, one per runtime and protocol version, in a process group of its own so it outlives the server: a
+//! restart of the server (`./moq run` again, Restart Now, a rebuild) finds it and its sessions. It owns the ptys, a
+//! ring of each session's output and its tracker; the server keeps the limits, the permissions and the audit, and the
+//! holder trusts the owner of its socket and nothing else (`0600`, in a `0700` directory under the runtime's `tmp`).
 //!
 //! The protocol is a line of JSON and its answer, a line of JSON, on a connection of its own. `hello`, `list`,
 //! `status`, `resize`, `signal` and `forget` answer and close; `list` and `forget` are kept the same in every version,

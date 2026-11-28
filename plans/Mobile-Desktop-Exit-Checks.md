@@ -301,15 +301,17 @@ says "as on desktop", run that check of MD4 or MD5 on the phone and record it th
 
 ## The browser terminal: the apps and the edge node
 
-The checks that close [Terminal-Fancy](Terminal-Fancy.md) P7 and P8 on real machines. The emulator, a development run
-of the Desktop app and the in-process edge node of `crates/moqui-host/tests/it/edge_web.rs` have run these paths
-already; these checks run them on installed apps, a real touch screen and a deployed edge node. Record the results in
-Terminal-Fancy §13 (a line per check), and file what fails in Remaining-Work's Browser terminal table.
+The checks that close [Terminal-Fancy](archive/Terminal-Fancy.md) P7 and P8 on real machines. The emulator, a
+development run of the Desktop app and the in-process edge node of `crates/moqui-host/tests/it/edge_web.rs` have run
+these paths already; these checks run them on installed apps, a real touch screen and a deployed edge node. Record the
+results in [Testing-Needed](Testing-Needed.md) (a line per check), and file what fails in Remaining-Work's Browser
+terminal table.
 
-Set up a **remote dev server**: `instance_purpose=dev`, `terminal_remote=true` (in its `runtime/.env`), its HTTPS
-listener with a certificate the devices trust, a `host-profile` for `claude` or another agent beside the defaults, and
-a user in `ADMIN_ADV` (john.doe in the demo data) who has `SSH_SHELL` and `TERMINAL_HOST`. For check 4, the same server
-as the local node of the edge node and the all-in-one node of [Setup](#setup), with web access in each mode.
+Set up a **remote dev server**: `moqui_conf__instance__purpose=dev` and `moqui_conf__terminal__remote=true` (in its
+`runtime/.env`), its HTTPS listener with a certificate the devices trust, a `host-profile` for `claude` or another agent
+beside the defaults, and a user in `ADMIN_ADV` (john.doe in the demo data) who has `SSH_SHELL` and `TERMINAL_HOST`. For
+check 4, the same server as the local node of the edge node and the all-in-one node of [Setup](#setup), with web access
+in each mode.
 
 1. **The Desktop app as a client** (MD3's client mode, the installed bundle) of the remote dev server.
    - Open the Terminal: the command line opens; New › Shell opens a shell. The first of these asks for the password

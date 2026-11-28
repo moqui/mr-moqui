@@ -18,10 +18,10 @@
 //! sends the page's. A dropped socket connects again, waiting longer each time up to a minute with jitter
 //! (`moqui_lib::reconnect`), as `moqui tui --server`'s does; a close for authentication (1008, the key revoked or expired) does not.
 //!
-//! `/termws`, the browser terminal (plans/Terminal-Fancy.md §12), carries binary frames both ways, keeps every frame the
-//! page sends (none is dropped: they are what the user typed), reads with a shorter poll, and is never connected again
-//! by the host: its page attaches again itself, saying how far it got, so nothing is repeated or lost. Its close
-//! reason goes to the page.
+//! `/termws`, the browser terminal (plans/archive/Terminal-Fancy.md §12), carries binary frames both ways, keeps every
+//! frame the page sends (none is dropped: they are what the user typed), reads with a shorter poll, and is never
+//! connected again by the host: its page attaches again itself, saying how far it got, so nothing is repeated or lost.
+//! Its close reason goes to the page.
 
 use std::collections::VecDeque;
 use std::io::{Read, Write};

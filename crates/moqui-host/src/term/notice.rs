@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A session that wants its user while nobody looks sends a notification (plans/Terminal-Fancy.md §11.1), on the
-//! `TerminalAttention` topic, kept and alerting, so the page, Web Push, the Desktop app and a phone show "claude in
+//! A session that wants its user while nobody looks sends a notification (plans/archive/Terminal-Fancy.md §11.1), on
+//! the `TerminalAttention` topic, kept and alerting, so the page, Web Push, the Desktop app and a phone show "claude in
 //! mr-mantle is waiting". What notifies is the user's (the `TERMINAL_CONFIG` preference): a session that is blocked
 //! (on by default), one that is done, a command that ran longer than a set time, a bell. A session's own setting
 //! (`all`, `off`) comes first.

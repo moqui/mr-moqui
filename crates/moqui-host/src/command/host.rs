@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `sh [profile]`, `profiles` and `sessions` at the `moqui>` prompt (plans/Terminal-Fancy.md §6): a program on the
-//! server's operating system run on the prompt's own stream until it ends, then the prompt again. It takes
+//! `sh [profile]`, `profiles` and `sessions` at the `moqui>` prompt (plans/archive/Terminal-Fancy.md §6): a program on
+//! the server's operating system run on the prompt's own stream until it ends, then the prompt again. It takes
 //! `TERMINAL_HOST` beside the prompt's `SSH_SHELL`, a dev instance and the rule of §8.2: in the browser by where the
 //! command line was opened from, over SSH by the peer's address. Each run is an audit row and counts toward the host
 //! limits.

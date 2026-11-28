@@ -12,10 +12,10 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The server's side of the holder ([`super::hold`], plans/Terminal-Fancy.md §7.5): it starts the holder when there is
-//! none, opens host sessions there, and on the first look at the sessions after a start takes back those the holder
-//! kept from the server before (adoption). A held session is a [`Program`] like any other: its output and input are
-//! its connection to the holder, its resize and signals are requests of their own. The server's stop lets go of its
+//! The server's side of the holder ([`super::hold`], plans/archive/Terminal-Fancy.md §7.5): it starts the holder when
+//! there is none, opens host sessions there, and on the first look at the sessions after a start takes back those the
+//! holder kept from the server before (adoption). A held session is a [`Program`] like any other: its output and input
+//! are its connection to the holder, its resize and signals are requests of their own. The server's stop lets go of its
 //! held sessions without ending them. When no holder starts, host sessions run in the server, and end with it.
 
 use std::io;

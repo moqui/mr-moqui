@@ -12,11 +12,11 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The `moqui>` prompt's line editor (plans/Terminal-Fancy.md §6), since a person now lives there: Left, Right, Home
-//! and End; Ctrl+A, E, K, U and W; Delete and Backspace; history on Up and Down; Tab asks the caller to complete; a
-//! bracketed paste is taken whole, its lines ending lines as typed ones do. It reads the terminal's bytes as they come,
-//! a sequence split across reads included, and writes what the terminal shows: the line drawn again after each change.
-//! With no echo (an SSH exec with no pty) it only gathers lines.
+//! The `moqui>` prompt's line editor (plans/archive/Terminal-Fancy.md §6), since a person now lives there: Left, Right,
+//! Home and End; Ctrl+A, E, K, U and W; Delete and Backspace; history on Up and Down; Tab asks the caller to complete;
+//! a bracketed paste is taken whole, its lines ending lines as typed ones do. It reads the terminal's bytes as they
+//! come, a sequence split across reads included, and writes what the terminal shows: the line drawn again after each
+//! change. With no echo (an SSH exec with no pty) it only gathers lines.
 
 /// What a read of input asks of the caller, beside what the editor wrote.
 #[derive(Clone, Debug, PartialEq, Eq)]

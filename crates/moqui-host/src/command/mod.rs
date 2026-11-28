@@ -12,9 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The `moqui>` command line (plans/Terminal-Fancy.md §6): the loop that reads a line, runs it with [`shell`] and writes
-//! its output, on any byte stream. SSH's admin shell runs it on a channel. `apps` at the prompt runs the terminal client
-//! on the same stream, and the prompt comes back when it ends.
+//! The `moqui>` command line (plans/archive/Terminal-Fancy.md §6): the loop that reads a line, runs it with [`shell`]
+//! and writes its output, on any byte stream. SSH's admin shell runs it on a channel. `apps` at the prompt runs the
+//! terminal client on the same stream, and the prompt comes back when it ends.
 
 use std::sync::Weak;
 

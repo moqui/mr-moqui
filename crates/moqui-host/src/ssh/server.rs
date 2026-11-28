@@ -939,8 +939,8 @@ impl Connection {
         }
     }
 
-    /// `sh` on `channel` (plans/Terminal-Fancy.md §6): a pty, and a build with host sessions; who may and from where
-    /// is asked when it is typed, by the peer's address.
+    /// `sh` on `channel` (plans/archive/Terminal-Fancy.md §6): a pty, and a build with host sessions; who may and from
+    /// where is asked when it is typed, by the peer's address.
     #[cfg(all(feature = "devtools", feature = "tui", unix))]
     fn host_access(&self, channel: ChannelId, username: &str) -> crate::command::HostCommand {
         let pty = self.ptys.get(&channel)?;

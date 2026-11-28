@@ -9688,9 +9688,10 @@
     // The tray panel (design §1.4): one panel at the right of the canvas, 400 px from 600 px and the full width below, with a tab
     // for each tray screen the theme names. A tab is an m-dynamic-container loaded on its first opening and kept (v-show), so
     // its state lasts across navigation; the root keeps the open state, the tab and each tab's scroll position.
-    // Undocked (plans/Terminal-Fancy.md §10.6, D17) a tab is a float of kind tray on its own: its body is held in a teleport that
-    // targets the float's body while it floats ($root.trayFloatTarget) and is off while docked, so the tab's screen is the same
-    // instance in both places (a chat's draft stays); it leaves the strip, and the tray shows only the docked tabs.
+    // Undocked (plans/archive/Terminal-Fancy.md §10.6, D17) a tab is a float of kind tray on its own: its body is held
+    // in a teleport that targets the float's body while it floats ($root.trayFloatTarget) and is off while docked, so
+    // the tab's screen is the same instance in both places (a chat's draft stays); it leaves the strip, and the tray
+    // shows only the docked tabs.
     component("m-shell-tray", {
         name: "mShellTray",
         // the containers and scroll elements of the tabs, by key, from the function refs: not reactive
@@ -10165,8 +10166,9 @@
         "        <div v-html=\"shell.footerHtml\" class=\"row full-width\"></div>\n" +
         "    </q-footer>\n" +
         "</q-layout>\n" +
-        // the floating windows (WebrootFloats.js, plans/Terminal-Fancy.md §10.1): outside #m-canvas and over the layout, below the
-        // dialogs, menus and notices; what floats is its owner's content, moved into a window's body
+        // the floating windows (WebrootFloats.js, plans/archive/Terminal-Fancy.md §10.1): outside #m-canvas and over
+        // the layout, below the dialogs, menus and notices; what floats is its owner's content, moved into a window's
+        // body
         "<m-float-layer v-if=\"floatsOn\"></m-float-layer>\n" +
         // the copy a terminal's program made that the browser refused, to copy by hand (WebrootTerminal.js)
         "<m-terminal-copy v-if=\"terminalOn\"></m-terminal-copy>\n" +
@@ -10950,8 +10952,9 @@
             },
             // The ids of the elements Assist may reach (IronStone design §1.1): the canvas, the tray panel while it is there and the
             // quick-create dialog while it is open; not the header, the drawer or the palette.
-            // A float is in reach only when its kind says so (plans/Terminal-Fancy.md §10.7, D18): a floated tray tab's body is, a
-            // floated Assist is not; whatever carries data-assist-self (Assist's body, a terminal) never is, wherever it is.
+            // A float is in reach only when its kind says so (plans/archive/Terminal-Fancy.md §10.7, D18): a floated
+            // tray tab's body is, a floated Assist is not; whatever carries data-assist-self (Assist's body, a
+            // terminal) never is, wherever it is.
             assistReach() {
                 return ["m-canvas"].concat(this.trayMounted && this.trayOpen && this.trayDockedTabs.length ? ["m-tray"] : [], this.quickCreateShow ? ["m-quick-create"] : [],
                     moqui.floats ? moqui.floats.reach() : []);

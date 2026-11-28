@@ -122,8 +122,8 @@ pub fn take_auth_failure() -> bool {
     AUTH_FAILED.with(|flag| flag.replace(false))
 }
 
-/// How a request reached this server, beside its peer's address (plans/Terminal-Fancy.md §8.2): the host sets it from
-/// the connection, and a client cannot.
+/// How a request reached this server, beside its peer's address (plans/archive/Terminal-Fancy.md §8.2): the host sets
+/// it from the connection, and a client cannot.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RequestVia {
     /// A connection to one of this server's listeners.

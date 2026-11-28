@@ -12,10 +12,10 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.terminal.TerminalServices` (plans/Terminal-Fancy.md §5.7): what the Terminal screen's transitions call to
-//! list, open, rename and end the signed-in user's kept sessions. Each works on the caller's own sessions only, whatever
-//! calls it; a refusal adds an error and answers a `reasonCode`. The socket (`/termws?session=`) attaches to a session
-//! these opened.
+//! `org.moqui.terminal.TerminalServices` (plans/archive/Terminal-Fancy.md §5.7): what the Terminal screen's transitions
+//! call to list, open, rename and end the signed-in user's kept sessions. Each works on the caller's own sessions only,
+//! whatever calls it; a refusal adds an error and answers a `reasonCode`. The socket (`/termws?session=`) attaches to a
+//! session these opened.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -65,7 +65,7 @@ fn warn_remote(factory: &ExecutionContextFactory) {
     tracing::warn!(
         "terminal remote is on: a user with SSH_SHELL may open the moqui> command line, and one with TERMINAL_HOST a \
          shell as this server's operating system user, from other machines over HTTPS with a recent sign-in \
-         (plans/Terminal-Fancy.md §8.2)"
+         (plans/archive/Terminal-Fancy.md §8.2)"
     );
 }
 

@@ -12,11 +12,11 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The tracker (plans/Terminal-Fancy.md §5.5): a state machine over a session's output that keeps no screen. It reads
-//! the DEC private modes a replay must set again, the title (OSC 0, 2), the working directory (OSC 7), the bell and
-//! notifications (BEL, OSC 9, 777 and 99), shell marks (OSC 133), a program's own status (OSC 7501, Rex's program status
-//! protocol) and progress (OSC 9;4), and the points where the stream is at rest: outside any escape sequence and any
-//! UTF-8 character, where a replay may start.
+//! The tracker (plans/archive/Terminal-Fancy.md §5.5): a state machine over a session's output that keeps no screen. It
+//! reads the DEC private modes a replay must set again, the title (OSC 0, 2), the working directory (OSC 7), the bell
+//! and notifications (BEL, OSC 9, 777 and 99), shell marks (OSC 133), a program's own status (OSC 7501, Rex's program
+//! status protocol) and progress (OSC 9;4), and the points where the stream is at rest: outside any escape sequence and
+//! any UTF-8 character, where a replay may start.
 //!
 //! A scanner of our own rather than `vte`: these few sequences need a few states, and a sequence split across reads
 //! is carried in the state. Nothing in it reads the factory, so the holder (§7.5) runs it too.
