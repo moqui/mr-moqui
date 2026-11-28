@@ -559,6 +559,39 @@ impl Room {
         Ok(())
     }
 
+    /// Take off, after an undo, the rules past the bounds a room opened anew holds them to ([`trim_rules`], in its
+    /// order): rows or columns an undo puts back inside a rule another added since grow it, as space a deletion freed
+    /// may have been taken. Every room takes off the same, so the rooms stay alike; each is told as passed by, logged.
+    pub(super) fn enforce_rule_bounds(&mut self) {
+        let (mut rules, mut cells) = (0_usize, 0_i64);
+        let mut drop: Vec<(u32, usize)> = Vec::new();
+        for (sheet, worksheet) in self.model().workbook.worksheets.iter().enumerate() {
+            let (mut sheet_rules, mut sheet_cells) = (0_usize, 0_i64);
+            for (at, rule) in worksheet.conditional_formatting.iter().enumerate() {
+                let size = range_cells(&rule.range).unwrap_or(i64::MAX);
+                let keep = sheet_rules < MAX_SHEET_RULES
+                    && rules < MAX_WORKBOOK_RULES
+                    && size <= MAX_EDIT_CELLS
+                    && sheet_cells.saturating_add(size) <= MAX_SHEET_RULE_CELLS
+                    && cells.saturating_add(size) <= MAX_WORKBOOK_RULE_CELLS;
+                if keep {
+                    sheet_rules += 1;
+                    rules += 1;
+                    sheet_cells += size;
+                    cells += size;
+                } else if let Ok(sheet) = u32::try_from(sheet) {
+                    drop.push((sheet, at));
+                }
+            }
+        }
+        for (sheet, at) in drop.into_iter().rev() {
+            tracing::warn!(room = %self.id, sheet, index = at, "An undo left a conditional format past the bounds; it is taken off");
+            if self.delete_rule(sheet, at).is_ok() {
+                self.rules_passed += 1;
+            }
+        }
+    }
+
     fn priorities(&self, sheet: u32) -> Vec<u32> {
         self.model()
             .workbook
@@ -703,7 +736,11 @@ impl Room {
             // a changed rule, still as the change left it: its rule back, and its range when that is as the change left
             // it too; with the range another's rows moved kept, it is set back only in part, and told as passed by
             ("setRule", Some((sheet, at)), Some(now)) if same_json(&now["rule"], &op["expect"]["rule"]) => {
-                let whole = now["range"] == op["expect"]["range"];
+                // its old range, when that is still as the change left it and within the rules' bounds now
+                let whole = now["range"] == op["expect"]["range"]
+                    && self
+                        .check_room_for(sheet, op["range"].as_str().unwrap_or_default(), Some(at))
+                        .is_ok();
                 let range = if whole { &op["range"] } else { &now["range"] };
                 let set = input(&op["rule"]).and_then(|rule| {
                     self.model.update_conditional_formatting(
@@ -757,6 +794,11 @@ impl Room {
                         continue;
                     };
                     let range = before["range"].as_str().unwrap_or_default();
+                    // the space it had may be another's rules' now
+                    if self.check_room_for(sheet, range, Some(at)).is_err() {
+                        self.pass_by(kind, Some(id));
+                        continue;
+                    }
                     let set = input(&before["rule"])
                         .and_then(|rule| self.model.update_conditional_formatting(sheet, place(at)?, range, rule));
                     match set {

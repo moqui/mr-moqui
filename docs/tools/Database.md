@@ -183,9 +183,11 @@ workbook on the server's spreadsheet engine (IronCalc; plan [IronCalc-DB](../../
   sides it changes; the merged cells a merge, an unmerge, a fill or a deletion of rows, columns or a sheet met; the one
   conditional format the edit touched, found by an id the room keeps for each rule, and for a deletion of rows or
   columns the rules' ranges and formulas it moved or made `#REF!`). A rule another person changed or deleted since is
-  passed by, as is a step whose sheet another deleted or which is a data sheet now, or one the engine refuses, and the
-  rest of the undo is taken back: the person is told how many were, their next undo goes on, and a redo leaves out an
-  edit its undo passed by whole. An added rule is taken back when no one changed it since, wherever another's rows
+  passed by, as is a step whose sheet another deleted or which is a data sheet now, or one the engine refuses (a sheet
+  name another took, a place no longer there), and the rest of the undo is taken back: the person is told how many
+  were, their next undo goes on, and a redo leaves out an edit its undo passed by whole. A sheet's rename, move,
+  deletion or addition is taken back on that sheet, wherever others' sheets put it, and a rule an undo leaves past the
+  bounds (rows put back inside a rule added since) is taken off, as a room opened anew would trim it. An added rule is taken back when no one changed it since, wherever another's rows
   moved it; a changed rule only while it is as the change left it (a formula another's rows rewrote counts as
   changed), and a rule a deletion of rows moved only while it is as the deletion left it.
 - **Unsaved edits are kept** in the log until the document is saved: they outlast a restart and everyone leaving, and

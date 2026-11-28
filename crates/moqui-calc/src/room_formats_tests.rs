@@ -1155,3 +1155,94 @@ fn an_insertion_is_held_to_the_rules_bounds_and_a_data_sheets_rules_are_left_out
         .unwrap();
     assert!(lock(&data).rules_of(0).unwrap().is_empty());
 }
+
+/// Rows an undo puts back inside a rule another added since would grow it past a rule's bound: the rule is taken off
+/// after the undo, as a room opened anew would trim it, in every room alike, and told.
+#[test]
+fn an_undo_that_grows_a_rule_past_the_bounds_takes_it_off_in_every_room() {
+    let rooms = Rooms::default();
+    let mut pair = Pair::new(&rooms);
+    let deleted = pair.write(&[json!({"op": "deleteRows", "sheet": 1, "row": 5, "count": 1})]);
+    pair.write(&[
+        json!({"op": "addRule", "sheet": 1, "range": "A1:J10000", "rule": cell_is("GreaterThan", "1", "#FFC7CE")}),
+    ]);
+    pair.undo(deleted);
+    assert!(lock(&pair.writer).rules_passed() >= 1);
+    for room in [&pair.writer, &pair.follower] {
+        assert!(lock(room).rules_of(1).unwrap().is_empty(), "past the bound, taken off");
+    }
+}
+
+/// A step of an undo the engine refuses as the sheets are now is passed by and the rest applied: a sheet's old name
+/// another took since, a place no longer there.
+#[test]
+fn an_undo_passes_by_a_sheet_step_the_engine_refuses() {
+    let rooms = Rooms::default();
+    let mut pair = Pair::new(&rooms);
+    let names = |room: &SharedRoom| lock(room).model().workbook.get_worksheet_names();
+    // Ann renames Summary to Budget, Bob names another sheet Summary: Ann's undo cannot take the name back
+    let renamed = pair.write(&[json!({"op": "renameSheet", "sheet": 1, "name": "Budget"})]);
+    pair.write(&[
+        json!({"op": "addSheet"}),
+        json!({"op": "renameSheet", "sheet": 2, "name": "Summary"}),
+    ]);
+    pair.undo(renamed);
+    assert_eq!(lock(&pair.writer).rules_passed(), 1);
+    assert_eq!(names(&pair.writer), ["Orders", "Budget", "Summary"]);
+    assert_eq!(names(&pair.follower), ["Orders", "Budget", "Summary"]);
+    // Ann moves the last sheet to 1, Bob deletes one: the move back is to a place no longer there
+    pair.write(&[
+        json!({"op": "addSheet"}),
+        json!({"op": "renameSheet", "sheet": 3, "name": "Four"}),
+    ]);
+    let moved = pair.write(&[json!({"op": "moveSheet", "sheet": 3, "to": 1})]);
+    pair.write(&[json!({"op": "deleteSheet", "sheet": 2})]);
+    pair.undo(moved);
+    assert_eq!(lock(&pair.writer).rules_passed(), 1);
+    assert_eq!(names(&pair.writer), ["Orders", "Four", "Summary"]);
+    assert_eq!(names(&pair.follower), names(&pair.writer));
+}
+
+/// A deleted sheet's undo names the sheet it adds wherever it lands, and an added sheet's undo deletes that sheet by
+/// the engine's id: another's sheets added or deleted between are left as they are.
+#[test]
+fn a_sheets_undo_finds_its_own_sheet_after_anothers() {
+    let rooms = Rooms::default();
+    let mut pair = Pair::new(&rooms);
+    let names = |room: &SharedRoom| lock(room).model().workbook.get_worksheet_names();
+    // Ann's sheet Two with a cell, deleted; Bob adds a sheet with a cell of his; Ann's undo puts Two back as it was
+    pair.write(&[
+        json!({"op": "addSheet"}),
+        json!({"op": "renameSheet", "sheet": 2, "name": "Two"}),
+        json!({"op": "input", "sheet": 2, "row": 1, "column": 1, "value": "Ann's"}),
+    ]);
+    let deleted = pair.write(&[json!({"op": "deleteSheet", "sheet": 2})]);
+    pair.write(&[
+        json!({"op": "addSheet"}),
+        json!({"op": "renameSheet", "sheet": 2, "name": "Bob"}),
+        json!({"op": "input", "sheet": 2, "row": 1, "column": 1, "value": "Bob's"}),
+    ]);
+    pair.undo(deleted);
+    for room in [&pair.writer, &pair.follower] {
+        assert_eq!(names(room), ["Orders", "Summary", "Two", "Bob"]);
+        let room = lock(room);
+        assert_eq!(
+            (room.cell_content(2, 1, 1).unwrap(), room.cell_content(3, 1, 1).unwrap()),
+            ("Ann's".into(), "Bob's".into())
+        );
+    }
+    // Ann adds a sheet; Bob deletes Summary and adds one; Ann's undo deletes her sheet, not his
+    let added = pair.write(&[
+        json!({"op": "addSheet"}),
+        json!({"op": "renameSheet", "sheet": 4, "name": "Ann"}),
+    ]);
+    pair.write(&[
+        json!({"op": "deleteSheet", "sheet": 1}),
+        json!({"op": "addSheet"}),
+        json!({"op": "renameSheet", "sheet": 4, "name": "Bob2"}),
+    ]);
+    pair.undo(added);
+    for room in [&pair.writer, &pair.follower] {
+        assert_eq!(names(room), ["Orders", "Two", "Bob", "Bob2"]);
+    }
+}

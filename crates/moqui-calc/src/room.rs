@@ -534,8 +534,16 @@ impl Room {
             }
             let taken = self.inverse(op).and_then(|mut inverse| {
                 self.apply(op)?;
-                // what an undo of a rule's edit finds is the rule as the edit left it
+                // what an undo of a rule's edit finds is the rule as the edit left it, and an added sheet's undo the
+                // sheet by the engine's id (another may delete or add sheets before it)
                 self.settle_rule(op, &mut inverse);
+                if op["op"] == "addSheet" {
+                    if let (Some(step), Some(worksheet)) =
+                        (inverse.first_mut(), self.model().workbook.worksheets.last())
+                    {
+                        step["sheetId"] = json!(worksheet.sheet_id);
+                    }
+                }
                 Ok(inverse)
             });
             match taken {
@@ -629,14 +637,29 @@ impl Room {
         self.rule_restore.clear();
         // for each op of the edit, its steps and how many of them were passed by
         let mut parts: BTreeMap<usize, (usize, usize)> = BTreeMap::new();
+        // the sheet a step of this undo added (a deleted sheet put back), which its next steps name
+        let mut added: Option<u32> = None;
         for step in &inverse {
             let before = self.steps_skipped;
-            if self.step_sheet_gone(step) {
-                self.rules_passed += 1;
-                self.steps_skipped += 1;
-                tracing::debug!(room = %self.id, step = %step["op"], "An undo passed by a step whose sheet is gone or a data sheet now");
-            } else {
-                self.apply(step)?;
+            match self.step_now(step, added) {
+                None => {
+                    self.rules_passed += 1;
+                    self.steps_skipped += 1;
+                    tracing::debug!(room = %self.id, step = %step["op"], "An undo passed by a step whose sheet is gone or a data sheet now");
+                }
+                Some(now) => match self.apply(&now) {
+                    Ok(()) if now["op"] == "addSheet" => {
+                        added = u32::try_from(self.model().workbook.worksheets.len().saturating_sub(1)).ok();
+                    }
+                    Ok(()) => {}
+                    // refused as the sheet is now (a name another took, a place no longer there): passed by, the
+                    // rest applied
+                    Err(err) => {
+                        tracing::warn!(room = %self.id, step = %now["op"], error = %err, "A step of an undo was refused; it is passed by");
+                        self.rules_passed += 1;
+                        self.steps_skipped += 1;
+                    }
+                },
             }
             if let Some(part) = step["part"].as_u64().and_then(|part| usize::try_from(part).ok()) {
                 let counts = parts.entry(part).or_insert((0, 0));
@@ -644,11 +667,35 @@ impl Room {
                 counts.1 += usize::from(self.steps_skipped > before);
             }
         }
+        // what the steps set back may pass the rules' bounds (rows coming back inside a rule another added since): held
+        // to them as a room opened after the next save holds them
+        self.enforce_rule_bounds();
         Ok(parts
             .into_iter()
             .filter(|(_, (steps, passed))| steps == passed)
             .map(|(part, _)| part)
             .collect())
+    }
+
+    /// A step of an undo as it applies now, or None to pass it by: a step that names the sheet this undo added
+    /// (`added`) is given its place; one that names a sheet by the engine's id (`sheetId`) is given that sheet's place,
+    /// passed by when it is gone; and one whose sheet is gone, or is a data sheet now, is passed by.
+    fn step_now(&self, step: &Json, added: Option<u32>) -> Option<Json> {
+        let mut now = step.clone();
+        // with no sheet added (its step passed by), nothing of it to name
+        if step["added"] == true {
+            now["sheet"] = json!(added?);
+        }
+        if let Some(id) = step["sheetId"].as_u64() {
+            let at = self
+                .model()
+                .workbook
+                .worksheets
+                .iter()
+                .position(|worksheet| u64::from(worksheet.sheet_id) == id)?;
+            now["sheet"] = json!(at);
+        }
+        (!self.step_sheet_gone(&now)).then_some(now)
     }
 
     /// Whether a step of an undo names a sheet that is no longer there, or is now a data sheet where the step would
@@ -673,7 +720,9 @@ impl Room {
 
     /// Keep, for the undo of row `seq`, the places of its edit's ops it passed by whole ([`Room::undo_row`]).
     pub fn record_skipped(&mut self, seq: i64, parts: Vec<usize>) {
-        if !parts.is_empty() {
+        if parts.is_empty() {
+            self.skipped.remove(&seq);
+        } else {
             self.skipped.insert(seq, parts);
         }
     }
@@ -979,17 +1028,28 @@ impl Room {
                 edits
             }
             "addSheet" => vec![json!({"op": "deleteSheet", "sheet": sheet_count})],
+            // a sheet's rename and move are taken back on that sheet, found by the engine's id wherever others' sheets
+            // put it since
             "renameSheet" => {
-                let name = self
+                let worksheet = self
                     .model()
                     .workbook
                     .worksheets
                     .get(sheet as usize)
-                    .map(|worksheet| worksheet.get_name())
                     .ok_or_else(|| Error::new("No such sheet"))?;
-                vec![json!({"op": "renameSheet", "sheet": sheet, "name": name})]
+                vec![
+                    json!({"op": "renameSheet", "sheet": sheet, "name": worksheet.get_name(), "sheetId": worksheet.sheet_id}),
+                ]
             }
-            "moveSheet" => vec![json!({"op": "moveSheet", "sheet": small("to", 0), "to": sheet})],
+            "moveSheet" => {
+                let id = self
+                    .model()
+                    .workbook
+                    .worksheets
+                    .get(sheet as usize)
+                    .map(|worksheet| worksheet.sheet_id);
+                vec![json!({"op": "moveSheet", "sheet": small("to", 0), "to": sheet, "sheetId": id})]
+            }
             "deleteSheet" => {
                 let worksheet = self
                     .model()
@@ -1003,8 +1063,9 @@ impl Room {
                 let last = sheet_count.saturating_sub(1);
                 let mut edits = vec![
                     json!({"op": "addSheet"}),
-                    json!({"op": "renameSheet", "sheet": last, "name": name}),
-                    json!({"op": "moveSheet", "sheet": last, "to": sheet}),
+                    // the sheet the undo adds, wherever it lands (another may have added one since)
+                    json!({"op": "renameSheet", "sheet": last, "name": name, "added": true}),
+                    json!({"op": "moveSheet", "sheet": last, "to": sheet, "added": true}),
                 ];
                 edits.extend(self.sizes(sheet, 1, max_column.max(1), true)?);
                 edits.extend(self.sizes(sheet, 1, max_row.max(1), false)?);
@@ -1680,6 +1741,7 @@ impl Rooms {
             held.seq = seq;
             held.own_log.clear();
             held.inverses.clear();
+            held.skipped.clear();
             held.definition_id.clone()
         };
         let mut rooms = lock(&self.rooms);
