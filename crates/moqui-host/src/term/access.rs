@@ -239,6 +239,8 @@ impl Refusal {
 pub(crate) struct Switches {
     pub command: bool,
     pub host: bool,
+    /// A crate gave a policy for thread terminals (plans/Terminal-Fancy2.md D9).
+    pub thread: bool,
     /// `terminal` `remote`: from anywhere but this machine.
     pub remote: bool,
     /// How recent a remote session's sign-in must be.
@@ -251,6 +253,7 @@ impl Switches {
         Self {
             command: switched_on(factory, "command-line"),
             host: switched_on(factory, "host-sessions"),
+            thread: !moqui_core::terminal::policies(factory).is_empty(),
             remote: factory.conf_flag("terminal", "remote", false),
             reauth_millis: i64::try_from(minutes).unwrap_or(60) * 60_000,
         }
@@ -306,7 +309,7 @@ fn built_with(kind: Kind) -> bool {
     match kind {
         Kind::Apps => true,
         Kind::Command => cfg!(feature = "devtools"),
-        Kind::Host => cfg!(all(feature = "devtools", unix)),
+        Kind::Host | Kind::Thread => cfg!(all(feature = "devtools", unix)),
     }
 }
 
@@ -333,12 +336,14 @@ pub(crate) fn check(
     permitted: &dyn Fn(&str) -> bool,
     recent: &dyn Fn(i64) -> bool,
 ) -> Result<(), Refusal> {
+    // a thread terminal's own rule is its policy's, asked when it is opened (plans/Terminal-Fancy2.md D9)
     let (permission, on) = match kind {
         Kind::Apps => return Ok(()),
-        Kind::Command => (COMMAND_PERMISSION, switches.command),
-        Kind::Host => (HOST_PERMISSION, switches.host),
+        Kind::Command => (Some(COMMAND_PERMISSION), switches.command),
+        Kind::Host => (Some(HOST_PERMISSION), switches.host),
+        Kind::Thread => (None, switches.thread),
     };
-    if !built_with(kind) || !on || !permitted(permission) {
+    if !built_with(kind) || !on || permission.is_some_and(|permission| !permitted(permission)) {
         return Err(Refusal::NotAvailable);
     }
     // the server's own origin only, whatever allow-origins says (§8.3); the node in process has its own

@@ -484,6 +484,8 @@ pub static CATALOG: &[Unit] = &[
         Class::Restart("the log writer starts at boot; Monitor › Settings changes its levels for a while"),
     ),
     single("report", Class::Live),
+    // CalcGrid: slow-ms is read at each evaluation (plans/IronCalc-DB2.md CG1.4)
+    single("calc", Class::Live),
     single("resource-watch", Class::Live),
     // the artifact index reads index-writers at each write
     single("dev-reload", Class::Restart("the file watcher starts at boot")).attrs(&[("index-writers", Class::Live)]),

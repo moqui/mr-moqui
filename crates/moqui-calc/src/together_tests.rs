@@ -166,6 +166,100 @@ fn rooms_of_two_scopes_follow_one_log_each_over_its_own_rows_and_undo_with_what_
     assert!(follow(&mut lock(&east), &[revert], &head).is_err());
 }
 
+/// A test context over the in-memory database, which holds the document's edit log.
+fn log_context() -> (moqui_core::context::ExecutionContext, EntityFacade) {
+    let ctx = ExecutionContextFactory::test_context_in(
+        "",
+        moqui_core::service::ServicePools::idle(),
+        moqui_core::context::framework_dir(),
+    );
+    let facade = moqui_core::testing::open();
+    facade.assume_db_tables();
+    ctx.factory().set_entity(facade.clone());
+    (ctx, facade)
+}
+
+/// plans/IronCalc-DB2.md CG1.3: under the log's lock the rows a room had not followed, and its own edit, are applied
+/// with evaluation paused; the room evaluates them once, after the lock. Every room still ends with the same sheets.
+#[test]
+fn an_edit_and_a_save_follow_the_log_under_its_lock_and_evaluate_once_after_it() {
+    let (_ctx, facade) = log_context();
+    let rooms = Rooms::default();
+    let west = scope_room(&rooms, "ann", "west", orders(&[10.0, 20.0, 30.0], "West"));
+    let east = scope_room(&rooms, "otto", "east", orders(&[100.0, 200.0], "East"));
+    let value = |room: &SharedRoom, row| lock(room).model().get_formatted_cell_value(1, row, 1).unwrap();
+    // Ann adds a summary: a row of the log the east room has not followed
+    let summary = [
+        json!({"op": "addSheet"}),
+        json!({"op": "renameSheet", "sheet": 1, "name": "Summary"}),
+        json!({"op": "input", "sheet": 1, "row": 1, "column": 1, "value": "=SUM(Orders[amount])"}),
+        json!({"op": "input", "sheet": 1, "row": 2, "column": 1, "value": "=A1*2"}),
+    ];
+    assert_eq!(edit(&facade, &mut lock(&west), "ann", &summary).unwrap().seq, 1);
+    assert_eq!(value(&west, 2), "120");
+
+    // Otto's edit follows Ann's row and applies his own under the lock, then the room evaluates both, once
+    let before = lock(&east).evaluations();
+    let otto = [json!({"op": "input", "sheet": 1, "row": 3, "column": 1, "value": "=A2+1"})];
+    let edited = edit(&facade, &mut lock(&east), "otto", &otto).unwrap();
+    assert_eq!((edited.seq, edited.kind), (2, log::EDIT));
+    assert_eq!(
+        lock(&east).evaluations(),
+        before + 1,
+        "one evaluation for the row followed and the edit"
+    );
+    // the row followed added a sheet: what the evaluation changed may be anything, and the views read everything again
+    assert!(lock(&east).changed().is_none());
+    assert_eq!(
+        (value(&east, 1), value(&east, 2), value(&east, 3)),
+        ("300".into(), "600".into(), "601".into())
+    );
+    // and his undo takes back his own edit with what the room took before it, the summary kept
+    edit(&facade, &mut lock(&east), "otto", &[json!({"op": "undo"})]).unwrap();
+    assert_eq!((value(&east, 2), value(&east, 3)), ("600".into(), String::new()));
+    edit(&facade, &mut lock(&east), "otto", &[json!({"op": "redo"})]).unwrap();
+
+    // a save follows Otto's rows with evaluation paused: no evaluation while the log is locked, one after
+    let before = lock(&west).evaluations();
+    let mut at_write = None;
+    let saved = save(&facade, &mut lock(&west), "ann", |room, version| {
+        at_write = Some((room.evaluations(), room.seq));
+        Ok(version.map(|saved| saved + 1))
+    })
+    .unwrap();
+    assert_eq!(saved, Some(2));
+    assert_eq!(
+        at_write,
+        Some((before, 4)),
+        "the rows followed, not yet evaluated, when the document is written"
+    );
+    assert_eq!(lock(&west).evaluations(), before + 1);
+    assert_eq!(
+        (value(&west, 1), value(&west, 2), value(&west, 3)),
+        ("60".into(), "120".into(), "121".into())
+    );
+    // nothing left to follow: a save evaluates nothing
+    let before = lock(&west).evaluations();
+    save(&facade, &mut lock(&west), "ann", |_, version| Ok(version)).unwrap();
+    assert_eq!(lock(&west).evaluations(), before);
+    assert_eq!(unsaved(&facade, &lock(&west)), 0);
+
+    // values only, the row followed and the edit: the one evaluation's changed areas hold both
+    let input = |row: i32, value: &str| [json!({"op": "input", "sheet": 1, "row": row, "column": 1, "value": value})];
+    edit(&facade, &mut lock(&west), "ann", &input(4, "5")).unwrap();
+    edit(&facade, &mut lock(&east), "otto", &input(5, "6")).unwrap();
+    let changed: Vec<Area> = lock(&east)
+        .changed()
+        .expect("value edits say what they changed")
+        .to_vec();
+    let covers = |row: i32| {
+        changed
+            .iter()
+            .any(|area| area.sheet == 1 && area.column == 1 && area.row <= row && row < area.row + area.height)
+    };
+    assert!(covers(4) && covers(5), "{changed:?}");
+}
+
 #[test]
 fn the_others_in_a_document_are_seen_by_name_and_place_and_one_who_left_is_not() {
     let presence = Presence::default();

@@ -60,6 +60,18 @@ pub fn catch_up(facade: &EntityFacade, room: &mut Room) -> Result<bool, Error> {
 
 /// Apply `rows` (the log after the room's last edit) to the room, and evaluate once.
 fn follow(room: &mut Room, rows: &[LogRow], head: &log::Head) -> Result<(), Error> {
+    let followed = follow_paused(room, rows, head);
+    if !rows.is_empty() {
+        room.evaluate();
+    }
+    followed
+}
+
+/// Apply `rows` (the log after the room's last edit) to the room with its evaluation paused, as [`edit`] and [`save`]
+/// do under the log's lock: when there were rows, the caller evaluates ([`Room::evaluate`]) once the lock is let go,
+/// whether this failed or not (plans/IronCalc-DB2.md, CG1.3). What an edit takes for its undo is read as typed, never
+/// as a value, so it is the same before an evaluation as after one.
+fn follow_paused(room: &mut Room, rows: &[LogRow], head: &log::Head) -> Result<(), Error> {
     if rows.is_empty() {
         return Ok(());
     }
@@ -67,9 +79,9 @@ fn follow(room: &mut Room, rows: &[LogRow], head: &log::Head) -> Result<(), Erro
         return Err(Error::new(REOPEN));
     }
     room.pause();
-    let followed = rows.iter().try_for_each(|row| room.apply_row(row));
-    room.evaluate();
-    followed.map_err(|_| Error::new(REOPEN))?;
+    rows.iter()
+        .try_for_each(|row| room.apply_row(row))
+        .map_err(|_| Error::new(REOPEN))?;
     room.saved_through(head.saved_seq);
     if head.saved_version.is_some() {
         room.version = head.saved_version;
@@ -143,7 +155,9 @@ pub struct Edited {
 }
 
 /// Apply `ops` of `user_id` to a shared room as the next edit of its document's log, then evaluate. A lone `undo` or
-/// `redo` takes back the person's own last edit, or their last undo, since the document was saved.
+/// `redo` takes back the person's own last edit, or their last undo, since the document was saved. The log's rows the
+/// room had not followed and the edit are applied under the log's lock with evaluation paused, and evaluated together
+/// once the lock is let go: every editor of the document, on every server, waits on the lock, not on an evaluation.
 ///
 /// # Errors
 ///
@@ -159,7 +173,7 @@ pub fn edit(facade: &EntityFacade, room: &mut Room, user_id: &str, ops: &[Json])
     let mut touched = false;
     let written = log::locked(facade, &definition_id, user_id, |log| {
         let rows = log.rows_after(room.seq)?;
-        follow(room, &rows, &log.head)?;
+        follow_paused(room, &rows, &log.head)?;
         if log.head.saved_version.is_none() {
             log.head.saved_version = room.version;
         }
@@ -267,7 +281,9 @@ pub fn unsaved(facade: &EntityFacade, room: &Room) -> i64 {
 }
 
 /// Save a shared room's document with `write`, under the log's lock after bringing the room up to it: the version
-/// `write` gets is the saved one, at the room's last edit. `write` answers the version it saved.
+/// `write` gets is the saved one, at the room's last edit. `write` answers the version it saved. The rows the room
+/// follows are applied with evaluation paused and evaluated once the lock is let go: what `write` saves is the stored
+/// form, which is evaluated anew from its formulas ([`Room::stored_form`]), not the room's values.
 ///
 /// # Errors
 ///
@@ -282,13 +298,20 @@ pub fn save(
         .definition_id
         .clone()
         .ok_or_else(|| Error::new("Not a saved document"))?;
+    // set when rows of the log are applied with evaluation paused, for the evaluation after the lock
+    let mut followed = false;
     let saved = log::locked(facade, &definition_id, user_id, |log| {
         let rows = log.rows_after(room.seq)?;
-        follow(room, &rows, &log.head)?;
+        followed = !rows.is_empty();
+        follow_paused(room, &rows, &log.head)?;
         let version = write(room, log.head.saved_version.or(room.version))?;
         log.saved(room.seq, version)?;
         Ok((version, room.seq))
-    })?;
+    });
+    if followed {
+        room.evaluate();
+    }
+    let saved = saved?;
     room.version = saved.0;
     room.saved_through(saved.1);
     log::announce(facade, &definition_id, saved.1, user_id, "save");

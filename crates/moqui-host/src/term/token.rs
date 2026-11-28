@@ -58,11 +58,20 @@ pub(crate) fn holds(id: &str, token: &str) -> bool {
 }
 
 /// Whether a program in session `from` may read and drive session `to` (D14): one of the same user, of a kind it
-/// reaches. A command line or a shell reaches the user's command lines and shells; nothing else is reached.
+/// reaches. A command line or a shell reaches the user's command lines and shells; a thread terminal only the thread
+/// terminals of its own conversation (its agent may run as another account, and never types into the person's shell).
 pub(crate) fn reaches(from: &Session, to: &Session) -> bool {
-    from.username == to.username
-        && matches!(from.kind, Kind::Command | Kind::Host)
-        && matches!(to.kind, Kind::Command | Kind::Host)
+    if from.username != to.username {
+        return false;
+    }
+    match (from.kind, to.kind) {
+        (Kind::Command | Kind::Host, Kind::Command | Kind::Host) => true,
+        (Kind::Thread, Kind::Thread) => match (from.thread(), to.thread()) {
+            (Some(from), Some(to)) => !from.conversation_id.is_empty() && from.conversation_id == to.conversation_id,
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 #[cfg(test)]

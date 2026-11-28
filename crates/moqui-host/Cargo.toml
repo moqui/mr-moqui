@@ -274,6 +274,11 @@ libc = "0.2"
 # window size, and the session leader of `moqui term-exec`. A workspace dependency already; these features add no crate.
 rustix = { workspace = true, features = ["pty", "process", "termios", "fs"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# A host session as another OS account (src/term/runas.rs, plans/Terminal-Fancy2.md §4.6): the thread's credentials,
+# which on Linux are the one-threaded term-exec child's. No crate is added.
+rustix = { workspace = true, features = ["thread"] }
+
 [lints]
 workspace = true
 

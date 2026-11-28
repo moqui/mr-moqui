@@ -496,23 +496,25 @@ desktop shell, so its components are precompiled; its tests are `test/client/Web
   The windows keep below the header (`#top`) and inside the viewport when it is resized. **Dock** puts the content back and
   shows it there; **Close** puts it back and does not show it: closing a float ends nothing.
 - **A kind** is what floats: `moqui.floats.register(kind, {title, icon, badge, dot, defaultSize: {w, h}, minSize: {w, h},
-  place: "right" | "center", dock(shown, key, float), inReach, focus(key, bodyEl), gatherLabel, actions, home(key, float), overModal()})`.
+  place: "right" | "center", dock(shown, key, float), inReach, focus(key, bodyEl), gatherLabel, actions, home(key, float), overModal(),
+  close(key, float)})`. `close` is asked on Close: answering true keeps the window, minimized, instead of ending it (a call
+  goes on).
   `home` answers where the content docks, measured when a drag starts: `{rect: {x, y, w, h}, edge}` with an edge of the
   area (`left`, `right`, `top`, `bottom`: a drag to that edge, outside the corners, docks in place of its snap) or none (a
   drag over the rect docks), or null for no home now. `actions`
   (a list, or a function of the key) are buttons of the kind's own on the title bar before Minimize: `{id, icon, label,
   run(key, float)}` (a terminal's Pop out and End session). `title`, `icon`,
-  `badge` and `dot` are values or functions of the key, read at each render. `open(kind, key, {title, rect, restore})`
+  `badge` and `dot` are values or functions of the key, read at each render. `open(kind, key, {title, data, rect, restore})`
   answers the window's id (`kind:key`), or false; `close(id)`, `dock(id)`, `hide(id)` (still a float, drawn nowhere),
   `show(id)`, `focus(id)`, `minimize(id)`, `maximize(id)`, `toggle(kind, key)` (shows a hidden or minimized window,
-  raises one under another, hides the top one), `arrange(mode, kind)`; `state.floats` is reactive (id, kind, key, x, y,
-  w, h, z, minimized, maximized, hidden).
+  raises one under another, hides the top one), `arrange(mode, kind)`; `state.floats` is reactive (id, kind, key, title,
+  data, x, y, w, h, z, minimized, maximized, hidden).
 - **Content comes to the window** (D17): the owner keeps its component where it is and moves its element into the body,
   `<teleport :to="floats.target(kind, key) || 'body'" :disabled="!floats.target(kind, key)">`. `target` answers the body's
   selector only once the body is mounted, so the teleport never names an element that is not there. Content that is an
   element of its own (a terminal) takes `await floats.whenReady(kind, key)`, the body element or null. A moved element
   loses its scroll position; the owner puts it back.
-- **Kept**: places, sizes, the order, minimized, maximized, hidden and which (kind, key) float, in `localStorage` under
+- **Kept**: places, sizes, the order, minimized, maximized, hidden, a window's title and data, and which (kind, key) float, in `localStorage` under
   `moqui.scopedKey("moqui.floats")`, per device (D13), with the last place of a docked one. At a load a kind asks
   `wasFloated(kind, key)` and opens itself with `{restore: true}`.
 - **Small screens**: below 600 px, and on a `density="handheld"` screen, nothing floats: `open` answers false,
@@ -520,7 +522,20 @@ desktop shell, so its components are precompiled; its tests are `test/client/Web
 - **Assist's reach** (§10.7): `floats.reach()` is the ids of the shown bodies of a kind with `inReach`, which the root adds
   to `assistReach`. An element with `data-assist-self` is never in reach, wherever it is.
 - **The kinds of this version**: `assist` (the Assist drawer's body, [Assist](../ai/Assist.md#the-drawer)), `tray` (a
-  tab of the tray, above) and `terminal` (below).
+  tab of the tray, above), `terminal` (below: the whole `m-terminal-view`, by `m-terminal-floats`), and since
+  plans/Terminal-Fancy2.md §4.8:
+  - `screen`: any screen by its URL (`floats.openScreen(url, title, data)`), "Open in a window" in the screen title menu
+    (`#m-app-screens`, `#m-screen-float`) and the palette. `m-float-screens`, mounted beside the layer, teleports an
+    `m-float-screen` into each window: a dynamic container of its own (`m-float-screen-<n>`), so the screen loads anew
+    there (the one exception to moving content, D11), and its links open in the page, as a tray tab's do. It comes back at
+    a load; Dock opens it in the page. In Assist's reach.
+  - Record panels: Chatter and Files (`m-chatter`, `m-record-files`) have an Open in a window button that floats the
+    panel's screen with the record's name; the window provides `mRecordPanel` (kept in its `data`), so a `.qvue` panel such
+    as mr-boss's `Shared/Chatter.qvue` works unchanged. The panel in the page stays.
+  - `call`: the live call off its screen and its side panel (`m-call-dock`), the compact `m-call` (`float`) in the window,
+    where windows float; below 600 px the small card stays. Close minimizes and the call goes on; Leave is on the title bar;
+    Dock opens the side panel where the page is wide, else the Call screen. Never in Assist's reach. Its media are made in
+    the window, and a video in it is played again after a move.
 
 ## The terminal store
 

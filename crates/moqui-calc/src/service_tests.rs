@@ -20,34 +20,105 @@ use super::*;
 
 /// An xlsx as a minimal writer makes one: a workbook and a sheet, no styles part, which the engine's reader refuses.
 fn minimal_xlsx() -> Vec<u8> {
-    let parts: [(&str, &str); 5] = [
+    xlsx_without_styles(&[(
+        "Costs",
+        r#"<row r="1"><c r="A1" t="inlineStr"><is><t>item</t></is></c><c r="B1" t="inlineStr"><is><t>cost</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Truck</t></is></c><c r="B2"><v>120.5</v></c></row>"#,
+    )])
+}
+
+/// An xlsx of `sheets` (each a name and its `sheetData` rows) with no styles part, which the engine's reader refuses.
+fn xlsx_without_styles(sheets: &[(&str, &str)]) -> Vec<u8> {
+    let numbered = || sheets.iter().enumerate().map(|(index, sheet)| (index + 1, sheet));
+    let overrides: String = numbered()
+        .map(|(number, _)| format!(r#"<Override PartName="/xl/worksheets/sheet{number}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>"#))
+        .collect();
+    let listed: String = numbered()
+        .map(|(number, (name, _))| format!(r#"<sheet name="{name}" sheetId="{number}" r:id="rId{number}"/>"#))
+        .collect();
+    let relations: String = numbered()
+        .map(|(number, _)| format!(r#"<Relationship Id="rId{number}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{number}.xml"/>"#))
+        .collect();
+    let mut parts: Vec<(String, String)> = vec![
         (
-            "[Content_Types].xml",
-            r#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#,
+            "[Content_Types].xml".to_string(),
+            format!(r#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>{overrides}</Types>"#),
         ),
         (
-            "_rels/.rels",
-            r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#,
+            "_rels/.rels".to_string(),
+            r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#.to_string(),
         ),
         (
-            "xl/workbook.xml",
-            r#"<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Costs" sheetId="1" r:id="rId1"/></sheets></workbook>"#,
+            "xl/workbook.xml".to_string(),
+            format!(r#"<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>{listed}</sheets></workbook>"#),
         ),
         (
-            "xl/_rels/workbook.xml.rels",
-            r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#,
-        ),
-        (
-            "xl/worksheets/sheet1.xml",
-            r#"<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>item</t></is></c><c r="B1" t="inlineStr"><is><t>cost</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Truck</t></is></c><c r="B2"><v>120.5</v></c></row></sheetData></worksheet>"#,
+            "xl/_rels/workbook.xml.rels".to_string(),
+            format!(r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{relations}</Relationships>"#),
         ),
     ];
+    for (number, (_, rows)) in numbered() {
+        parts.push((
+            format!("xl/worksheets/sheet{number}.xml"),
+            format!(r#"<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>{rows}</sheetData></worksheet>"#),
+        ));
+    }
     let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     for (name, text) in parts {
         zip.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
         zip.write_all(text.as_bytes()).unwrap();
     }
     zip.finish().unwrap().into_inner()
+}
+
+/// A sheet whose first used cell is not A1 opens with each value in its own cell: calamine's range starts at the first
+/// used row and column, and the fallback places the values from there (plans/IronCalc-DB2.md CG1.5).
+#[test]
+fn a_sheet_the_engine_refuses_keeps_its_cells_where_they_are_when_it_starts_past_a1() {
+    let bytes = xlsx_without_styles(&[
+        (
+            "Costs",
+            r#"<row r="3"><c r="C3" t="inlineStr"><is><t>item</t></is></c><c r="D3" t="inlineStr"><is><t>cost</t></is></c></row><row r="4"><c r="C4" t="inlineStr"><is><t>Truck</t></is></c><c r="E4"><v>120.5</v></c></row>"#,
+        ),
+        (
+            "Notes",
+            r#"<row r="2"><c r="B2" t="inlineStr"><is><t>first</t></is></c></row><row r="5"><c r="D5"><v>7</v></c></row>"#,
+        ),
+    ]);
+    assert!(
+        workbook::open_xlsx(&bytes, "offset").is_err(),
+        "the fallback is what reads it"
+    );
+    let (model, left_out) = workbook_model(&bytes, "offset").unwrap();
+    assert!(left_out.is_empty());
+    assert_eq!(model.workbook.get_worksheet_names(), ["Costs", "Notes"]);
+    let value = |sheet, row, column| model.get_formatted_cell_value(sheet, row, column).unwrap();
+    assert_eq!(value(0, 3, 3), "item");
+    assert_eq!(value(0, 3, 4), "cost");
+    assert_eq!(value(0, 4, 3), "Truck");
+    assert_eq!(value(0, 4, 4), "", "an empty cell between stays empty");
+    assert_eq!(value(0, 4, 5), "120.5");
+    assert_eq!(value(0, 3, 1), "", "nothing moved left to column A");
+    assert_eq!(value(1, 2, 2), "first");
+    assert_eq!(value(1, 5, 4), "7");
+    assert_eq!(value(1, 2, 1), "");
+}
+
+/// One sheet that cannot be read (here one whose used area is past the cell cap: a cell at A1 and one at Z500000) is
+/// left out and named, and the other sheets open; a workbook whose every sheet is refused is refused, with the reason.
+#[test]
+fn a_sheet_that_cannot_be_read_is_left_out_and_named_and_the_rest_open() {
+    let item = r#"<row r="1"><c r="A1" t="inlineStr"><is><t>item</t></is></c></row>"#;
+    let too_large = r#"<row r="1"><c r="A1"><v>1</v></c></row><row r="500000"><c r="Z500000"><v>2</v></c></row>"#;
+    let bytes = xlsx_without_styles(&[("Costs", item), ("Huge", too_large), ("Notes", item)]);
+    let (model, left_out) = workbook_model(&bytes, "partly").unwrap();
+    assert_eq!(left_out, ["Huge"]);
+    assert_eq!(model.workbook.get_worksheet_names(), ["Costs", "Notes"]);
+    assert_eq!(model.get_formatted_cell_value(1, 1, 1).unwrap(), "item");
+
+    let Err(refused) = workbook_model(&xlsx_without_styles(&[("Huge", too_large)]), "none") else {
+        panic!("a workbook with no readable sheet opens");
+    };
+    assert!(refused.message().contains("Huge"), "{}", refused.message());
 }
 
 #[test]
@@ -57,7 +128,7 @@ fn a_workbook_the_engine_refuses_opens_as_values_and_one_it_takes_keeps_its_form
         workbook::open_xlsx(&bytes, "minimal").is_err(),
         "the engine's reader needs a styles part"
     );
-    let model = workbook_model(&bytes, "minimal").unwrap();
+    let (model, _) = workbook_model(&bytes, "minimal").unwrap();
     assert_eq!(model.workbook.get_worksheet_names(), ["Costs"]);
     assert_eq!(model.get_formatted_cell_value(0, 1, 1).unwrap(), "item");
     assert_eq!(model.get_formatted_cell_value(0, 2, 1).unwrap(), "Truck");
@@ -68,7 +139,7 @@ fn a_workbook_the_engine_refuses_opens_as_values_and_one_it_takes_keeps_its_form
     made.set_user_input(0, 1, 1, "2".to_string()).unwrap();
     made.set_user_input(0, 2, 1, "=A1*21".to_string()).unwrap();
     made.evaluate();
-    let model = workbook_model(&workbook::model_xlsx(&made).unwrap(), "made").unwrap();
+    let (model, _) = workbook_model(&workbook::model_xlsx(&made).unwrap(), "made").unwrap();
     assert_eq!(model.get_cell_formula(0, 2, 1).unwrap().as_deref(), Some("=A1*21"));
     assert!(workbook_model(b"not a workbook", "bad").is_err());
 }

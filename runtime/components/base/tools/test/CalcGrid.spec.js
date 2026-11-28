@@ -193,16 +193,31 @@ feature("CalcGrid in Dashboards: an administrator has the Tools app's own access
         // the room was opened with no profile: it is not read under one
         const underProfile = dashboards("calcCells", {roomId: opened.json.roomId, profileId: "nosuch", sheet: 0, row: 1, column: 1, width: 3, height: 3})
         const notHeld = dashboards("calcOpen", {profileId: "nosuch", entityName: "moqui.basic.Enumeration"}, "post")
+        // the slow-calculation limit the room's state carries is the conf's (calc@slow-ms), read at each answer
+        const slowAt = withConf("calc@slow-ms", "40", () => dashboards("calcState", {roomId: opened.json.roomId}).json.slowMs)
         dashboards("calcClose", {roomId: opened.json.roomId}, "post")
+        // a saved document is scheduled on Tools' schedules screen, a link from the request's root (webroot's apps); one who
+        // may not schedule for themselves is offered no Schedule
+        let scheduling = {}
+        try { scheduling = JSON.parse(String(ec.screen.makeTest().rootScreen("component://webroot/screen/webroot.xml").render("apps/dashboards/CalcGrid/calcAccess", {}, null).output || "")) } catch (e) { scheduling = {} }
+        ec.user.internalLoginUser(OUTSIDER)
+        const outsider = ec.resource.script("component://tools/template/CalcGrid.js").access()
+        login("john.doe")
         // the screen's terminal render, its list and a sheet, is crates/moqui-host's monitor_tui test's
         ec.message.clearErrors()
-        return {access, entityNames, opened, cellTexts, underProfile, notHeld}
+        return {access, entityNames, opened, cellTexts, underProfile, notHeld, slowAt, scheduling, outsider}
     },
-    then({access, entityNames, opened, cellTexts, underProfile, notHeld}) {
+    then({access, entityNames, opened, cellTexts, underProfile, notHeld, slowAt, scheduling, outsider}) {
         access.status == 200
         access.json.tools === true
         access.json.canAuthor === true
         access.json.canShare === true
+        scheduling.canSchedule === true
+        scheduling.schedulesPath == "/apps/dashboards/Schedules"
+        outsider.canSchedule === false
+        outsider.schedulesPath == null
+        opened.json.slowMs == 250
+        slowAt == 40
         access.json.fixedProfile == null
         entityNames.includes("moqui.basic.Enumeration")
         !opened.json.errors

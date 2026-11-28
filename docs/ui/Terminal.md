@@ -80,8 +80,8 @@ Leaving the page, a reload, a dropped connection or another device leaves it run
 with no window (`detach-seconds`), a command or host session until it ends or has had no window for three days
 (`host-detach-hours`). Coming back, a window that says how far it got goes on with nothing repeated, and one that does
 not gets the session's last output again (`replay-kb`, 2 MiB) with the modes in force; an apps session draws itself
-again. A second window takes a session, and the first offers Take it back. A logout closes the windows and leaves the
-sessions. Typing in a terminal keeps your HTTP session from timing out.
+again. A second window of yours takes the typing of a command line or a shell, and the first watches on with Take it
+back (an apps session's first window is let go). A logout closes the windows and leaves the sessions. Typing in a terminal keeps your HTTP session from timing out.
 
 Host sessions are held by `moqui term-hold`, a process the server starts beside itself, so they outlive a restart of
 the server (`./moq run` again, Restart Now, a rebuild): the restarted server lists them again. The holder ends a minute
@@ -166,6 +166,75 @@ Claude Code's lines were run against Claude Code 2.1 in a host session on Nov 11
 another Claude Code session (a server started from one passes it on) runs as that session's child and does not run its
 permission hooks: start the server outside it, or `claude` with those variables cleared. Codex's line was not run.
 
+## Watching and sharing
+
+Any number of windows may watch a command line or a shell beside the one that types (plans/Terminal-Fancy2.md §4.4):
+your other windows and devices, and the users you share it with. A watching window shows the session at the session's
+own size, scrolled in its box; it never pauses the program or changes its size, and what is typed in it is dropped. One
+far behind is let go and comes back by what it drew. Only your own watching windows keep a session from its
+`host-detach-hours` timeout.
+
+- **Share** in the session list shares one of your command lines or shells with a user, to watch it, or to type in it
+  too when that user holds the kind's own permission (`SSH_SHELL`, `TERMINAL_HOST`). Sessions shared with you are
+  listed apart, with their owner; a session shared to watch only opens watching.
+- The pane's header shows an eye with the count of watching windows, and the shares, each with Revoke; revoked, the
+  user's windows on it close. A session's end ends its shares; they outlive a restart of the server.
+- A user with a share passes the same rules for the place as you do (a remote client needs `terminal@remote` and a
+  recent sign-in), and the driving services read a shared session too, typing only where the share lets them.
+- `/termws?session=<id>&observe=1` watches; over SSH, `attach --view <id>`.
+
+## Thread terminals
+
+The `thread` kind is a host session of an agent conversation (plans/Terminal-Fancy2.md §4.7): Agent Code's terminal
+drawer. It is a host session in every way (a pty, the holder, viewers, sharing, driving, the audit row), and it is
+also opened and listed by its conversation:
+
+- `open#TerminalSession` with `kind="thread"`, `conversationId` and `clientTerminalId` (1 to 128 characters each); an
+  open of a live one of the same user, conversation and client id answers it. `label`, `workRootId`,
+  `providerInstanceId` and `stopOnSettle` are kept for its component, `env` adds at most 128 variables (the Moqui conf's
+  names left out), and `cols` goes to 1000 (for every kind).
+- Who may open one, in which directory, as which OS account and with what environment is the policy a crate gives
+  (`moqui_core::terminal::ThreadTerminalPolicy`, through its `Extension`'s `terminal_policies`). With none, `thread` is
+  not available. It needs a build with the dev tools, not a dev instance.
+- Its output is kept as a history of at most 8 MiB (rolling segments under `runtime/terminal/history/<username>/`).
+  Started again after its program ended (`restart#TerminalSession`, or an attach with `"restart": true`), it runs
+  again under the same id with its history first, and the socket says `restarted`; an attach's `maxHistory` limits
+  the replay. `clear#TerminalSession` empties its kept output and history, and its windows are sent `cleared`.
+  Closing one removes its history.
+- A thread terminal's `MOQUI_TERMINAL_TOKEN` reaches only the thread terminals of its own conversation.
+
+## OS accounts
+
+A host session runs as the server's OS user (`terminal@run-as="server"`, the default). On a shared Linux dev server,
+`run-as="person"` runs each user's as their own OS account (plans/Terminal-Fancy2.md §4.6): an administrator with
+`TERMINAL_HOST` maps users to accounts on System › Terminal Sessions › Accounts, and a user with none is refused host
+sessions (`noOsAccount`). The program has that account's `HOME`, `USER`, `LOGNAME`, `SHELL` and a plain `PATH`, its login
+shell (for the shell profile, the account's own), and starts in the profile's directory or the account's home;
+nothing of the server's own environment. The server starts it through `sudo -n -- <moqui> term-exec --run-as
+<account>` (`terminal@run-as-sudo`); as root, `term-exec` allows only the accounts `/etc/moqui/run-as.conf` names
+(a group's members, accounts one by one, never root or the server's own), gives the account the pty, drops to it for
+the program, and ends the program when the session ends. Setting it up is root's, once
+([Run-Deploy](../Run-Deploy.md#host-sessions-as-peoples-own-accounts)). Agent Code's `run-as` account takes the same
+path.
+
+## Recording
+
+A session's output can be kept as an asciicast file (plans/Terminal-Fancy2.md §4.5): what it showed, with its timing
+and resizes, never what was typed, and without the terminal's queries, so a playback answers nothing. It is the one
+exception to "what is shown is never recorded", so it is visible and bounded:
+
+- `terminal@recording` is `offer` (the default: the record button on a session's row starts and stops it, and a
+  profile's `record="true"` starts its sessions recorded), `always` (every host session from its start, which its
+  owner cannot stop) or `off`. A recorded session shows REC on its pane, its window's title and its row.
+- The holder writes a held session's recording, so a restart of the server loses nothing of it; the server writes one
+  in process. At `recording-max-mb` (256) a recording stops. Files are kept under
+  `runtime/terminal/recordings/<username>/`, `0600` in a `0700` directory, as the server's OS user.
+- **Recordings** (the Terminal's header) lists yours: Play (xterm.js at the recording's times, with play, pause,
+  speed and seek) and Download (`.cast`, which asciinema plays too). Nobody else plays them; System › Terminal Sessions
+  lists every user's and deletes them. They expire after `recording-days` (30).
+- A new window's replay of a session's kept output also leaves the terminal's queries out, so it never types an answer
+  to an old question into the program.
+
 ## Driving a session
 
 A program or an agent can read a command line or a shell and type into it (plans/Terminal-Fancy2.md §4.2, §4.3); an
@@ -209,12 +278,13 @@ apps session cannot be driven.
 - They take only the server's own origin, whatever `allow-origins` says.
 - Elsewhere the Terminal offers the apps only, and a request for more gets one vague refusal.
 - Each command line and host session is an audit row (`moqui.terminal.TerminalSession`: who, what, where from, when,
-  how it ended), kept 90 days. What is typed and shown is never recorded.
+  how it ended), kept 90 days. What is typed is never recorded; what a session shows only in a recording (below).
 
 ## Conf
 
 ```xml
 <terminal max-sessions="16" max-sessions-per-user="4" detach-seconds="120" replay-kb="2048" screen-scrollback="1000"
+        recording="offer" recording-days="30" recording-max-mb="256" run-as="server" run-as-sudo="sudo"
         command-line="dev" host-sessions="dev" remote="false"
         remote-reauth-minutes="60" host-max-sessions="32" host-max-sessions-per-user="16" host-detach-hours="72"
         host-directory="">

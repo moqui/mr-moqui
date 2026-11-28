@@ -1,6 +1,6 @@
 # IronCalc DB 2: finishing CalcGrid for the first release
 
-Status 2026-11-27: plan, not built. It follows [IronCalc-DB](archive/IronCalc-DB.md), built Nov 13, 2026 (Phases 0
+Status 2026-11-28: CG1 and CG3 (but CG3.2) built; CG2, CG4, CG5 and CG6 not yet. It follows [IronCalc-DB](archive/IronCalc-DB.md), built Nov 13, 2026 (Phases 0
 to 4) and archived the same day as this plan was written. The IronCalc fork was merged with upstream on 2026-11-27
 (`a0e66946`, [Working with upstream](archive/IronCalc-DB.md#working-with-upstream)). This plan takes the items that
 plan left open and that the user chose to finish on Nov 27, 2026. What waits on IronCalc upstream, the larger engine
@@ -41,6 +41,22 @@ Read against the code on Nov 27, 2026:
 The large items are CG2.6 merged cells, CG3.4 the push to the terminal and CG5.7 a search dataset as a data sheet.
 
 ### 2.1 CG1: small wiring and fixes
+
+**Built 2026-11-28** (merge `098a01d10`, mr-boss `8bf15f01`). What differed from the plan:
+- **Insights needed more grants than the dataset.** The Insights root's deny on `ReportServices.*` also refused
+  `check#DefinitionRead`, which every CalcGrid call on a saved document makes, so a saved document answered
+  `ROOM_GONE` under Insights before this; it is granted to `BOSS_INS_REPORT_READ`. A schedule is checked and run in a
+  fresh context with no screen grant inherited, so `get#CalcScope` (the recipients' scope, checked already when the
+  schedule is stored) and `render#CalcDocument` are granted to the scheduling groups (`BOSS_INS_CALC_SCHEDULE`). An app
+  that shows CalcGrid without granting `CALC_GRID` grants these, `get#CalcFrame` and the `calcgrid` dataset itself.
+- **CG1.3:** an edit's `changed` areas now also cover the log rows it followed (a followed structural row reads
+  everything again); a save still evaluates the stored form under the lock.
+- **CG1.4:** `calc` is a new top-level conf element, `<calc slow-ms="250"/>`; the state field is `slowMs`.
+- **CG1.5:** a sheet that cannot be read (or is past the cell cap, now checked for xls and ods too) is left out,
+  logged and named to the opener; the workbook is refused only when no sheet could be read. xlsx and xlsb sheets are
+  read one at a time; calamine parses an xls or ods book whole when it opens.
+- **CG1.6:** the grants are in mr-boss `BossSetupSalesData.xml`, where those groups are defined; a sales manager or
+  reader reaches CalcGrid only as an Insights user.
 
 1. **BOSS Insights users read the `calcgrid` dataset.** A new artifact group in mr-boss
    `data/BossSetupData09DatasetAccess.xml` with both `org.moqui.report.dataset.calcgrid` and
@@ -97,6 +113,17 @@ In `js/WebrootCalc.js` and `calc/room.rs`, both screens.
    unmerge and what it emptied; a row deletion's undo puts merges back.
 
 ### 2.3 CG3: the terminal
+
+**Built 2026-11-28** but CG3.2, which waits for CG2.6 (merge `1849dde87`). What it records:
+- **Colours:** a sheet's text colour is drawn where it reaches 3:1 against what is behind it (WCAG 2, on the colours at
+  the terminal's depth), else the theme's text colour, else black or white; a fill under 1.1:1 against the background
+  is not drawn; monochrome draws none; the cursor, selection and others' places keep the theme's roles.
+- **Push:** `Component::topics` and `push`, `Act::Frame`; the remote link replays its joins on a new socket; the
+  in-process link's frames go through a sink beside the socket's with the same checks and caps, at most 256 of the
+  rooms' frames a second (its own `joined`, `error` and `reopen` always pass). While joined the sheet polls every 15 s
+  as a fallback (which also keeps its presence); without frames every 1.5 s as before.
+- **Open:** the sheet names the others but does not outline their selections; a range panel in the terminal does not
+  `watch` its room.
 
 In `tui/components/calc.rs` unless named.
 

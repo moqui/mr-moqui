@@ -53,6 +53,9 @@ pub struct Extension {
     /// The crate's chat bridge adapters (plans/archive/Comms-Framework.md §4.3), each serving the `ChatBridge` rows that name it
     /// ([`crate::service::chat_bridge`]).
     pub chat_bridge_adapters: fn() -> Vec<std::sync::Arc<dyn crate::service::chat_bridge::ChatBridgeAdapter>>,
+    /// The crate's policies for the browser terminal's `thread` kind (plans/Terminal-Fancy2.md §4.7,
+    /// [`crate::terminal`]): Agent Code's, who may open a thread terminal and how.
+    pub terminal_policies: fn() -> Vec<std::sync::Arc<dyn crate::terminal::ThreadTerminalPolicy>>,
 }
 inventory::collect!(Extension);
 
@@ -67,6 +70,7 @@ impl Extension {
         before_shutdown: |_| {},
         after_artifacts_changed: |_| {},
         chat_bridge_adapters: Vec::new,
+        terminal_policies: Vec::new,
     };
 }
 

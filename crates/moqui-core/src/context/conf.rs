@@ -457,6 +457,8 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         "smtp-server",
         "logging",
         "report",
+        // CalcGrid's slow evaluation (plans/IronCalc-DB2.md CG1.4)
+        "calc",
         "board",
         // the thresholds of the resource readings (plans/archive/Tools-Fancy.md B2)
         "resource-watch",

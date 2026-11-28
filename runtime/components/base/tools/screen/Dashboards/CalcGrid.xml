@@ -145,8 +145,11 @@
                     const room = lib.open()
                     if (room.errors || !room.roomId) return [{t: 'text', id: 'CalcGridError', style: 'error', text: room.errors || 'The document did not open'},
                         {t: 'link', id: 'CalcGridBack', text: 'All documents', url: here}]
+                    // its schedule, on the schedules screen here, which preselects it (to one who may schedule for themselves)
+                    const schedule = access.schedulesPath ? [{t: 'link', id: 'CalcGridSchedule', text: 'Schedule',
+                        url: access.schedulesPath + '?definitionId=' + encodeURIComponent(definitionId), kind: 'anchor'}] : []
                     return [{t: 'text', id: 'CalcGridTitle', style: 'h5', text: room.title || definitionId},
-                        {t: 'link', id: 'CalcGridBack', text: 'All documents', url: here}].concat(accessLine).concat([
+                        {t: 'link', id: 'CalcGridBack', text: 'All documents', url: here}].concat(schedule).concat(accessLine).concat([
                         {t: 'component', id: 'CalcGridSheet', name: 'calcgrid',
                             props: {room, editable: access.canAuthor, profileId: access.current || ''}}])
                 }

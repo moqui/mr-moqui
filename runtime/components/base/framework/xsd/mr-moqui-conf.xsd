@@ -44,6 +44,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="cache-list"/>
                 <xs:element minOccurs="0" ref="telemetry"/>
                 <xs:element minOccurs="0" ref="report"/>
+                <xs:element minOccurs="0" ref="calc"/>
                 <xs:element minOccurs="0" ref="resource-watch"/>
                 <xs:element minOccurs="0" ref="server-stats"/>
                 <xs:element minOccurs="0" ref="webapp-list"/>
@@ -430,6 +431,14 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:annotation><xs:documentation>The locations a scheduled report may save its file under, separated by commas or
                 white space (each a directory); empty is dbresource://report/. A saveToLocation outside them, with a ..
                 segment, in a component, in a conf directory or a .env file is refused.</xs:documentation></xs:annotation></xs:attribute>
+    </xs:complexType></xs:element>
+    <xs:element name="calc"><xs:complexType>
+        <xs:annotation><xs:documentation>CalcGrid, the spreadsheets over the database (docs/tools/Database.md, Calc
+            mode). Read at each evaluation, so a conf reload applies a change.</xs:documentation></xs:annotation>
+        <xs:attribute name="slow-ms" type="xs:string"><xs:annotation><xs:documentation>Milliseconds: an evaluation of
+            an open document that takes longer is slow. An author sees a warning with the time, and the server logs
+            one line naming the document and the time. Default 250; a value that is not a positive number keeps the
+            default.</xs:documentation></xs:annotation></xs:attribute>
     </xs:complexType></xs:element>
     <xs:element name="resource-watch"><xs:complexType>
         <xs:annotation><xs:documentation>When a reading of the machine or of the server process is a warning or
@@ -2035,6 +2044,11 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="max-sessions-per-user" type="non-neg-int-expandable" default="4"><xs:annotation><xs:documentation>The most apps and command sessions of one user; a session in its login dialog counts toward max-sessions only.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="detach-seconds" type="non-neg-int-expandable" default="120"><xs:annotation><xs:documentation>A kept apps session with no window this long ends.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="replay-kb" type="non-neg-int-expandable" default="2048"><xs:annotation><xs:documentation>The output a command or host session keeps for a window that comes back.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="recording" type="xs:string" default="offer"><xs:annotation><xs:documentation>Recording what a session shows (never what is typed): offer (the owner starts and stops it, or a profile's record="true" starts its sessions recorded), always (every host session from its start, which the owner cannot stop) or off; any other value is off, logged.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="recording-days" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>How long recordings are kept: clean#TerminalRecordings removes older ones, file and row.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="recording-max-mb" type="non-neg-int-expandable" default="256"><xs:annotation><xs:documentation>The most output one recording keeps: at it the recording stops.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="run-as" type="xs:string" default="server"><xs:annotation><xs:documentation>Whose OS account host sessions run as: server (the server's own user) or person (each user's own account, a moqui.terminal.TerminalOsAccount, started through run-as-sudo and moqui term-exec --run-as; Linux only; a user with none is refused host sessions). Any other value refuses host sessions, logged.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="run-as-sudo" type="xs:string" default="sudo"><xs:annotation><xs:documentation>The sudo that starts a program as another account, under the sudoers line moqui term-exec --print-setup prints.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="token-key" type="xs:string"><xs:annotation><xs:documentation>The key a command or host session's MOQUI_TERMINAL_TOKEN is signed with, so moqui term inside it reads and drives its user's sessions (generated into runtime/.env as moqui_conf__terminal__token_key).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="screen-scrollback" type="non-neg-int-expandable" default="1000"><xs:annotation><xs:documentation>The lines above the screen that a command or host session's screen as text keeps, for a program or an agent that reads it (get#TerminalScreen).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="command-line" type="xs:string" default="dev"><xs:annotation><xs:documentation>The moqui> command line in the browser: dev (on a dev instance), true (on for any purpose) or false (off); any other value, empty included, is off and logged as an error.</xs:documentation></xs:annotation></xs:attribute>
@@ -2068,6 +2082,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="login" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Start the command as a login shell.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="integration" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Start bash or zsh with the shell integration script (prompt marks, the directory).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="agent" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>A coding agent: quiet output reads as done.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="record" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Its sessions start recorded, where terminal@recording is offer.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
