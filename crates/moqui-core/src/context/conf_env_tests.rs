@@ -230,7 +230,7 @@ fn a_secret_at_changeme_is_made_into_the_seal_never_dotenv_unless_an_override_se
 
 #[test]
 fn a_renamed_attribute_is_refused_naming_its_replacement_from_a_file_or_the_environment() {
-    for (retired, replacement) in super::RETIRED_ATTRIBUTES {
+    for (retired, replacement, hint) in super::RETIRED_ATTRIBUTES {
         let (element, attribute) = retired.split_once('@').unwrap();
         let xml = match element.split_once('/') {
             Some((outer, inner)) => {
@@ -242,7 +242,25 @@ fn a_renamed_attribute_is_refused_naming_its_replacement_from_a_file_or_the_envi
         let err = super::refuse_retired(&file).unwrap_err().to_string();
         assert!(err.contains(retired) && err.contains(replacement), "{err}");
         assert!(err.contains(&super::env_name_of(replacement)), "{err}");
+        assert!(err.contains(hint), "{err}");
+        // a set while running is refused the same way (plans/Runtime-Config.md §8.2)
+        let path = moqui_lib::node::path::AttrPath::parse(retired).unwrap();
+        let refused = super::retired_attribute(&path).unwrap();
+        assert!(refused.contains(replacement) && refused.contains(hint), "{refused}");
     }
+    // the SSH login dialog's flag names the access mode each value became (plans/Runtime-Config.md §3.4)
+    let dialog = MNode::parse_text(
+        "moqui-conf",
+        r#"<moqui-conf><ssh-server login-dialog="false"/></moqui-conf>"#,
+    )
+    .unwrap();
+    let err = super::refuse_retired(&dialog).unwrap_err().to_string();
+    assert!(
+        err.contains("ssh-server@access") && err.contains("false is access=\"login\""),
+        "{err}"
+    );
+    let access = moqui_lib::node::path::AttrPath::parse("ssh-server@access").unwrap();
+    assert_eq!(super::retired_attribute(&access), None);
     // the environment form: moqui_conf__pass_authority__grpc_port adds the attribute to the merged conf
     let conf = MNode::parse_text(
         "moqui-conf",

@@ -397,13 +397,14 @@ impl Server {
         }
     }
 
-    /// The SSH server's address, when `ssh-server@enabled` is true and this build has the `ssh` feature.
+    /// The SSH server's address while it runs (`ssh-server@enabled` true and bound; it binds again and stops while the
+    /// server runs), when this build has the `ssh` feature.
     #[must_use]
     pub fn ssh_address(&self) -> Option<std::net::SocketAddr> {
         #[cfg(feature = "ssh")]
         {
             let factory = self.factory.as_ref()?;
-            *lock(&factory.extension(|_| ssh::server::SshAddress::default()).0)
+            *lock(&factory.extension(|_| ssh::intake::SshAddress::default()).0)
         }
         #[cfg(not(feature = "ssh"))]
         None
@@ -547,7 +548,7 @@ impl Drop for Server {
 ///
 /// # Errors
 ///
-/// Returns an error when this build has no HTTP server, boot fails, or a required port (the cluster port, SSH) cannot
+/// Returns an error when this build has no HTTP server, boot fails, or a required port (the cluster port) cannot
 /// be bound.
 pub fn start_server_by_conf(
     runtime_dir: impl AsRef<std::path::Path>,
@@ -2228,7 +2229,8 @@ fn boot_server_factory(
     );
     listeners::add_boot_entries(&registry);
     // The SSH server binds before the member row is written: with moqui_conf__cluster_member__transport=ssh the row carries its address
-    // and host key. A failed start stops the boot.
+    // and host key. A failed bind is a Failed row and the boot goes on (plans/Runtime-Config.md §6); the ssh transport
+    // then fails the cluster's start, which needs the address.
     registry.run(
         listeners::Scope::Stage(listeners::Stage::BeforeCluster),
         moqui_core::listeners::Cause::Boot,

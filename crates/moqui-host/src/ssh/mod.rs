@@ -21,6 +21,8 @@ pub mod client;
 pub mod cluster;
 #[cfg(feature = "git")]
 mod git;
+pub(crate) mod intake;
+pub mod live;
 pub mod server;
 mod sftp_fs;
 

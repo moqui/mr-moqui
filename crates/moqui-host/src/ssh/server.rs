@@ -20,15 +20,18 @@
 //! Login is the user facade: a password through `loginUser` (failures count toward the lockout, and an account that
 //! needs a second factor cannot log in here), or a public key whose fingerprint is an active `UserSshKey` of that
 //! user. A client with neither (keyboard-interactive, which OpenSSH tries after its keys) is let in with no user and no
-//! questions: it gets the terminal client's login dialog, as `moqui tui` shows it, and nothing else
-//! (`ssh-server` `login-dialog`, on by default).
+//! questions: it gets the terminal client's login dialog, as `moqui tui` shows it, and nothing else. Who may connect is
+//! `ssh-server@access` ([`super::live::Access`]): `open` (the default) offers and takes all three, `login` a password
+//! or a key, `key` a registered key alone; the cluster's own key logs in under each.
 //!
 //! `apps`, the terminal client (`crate::term`), needs a pty. It is the whole session of a user without `SSH_SHELL`
 //! and of one who logged in through the dialog, the `exec` command `apps` (`ssh -t host apps`), and a command at the
 //! shell's prompt. A user who logged in by key or password with `SSH_SHELL` gets the admin shell ([`super::shell`]),
 //! for `shell` and `exec`. The `sftp` subsystem needs `SSH_SFTP` and serves `ssh-server` `sftp-root`. Git needs `SSH_GIT` (or, with `ssh-server` `git-any-account`, any account logged in by key), and
 //! a key unless `ssh-server` `git-password-auth` is true. `agent-apps` (`super::agent`) is the terminal client for a program,
-//! on an `exec` channel with no pty, one command line at a time, for a user logged in by key or password.
+//! on an `exec` channel with no pty, one command line at a time, for a user logged in by key or password. Each of the
+//! four is turned off for everyone by its flag (`tui-enabled`, `sftp-enabled`, `git-enabled`, `shell-enabled`),
+//! checked when a channel asks for it; the permissions still decide per user.
 //!
 //! At most `ssh-server` `max-sessions` logged-in sessions are open at once; one with no user counts too. Of those, one
 //! user logged in by key or password holds at most `max-sessions-per-user` and one address `max-sessions-per-source`
@@ -40,6 +43,11 @@
 //! tunnel's connection counts as the client the edge node names), so one host cannot keep SFTP, Git, edge tunnels and
 //! the SSH cluster transport out. One let in with no user is closed when it has opened no `apps` within [`PREAUTH_TIMEOUT`] of its connection, or its dialog
 //! has not logged in within `crate::term::LOGIN_WAIT`.
+//!
+//! While the server runs (plans/Runtime-Config.md §3.4, §8.4) the listener registry starts, stops and binds it again
+//! and applies the settings above in place ([`super::intake`]); each new connection, login and channel reads them.
+//! Sessions still at the sign-in dialog end when the dialog is no longer offered. Signed-in sessions stay, but one
+//! signed in by a password opens no new channel once the access mode no longer takes passwords.
 
 use std::collections::{BTreeMap, HashMap};
 use std::net::{IpAddr, SocketAddr};
@@ -47,6 +55,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use moqui_core::context::{Error as CoreError, ExecutionContextFactory};
 use moqui_lib::error::Error;
 use moqui_lib::node::MNode;
@@ -55,26 +64,15 @@ use moqui_lib::source_guard::{SlotRefused, SourceSlot, SourceSlots};
 use russh::keys::{HashAlg, PrivateKey};
 use russh::server::{Auth, ChannelOpenHandle, Msg, Session, VerifiedPublicKey};
 use russh::{Channel, ChannelId, ChannelOpenFailure};
-use russh::{MethodKind, MethodSet};
 use tokio::io::AsyncWriteExt;
-use tokio::net::TcpListener;
+use tokio::sync::watch;
 
+use super::intake::{ended, BindState, Configs, Ending, Intake, Shared};
+use super::live::{Access, Method, SshLimits, SshLive};
 use super::sftp_fs::{Backend, Held, OpenChannel, SftpFs};
 use crate::command::{interactive, run_apps, shell, with_newlines, AppsAccess};
 use crate::worker::on_pool;
 
-const DEFAULT_MAX_SESSIONS: usize = 8;
-/// `ssh-server` `max-sessions-per-user`: the sessions one user logged in by key or password holds at once, so one
-/// account (any account, with `git-any-account`) does not hold every session.
-const DEFAULT_MAX_PER_USER: usize = 4;
-/// `ssh-server` `max-sessions-per-source`: the sessions one address (an IPv6 /64) holds at once, under the total so
-/// one address does not hold them all.
-const DEFAULT_MAX_PER_SOURCE: usize = 4;
-/// `ssh-server` `max-dialog-sessions`: the sessions with no user, let in for the login dialog, at once.
-const DEFAULT_MAX_DIALOGS: usize = 4;
-/// `ssh-server` `max-dialog-sessions-per-source`: of those, the ones one address holds.
-const DEFAULT_MAX_DIALOGS_PER_SOURCE: usize = 2;
-const DEFAULT_MAX_FILE: usize = 256 * 1024 * 1024;
 /// Session channels of one connection waiting for their request or running `sftp`; one more is refused (SEC-FIL-61).
 const MAX_SESSION_CHANNELS: usize = 8;
 /// The longest `TERM` of a pty request and value of an `env` request a channel keeps (SEC-FIL-88).
@@ -99,57 +97,6 @@ fn for_log(text: &str, max: usize) -> String {
 const MAX_PREAUTH: usize = 16;
 /// Of [`MAX_PREAUTH`], those one source may hold (plans/archive/High-Level-Review.md HL-032).
 const PREAUTH_PER_SOURCE: usize = 4;
-
-/// The address the server listens on, kept on the factory for `Server::ssh_address`.
-#[derive(Default)]
-pub struct SshAddress(pub std::sync::Mutex<Option<SocketAddr>>);
-
-/// A running server. Drop stops the listener and disconnects every session.
-pub struct SshServer {
-    address: SocketAddr,
-    shutdown: tokio::sync::watch::Sender<bool>,
-}
-
-impl SshServer {
-    #[must_use]
-    pub fn address(&self) -> SocketAddr {
-        self.address
-    }
-}
-
-impl Drop for SshServer {
-    fn drop(&mut self) {
-        let _ = self.shutdown.send(true);
-    }
-}
-
-struct Shared {
-    factory: std::sync::Weak<ExecutionContextFactory>,
-    root: String,
-    max_file: usize,
-    /// `dav-server` `sftp-drives`: SFTP to the drives for a user without `SSH_SFTP`.
-    sftp_drives: bool,
-    /// The live terminal sessions of the process, against `terminal` `max-sessions`.
-    #[cfg(feature = "tui")]
-    apps: Arc<crate::term::Sessions>,
-    /// The sessions `agent-apps open` started, kept between its commands.
-    #[cfg(feature = "tui")]
-    agents: Arc<super::agent::AgentSessions>,
-    /// The cluster topics received, shared with the HTTPS cluster listener.
-    cluster_posts: Arc<std::sync::Mutex<Vec<String>>>,
-    /// The host key's SHA-256 fingerprint, which a cluster channel's proof is bound to (SEC-CLU-04).
-    host_fingerprint: String,
-    /// Keyboard-interactive lets a client in with no user, for the login dialog (`ssh-server` `login-dialog`).
-    #[cfg_attr(not(feature = "tui"), allow(dead_code))]
-    dialog: bool,
-    /// Git over SSH on a connection that logged in by password (`ssh-server` `git-password-auth`).
-    #[cfg_attr(not(feature = "git"), allow(dead_code))]
-    git_password_auth: bool,
-    /// Git over SSH for any account that logged in by key, with no `SSH_GIT` (`ssh-server` `git-any-account`): each
-    /// repository's own check decides what it reads and writes.
-    #[cfg_attr(not(feature = "git"), allow(dead_code))]
-    git_any_account: bool,
-}
 
 /// The host key from `ssh-server` `host-key`: an OpenSSH private key, or the base64 of a 32-byte Ed25519 seed.
 ///
@@ -179,7 +126,7 @@ pub fn host_key(text: &str) -> Result<PrivateKey, Error> {
 }
 
 /// The host and port the SSH server will bind by the merged conf, for the port check before the framework is built:
-/// read as [`start`] reads them, so None while `ssh-server` `enabled` is not true.
+/// read as the listener registry reads them, so None while `ssh-server` `enabled` is not true.
 pub(crate) fn listen_target(conf: &MNode) -> Result<Option<(String, u16)>, Error> {
     let node = conf.first_named("ssh-server");
     configured_target(&|name: &str| {
@@ -196,7 +143,7 @@ pub(crate) fn listen_target(conf: &MNode) -> Result<Option<(String, u16)>, Error
 ///
 /// When `port_text` is not a port: digits, 0 for one of the kernel's choosing; an empty one is a retired value the boot
 /// refuses by name (plans/Runtime-Config.md §8.2).
-fn listen_target_of(port_text: &str, host_text: &str) -> Result<(String, u16), Error> {
+pub fn listen_target_of(port_text: &str, host_text: &str) -> Result<(String, u16), Error> {
     let port_text = port_text.trim();
     let port: u16 = port_text.parse().map_err(|_| {
         Error::new(format!(
@@ -228,137 +175,16 @@ fn configured_target(attr: &dyn Fn(&str) -> String) -> Result<Option<(String, u1
     )
 }
 
-/// Start the server when the conf's `ssh-server` `enabled` is true, on its `port` (`0` binds an ephemeral port).
-///
-/// # Errors
-///
-/// Returns an error when the host key, the address, or the bind fails.
-pub fn start(
-    factory: &Arc<ExecutionContextFactory>,
-    runtime_dir: &std::path::Path,
-    cluster_posts: Arc<std::sync::Mutex<Vec<String>>>,
-) -> Result<Option<SshServer>, Error> {
-    moqui_lib::env::set_property(moqui_core::cluster::SSH_FINGERPRINT_PROPERTY, "");
-    moqui_lib::env::set_property(moqui_core::cluster::SSH_ADDRESS_PROPERTY, "");
-    let attr = |name: &str| factory.conf_setting("ssh-server", name);
-    let Some((host, port)) = configured_target(&attr)? else {
-        return Ok(None);
-    };
-    // by its handle: the conf's, else seal's store, where it is generated (plans/Sealed-Secrets.md S4)
-    let key = host_key(
-        &factory
-            .secret("ssh-server@host-key")
-            .map_err(|err| Error::new(err.to_string()))?
-            .unwrap_or_default(),
-    )?;
-    let root = match factory.conf_setting("ssh-server", "sftp-root").as_str() {
-        "" => "runtime://sftp".to_string(),
-        other => other.to_string(),
-    };
-    if root.starts_with("runtime:") {
-        let relative = root.trim_start_matches("runtime://").trim_start_matches("runtime:");
-        let _ = std::fs::create_dir_all(runtime_dir.join(relative.trim_start_matches('/')));
-    }
-    let max_sessions = positive(
-        factory.conf_number("ssh-server", "max-sessions", DEFAULT_MAX_SESSIONS),
-        DEFAULT_MAX_SESSIONS,
-    );
-    // 0 is no share: the total alone bounds a user or a source
-    let max_per_user = factory.conf_number("ssh-server", "max-sessions-per-user", DEFAULT_MAX_PER_USER);
-    let max_per_source = factory.conf_number("ssh-server", "max-sessions-per-source", DEFAULT_MAX_PER_SOURCE);
-    let max_dialogs = factory.conf_number("ssh-server", "max-dialog-sessions", DEFAULT_MAX_DIALOGS);
-    let max_dialogs_per_source = factory.conf_number(
-        "ssh-server",
-        "max-dialog-sessions-per-source",
-        DEFAULT_MAX_DIALOGS_PER_SOURCE,
-    );
-    let max_file = positive(
-        factory.conf_number("ssh-server", "sftp-max-file", DEFAULT_MAX_FILE),
-        DEFAULT_MAX_FILE,
-    );
-    let fingerprint = key.public_key().fingerprint(HashAlg::Sha256).to_string();
-    // "none" is not offered, so a client tries its keys first; keyboard-interactive, which OpenSSH tries next, is the
-    // login dialog, and only with the terminal client.
-    let dialog = cfg!(feature = "tui") && factory.conf_flag("ssh-server", "login-dialog", true);
-    let git_password_auth = factory.conf_flag("ssh-server", "git-password-auth", false);
-    let git_any_account = factory.conf_flag("ssh-server", "git-any-account", false);
-    let methods: &[MethodKind] = if dialog {
-        &[
-            MethodKind::PublicKey,
-            MethodKind::KeyboardInteractive,
-            MethodKind::Password,
-        ]
-    } else {
-        &[MethodKind::PublicKey, MethodKind::Password]
-    };
-    let config = Arc::new(russh::server::Config {
-        keys: vec![key],
-        methods: MethodSet::from(methods),
-        inactivity_timeout: Some(IDLE),
-        auth_rejection_time: Duration::from_millis(500),
-        auth_rejection_time_initial: Some(Duration::from_millis(0)),
-        max_auth_attempts: 6,
-        nodelay: true,
-        ..russh::server::Config::default()
-    });
-    let bind = format!("{host}:{port}");
-    let listener = crate::edge::block_on(async move { TcpListener::bind(bind).await })?
-        .map_err(|err| Error::new(format!("could not bind the SSH server to {host}:{port}: {err}")))?;
-    let address = listener
-        .local_addr()
-        .map_err(|err| Error::new("the SSH listener has no address").with_source(err))?;
-    let (shutdown, watch) = tokio::sync::watch::channel(false);
-    let shared = Arc::new(Shared {
-        factory: Arc::downgrade(factory),
-        root,
-        max_file,
-        sftp_drives: factory.conf_flag("dav-server", "sftp-drives", true),
-        #[cfg(feature = "tui")]
-        apps: crate::term::Sessions::of(factory),
-        #[cfg(feature = "tui")]
-        agents: Arc::default(),
-        cluster_posts,
-        host_fingerprint: fingerprint.clone(),
-        dialog,
-        git_password_auth,
-        git_any_account,
-    });
-    let intake = Arc::new(Intake {
-        config,
-        shared,
-        counts: Arc::new(
-            Counts::new(max_sessions, max_per_user, max_per_source).with_dialogs(max_dialogs, max_dialogs_per_source),
-        ),
-        shutdown: watch,
-    });
-    *moqui_lib::sync::lock(&factory.extension(|_| IntakeSlot::default()).0) = Some(Arc::clone(&intake));
-    crate::edge::handle().spawn(accept_loop(listener, intake));
-    *moqui_lib::sync::lock(&factory.extension(|_| SshAddress::default()).0) = Some(address);
-    // For the cluster member row: peers pin this key, and the ssh:// base URL defaults to this address.
-    moqui_lib::env::set_property(moqui_core::cluster::SSH_FINGERPRINT_PROPERTY, fingerprint);
-    moqui_lib::env::set_property(moqui_core::cluster::SSH_ADDRESS_PROPERTY, address.to_string());
-    Ok(Some(SshServer { address, shutdown }))
-}
-
-/// `value`, or `default` when it is 0.
-fn positive(value: usize, default: usize) -> usize {
-    if value == 0 {
-        default
-    } else {
-        value
-    }
-}
-
-/// The connections counted against the two limits.
-struct Counts {
+/// The connections counted against the limits, which apply while the server runs ([`Counts::set`]).
+pub(super) struct Counts {
     preauth: SourceSlots,
     sessions: AtomicUsize,
-    max_sessions: usize,
+    max_sessions: AtomicUsize,
     /// The sessions of each source, against `ssh-server` `max-sessions-per-source`.
     by_source: SourceSlots,
     /// The sessions of each user logged in by key or password, against `ssh-server` `max-sessions-per-user`.
     by_user: std::sync::Mutex<HashMap<String, usize>>,
-    max_per_user: usize,
+    max_per_user: AtomicUsize,
     /// The sessions with no user, against `ssh-server` `max-dialog-sessions` and `max-dialog-sessions-per-source`.
     dialogs: SourceSlots,
 }
@@ -368,24 +194,41 @@ impl Counts {
         Self {
             preauth: SourceSlots::new(MAX_PREAUTH, PREAUTH_PER_SOURCE),
             sessions: AtomicUsize::new(0),
-            max_sessions,
+            max_sessions: AtomicUsize::new(max_sessions),
             // the total is `max_sessions`' to keep: this table only keeps each source's share
             by_source: SourceSlots::new(usize::MAX, max_per_source),
             by_user: std::sync::Mutex::default(),
-            max_per_user,
+            max_per_user: AtomicUsize::new(max_per_user),
             dialogs: SourceSlots::new(usize::MAX, 0),
         }
     }
 
     /// With the share of the sessions with no user: at most `total` (0 for no share but `max-sessions`), and
     /// `per_source` of them from one source (0 for no share).
-    fn with_dialogs(mut self, total: usize, per_source: usize) -> Self {
-        let total = if total == 0 { usize::MAX } else { total };
-        self.dialogs = SourceSlots::new(total, per_source);
+    fn with_dialogs(self, total: usize, per_source: usize) -> Self {
+        self.set_dialogs(total, per_source);
         self
     }
-}
 
+    fn set_dialogs(&self, total: usize, per_source: usize) {
+        let total = if total == 0 { usize::MAX } else { total };
+        self.dialogs.set_limits(total, per_source);
+    }
+
+    /// The counts with `limits`.
+    pub(super) fn of(limits: &SshLimits) -> Self {
+        Self::new(limits.max_sessions, limits.max_per_user, limits.max_per_source)
+            .with_dialogs(limits.max_dialogs, limits.max_dialogs_per_source)
+    }
+
+    /// Take `limits` from now on: a login is refused by the new ones, and the sessions open past a lowered one stay.
+    pub(super) fn set(&self, limits: &SshLimits) {
+        self.max_sessions.store(limits.max_sessions, Ordering::Release);
+        self.max_per_user.store(limits.max_per_user, Ordering::Release);
+        self.by_source.set_limits(usize::MAX, limits.max_per_source);
+        self.set_dialogs(limits.max_dialogs, limits.max_dialogs_per_source);
+    }
+}
 /// Who a session is for, which says what it is counted against.
 #[derive(Clone, Copy, Debug)]
 enum Who<'a> {
@@ -499,7 +342,7 @@ impl Slot {
             }
             Who::Dialog | Who::Cluster => None,
         };
-        if counts.sessions.fetch_add(1, Ordering::AcqRel) >= counts.max_sessions {
+        if counts.sessions.fetch_add(1, Ordering::AcqRel) >= counts.max_sessions.load(Ordering::Acquire) {
             counts.sessions.fetch_sub(1, Ordering::AcqRel);
             self.release_user(user.as_deref());
             return Err(SessionRefused::Total);
@@ -514,9 +357,10 @@ impl Slot {
     /// `max-sessions-per-user` open.
     fn take_user(&self, user: &str) -> bool {
         let counts = &self.counts;
+        let max_per_user = counts.max_per_user.load(Ordering::Acquire);
         let mut by_user = moqui_lib::sync::lock(&counts.by_user);
         let held = by_user.entry(user.to_string()).or_insert(0);
-        if counts.max_per_user > 0 && *held >= counts.max_per_user {
+        if max_per_user > 0 && *held >= max_per_user {
             if *held == 0 {
                 by_user.remove(user);
             }
@@ -543,15 +387,23 @@ impl Slot {
     fn logged_in(&self) -> bool {
         self.session.load(Ordering::Acquire)
     }
+
+    /// Let in with no user and its dialog not logged in yet: at the sign-in dialog.
+    fn at_dialog(&self) -> bool {
+        self.dialog.load(Ordering::SeqCst) && !self.dialog_done.load(Ordering::Acquire)
+    }
 }
 
 /// A dialog's login (SEC-FIL-87): the user's share of the sessions is taken as a key or password login takes it, and
 /// once logged in the connection gives back its place among the dialogs, so logged-in dialogs do not fill
 /// `max-dialog-sessions` and a user's dialog sessions count toward `max-sessions-per-user`. The `apps` session holds
 /// it by a weak reference: the connection's place goes when the connection does, whatever the session does after.
+/// Only with the terminal client, whose sign-in dialog it serves.
+#[cfg(feature = "tui")]
 #[derive(Debug)]
 struct SlotLogin(std::sync::Weak<Slot>);
 
+#[cfg(feature = "tui")]
 impl crate::term::DialogLogin for SlotLogin {
     fn take(&self, username: &str) -> Result<(), String> {
         self.0.upgrade().map_or(Ok(()), |slot| slot.take_dialog_user(username))
@@ -570,6 +422,7 @@ impl crate::term::DialogLogin for SlotLogin {
     }
 }
 
+#[cfg_attr(not(feature = "tui"), allow(dead_code))]
 impl Slot {
     /// A dialog's login: take `username`'s share, the reason it is refused.
     fn take_dialog_user(&self, username: &str) -> Result<(), String> {
@@ -643,141 +496,137 @@ async fn dialog_expired_within(slot: &Slot, since: tokio::time::Instant, start: 
     std::future::pending::<()>().await;
 }
 
-/// What serves one connection: the server's settings, its shared state and counts, and its stop. The listener hands
-/// it each TCP connection, and an edge link's SSH tunnel hands it a tunnel stream with the client's address
-/// ([`serve_stream`], plans/archive/Edge-Node.md §5.3).
-struct Intake {
-    config: Arc<russh::server::Config>,
-    shared: Arc<Shared>,
-    counts: Arc<Counts>,
-    shutdown: tokio::sync::watch::Receiver<bool>,
+/// Resolves when the connection is at the sign-in dialog ([`Slot::at_dialog`]) while `dialog_off` says the dialog is no
+/// longer offered (`access` left `open`, or the terminal client was turned off; plans/Runtime-Config.md §3.4), so it
+/// does not go on; never for a session signed in.
+async fn dialog_closed(slot: &Slot, mut dialog_off: watch::Receiver<bool>) {
+    loop {
+        if *dialog_off.borrow_and_update() && slot.at_dialog() {
+            return;
+        }
+        if dialog_off.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
 }
 
-/// The server's [`Intake`], kept on the factory while it runs.
-#[derive(Default)]
-struct IntakeSlot(std::sync::Mutex<Option<Arc<Intake>>>);
-
-/// Serve `stream` as a connection from `peer` to this factory's SSH server, as one the listener accepted: the edge
-/// link's SSH tunnel. False when no SSH server runs.
-#[cfg_attr(not(feature = "edge"), allow(dead_code))]
-pub(crate) fn serve_stream<S>(factory: &ExecutionContextFactory, stream: S, peer: SocketAddr) -> bool
-where
+/// Serve one connection from `peer` to `intake`'s server in a task of its own with `configs`' settings for the access
+/// mode it sees now, until `stop` ends it, or close it when too many wait to log in. `via_edge`: a tunnel stream an
+/// edge link handed over, `peer` the client the edge node names. `bind`: the bind that took it, which counts it.
+pub(super) fn serve_connection<S>(
+    intake: &Intake,
+    stream: S,
+    peer: SocketAddr,
+    via_edge: bool,
+    configs: &Configs,
+    stop: watch::Receiver<Option<Ending>>,
+    bind: Option<&Arc<BindState>>,
+) where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    let intake = moqui_lib::sync::lock(&factory.extension(|_| IntakeSlot::default()).0).clone();
-    match intake {
-        Some(intake) if !*intake.shutdown.borrow() => {
-            intake.serve(stream, peer, true);
-            true
+    let slot = match Slot::preauth(&intake.counts, peer.ip()) {
+        Ok(slot) => slot,
+        Err(SlotRefused::Full) => {
+            tracing::warn!("SSH connection from {peer} refused: {MAX_PREAUTH} connections are waiting to log in");
+            return;
         }
-        _ => false,
-    }
-}
-
-/// Whether this factory's SSH server runs, to take [`serve_stream`].
-#[cfg_attr(not(feature = "edge"), allow(dead_code))]
-pub(crate) fn running(factory: &ExecutionContextFactory) -> bool {
-    moqui_lib::sync::lock(&factory.extension(|_| IntakeSlot::default()).0)
-        .as_ref()
-        .is_some_and(|intake| !*intake.shutdown.borrow())
-}
-
-async fn accept_loop(listener: TcpListener, intake: Arc<Intake>) {
-    let mut shutdown = intake.shutdown.clone();
-    loop {
-        let accepted = tokio::select! {
-            _ = shutdown.changed() => return,
-            accepted = listener.accept() => accepted,
-        };
-        let Ok((stream, peer)) = accepted else {
-            continue;
-        };
-        let _ = stream.set_nodelay(true);
-        intake.serve(stream, peer, false);
-    }
-}
-
-impl Intake {
-    /// Serve one connection from `peer` in a task of its own, or close it when too many wait to log in. `via_edge`: a
-    /// tunnel stream an edge link handed over, `peer` the client the edge node names.
-    fn serve<S>(&self, stream: S, peer: SocketAddr, via_edge: bool)
-    where
-        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
-    {
-        let slot = match Slot::preauth(&self.counts, peer.ip()) {
-            Ok(slot) => slot,
-            Err(SlotRefused::Full) => {
-                tracing::warn!("SSH connection from {peer} refused: {MAX_PREAUTH} connections are waiting to log in");
+        Err(SlotRefused::Source) => {
+            tracing::warn!("SSH connection from {peer} refused: {PREAUTH_PER_SOURCE} from there are waiting to log in");
+            return;
+        }
+    };
+    let held = bind.map(|bind| bind.hold(true));
+    let slot = Arc::new(slot);
+    let since = tokio::time::Instant::now();
+    let live = intake.live.load();
+    let config = configs.of(live.offered_as());
+    let handler = Connection {
+        shared: Arc::clone(&intake.shared),
+        live: Arc::clone(&intake.live),
+        accepted: live.access,
+        host_fingerprint: configs.fingerprint.clone(),
+        dialog_off: intake.dialog_off.subscribe(),
+        slot: Arc::clone(&slot),
+        peer,
+        via_edge,
+        username: None,
+        logged_in_at: None,
+        login_name: None,
+        dialog_used: false,
+        by_password: false,
+        by_app_password: false,
+        cluster: false,
+        can_sftp: false,
+        can_shell: false,
+        can_git: false,
+        channels: HashMap::new(),
+        sftp_open: Arc::new(AtomicUsize::new(0)),
+        ptys: HashMap::new(),
+        terminal_env: HashMap::new(),
+        git_protocol: HashMap::new(),
+    };
+    let dialog_off = intake.dialog_off.subscribe();
+    tokio::spawn(async move {
+        // The version exchange waits on the client too, so the login deadline covers it, and the bind's stop ends
+        // it as it ends a session, so a stop does not wait on a client that sends nothing.
+        let deadline = since + PREAUTH_TIMEOUT;
+        let exchange = tokio::time::timeout_at(deadline, russh::server::run_stream(config, stream, handler));
+        let exchanged = tokio::select! {
+            exchanged = exchange => exchanged,
+            () = ended(stop.clone()) => {
+                tracing::debug!("SSH connection from {peer} ended by its listener's stop before it logged in");
                 return;
             }
-            Err(SlotRefused::Source) => {
-                tracing::warn!(
-                    "SSH connection from {peer} refused: {PREAUTH_PER_SOURCE} from there are waiting to log in"
-                );
-                return;
-            }
         };
-        let slot = Arc::new(slot);
-        let since = tokio::time::Instant::now();
-        let handler = Connection {
-            shared: Arc::clone(&self.shared),
-            slot: Arc::clone(&slot),
-            peer,
-            via_edge,
-            username: None,
-            logged_in_at: None,
-            login_name: None,
-            dialog_used: false,
-            by_password: false,
-            by_app_password: false,
-            cluster: false,
-            can_sftp: false,
-            can_shell: false,
-            can_git: false,
-            channels: HashMap::new(),
-            sftp_open: Arc::new(AtomicUsize::new(0)),
-            ptys: HashMap::new(),
-            terminal_env: HashMap::new(),
-            git_protocol: HashMap::new(),
-        };
-        let config = Arc::clone(&self.config);
-        let mut stop = self.shutdown.clone();
-        tokio::spawn(async move {
-            // The version exchange waits on the client too, so the login deadline covers it.
-            let deadline = since + PREAUTH_TIMEOUT;
-            match tokio::time::timeout_at(deadline, russh::server::run_stream(config, stream, handler)).await {
-                Ok(Ok(session)) => {
-                    let handle = session.handle();
-                    tokio::select! {
-                        _ = stop.changed() => {
-                            let _ = handle.disconnect(russh::Disconnect::ByApplication, "server stopping".into(), String::new()).await;
-                        }
-                        () = preauth_expired(&slot, since) => {
-                            tracing::debug!("SSH connection from {peer} did not log in within {PREAUTH_TIMEOUT:?}");
-                            let _ = handle.disconnect(russh::Disconnect::ByApplication, "login timed out".into(), String::new()).await;
-                        }
-                        () = dialog_expired(&slot, since) => {
-                            tracing::info!("SSH connection from {peer} did not log in through the dialog in time");
-                            let _ = handle.disconnect(russh::Disconnect::ByApplication, "login timed out".into(), String::new()).await;
-                        }
-                        result = session => {
-                            if let Err(err) = result {
-                                tracing::debug!("SSH session from {peer} ended: {err:?}");
-                            }
+        match exchanged {
+            Ok(Ok(session)) => {
+                let handle = session.handle();
+                tokio::select! {
+                    () = ended(stop) => {
+                        let _ = handle.disconnect(russh::Disconnect::ByApplication, "server stopping".into(), String::new()).await;
+                    }
+                    () = preauth_expired(&slot, since) => {
+                        tracing::debug!("SSH connection from {peer} did not log in within {PREAUTH_TIMEOUT:?}");
+                        let _ = handle.disconnect(russh::Disconnect::ByApplication, "login timed out".into(), String::new()).await;
+                    }
+                    () = dialog_expired(&slot, since) => {
+                        tracing::info!("SSH connection from {peer} did not log in through the dialog in time");
+                        let _ = handle.disconnect(russh::Disconnect::ByApplication, "login timed out".into(), String::new()).await;
+                    }
+                    () = dialog_closed(&slot, dialog_off) => {
+                        tracing::info!(
+                            "SSH connection from {peer} at the sign-in dialog ended: the dialog is no longer offered"
+                        );
+                        let reason = "the sign-in dialog is closed".to_string();
+                        let _ = handle.disconnect(russh::Disconnect::ByApplication, reason, String::new()).await;
+                    }
+                    result = session => {
+                        if let Err(err) = result {
+                            tracing::debug!("SSH session from {peer} ended: {err:?}");
                         }
                     }
                 }
-                Ok(Err(err)) => tracing::debug!("SSH connection from {peer} failed: {err:?}"),
-                Err(_) => tracing::debug!("SSH connection from {peer} sent no version within {PREAUTH_TIMEOUT:?}"),
             }
-            drop(slot);
-        });
-    }
+            Ok(Err(err)) => tracing::debug!("SSH connection from {peer} failed: {err:?}"),
+            Err(_) => tracing::debug!("SSH connection from {peer} sent no version within {PREAUTH_TIMEOUT:?}"),
+        }
+        drop(slot);
+        drop(held);
+    });
 }
 
 /// One client connection.
 struct Connection {
     shared: Arc<Shared>,
+    /// The server's settings applied in place, read again at each login and channel request.
+    live: Arc<ArcSwap<SshLive>>,
+    /// The access mode when the connection was accepted, whose methods it was offered: a login must be taken by it and
+    /// by the mode now.
+    accepted: Access,
+    /// The SHA-256 fingerprint of the host key the connection was accepted with (SEC-CLU-04).
+    host_fingerprint: String,
+    /// True while the access mode is not `open`, for the sign-in dialog's login to look at once it is let in.
+    dialog_off: watch::Receiver<bool>,
     /// This connection's place in the pre-auth and session counts.
     slot: Arc<Slot>,
     peer: SocketAddr,
@@ -939,6 +788,13 @@ fn git_allowed(login: GitLogin) -> GitAccess {
 /// What a connection let in for the login dialog is told when it asks for anything but `apps` on a pty.
 const DIALOG_ONLY: &str = "log in with a key or a password for commands; ssh -t opens the login screen";
 
+/// What a connection signed in by a password is told for a new channel once the access mode takes no password.
+const PASSWORD_WITHDRAWN: &str =
+    "this server takes a registered key only now (ssh-server@access key): log in with a key";
+
+/// What a request for the terminal client is told while `ssh-server@tui-enabled` is false.
+const TUI_OFF: &str = "the terminal client is turned off on this server (ssh-server@tui-enabled)";
+
 /// A window size from the SSH request's `u32`s; 0 (not given) is 80 by 24.
 fn window(columns: u32, rows: u32) -> (u16, u16) {
     let fit = |value: u32, default: u16| match u16::try_from(value) {
@@ -950,6 +806,32 @@ fn window(columns: u32, rows: u32) -> (u16, u16) {
 }
 
 impl Connection {
+    /// The server's settings now.
+    fn live(&self) -> Arc<SshLive> {
+        self.live.load_full()
+    }
+
+    /// Whether a login by `method` is taken: by the access mode the connection was accepted under and by the mode now,
+    /// so a mode made stricter since refuses what it no longer takes (plans/Runtime-Config.md §3.4).
+    fn takes(&self, method: Method) -> bool {
+        super::live::takes(self.accepted, method) && self.live().takes(method)
+    }
+
+    /// Whether this connection signed in by a password (an app password too) that the access mode now refuses
+    /// (plans/Runtime-Config.md §3.4): it is given no new channel and no new request on one it has, so `key` holds for
+    /// SFTP, git, the shell and the apps alike; what already runs on its channels goes on. Logged naming `what`.
+    fn password_withdrawn(&self, what: &str) -> bool {
+        let withdrawn = self.by_password && !self.live().takes(Method::Password);
+        if withdrawn {
+            tracing::info!(
+                "SSH {what} of {} from {} refused: signed in by a password, which ssh-server@access takes no more",
+                self.username.as_deref().unwrap_or_default(),
+                self.peer
+            );
+        }
+        withdrawn
+    }
+
     /// Remove `channel` from the per-channel maps: its open handle, pty, terminal variables and `GIT_PROTOCOL`.
     fn forget_channel(&mut self, channel: ChannelId) {
         self.channels.remove(&channel);
@@ -1039,6 +921,9 @@ impl Connection {
         if self.by_app_password {
             return Err(DRIVES_ONLY);
         }
+        if !self.live().tui {
+            return Err(TUI_OFF);
+        }
         #[cfg(feature = "tui")]
         {
             Ok(super::agent::AgentAccess {
@@ -1079,6 +964,9 @@ impl Connection {
     fn apps_access(&mut self, channel: ChannelId) -> AppsAccess {
         if self.by_app_password {
             return Err(DRIVES_ONLY);
+        }
+        if !self.live().tui {
+            return Err(TUI_OFF);
         }
         let Some(pty) = self.ptys.get(&channel) else {
             return Err("apps needs a terminal: connect with ssh -t");
@@ -1176,6 +1064,16 @@ impl russh::server::Handler for Connection {
     type Error = russh::Error;
 
     async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
+        // under `key` no password logs in, an app password neither, whatever the client was offered
+        if !self.takes(Method::Password) {
+            tracing::info!(
+                "SSH password login of {} from {} refused: ssh-server@access is {}",
+                for_log(user, MAX_LOGGED_NAME),
+                self.peer,
+                self.live().access.word()
+            );
+            return Ok(Auth::reject());
+        }
         let (username, secret) = (user.to_string(), password.to_string());
         let client_ip = self.peer.ip().to_string();
         let checked = on_pool(&self.shared.factory, move |_| {
@@ -1200,6 +1098,16 @@ impl russh::server::Handler for Connection {
         })
         .await;
         match checked {
+            // the access mode may have left password logins while the password was checked
+            Ok(_) if !self.takes(Method::Password) => {
+                tracing::info!(
+                    "SSH password login of {} from {} refused: ssh-server@access changed to {} as it was checked",
+                    for_log(user, MAX_LOGGED_NAME),
+                    self.peer,
+                    self.live().access.word()
+                );
+                Ok(Auth::reject())
+            }
             Ok((permissions, by)) => Ok(self.accept(user, permissions, by)),
             Err(err) => {
                 tracing::warn!(
@@ -1287,17 +1195,26 @@ impl russh::server::Handler for Connection {
     }
 
     /// No questions: the client is let in with no user, and its `apps` session shows the login dialog. A client with a
-    /// key has tried it by now, since "none" is not offered and OpenSSH tries keys before keyboard-interactive.
+    /// key has tried it by now, since "none" is not offered and OpenSSH tries keys before keyboard-interactive. Only
+    /// under `access="open"` and while the terminal client is on.
     async fn auth_keyboard_interactive<'a>(
         &'a mut self,
         user: &str,
         _submethods: &str,
         _response: Option<russh::server::Response<'a>>,
     ) -> Result<Auth, Self::Error> {
-        if !self.shared.dialog || user == super::cluster::CLUSTER_USER {
+        if !self.takes(Method::Dialog) || user == super::cluster::CLUSTER_USER {
+            return Ok(Auth::reject());
+        }
+        // marked before the last look at the mode: a mode that left `open` before the look is refused here, and one that
+        // leaves after it finds the connection at the dialog and ends it ([`dialog_closed`])
+        self.slot.dialog.store(true, Ordering::SeqCst);
+        if *self.dialog_off.borrow() {
+            self.slot.dialog.store(false, Ordering::SeqCst);
             return Ok(Auth::reject());
         }
         if let Err(refused) = self.slot.log_in(Who::Dialog) {
+            self.slot.dialog.store(false, Ordering::SeqCst);
             tracing::warn!(
                 "SSH login dialog for {} from {} refused: ssh-server {} sessions are open",
                 for_log(user, MAX_LOGGED_NAME),
@@ -1306,7 +1223,6 @@ impl russh::server::Handler for Connection {
             );
             return Ok(Auth::reject());
         }
-        self.slot.dialog.store(true, Ordering::Release);
         tracing::info!(
             "SSH connection from {} let in for the login dialog as {}",
             self.peer,
@@ -1322,7 +1238,7 @@ impl russh::server::Handler for Connection {
         reply: ChannelOpenHandle,
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
-        if !self.let_in() {
+        if !self.let_in() || self.password_withdrawn("session channel") {
             reply.reject(ChannelOpenFailure::AdministrativelyProhibited).await;
             return Ok(());
         }
@@ -1391,13 +1307,26 @@ impl russh::server::Handler for Connection {
         let Some(username) = self.username.clone().filter(|_| name == "sftp" && !self.cluster) else {
             return session.channel_failure(channel);
         };
+        let live = self.live();
+        if !live.sftp {
+            tracing::info!(
+                "SSH SFTP of {username} from {} refused: SFTP is turned off (ssh-server@sftp-enabled)",
+                self.peer
+            );
+            return session.channel_failure(channel);
+        }
+        // a password, an app password too, logs in under `open` and `login` only, and opens no SFTP once the mode is
+        // `key`
+        if self.password_withdrawn("SFTP") {
+            return session.channel_failure(channel);
+        }
         if !self.refresh_permissions().await {
             return session.channel_failure(channel);
         }
         let held = Held::new(&username);
         let backend = if self.can_sftp {
             Backend::Root(self.shared.root.clone())
-        } else if self.shared.sftp_drives {
+        } else if live.sftp_drives {
             Backend::Drives { username }
         } else {
             return session.channel_failure(channel);
@@ -1409,7 +1338,7 @@ impl russh::server::Handler for Connection {
         let fs = SftpFs::new(
             std::sync::Weak::clone(&self.shared.factory),
             backend,
-            self.shared.max_file,
+            live.limits.max_file,
             held,
         )
         .counted(OpenChannel::new(&self.sftp_open));
@@ -1438,7 +1367,7 @@ impl russh::server::Handler for Connection {
             let posts = Arc::clone(&self.shared.cluster_posts);
             let side = super::cluster::ChannelSide {
                 peer: self.peer,
-                host: self.shared.host_fingerprint.clone(),
+                host: self.host_fingerprint.clone(),
             };
             tokio::spawn(super::cluster::serve_channel(
                 open.into_stream(),
@@ -1449,19 +1378,30 @@ impl russh::server::Handler for Connection {
             ));
             return Ok(());
         }
+        if self.password_withdrawn("exec") {
+            return refuse_channel(self.channels.remove(&channel), channel, session, PASSWORD_WITHDRAWN);
+        }
         let line = String::from_utf8_lossy(data).into_owned();
         #[cfg(feature = "git")]
         if moqui_git::server::parse_ssh_command(&line).is_some()
             || moqui_git::server::lfs::parse_ssh_command(&line).is_some()
         {
+            let live = self.live();
+            if !live.git {
+                tracing::info!(
+                    "SSH git from {} refused: git over SSH is turned off (ssh-server@git-enabled)",
+                    self.peer
+                );
+                return session.channel_failure(channel);
+            }
             if !self.refresh_permissions().await {
                 return session.channel_failure(channel);
             }
             let may_git = git_allowed(GitLogin {
                 has_permission: self.can_git,
                 by_password: self.by_password,
-                any_account: self.shared.git_any_account,
-                password_auth: self.shared.git_password_auth,
+                any_account: live.git_any_account,
+                password_auth: live.git_password_auth,
             });
             let (Some(username), true) = (self.username.clone(), may_git != GitAccess::Refused) else {
                 return session.channel_failure(channel);
@@ -1536,7 +1476,8 @@ impl russh::server::Handler for Connection {
         if !self.refresh_permissions().await {
             return session.channel_failure(channel);
         }
-        let (Some(username), true) = (self.username.clone(), self.can_shell) else {
+        // the admin shell's commands, each needing `SSH_SHELL`, while `shell-enabled`
+        let (Some(username), true) = (self.username.clone(), self.can_shell && self.live().shell) else {
             return session.channel_failure(channel);
         };
         let Some(open) = self.channels.remove(&channel) else {
@@ -1598,11 +1539,14 @@ impl russh::server::Handler for Connection {
         Ok(())
     }
 
-    /// The admin shell for a user with `SSH_SHELL` who logged in by key or password; for everyone else, `apps` is the
-    /// whole session.
+    /// The admin shell for a user with `SSH_SHELL` who logged in by key or password, while `shell-enabled`; for everyone
+    /// else, `apps` is the whole session.
     async fn shell_request(&mut self, channel: ChannelId, session: &mut Session) -> Result<(), Self::Error> {
         if self.cluster || !self.let_in() {
             return session.channel_failure(channel);
+        }
+        if self.password_withdrawn("shell") {
+            return refuse_channel(self.channels.remove(&channel), channel, session, PASSWORD_WITHDRAWN);
         }
         let username = self.username.clone().unwrap_or_default();
         let Some(open) = self.channels.remove(&channel) else {
@@ -1615,7 +1559,7 @@ impl russh::server::Handler for Connection {
         // an account that may no longer sign in keeps no permission; its `apps` login meets the same gate
         let _ = self.refresh_permissions().await;
         let access = self.apps_access(channel);
-        if !self.can_shell || self.username.is_none() {
+        if !self.can_shell || !self.live().shell || self.username.is_none() {
             let newline = if pty { "\r\n" } else { "\n" };
             tokio::spawn(async move {
                 let mut stream = open.into_stream();

@@ -1220,14 +1220,26 @@
         address. git-password-auth: git over SSH (SSH_GIT) on a connection that logged in by
         password; by key only when false. git-any-account: git over SSH for any account that logs in by key, without
         SSH_GIT (a public site's accounts); each repository's own check still decides, and SFTP and the shell keep
-        their permissions. login-dialog: a client with no key is let in with no user and gets the
-        terminal client's login dialog (keyboard-interactive with no questions); when false, such a client logs in by
-        password at the SSH level or not at all.
+        their permissions. access: who may connect (plans/Runtime-Config.md 3.4). open: anyone; a client with no key or
+        password is let in with no user and gets the terminal client's login dialog (keyboard-interactive with no
+        questions), within max-dialog-sessions; login: an account's password or one of its keys (UserSshKey); key: a
+        registered key alone, so no password logs in, an app password neither (the cluster's own key logs in under
+        each). A change applies to new connections; the ones still at the login dialog end when it is no longer
+        offered (access leaves open, or tui-enabled is false), and those signed in stay, though one signed in by a
+        password opens no new channel once access takes no password. tui-enabled, sftp-enabled, git-enabled and
+        shell-enabled: the terminal client (apps, agent-apps and the login dialog), the sftp subsystem, git over SSH and
+        the admin shell, each turned off for everyone when false and checked when a channel asks for it; the SSH_*
+        permissions still decide per user.
+        Every setting here but host-key, public-host, public-port and sftp-root applies while the server runs: the
+        switch, port and host start, stop or bind it again (the old socket's sessions end 5 s later), the rest
+        applies to the next connection, login or channel. The host key is read again at each bind, sftp-root at
+        the first start.
     -->
     <ssh-server enabled="false" port="2222" host="127.0.0.1" host-key="CHANGEME" public-host=""
             public-port="" sftp-root="runtime://sftp" sftp-max-file="268435456" max-sessions="8"
             max-sessions-per-user="4" max-sessions-per-source="4" max-dialog-sessions="4"
-            max-dialog-sessions-per-source="2" git-password-auth="false" git-any-account="false" login-dialog="true"/>
+            max-dialog-sessions-per-source="2" git-password-auth="false" git-any-account="false" access="open"
+            tui-enabled="true" sftp-enabled="true" git-enabled="true" shell-enabled="true"/>
     <!-- The terminal's sessions, over SSH and in the browser together (plans/Terminal-Fancy.md §5.8): max-sessions apps and
         command sessions at once, and max-sessions-per-user of them for one user; a session in its login dialog counts toward
         the first only. A kept apps session with no window ends after detach-seconds, a command or host session after

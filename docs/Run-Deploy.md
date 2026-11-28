@@ -461,6 +461,35 @@ start even with HTTPS off, so it can be turned on later. An edge node takes edge
 start only after a restart. The gRPC services' own switches (`telemetry/receiver@grpc-enabled`,
 `pass-authority@grpc-enabled`) still wait for a restart.
 
+**The SSH server applies live** ([plan](../plans/Runtime-Config.md), §3.4). `ssh-server@enabled`, `port` and `host`
+start, stop and bind it again while the server runs, as the web listeners do: its old socket's sessions end 5 seconds
+later (at once with "end connections now"), the host key is read again at each bind, and the start or new bind
+rewrites this member's cluster row, which carries its address and host key. A port that cannot bind, at the start or
+later, is a Failed row on System Home and the server goes on (with `cluster-member@transport="ssh"` the cluster's start
+still needs it). Turning SSH off also ends the sessions of the edge node's SSH tunnel and of the cluster's SSH
+transport; a conf reload that does so logs which. `access`, the session limits (`max-sessions`,
+`max-sessions-per-user`, `max-sessions-per-source`, `max-dialog-sessions`, `max-dialog-sessions-per-source`),
+`sftp-max-file`, `git-password-auth`, `git-any-account`, `dav-server@sftp-drives` and the four sub-service flags apply
+to the next connection, login or channel, with no new bind. `sftp-root` waits for a restart.
+
+| `ssh-server@access` | Who connects | Methods offered |
+|---|---|---|
+| `open` (default) | Anyone; a client with no key or password gets only the terminal client's sign-in dialog, within `max-dialog-sessions` | public key, keyboard-interactive, password |
+| `login` | An account's password or one of its registered keys | public key, password |
+| `key` | A registered key (`UserSshKey`) alone: no password, and no app password, so SFTP by app password is off too | public key |
+
+The cluster's own key logs in under each mode. A change applies to new connections. The sessions still at the sign-in
+dialog end when it is no longer offered (the mode leaves `open`, or `tui-enabled` turns false). Signed-in sessions stay:
+one signed in by a key goes on as before; one signed in by a password (an app password too) opens no new channel once
+the mode no longer takes passwords, and what already runs on its channels (an apps session, a shell, an SFTP transfer)
+goes on. An apps, command or host session can be ended on System › Terminal Sessions; an SSH connection itself (SFTP,
+git, an exec) ends when its client closes it, after 10 minutes with no traffic, or when SSH is turned off or moved,
+5 seconds later or at once with "end connections now". `tui-enabled`, `sftp-enabled`, `git-enabled` and
+`shell-enabled` (all `true`) turn the terminal client (`apps`, `agent-apps`, the sign-in dialog), SFTP, git over SSH
+and the admin shell off for everyone, each checked when a channel asks for it; the `SSH_*` permissions still decide per
+user. `ssh-server@login-dialog` is retired: a conf that sets it is
+refused at boot, naming `access` (`true` was `open`, `false` was `login`).
+
 The settings most deployments set or should know. Their defaults are in `MoquiDefaultConf.xml`.
 
 | Setting | Default | What it does |
@@ -487,7 +516,9 @@ The settings most deployments set or should know. Their defaults are in `MoquiDe
 | `load-runner@targets`, `load-runner@max-runs`, `load-runner@max-users` | empty, `1`, `1000` | Load runs from Tools: the URL prefixes a run may reach besides this server and loopback (any URL on a dev instance; plain http to another machine only when listed), the loads at once, and the users a run |
 | `maps@external-requests`, `maps@import-max-bytes`, `maps@max-features` | `true`, `536870912` (512 MiB), `5000` | Maps ([plan](../plans/archive/Maps.md#42-metadata-and-effective-settings)): `false` stops the server's outside map requests (a geocoder, a Geo data download) and its handing a browser a profile with outside URLs; the largest Geo data download or file and what it may unzip to; the most features one overlay or viewport query returns (`0`: record layers off) |
 | `location@max-share-hours`, `location@trail-max-days`, `location@min-interval-seconds`, `location@approximate-interval-seconds`, `location@max-active-shares`, `location@max-audience`, `location@link-max-views-per-minute`, `location@link-max-failed-tries` | `24`, `30`, `5`, `60`, `20`, `50`, `30`, `10` | Shared live location ([Maps, Live location](tools/Maps.md#live-location)): the longest a share runs from its start or last extension; the longest a kept trail stays after its share ends; the shortest time between two positions a share takes (a sooner one is answered 429), and an approximate share's; the most shares a person has on at once; the most people, contacts and links a share has; the most reads a minute of a guest link's page; the wrong secrets after which a guest link is refused |
-| `ssh-server@enabled`, `ssh-server@port`, `ssh-server@host` | `false` (`true` in the dev conf), `2222`, `127.0.0.1` | The SSH server (SFTP, git, the apps in a terminal), on while its switch is true |
+| `ssh-server@enabled`, `ssh-server@port`, `ssh-server@host` | `false` (`true` in the dev conf), `2222`, `127.0.0.1` | The SSH server (SFTP, git, the apps in a terminal), on while its switch is true; applies while the server runs |
+| `ssh-server@access` | `open` | Who may connect over SSH: `open` (anyone, to the sign-in dialog), `login` (a password or a key), `key` (a registered key alone); applies to new connections |
+| `ssh-server@tui-enabled`, `ssh-server@sftp-enabled`, `ssh-server@git-enabled`, `ssh-server@shell-enabled` | `true` | The SSH server's terminal client, SFTP, git and admin shell, each off for everyone when false; applies to the next channel |
 | `smtp-server@enabled`, `smtp-server@listen-port`, `smtp-server@listen-host` | `false`, `2525`, `127.0.0.1` | The SMTP listener for hosted and shared mail accounts ([Mail-Inbound](interfaces/Mail-Inbound.md)), on while its switch is true |
 | `media-server@enabled`, `media-server@port`, `media-server@host`, `media-server@public-address` | `false`, `10000`, `127.0.0.1`, empty | Call media ([WebRTC](interfaces/WebRTC.md)), on while its switch is true; the public address is what browsers are told, for a server behind 1:1 NAT |
 | `calls@ring-seconds` | `45` | How long a call rings before it is missed |
@@ -972,8 +1003,9 @@ The gRPC listener (webroot `grpc-listen-port`, default 4317, at `grpc-listen-bin
 ports (`edge@ssh-tunnel-port`, `edge@xmpp-port`, `edge@xmpp-tls-port`) also open only when they are configured.
 
 Before the database opens, a start checks every port it will bind, over TCP or UDP as the listener uses it, and logs
-`Ports checked free: …`. If HTTP, HTTPS, cluster or SSH is busy, the start stops, and the error names each busy port
-and the process that holds it. If one of the other listeners has a busy port, the start logs a warning and goes on
+`Ports checked free: …`. If the cluster port is busy, the start stops, and the error names each busy port and the
+process that holds it. HTTP, HTTPS and SSH try a busy port anyway: their row says it failed, naming the holder, and it
+is tried again every 30 seconds. If one of the other listeners has a busy port, the start logs a warning and goes on
 without that listener. When the server is ready it logs one report: the instance purpose, every listener and its
 address (or why it is off, failed or skipped), every integration, the tool factories, and what the build leaves out.
 The report is a warning when something that was configured did not start. The instance purpose also has a line of

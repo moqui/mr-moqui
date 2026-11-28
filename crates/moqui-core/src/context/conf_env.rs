@@ -594,27 +594,63 @@ pub fn declared_secret(selector: &str) -> bool {
     })
 }
 
-/// The conf attributes renamed away, each with the attribute that replaced it: the gRPC listener's port and address
-/// moved to the webroot webapp beside the HTTP and HTTPS ports (`grpc-listen-port`, `grpc-listen-bind`), which every
-/// gRPC service shares. Nothing reads the old ones, so a conf that sets one is refused rather than silently ignored.
-pub const RETIRED_ATTRIBUTES: &[(&str, &str)] = &[
+/// The conf attributes renamed away, each with the attribute that replaced it and a hint saying what to write there
+/// (empty when the value carries over): the gRPC listener's port and address moved to the webroot webapp beside the
+/// HTTP and HTTPS ports (`grpc-listen-port`, `grpc-listen-bind`), which every gRPC service shares, and the SSH login
+/// dialog's flag became one of the SSH access modes (plans/Runtime-Config.md §3.4). Nothing reads the old ones, so a
+/// conf that sets one is refused rather than silently ignored.
+pub const RETIRED_ATTRIBUTES: &[(&str, &str, &str)] = &[
     (
         "pass-authority@grpc-host",
         "webapp-list/webapp[webroot]@grpc-listen-bind",
+        "",
     ),
     (
         "pass-authority@grpc-port",
         "webapp-list/webapp[webroot]@grpc-listen-port",
+        "",
     ),
     (
         "telemetry/receiver@grpc-port",
         "webapp-list/webapp[webroot]@grpc-listen-port",
+        "",
     ),
     (
         "telemetry/receiver@grpc-bind",
         "webapp-list/webapp[webroot]@grpc-listen-bind",
+        "",
+    ),
+    (
+        "ssh-server@login-dialog",
+        "ssh-server@access",
+        "true is access=\"open\", false is access=\"login\"",
     ),
 ];
+
+/// Why setting the attribute at `path` is refused, when it is a renamed one ([`RETIRED_ATTRIBUTES`]): the message
+/// names it and its environment name, and its replacement, its own and the hint; `None` for any other attribute.
+#[must_use]
+pub fn retired_attribute(path: &AttrPath) -> Option<String> {
+    let key = compare_key(path);
+    RETIRED_ATTRIBUTES.iter().find_map(|(retired, replacement, hint)| {
+        let retired_path = AttrPath::parse(retired).ok()?;
+        (compare_key(&retired_path) == key).then(|| retired_attribute_message(retired, replacement, hint))
+    })
+}
+
+/// The message for a renamed attribute `retired` that is set: its replacement, both environment names and the hint.
+fn retired_attribute_message(retired: &str, replacement: &str, hint: &str) -> String {
+    let hint = if hint.is_empty() {
+        String::new()
+    } else {
+        format!(" ({hint})")
+    };
+    format!(
+        "{retired} ({}) is renamed: set {replacement} ({}) instead{hint}",
+        env_name_of(retired),
+        env_name_of(replacement)
+    )
+}
 
 /// A conf value retired while its attribute stays (plans/Runtime-Config.md §3.2): the attribute's selector, the values
 /// no longer read (trimmed and in lower case, `""` for empty), the attribute that replaced them, and a hint saying what
@@ -718,17 +754,13 @@ pub fn refuse_retired(conf: &MNode) -> Result<(), Error> {
 /// [`refuse_retired`] with the retired values of `values`.
 pub(crate) fn refuse_retired_with(conf: &MNode, values: &[RetiredValue]) -> Result<(), Error> {
     let mut found = Vec::new();
-    for (retired, replacement) in RETIRED_ATTRIBUTES {
+    for (retired, replacement, hint) in RETIRED_ATTRIBUTES {
         let set = AttrPath::parse(retired)
             .ok()
             .and_then(|path| path::resolve(conf, &path, &conf_schema::keying, false).ok())
             .is_some_and(|target| target.node.attribute(&target.attribute).is_some());
         if set {
-            found.push(format!(
-                "{retired} ({}) is renamed: set {replacement} ({}) instead",
-                env_name_of(retired),
-                env_name_of(replacement)
-            ));
+            found.push(retired_attribute_message(retired, replacement, hint));
         }
     }
     for row in values {

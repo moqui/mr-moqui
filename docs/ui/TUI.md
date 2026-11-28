@@ -97,7 +97,11 @@ moqui> attach <id>                          one of your kept terminal sessions (
   with the same login dialog `moqui tui` shows, the SSH name filled in. Such a session closes after 2 minutes without a
   login, or after 5 refused ones, and gets only the apps: no commands, `agent-apps`, SFTP or git. To log in by password
   at the SSH level instead (for the admin shell without a key), use `ssh -o PreferredAuthentications=password`.
-  `ssh-server` `login-dialog="false"` turns the dialog off.
+  `ssh-server@access` decides who may connect ([Run-Deploy](../Run-Deploy.md), SSH applies live): `open` (the default)
+  lets a client with no key in to the dialog, `login` takes only a password or a key, and `key` only a registered key;
+  a change applies to new connections, and the sessions still at the dialog end when it leaves `open` or the apps are
+  turned off.
+  `ssh-server@tui-enabled="false"` turns the apps (and so the dialog) off over SSH.
   An account with a second factor logs in through the dialog ("The login dialog");
   at the SSH level a password alone does not let it in. A dialog login is checked against the account's and its
   groups' `ipAllowed` with the SSH client's address, as an SSH password login is.

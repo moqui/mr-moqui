@@ -27,7 +27,9 @@ runs on the result of the one before; a failure stops the release until it is fi
    ([Run-Deploy](../../../docs/Run-Deploy.md#settings-and-the-environment)). Renamed so far (`RETIRED_ATTRIBUTES` in
    `conf_env.rs`): `pass-authority@grpc-host` and `telemetry/receiver@grpc-bind` to
    `webapp-list/webapp[webroot]@grpc-listen-bind`, `pass-authority@grpc-port` and `telemetry/receiver@grpc-port` to
-   `webapp-list/webapp[webroot]@grpc-listen-port`; check the runtime's conf files, `.env` and the service environment.
+   `webapp-list/webapp[webroot]@grpc-listen-port`, `ssh-server@login-dialog` to `ssh-server@access` (`true` is `open`,
+   `false` is `login`, plans/Runtime-Config.md §3.4); check the runtime's conf files, `.env` and the service
+   environment.
    The listener switches (plans/Runtime-Config.md §3.2; `RETIRED_VALUES` in `conf_env.rs`): `off` or an empty
    `http-listen-port`, `https-listen-port` or `grpc-listen-port`, and an empty `ssh-server@port`,
    `smtp-server@listen-port` or `media-server@port`, refuse the start naming the switch to set; a port alone, or

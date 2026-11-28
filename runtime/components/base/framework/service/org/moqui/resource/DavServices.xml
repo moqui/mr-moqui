@@ -46,7 +46,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="filesUrl"><description>WebDAV: one folder per drive</description></parameter>
             <parameter name="calendarsUrl"><description>Empty when no CalDAV adapter is named</description></parameter>
             <parameter name="addressBooksUrl"><description>Empty when no CardDAV adapter is named</description></parameter>
-            <parameter name="sftpUrl"><description>Empty when the SSH server is off or dav-server sftp-drives is false</description></parameter>
+            <parameter name="sftpUrl"><description>Empty when the SSH server is off, ssh-server sftp-enabled or dav-server sftp-drives is false</description></parameter>
             <parameter name="driveUrl"><description>With driveId: the drive's WebDAV folder; empty when the user may not open it</description></parameter>
             <parameter name="driveSftpPath"><description>With driveId: the drive's folder over SFTP</description></parameter>
         </out-parameters>

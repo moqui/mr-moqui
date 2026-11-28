@@ -349,8 +349,8 @@ fn os_environment(name: &str) -> Option<String> {
 /// # Errors
 ///
 /// When `selector` does not name an attribute that has an environment name, `value` is a retired value
-/// ([`super::conf_env::RETIRED_VALUES`]), the running conf does not parse, or `.env` or the seal's store cannot be
-/// written.
+/// ([`super::conf_env::RETIRED_VALUES`]) or the attribute a renamed one ([`super::conf_env::RETIRED_ATTRIBUTES`]), the
+/// running conf does not parse, or `.env` or the seal's store cannot be written.
 pub fn set(
     factory: &ExecutionContextFactory,
     selector: &str,
@@ -606,6 +606,11 @@ fn plan(
         )));
     };
     if let Some(refused) = value.and_then(|value| conf_env::retired_value_in(inputs.retired, &target.path, value)) {
+        return Err(Error::new(refused));
+    }
+    // a renamed attribute the boot refuses by name ([`conf_env::RETIRED_ATTRIBUTES`]) is not set while running either,
+    // so the next reload does not refuse the conf for it; putting it back (no value) is left alone
+    if let Some(refused) = value.and_then(|_| conf_env::retired_attribute(&target.path)) {
         return Err(Error::new(refused));
     }
     let secret = conf_env::attribute_secret(&target.path);

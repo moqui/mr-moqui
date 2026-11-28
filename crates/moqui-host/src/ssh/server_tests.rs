@@ -15,10 +15,13 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use std::time::Duration;
+
 use super::{
-    conf_listen_target, dialog_expired_within, for_log, git_allowed, listen_target, Counts, GitAccess, GitLogin,
-    SessionRefused, Slot, SlotRefused, Who, MAX_LOGGED_NAME, MAX_PREAUTH, PREAUTH_PER_SOURCE,
+    conf_listen_target, dialog_closed, dialog_expired_within, for_log, git_allowed, listen_target, Counts, GitAccess,
+    GitLogin, SessionRefused, Slot, SlotRefused, Who, MAX_LOGGED_NAME, MAX_PREAUTH, PREAUTH_PER_SOURCE,
 };
+use crate::ssh::live::SshLimits;
 
 /// SEC-FIL-92: a client's user name goes to the log quoted, its control characters escaped, and cut short.
 #[test]
@@ -253,7 +256,6 @@ fn git_any_account_is_for_a_key_login_only() {
 /// s), or its dialog does not log in within the login wait; one that logs in is not (SEC-FIL-87).
 #[tokio::test]
 async fn a_dialog_with_no_apps_or_no_login_is_closed_in_time() {
-    use std::time::Duration;
     let (start, login) = (Duration::from_millis(50), Duration::from_millis(150));
     let counts = Arc::new(Counts::new(8, 0, 0));
     let dialog = || {
@@ -282,4 +284,83 @@ async fn a_dialog_with_no_apps_or_no_login_is_closed_in_time() {
     logged_in.dialog_started.store(true, Ordering::Release);
     logged_in.dialog_logged_in();
     assert!(!ends(&logged_in, Duration::from_millis(300), waits).await);
+}
+
+/// The limits apply while the server runs (plans/Runtime-Config.md §3.4): a lowered one refuses the next login and
+/// keeps the sessions open past it; a raised one lets the next in.
+#[test]
+fn new_limits_apply_to_the_next_login_and_keep_the_sessions_open() {
+    let counts = Arc::new(Counts::of(&SshLimits {
+        max_sessions: 4,
+        max_per_user: 0,
+        max_per_source: 0,
+        max_dialogs: 2,
+        max_dialogs_per_source: 0,
+        ..SshLimits::default()
+    }));
+    let at = |last: u8| std::net::IpAddr::from([198, 51, 100, last]);
+    let slot = |last: u8| Slot::preauth(&counts, at(last)).unwrap();
+    let open = [slot(1), slot(1), slot(2)];
+    assert!(open[0].log_in(Who::User("ann")).is_ok() && open[1].log_in(Who::User("ann")).is_ok());
+    assert!(open[2].log_in(Who::Dialog).is_ok());
+    counts.set(&SshLimits {
+        max_sessions: 2,
+        max_per_user: 1,
+        max_per_source: 1,
+        max_dialogs: 1,
+        max_dialogs_per_source: 1,
+        ..SshLimits::default()
+    });
+    assert_eq!(
+        counts.sessions.load(Ordering::Acquire),
+        3,
+        "the sessions past the new total stay"
+    );
+    assert_eq!(slot(3).log_in(Who::User("bob")), Err(SessionRefused::Total));
+    assert_eq!(slot(4).log_in(Who::Dialog), Err(SessionRefused::Dialog));
+    drop(open);
+    let first = slot(1);
+    assert!(first.log_in(Who::User("ann")).is_ok());
+    assert_eq!(
+        slot(1).log_in(Who::User("cy")),
+        Err(SessionRefused::Source),
+        "the new share of a source"
+    );
+    assert_eq!(
+        slot(5).log_in(Who::User("ann")),
+        Err(SessionRefused::User),
+        "the new share of a user"
+    );
+    counts.set(&SshLimits::default());
+    assert!(
+        slot(5).log_in(Who::User("ann")).is_ok(),
+        "a raised share lets the next in"
+    );
+}
+
+/// A connection at the sign-in dialog ends when the access mode leaves `open`, also when it got there after the change
+/// was first seen; one signed in, or never at the dialog, does not.
+#[tokio::test]
+async fn a_dialog_ends_when_the_access_mode_leaves_open() {
+    let counts = Arc::new(Counts::new(8, 0, 0));
+    let slot = |dialog: bool| {
+        let slot = Slot::preauth(&counts, std::net::IpAddr::from([198, 51, 100, 9])).unwrap();
+        slot.dialog.store(dialog, Ordering::SeqCst);
+        slot
+    };
+    async fn ends(slot: &Slot, off: tokio::sync::watch::Receiver<bool>) -> bool {
+        tokio::time::timeout(Duration::from_millis(100), dialog_closed(slot, off))
+            .await
+            .is_ok()
+    }
+    let (off, seen) = tokio::sync::watch::channel(false);
+    let at_dialog = slot(true);
+    let signed_in = slot(true);
+    signed_in.dialog_logged_in();
+    let by_key = slot(false);
+    assert!(!ends(&at_dialog, seen.clone()).await, "open");
+    off.send_replace(true);
+    assert!(ends(&at_dialog, seen.clone()).await);
+    assert!(!ends(&signed_in, seen.clone()).await);
+    assert!(!ends(&by_key, seen.clone()).await);
 }

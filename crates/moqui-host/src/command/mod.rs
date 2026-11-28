@@ -441,8 +441,9 @@ pub(crate) async fn interactive<S: tokio::io::AsyncRead + tokio::io::AsyncWrite 
                     Ok(start) => Ok(start.again()),
                     Err(reason) => Err(*reason),
                 };
+                // without the client the access is a plain `Result` that copies
                 #[cfg(not(feature = "tui"))]
-                let access = apps.clone();
+                let access = apps;
                 let _ = stream.write_all(if pty { PASTE_OFF } else { b"" }).await;
                 run_apps(&mut stream, access, newline).await;
                 let _ = stream.write_all(paste_on).await;
