@@ -737,7 +737,8 @@
                 this.chart = { title: "", type: "column", categories: several ? column(range.column, range.column) : "", values: range.lastRow > range.row ? values.join(", ") : "" };
                 this.chartOpen = true;
             },
-            chartDefinitions() { return this.charts.map((chart) => ({ title: chart.title, type: chart.type, categories: chart.categories, series: (chart.series || []).map((one) => ({ name: one.name, values: one.values })) })); },
+            // each with the id the server gave it, which it keeps, so a dashboard panel of the chart still finds it
+            chartDefinitions() { return this.charts.map((chart) => Object.assign(chart.id ? { id: chart.id } : {}, { title: chart.title, type: chart.type, categories: chart.categories, series: (chart.series || []).map((one) => ({ name: one.name, values: one.values })) })); },
             addChart() {
                 const series = this.chart.values.split(",").map((text) => text.trim()).filter(Boolean).map((values, index) => ({ name: "Series " + (index + 1), values }));
                 const charts = this.chartDefinitions().concat([{ title: this.chart.title, type: this.chart.type, categories: this.chart.categories.trim(), series }]);

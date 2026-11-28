@@ -221,6 +221,19 @@ test("a dataset's declared parameters are fields of its query, a select where th
         assert.equal(control("Document"), undefined);
     } finally { app.unmount(); target.remove(); }
 });
+test("a bar panel's bars across put its categories down the side: a CalcGrid chart's frame, a label column and a series", () => {
+    const frame = { fields: [{ name: "Label", type: "string", values: ["North", "South"] }, { name: "Amount", type: "number", values: [10, null] }] };
+    const across = report.chart(frame, { visualization: "bar", horizontal: true });
+    assert.equal(across.type, "bar");
+    assert.equal(across.options.indexAxis, "y");
+    assert.deepEqual(across.data.labels, ["North", "South"]);
+    assert.deepEqual(across.data.datasets[0].data, [10, null]);
+    assert.equal(typeof across.options.scales.x.ticks.callback, "function", "the values along the bottom");
+    assert.equal(across.options.scales.y.ticks, undefined, "the categories down the side");
+    assert.equal(report.chart(frame, { visualization: "bar" }).options.indexAxis, undefined);
+    assert.equal(report.chart(frame, { visualization: "line", horizontal: true }).options.indexAxis, undefined, "only a bar panel");
+    assert.equal(report.chart(frame, { visualization: "line" }).type, "line");
+});
 test("annotations map to chart positions while out-of-range markers stay outside the view", () => {
     const frame = { fields: [{ name: "time", type: "time", values: [1000, 2000, 3000] }, { name: "requests", type: "number", values: [1, 2, 3] }] };
     const annotations = [{ time: 2000, time_end: 3000, text: "Deployment" }, { time: 500, text: "Earlier" }];

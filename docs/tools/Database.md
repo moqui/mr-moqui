@@ -231,7 +231,9 @@ What a person reads there is set in the authorization data, not in a document. A
   documents shared with them, refreshes and exports, and sees the authors' edits as they are made. An author edits a
   document they read, with the others who have it open; it is its owner's to save and delete.
 - **Add to dashboard** puts the cells selected (or the sheet's used area) of a saved document on one of the viewer's
-  own dashboards, as a table, bars, a pie or a number: a panel over the dataset `calcgrid` (below). Read as names
+  own dashboards, as a table, bars, a pie or a number: a panel over the dataset `calcgrid` (below). For a document
+  with charts it also offers a chart of this document: the panel names the chart by its id and is drawn as the chart
+  is (a column chart as bars, a bar chart as bars across, a line, an area or a pie), its title the chart's. Read as names
   the access profile the panel reads under, one the author holds (the panel's `profileId`); left at each person's own
   access, the panel names none.
 - **A shared document shows each reader their own rows.** It stores its sources and its workbook without data; each
@@ -248,7 +250,14 @@ What a person reads there is set in the authorization data, not in a document. A
   source is the service `get#CalcFrame`) answers a range of a saved document as a table: a panel query names
   `datasetId: "calcgrid"` and the parameters `definitionId` and `range` (as in a formula, `Summary!A1:D20`; the first
   row names the columns), which the dataset declares, so the panel editors offer the documents and the profiles as
-  choices ([A dataset's parameters](Monitoring.md#the-dashboards-app)), and the table, chart and stat panels draw it, in playlists, the wall display, report
+  choices ([A dataset's parameters](Monitoring.md#the-dashboards-app)), and the table, chart and stat panels draw it.
+  With `chart` (a chart's id) in place of `range` it answers one of the document's charts as a table: a column
+  `Label` of its labels (each point's place where it has none) and a column of numbers for each series, a row for
+  each point, with the chart's type and title (`chartType`, `chartTitle`); the bar, line, area and pie panels draw
+  it. Each chart has an id the server gives it when a `charts` edit arrives, kept while the views send it back with the
+  list (`crates/moqui-calc/src/charts.rs`); a document saved before charts had ids gives each `chart<n>` by its place
+  when it opens and keeps it at its next save, and `chart` also takes a chart's index (from 0). A chart panel follows
+  the document as a range panel does (its `live` room). Both are drawn in playlists, the wall display, report
   previews and scheduled reports as any panel. A panel is read as its viewer, under the profile its parameters name
   (`profileId`) or, with none, the viewer's current access: the one they chose while they hold it, else the Tools
   app's own when they have it, else the first profile they hold. A scheduled report runs as its owner, so under its

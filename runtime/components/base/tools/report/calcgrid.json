@@ -4,7 +4,7 @@
   "title": "CalcGrid range",
   "body": {
     "folder": "CalcGrid",
-    "description": "A range of a CalcGrid document as a table: set the query parameters definitionId (the document) and range (as in a formula, Summary!A1:D20; its first row names the columns), and profileId to read under an access profile. Read as the viewer under their current CalcGrid access, or the profile named.",
+    "description": "A range or a chart of a CalcGrid document as a table: set the query parameters definitionId (the document) and range (as in a formula, Summary!A1:D20; its first row names the columns) or chart (a chart's id: a label column and a column for each series), and profileId to read under an access profile. Read as the viewer under their current CalcGrid access, or the profile named.",
     "serviceName": "org.moqui.calc.CalcServices.get#CalcFrame",
     "parameters": [
       {
@@ -18,7 +18,8 @@
           "label": "title"
         }
       },
-      {"name": "range", "label": "Range, as in a formula (Summary!A1:D20)"},
+      {"name": "range", "label": "Range, as in a formula (Summary!A1:D20)", "optional": true},
+      {"name": "chart", "label": "Chart (its id, in place of a range)", "optional": true},
       {
         "name": "profileId",
         "label": "Read as (an access profile)",

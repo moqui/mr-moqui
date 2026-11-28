@@ -14,7 +14,12 @@
 //! A CalcGrid document's charts in its xlsx (plans/archive/IronCalc-DB.md, Phase 4): the charts of the document's body
 //! (a title, a type of bar, column, line, area or pie, a categories range and series of a name and a values range,
 //! drawn on the screen with Chart.js) as charts of the engine, on a sheet of their own, which Excel and LibreOffice
-//! draw from the cells as the screen does.
+//! draw from the cells as the screen does. Each chart has a stable `id` ([`with_ids`]), by which a dashboard panel
+//! reads it as a table ([`frame_of`], `get#CalcFrame`'s `chart`; plans/IronCalc-DB2.md CG4.2).
+
+use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use moqui_core::context::Error;
 use moqui_core::workbook::ironcalc::base::drawings::{
@@ -132,6 +137,138 @@ pub fn add_to_model(model: &mut Model<'static>, charts: &[Json]) -> Result<Vec<S
         model.add_drawing(sheet, drawing).map_err(engine)?;
     }
     Ok(left_out)
+}
+
+/// The longest chart id kept as a client sends it.
+const MAX_ID: usize = 64;
+/// Ids made on this server, so two made in one millisecond differ.
+static ID_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Whether `id` is one a chart keeps: letters, digits, `-` and `_`, at most [`MAX_ID`].
+fn is_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= MAX_ID
+        && id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+}
+
+/// A new chart id: `c` and hexadecimal digits, never one of [`saved_ids`]' `chart<n>`.
+fn new_id() -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis());
+    format!("c{millis:x}{:03x}", ID_SEQ.fetch_add(1, Ordering::Relaxed) % 0x1000)
+}
+
+/// The charts of a `charts` edit, each with a stable `id` (plans/IronCalc-DB2.md CG4.2): the one the view sent with
+/// it, a chart of the list it read, else a new one, as the edit arrives and before it is in the document's log, so
+/// every room that follows the log gives a chart the same id. A dashboard panel names a chart by it
+/// (`get#CalcFrame`'s `chart`). An id sent twice is kept the first time.
+#[must_use]
+pub fn with_ids(charts: Vec<Json>) -> Vec<Json> {
+    let mut seen = BTreeSet::new();
+    charts
+        .into_iter()
+        .map(|mut chart| {
+            let kept = chart["id"]
+                .as_str()
+                .filter(|id| is_id(id) && !seen.contains(*id))
+                .map(str::to_string);
+            let id = kept.unwrap_or_else(|| {
+                let mut made = new_id();
+                while seen.contains(&made) {
+                    made = new_id();
+                }
+                made
+            });
+            seen.insert(id.clone());
+            if let Some(object) = chart.as_object_mut() {
+                object.insert("id".into(), Json::String(id));
+            }
+            chart
+        })
+        .collect()
+}
+
+/// A saved document's charts as a room opens them: one saved before charts had ids is given `chart<n>` by its place
+/// (from 1), the same in every room of the document, and keeps it when the document is next saved.
+#[must_use]
+pub fn saved_ids(charts: Vec<Json>) -> Vec<Json> {
+    charts
+        .into_iter()
+        .enumerate()
+        .map(|(index, mut chart)| {
+            let has = chart["id"].as_str().is_some_and(is_id);
+            if let (false, Some(object)) = (has, chart.as_object_mut()) {
+                object.insert("id".into(), Json::String(format!("chart{}", index + 1)));
+            }
+            chart
+        })
+        .collect()
+}
+
+/// The chart `wanted` names among `charts`: the one of that id, else the one at that index (from 0), for a panel added
+/// before the document's charts had ids.
+#[must_use]
+pub fn find<'a>(charts: &'a [Json], wanted: &str) -> Option<&'a Json> {
+    charts
+        .iter()
+        .find(|chart| chart["id"].as_str() == Some(wanted))
+        .or_else(|| wanted.parse::<usize>().ok().and_then(|index| charts.get(index)))
+}
+
+/// A chart as a table for the report engine, from the values a room read for it (`Room::charts`: its `labels` and
+/// each series' `data`): a label column, then a column of numbers for each series, named by the series (made unique),
+/// one row for each point. A chart with no labels is labelled by the point's place, from 1.
+///
+/// # Errors
+///
+/// The chart's own error, when its ranges did not read.
+pub fn frame_of(chart: &Json) -> Result<Json, Error> {
+    if let Some(error) = chart["error"].as_str() {
+        return Err(Error::new(error));
+    }
+    let series = chart["series"].as_array().map(Vec::as_slice).unwrap_or_default();
+    let labels = chart["labels"].as_array().map(Vec::as_slice).unwrap_or_default();
+    let points = series
+        .iter()
+        .map(|one| one["data"].as_array().map_or(0, Vec::len))
+        .max()
+        .unwrap_or(0)
+        .max(labels.len());
+    let label_values: Vec<Json> = (0..points)
+        .map(|at| match labels.get(at) {
+            Some(Json::String(label)) => Json::String(label.clone()),
+            _ => Json::String((at + 1).to_string()),
+        })
+        .collect();
+    let mut names = BTreeSet::from(["Label".to_string()]);
+    let mut fields = vec![serde_json::json!({"name": "Label", "type": "string", "values": label_values})];
+    for (at, one) in series.iter().enumerate() {
+        let given = one["name"]
+            .as_str()
+            .filter(|name| !name.trim().is_empty())
+            .map_or_else(|| format!("Series {}", at + 1), str::to_string);
+        let mut name = given.clone();
+        let mut again = 2;
+        while names.contains(&name) {
+            name = format!("{given} {again}");
+            again += 1;
+        }
+        names.insert(name.clone());
+        let data = one["data"].as_array().map(Vec::as_slice).unwrap_or_default();
+        let values: Vec<Json> = (0..points)
+            .map(|point| {
+                data.get(point)
+                    .filter(|value| value.is_number())
+                    .cloned()
+                    .unwrap_or(Json::Null)
+            })
+            .collect();
+        fields.push(serde_json::json!({"name": name, "type": "number", "values": values}));
+    }
+    Ok(serde_json::json!({ "fields": fields }))
 }
 
 #[cfg(test)]

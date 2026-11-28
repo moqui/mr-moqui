@@ -38,13 +38,13 @@ fn calcgrid() -> Json {
 }
 
 #[test]
-fn the_shipped_calcgrid_dataset_declares_the_document_the_range_and_the_profile() {
+fn the_shipped_calcgrid_dataset_declares_the_document_the_range_the_chart_and_the_profile() {
     let body = &calcgrid()["body"];
     assert_eq!(refusal(body), None);
     let ec = context();
     let listed = declared(&ec, "calcgrid", body, false);
     let names: Vec<&str> = listed.iter().filter_map(|one| one["name"].as_str()).collect();
-    assert_eq!(names, ["definitionId", "range", "profileId"]);
+    assert_eq!(names, ["definitionId", "range", "chart", "profileId"]);
     assert!(listed.iter().all(|one| one.get("choices").is_none()));
     let by = |name: &str| {
         listed
@@ -56,6 +56,7 @@ fn the_shipped_calcgrid_dataset_declares_the_document_the_range_and_the_profile(
     assert_eq!(by("definitionId")["optional"], false);
     assert_eq!(by("profileId")["optional"], true);
     assert_eq!(by("range")["kind"], "text");
+    assert_eq!(by("chart")["optional"], true);
     assert_eq!(
         choice_services(body),
         [

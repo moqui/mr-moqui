@@ -374,7 +374,7 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   call gives none (the field is a text field). A declaration is presentation only: the service checks every value it
   is given. A saved dataset names only a choices service a shipped dataset names there, as its `serviceName`
   (`crates/moqui-report/src/parameters.rs`). The shipped `calcgrid` declares the document (its choices the CalcGrid
-  documents the viewer reads, `list#Definitions`), the range, and the access profile (optional, from
+  documents the viewer reads, `list#Definitions`), the range or a chart of the document, and the access profile (optional, from
   `get#CalcProfiles`) ([CalcGrid and access profiles](Database.md#calcgrid-and-access-profiles)). A dataset without
   `parameters` is read and edited as before.
 - **The dataset screens** (Datasets, with the hidden DatasetDetail, DatasetFields and DatasetView) are the
@@ -399,8 +399,11 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   documents-mode panel query, which adds `first`, `last`, a `sparkline` of counts over time and the narrowing `query`.
   It reads at most 5,000 lines and keeps 200 patterns; the rest join an `(other)` pattern.
 - **Dashboards** are panels and a layout. Panels run report queries (aggregations by role: metric, x-axis, split
-  series, split rows), then transformations, then a visualization: time series, bar, stat, gauge, bar gauge, table,
-  pie and donut, heatmap, state timeline, text and the trace waterfall. Variables sync to the URL as `var-NAME`, along
+  series, split rows), then transformations, then a visualization: time series, line, area, bar, stat, gauge, bar
+  gauge, table, pie and donut, heatmap, state timeline, text and the trace waterfall. A bar panel with `horizontal`
+  true (the editor's Bars across) draws its bars across, the categories down the side, as a CalcGrid bar chart's
+  panel does ([CalcGrid and access profiles](Database.md#calcgrid-and-access-profiles)); the terminal draws bars as
+  it always does. Variables sync to the URL as `var-NAME`, along
   with the time range (`now-6h`, `now/d`, `now-1M/M`, `now/fy`; `<report week-start fiscal-start-month
   fiscal-start-day/>` in the conf sets the week and fiscal year). Keys: `t-` zooms out, `t←`/`t→` shift the range,
   `e` edits, `v` views a panel, `i` inspects, `d k` toggles kiosk mode, and Esc leaves kiosk mode, then the single-panel

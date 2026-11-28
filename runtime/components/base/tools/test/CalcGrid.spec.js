@@ -55,7 +55,7 @@ spec({
     },
     cleanupSpec() {
         // a document a failed feature left shared with the group goes first
-        for (const definitionId of ["spec-calcgrid-revoke", "spec-calcgrid-revoke-board", "spec-calcgrid-params-board", "spec-calcgrid-ds", "spec-calcgrid-params"])
+        for (const definitionId of ["spec-calcgrid-revoke", "spec-calcgrid-revoke-board", "spec-calcgrid-params-board", "spec-calcgrid-ds", "spec-calcgrid-params", "spec-calcgrid-charts-board", "spec-calcgrid-charts"])
             ec.service.sync().name("org.moqui.report.ReportServices.delete#Definition").parameters({definitionId}).disableAuthz().call()
         ec.message.clearErrors()
         ec.artifactExecution.disableAuthz()
@@ -560,10 +560,10 @@ feature("the calcgrid dataset's parameters are listed with their choices for the
         }
     },
     then({plain, chosen, got, logs, byName, values, savedOwn, savedListed, otherService, malformed, added, notHeld, query, names, queryErrors}) {
-        Array.from(plain.parameters || []).map(parameter => parameter.name).join(",") == "definitionId,range,profileId"
+        Array.from(plain.parameters || []).map(parameter => parameter.name).join(",") == "definitionId,range,chart,profileId"
         byName(plain, "definitionId").label == "Document"
         byName(plain, "profileId").optional === true
-        byName(plain, "range").optional === false
+        byName(plain, "range").optional === true
         byName(plain, "definitionId").choices === undefined
         values(byName(chosen, "definitionId")).includes("spec-calcgrid-params")
         Array.from(byName(chosen, "definitionId").choices || []).some(choice => choice.label == "Parameter types")
@@ -581,6 +581,86 @@ feature("the calcgrid dataset's parameters are listed with their choices for the
         names.join(",") == "enumId,sequenceNum"
         queryErrors == ""
         String(notHeld.json.errors).includes("Choose an access profile you hold")
+    },
+})
+
+// A document's chart as a panel (plans/IronCalc-DB2.md CG4.2): the server gives each chart of a charts edit an id and
+// keeps the ones the view sends back; get#CalcFrame with chart answers it as a table (a label column and a column for each
+// series) with its type and title, and Add to dashboard draws it as the chart is (a bar chart's bars across). A document
+// saved before charts had ids gives them by place when opened, and a chart is also found by its index.
+feature("a document's chart is a dashboard panel by its stable id: its labels and a column for each series, drawn as the chart is", {
+    when() {
+        const definitionId = "spec-calcgrid-charts", board = "spec-calcgrid-charts-board"
+        const opened = call("calcOpen", {sourceJson: JSON.stringify(source), columnsJson: JSON.stringify(["enumId", "sequenceNum"]),
+            sortJson: JSON.stringify([{field: "enumId", dir: "asc"}])}, "post")
+        const roomId = opened.json.roomId
+        const chart = (title, type) => ({title, type, categories: "Enumeration!A2:A4", series: [{name: "Sequence", values: "Enumeration!B2:B4"}]})
+        const edit = charts => call("calcEdit", {roomId, opsJson: JSON.stringify([{op: "charts", charts}])}, "post").json
+        const first = edit([chart("Across", "bar"), chart("Upright", "column")])
+        const ids = Array.from(first.charts || []).map(one => one.id)
+        // sent back as the view read them, with a new one: the ids stay, and the new one has its own
+        const read = Array.from(first.charts || []).map(one => ({id: one.id, title: one.title, type: one.type, categories: one.categories,
+            series: Array.from(one.series || []).map(series => ({name: series.name, values: series.values}))}))
+        const again = Array.from(edit(read.concat([chart("Trend", "line")])).charts || []).map(one => one.id)
+        call("calcSave", {roomId, title: "Chart types", definitionId}, "post")
+        call("calcClose", {roomId}, "post")
+        const frame = chart => {
+            const out = ec.service.sync().name("org.moqui.calc.CalcServices.get#CalcFrame").parameters({definitionId, chart}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.getErrorsString() : ""
+            ec.message.clearErrors()
+            return {out, errors, fields: Array.from((out.frame || {}).fields || [])}
+        }
+        const across = frame(ids[0])
+        const missing = frame("nosuch")
+        // a panel of it on a dashboard of the viewer's own, and the panel's query
+        ec.service.sync().name(REPORT + "save#Definition").parameters({definition: {id: board, type: "dashboard", title: "Spec chart board", body: {panels: {}}}}).call()
+        const added = dashboardsCall("calcAddPanel", {definitionId, dashboardId: board, chart: ids[0]}, "post")
+        const panels = (((ec.service.sync().name(REPORT + "get#Definition").parameters({definitionId: board}).call() || {}).definition || {}).body || {}).panels || {}
+        const panel = panels[added.json.panelId] || {}
+        const queried = Array.from((Array.from((ec.service.sync().name(REPORT + "run#Query").parameters({query: (panel.queries || [])[0]}).call() || {}).frames || [])[0] || {}).fields || [])
+        const noChart = dashboardsCall("calcAddPanel", {definitionId, dashboardId: board, chart: "nosuch"}, "post")
+        // the saved document's charts lose their ids, as one saved before they had them: opened again, each is found by place
+        ec.service.sync().name("org.moqui.calc.CalcServices.close#CalcDocument").parameters({roomId: (across.out.live || {}).room}).call()
+        const saved = (ec.service.sync().name(REPORT + "get#Definition").parameters({definitionId}).call() || {}).definition
+        const savedIds = Array.from(saved.body.charts || []).map(one => one.id)
+        for (const one of saved.body.charts) delete one.id
+        ec.service.sync().name(REPORT + "save#Definition").parameters({definition: saved, note: "charts without ids"}).call()
+        const byPlace = frame("chart2"), byIndex = frame("1")
+        ec.service.sync().name("org.moqui.calc.CalcServices.close#CalcDocument").parameters({roomId: (byPlace.out.live || {}).room}).call()
+        for (const id of [board, definitionId]) ec.service.sync().name(REPORT + "delete#Definition").parameters({definitionId: id}).call()
+        ec.message.clearErrors()
+        return {ids, again, savedIds, across, missing, added, panel, queried, noChart, byPlace, byIndex}
+    },
+    then({ids, again, savedIds, across, missing, added, panel, queried, noChart, byPlace, byIndex}) {
+        ids.length == 2
+        ids.every(id => /^c[0-9a-f]+$/.test(id))
+        ids[0] != ids[1]
+        again.length == 3
+        again[0] == ids[0]
+        again[1] == ids[1]
+        again[2] != ids[0] && again[2] != ids[1]
+        savedIds.join(",") == again.join(",")
+        across.errors == ""
+        across.out.chartType == "bar"
+        across.out.chartTitle == "Across"
+        across.fields.map(field => field.name).join(",") == "Label,Sequence"
+        across.fields.map(field => field.type).join(",") == "string,number"
+        Array.from(across.fields[0].values).length == 3
+        across.fields[0].values[0] == "AT_ENTITY"
+        across.out.live.kind == "calc"
+        missing.errors.includes("no chart nosuch")
+        !added.json.errors
+        panel.visualization == "bar"
+        panel.horizontal === true
+        panel.title == "Across"
+        panel.queries[0].parameters.chart == ids[0]
+        panel.queries[0].parameters.range === undefined
+        queried.map(field => field.name).join(",") == "Label,Sequence"
+        String(noChart.json.errors).includes("no chart nosuch")
+        byPlace.errors == ""
+        byPlace.out.chartTitle == "Upright"
+        byPlace.out.chartType == "column"
+        byIndex.out.chartTitle == "Upright"
     },
 })
 

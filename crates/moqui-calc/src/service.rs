@@ -799,7 +799,8 @@ fn open_document_with(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
             }
             None => fill::new_model("Sheet1"),
         };
-        let charts = body["charts"].as_array().cloned().unwrap_or_default();
+        // a chart saved before charts had ids is given one by its place, the same in every room of the document
+        let charts = crate::charts::saved_ids(body["charts"].as_array().cloned().unwrap_or_default());
         let title = definition["title"].as_str().unwrap_or(&definition_id).to_string();
         (base, data_sheets(body), charts, title, definition["version"].as_i64())
     } else if matches!(access, Access::Profile(_)) && (!workbook_location.is_empty() || !profile::may_author()) {
@@ -1321,12 +1322,19 @@ fn edit_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
     let Some(room) = room_of(parameters, &access, facade) else {
         return Ok(BTreeMap::new());
     };
-    let ops: Vec<Json> = match parameters.get("ops").map(to_json) {
+    let mut ops: Vec<Json> = match parameters.get("ops").map(to_json) {
         Some(Json::Array(ops)) => ops,
         _ => return refused("ops is a list of edits"),
     };
     if ops.len() > MAX_EDIT_OPS {
         return refused(format!("At most {MAX_EDIT_OPS} edits in one call"));
+    }
+    // each chart of a charts edit keeps the id the view read, and a new one is given one, before the edit is in the
+    // log, so every room of the document names it alike (plans/IronCalc-DB2.md CG4.2)
+    for op in ops.iter_mut().filter(|op| op["op"] == "charts") {
+        if let Some(charts) = op["charts"].as_array_mut() {
+            *charts = crate::charts::with_ids(std::mem::take(charts));
+        }
     }
     let user = user_id();
     let mut held = moqui_lib::sync::lock(&room);
@@ -1381,15 +1389,18 @@ fn get_calc_cell_content(parameters: &BTreeMap<String, Value>, facade: &EntityFa
 /// `serviceName`): the first row of `range` names the columns, each row below is a record. The document is opened as
 /// the caller under `profileId`, or with none under their current access ([`Access::current`]), its data read as
 /// they may read it; a room the caller already has for the document is read again, its data read anew when it is
-/// over a minute old.
+/// over a minute old. With `chart` (a chart's id, or its index for one saved before charts had ids) in place of a
+/// range, the document's chart as a table ([`crate::charts::frame_of`]: a label column and a column for each series)
+/// with its `chartType` and `chartTitle` (plans/IronCalc-DB2.md CG4.2).
 fn get_calc_frame(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
     let Some(access) = access_or_current(parameters, facade) else {
         return Ok(BTreeMap::new());
     };
     let definition_id = text(parameters, "definitionId");
     let range = text(parameters, "range");
-    if definition_id.is_empty() || range.is_empty() {
-        return refused("A CalcGrid frame needs a definitionId and a range");
+    let chart = text(parameters, "chart");
+    if definition_id.is_empty() || (range.is_empty() && chart.is_empty()) {
+        return refused("A CalcGrid frame needs a definitionId and a range or a chart");
     }
     let Some(user_id) = moqui_core::user::current_user_id().ok().flatten() else {
         return refused("Not signed in");
@@ -1453,9 +1464,28 @@ fn get_calc_frame(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -
         }
     };
     let room = moqui_lib::sync::lock(&room);
-    match room.frame(&range, MAX_FRAME_ROWS) {
+    let mut out = BTreeMap::new();
+    let framed = if chart.is_empty() {
+        room.frame(&range, MAX_FRAME_ROWS)
+    } else {
+        let charts = room.charts();
+        match crate::charts::find(charts.as_array().map(Vec::as_slice).unwrap_or_default(), &chart) {
+            Some(found) => {
+                out.insert(
+                    "chartType".to_string(),
+                    Value::string(found["type"].as_str().unwrap_or("column")),
+                );
+                out.insert(
+                    "chartTitle".to_string(),
+                    Value::string(found["title"].as_str().unwrap_or("")),
+                );
+                crate::charts::frame_of(found)
+            }
+            None => Err(Error::new(format!("The document has no chart {chart}"))),
+        }
+    };
+    match framed {
         Ok(frame) => {
-            let mut out = BTreeMap::new();
             out.insert("frame".to_string(), from_json(&frame));
             // the room the frame was read from: a dashboard watches its topic and reads the frame again when the
             // document changes, or when a share taken away leaves the viewer out of it (DASH-UI-008)

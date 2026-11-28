@@ -214,13 +214,18 @@
             a record, at most 10,000. The document's data is read as the caller under profileId, or with none under their
             current access: the one they chose in CalcGrid (set#CalcProfile) while they hold it, else the Tools app's own
             when they have it, else the first profile they hold. A room the caller has for the document is read again,
-            its data read anew when over a minute old.</description>
+            its data read anew when over a minute old. With chart in place of range, one of the document's charts as a
+            table: a label column (Label) and a column of numbers for each series, a row for each point, with the
+            chart's type and title.</description>
         <in-parameters>
             <parameter name="definitionId" required="true"/>
-            <parameter name="range" required="true"><description>As in a formula: Summary!A1:D20.</description></parameter>
+            <parameter name="range"><description>As in a formula: Summary!A1:D20. A range or a chart.</description></parameter>
+            <parameter name="chart"><description>A chart's id, or its index (from 0) for a chart saved before charts had ids.</description></parameter>
             <parameter name="profileId"/>
         </in-parameters>
         <out-parameters><parameter name="frame" type="Map"><description>fields, each a name, a type (number or string) and its values.</description></parameter>
+            <parameter name="chartType"><description>With chart: column, bar (drawn across), line, area or pie.</description></parameter>
+            <parameter name="chartTitle"/>
             <parameter name="live" type="Map"><description>How a view of the frame follows the document: kind calc and the
                 room it was read from, whose notification topic (calc:room, joined with watch) says when the document
                 changed, and when the caller left the room (a share taken away), so the view reads the frame again.</description></parameter></out-parameters>
