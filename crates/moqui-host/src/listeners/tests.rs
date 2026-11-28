@@ -16,8 +16,9 @@ use super::*;
 
 use crate::port_check::Proto;
 
-/// What the fakes of one test did, in order: `start A 1`, `stop A 1 Grace(5s)`, `finish A 1 7s` (the wait it was
-/// given, to the nearest second), `drop A 1`, `apply A 3`.
+/// What the fakes of one test did, in order: `start A 1`, `stop A 1 Grace(5s)`, `released A 1` (its port let go for
+/// a new bind of the same one), `finish A 1 7s` (the wait it was given, to the nearest second), `now A 1` (its
+/// connections ended now while it drained), `drop A 1`, `apply A 3`.
 type Log = Arc<Mutex<Vec<String>>>;
 
 /// What a fake reads, which a test changes between passes.
@@ -31,6 +32,8 @@ struct Script {
     wanted_panics: bool,
     /// Its stop never reports finished.
     hangs: bool,
+    /// Its stop drains for this long, unless its connections are ended now first.
+    drain: Option<Duration>,
     /// Its next start queues a request through the factory's control, as a signal would from within a pass.
     enqueue: bool,
     /// A failed start's error carries the bind's own error as its source.
@@ -72,6 +75,7 @@ impl Fake {
                 start_panics: false,
                 wanted_panics: false,
                 hangs: false,
+                drain: None,
                 enqueue: false,
                 with_source: false,
                 seen: Vec::new(),
@@ -118,6 +122,8 @@ struct FakeRun {
     port: u16,
     script: Arc<Mutex<Script>>,
     log: Log,
+    /// Its connections were ended now.
+    ended: Arc<AtomicBool>,
 }
 
 impl<P: Debug> Running<P> for FakeRun {
@@ -137,9 +143,29 @@ impl<P: Debug> Running<P> for FakeRun {
         lock(&self.log).push(format!("stop {} {} {how:?}", self.name, self.port));
     }
 
+    fn end_now(&self) -> Option<EndNow> {
+        let (name, port, log, ended) = (self.name, self.port, Arc::clone(&self.log), Arc::clone(&self.ended));
+        Some(Arc::new(move || {
+            lock(&log).push(format!("now {name} {port}"));
+            ended.store(true, Ordering::SeqCst);
+        }))
+    }
+
+    fn released(&mut self, _wait: Duration) -> bool {
+        lock(&self.log).push(format!("released {} {}", self.name, self.port));
+        true
+    }
+
     fn finished(&mut self, wait: Duration) -> bool {
         let seconds = (wait.as_millis() + 500) / 1000;
         lock(&self.log).push(format!("finish {} {} {seconds}s", self.name, self.port));
+        let drain = lock(&self.script).drain;
+        if let Some(drain) = drain {
+            let started = Instant::now();
+            while !self.ended.load(Ordering::SeqCst) && started.elapsed() < drain.min(wait) {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
         !lock(&self.script).hangs
     }
 
@@ -242,6 +268,7 @@ impl Listener for Fake {
             port: *bind,
             script: Arc::clone(&self.script),
             log: Arc::clone(&self.log),
+            ended: Arc::default(),
         }))
     }
 
@@ -528,9 +555,16 @@ fn an_overlapping_bind_stops_the_old_first() {
     taken(&log);
     fake.on(2, 0);
     assert_eq!(actions(&reload(&registry)), [("A", Action::Rebound)]);
+    // the old port is let go before the new bind, and the old one's connections drain with the pass's stops
     assert_eq!(
         taken(&log),
-        ["stop A 1 Grace(5s)", "finish A 1 7s", "drop A 1", "start A 2"]
+        [
+            "stop A 1 Grace(5s)",
+            "released A 1",
+            "start A 2",
+            "finish A 1 7s",
+            "drop A 1"
+        ]
     );
     assert_eq!(registry.address("A"), address(2));
 }
@@ -598,10 +632,11 @@ fn a_failed_overlapping_bind_binds_the_old_again() {
         taken(&log),
         [
             "stop A 1 Grace(5s)",
-            "finish A 1 7s",
-            "drop A 1",
+            "released A 1",
             "start A 2",
-            "start A 1"
+            "start A 1",
+            "finish A 1 7s",
+            "drop A 1"
         ]
     );
     assert_eq!(registry.address("A"), address(1));
@@ -618,6 +653,72 @@ fn a_failed_overlapping_bind_binds_the_old_again() {
     );
     assert_eq!(registry.address("A"), None);
     assert!(matches!(row(&registry, "A").state, State::Failed(_)));
+}
+
+/// "End connections now" asked while a listener drains its grace after a pass turned it off ends them at once, not
+/// after the pass, whose lock it does not wait for (plans/Runtime-Config.md §3.1).
+#[test]
+fn ending_now_cuts_short_a_stop_already_draining() {
+    let log = log();
+    let fake = Fake::new("A", &log);
+    fake.on(1, 0);
+    let registry = registry(&[&fake]);
+    boot(&registry);
+    taken(&log);
+    fake.script().drain = Some(Duration::from_secs(5));
+    fake.off("fake@enabled is false");
+    let started = Instant::now();
+    let draining = {
+        let registry = registry.clone();
+        std::thread::spawn(move || reload(&registry))
+    };
+    while !lock(&log).iter().any(|event| event.starts_with("finish A 1")) {
+        assert!(started.elapsed() < Duration::from_secs(3), "the stop began to drain");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let ended = requested(
+        &registry,
+        ReconcileRequest {
+            cause: Cause::Request {
+                user: "operator".to_string(),
+                reason: "a download that does not finish".to_string(),
+            },
+            end_now: vec!["A".to_string()],
+        },
+    );
+    assert_eq!(actions(&draining.join().unwrap()), [("A", Action::Stopped)]);
+    assert_eq!(actions(&ended), [("A", Action::Same)]);
+    assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+    assert_eq!(
+        taken(&log),
+        ["stop A 1 Grace(5s)", "finish A 1 7s", "now A 1", "drop A 1"]
+    );
+}
+
+/// A request to end a listener's connections now that came before a pass running already began its stop ends it as
+/// the stop begins; once a pass has taken the request's job, the pass ends it itself and nothing is remembered.
+#[test]
+fn ending_now_asked_before_a_stop_begins_ends_it_as_it_begins() {
+    let draining = Arc::new(Draining::default());
+    let ended = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let handle = |ended: &Arc<std::sync::atomic::AtomicUsize>| -> EndNow {
+        let ended = Arc::clone(ended);
+        Arc::new(move || {
+            ended.fetch_add(1, Ordering::SeqCst);
+        })
+    };
+    assert_eq!(draining.end_now(&["A".to_string()]), 0, "nothing drains yet");
+    let a = draining.add("A", handle(&ended));
+    assert_eq!(ended.load(Ordering::SeqCst), 1, "ended as its stop began");
+    let b = draining.add("B", handle(&ended));
+    assert_eq!(ended.load(Ordering::SeqCst), 1, "another listener is not");
+    draining.taken(&["A".to_string()]);
+    drop((a, b));
+    let again = draining.add("A", handle(&ended));
+    assert_eq!(ended.load(Ordering::SeqCst), 1, "a job taken leaves nothing remembered");
+    assert_eq!(draining.end_now(&["A".to_string()]), 1);
+    assert_eq!(ended.load(Ordering::SeqCst), 2);
+    drop(again);
 }
 
 #[test]
@@ -1495,67 +1596,4 @@ fn the_boot_entries_stop_in_the_order_of_before_the_registry() {
         .flat_map(|entry| entry.extra_rows().iter().copied())
         .collect();
     assert_eq!(extras, ["TURN"]);
-}
-
-/// The web entries' wants, read as `http::listen` read them before the registry: off for a node reached in process
-/// only, or by the listener's switch, which the row names (plans/Runtime-Config.md §3.2); HTTPS's plan bound, or
-/// standing by.
-#[test]
-fn the_web_entries_say_why_they_are_off() {
-    use super::web::{http_wanted, https_wanted, HttpsBind};
-    fn webroot(enabled: &'static str, port: &'static str) -> impl Fn(&str) -> String {
-        move |name: &str| match name {
-            "http-listen-enabled" => enabled.to_string(),
-            "http-listen-port" => port.to_string(),
-            _ => String::new(),
-        }
-    }
-    const IN_PROCESS: &str = "no port, reached in process only";
-    assert_eq!(
-        http_wanted(&ListenBind::None, &webroot("true", "8080")),
-        Wanted::Off(IN_PROCESS.to_string())
-    );
-    assert_eq!(
-        http_wanted(&ListenBind::Property, &webroot("false", "8080")),
-        Wanted::Off("webapp-list/webapp[webroot]@http-listen-enabled is false".to_string())
-    );
-    assert_eq!(
-        http_wanted(&ListenBind::Property, &webroot("true", "8081")),
-        Wanted::On {
-            bind: "0.0.0.0:8081".parse().unwrap(),
-            in_place: ()
-        }
-    );
-    let address: SocketAddr = "127.0.0.1:9".parse().unwrap();
-    assert_eq!(
-        http_wanted(&ListenBind::Address(address), &webroot("false", "8080")),
-        Wanted::On {
-            bind: address,
-            in_place: ()
-        }
-    );
-    let plan = |standby| {
-        Some(crate::http::HttpsPlan {
-            bind: "0.0.0.0:8443".parse().unwrap(),
-            standby,
-        })
-    };
-    assert_eq!(
-        https_wanted(&ListenBind::None, plan(false)),
-        Wanted::Off(IN_PROCESS.to_string())
-    );
-    assert_eq!(
-        https_wanted(&ListenBind::Property, None),
-        Wanted::Off("webapp-list/webapp[webroot]@https-listen-enabled is false".to_string())
-    );
-    assert_eq!(
-        https_wanted(&ListenBind::Property, plan(true)),
-        Wanted::On {
-            bind: HttpsBind {
-                address: "0.0.0.0:8443".parse().unwrap(),
-                standby: true
-            },
-            in_place: ()
-        }
-    );
 }

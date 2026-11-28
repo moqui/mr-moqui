@@ -383,6 +383,23 @@ pub fn set_many(
     set_with(factory, settings, persist, &Inputs::of(factory))
 }
 
+/// [`set_many`], with the hooks of `held` not run: the caller applies that group's change itself, at once and as one,
+/// as the listener services and the operator socket do, which then ask the listener registry for one pass that carries
+/// their cause ([`crate::listeners::Cause::SetValue`]) and the listeners whose connections end now
+/// (plans/Runtime-Config.md §3.6). The hooks of the other groups the settings reach run as [`set_many`] runs them.
+///
+/// # Errors
+///
+/// As [`set_many`].
+pub fn set_many_holding(
+    factory: &ExecutionContextFactory,
+    settings: &[(&str, Option<&str>)],
+    persist: bool,
+    held: Group,
+) -> Result<Vec<SetOutcome>, Error> {
+    set_with_holding(factory, settings, persist, &Inputs::of(factory), Some(held))
+}
+
 /// [`set`], answering what the name held before where it is kept ([`SetOutcome::before_kept`]): the form the specs'
 /// `setConf` and the DKIM key use.
 ///
@@ -418,6 +435,17 @@ fn set_with(
     settings: &[(&str, Option<&str>)],
     persist: bool,
     inputs: &Inputs<'_>,
+) -> Result<Vec<SetOutcome>, Error> {
+    set_with_holding(factory, settings, persist, inputs, None)
+}
+
+/// [`set_with`], running no hook of `holding`.
+fn set_with_holding(
+    factory: &ExecutionContextFactory,
+    settings: &[(&str, Option<&str>)],
+    persist: bool,
+    inputs: &Inputs<'_>,
+    holding: Option<Group>,
 ) -> Result<Vec<SetOutcome>, Error> {
     let applying = factory.extension(|_| Applying::default());
     let held = lock(&applying.0);
@@ -506,7 +534,7 @@ fn set_with(
     let mut groups: Vec<Group> = Vec::new();
     for outcome in &outcomes {
         if let Class::Apply(group) = outcome.class {
-            if !groups.contains(&group) {
+            if !groups.contains(&group) && holding != Some(group) {
                 groups.push(group);
             }
         }

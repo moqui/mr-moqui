@@ -369,9 +369,15 @@ impl Acceptor {
         Ok(Secured::Http(start.into_stream(Arc::clone(http)).await?))
     }
 
-    /// Serve a link connection until it closes.
-    pub(crate) async fn serve<S: ManageStream>(&self, stream: TlsStream<S>, remote: SocketAddr) {
-        Arc::clone(&self.server).serve(stream, remote).await;
+    /// Serve a link connection until it closes, the listeners stop, or `closing` turns true: the closing of the
+    /// listener it came over, which ends it with that listener alone (plans/Runtime-Config.md §8.3).
+    pub(crate) async fn serve<S: ManageStream>(
+        &self,
+        stream: TlsStream<S>,
+        remote: SocketAddr,
+        closing: watch::Receiver<bool>,
+    ) {
+        Arc::clone(&self.server).serve(stream, remote, closing).await;
     }
 
     /// A link connection that came down a passthrough tunnel, its ClientHello read (`accepted`, which offered
@@ -387,7 +393,8 @@ impl Acceptor {
     ) {
         let start = tokio_rustls::StartHandshake::from_parts(accepted, stream);
         match tokio::time::timeout(limit, start.into_stream(Arc::clone(&self.tls))).await {
-            Ok(Ok(stream)) => self.serve(stream, remote).await,
+            // down a link this node dialed, on no listener of its own: it ends with the listeners' stop
+            Ok(Ok(stream)) => self.serve(stream, remote, self.server.shutdown.clone()).await,
             Ok(Err(err)) => tracing::debug!("manager link through the edge node from {remote}: TLS failed: {err}"),
             Err(_) => tracing::debug!("manager link through the edge node from {remote}: TLS timed out"),
         }
@@ -488,7 +495,12 @@ impl ManagerServer {
         true
     }
 
-    async fn serve<S: ManageStream>(self: Arc<Self>, mut stream: TlsStream<S>, remote: SocketAddr) {
+    async fn serve<S: ManageStream>(
+        self: Arc<Self>,
+        mut stream: TlsStream<S>,
+        remote: SocketAddr,
+        listener: watch::Receiver<bool>,
+    ) {
         let fingerprint = stream
             .get_ref()
             .1
@@ -530,9 +542,9 @@ impl ManagerServer {
                     noted: Mutex::new(String::new()),
                 });
                 let lifetime = self.config.pairing_lifetime;
-                self.serve_h2(stream, conn, None, Some(lifetime)).await;
+                self.serve_h2(stream, conn, None, Some(lifetime), listener).await;
             }
-            ROLE_UP => self.serve_up(stream, remote, fingerprint).await,
+            ROLE_UP => self.serve_up(stream, remote, fingerprint, listener).await,
             _ => {
                 let _ = write_answer(&mut stream, Answer::Failed, "unknown role").await;
             }
@@ -544,6 +556,7 @@ impl ManagerServer {
         mut stream: TlsStream<S>,
         remote: SocketAddr,
         fingerprint: String,
+        listener: watch::Receiver<bool>,
     ) {
         let lookup = fingerprint.clone();
         let linked = self
@@ -587,7 +600,7 @@ impl ManagerServer {
         });
         let deadline = self.config.handshake_timeout;
         Arc::clone(&self)
-            .serve_h2(stream, Arc::clone(&conn), Some((closed, deadline)), None)
+            .serve_h2(stream, Arc::clone(&conn), Some((closed, deadline)), None, listener)
             .await;
         let gone = {
             let mut linked = lock(&self.linked);
@@ -620,13 +633,15 @@ impl ManagerServer {
     }
 
     /// Serve the `Manager` service on a connection until it ends, `closed` signals (with the time its Hello must come
-    /// in), the listener stops, or a pairing connection's time is up.
+    /// in), the listeners stop, `listener` (the closing of the listener it came over) turns true, or a pairing
+    /// connection's time is up.
     async fn serve_h2<S: ManageStream>(
         self: Arc<Self>,
         stream: TlsStream<S>,
         conn: Arc<Conn>,
         closed: Option<(watch::Receiver<bool>, Duration)>,
         lifetime: Option<Duration>,
+        mut listener: watch::Receiver<bool>,
     ) {
         let service = ManagerGrpc::new(Service {
             server: Arc::clone(&self),
@@ -683,6 +698,7 @@ impl ManagerServer {
             () = silent => tracing::debug!("manager link: a link connection sent no Hello in time"),
             () = expired => tracing::debug!("manager link: a pairing connection reached its time limit"),
             _ = shutdown.wait_for(|stopped| *stopped) => {}
+            _ = listener.wait_for(|closing| *closing) => {}
         }
     }
 

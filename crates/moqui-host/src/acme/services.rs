@@ -27,7 +27,7 @@ use moqui_lib::object::{is_empty, to_plain_string, Value};
 use serde_json::json;
 
 use super::store::{self, NameRow};
-use super::{check, normal_name, order, Acme};
+use super::{check, normal_name, order, Acme, HttpsState};
 
 moqui_core::extension::submit! {
     moqui_core::extension::Extension {
@@ -268,12 +268,24 @@ fn get_certificates(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacad
 /// `setup#AcmeName`: check the name reaches this node (unless `skipCheck`), save it, and start its order.
 fn setup_acme_name(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
     let factory = factory()?;
-    if !Acme::of(&factory).has_https() {
-        return refuse(
-            "httpsOff",
-            "This node has no HTTPS listener (the webroot webapp's https-listen-enabled is false), so it cannot answer the \
-             authority's challenge",
-        );
+    // what the HTTPS listener does, as the listener registry told it: bound, or waiting for ACME with no certificate
+    // yet, answers the challenge (plans/Runtime-Config.md §3.3)
+    match Acme::of(&factory).https() {
+        HttpsState::Serving | HttpsState::AcmeOnly | HttpsState::StandingBy => {}
+        HttpsState::Failed => {
+            return refuse(
+                "httpsFailed",
+                "This node's HTTPS listener did not start (System Home says why, its port held by another, say), so it \
+                 cannot answer the authority's challenge",
+            );
+        }
+        HttpsState::Off => {
+            return refuse(
+                "httpsOff",
+                "This node has no HTTPS listener (the webroot webapp's https-listen-enabled is false, or its port or TLS \
+                 settings are not usable), so it cannot answer the authority's challenge",
+            );
+        }
     }
     let host = normal_name(&text(parameters, "hostName"));
     if !valid_host(&host) {

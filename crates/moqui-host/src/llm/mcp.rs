@@ -27,7 +27,7 @@ use moqui_llm::mcp::{self, Answer, HttpRequest, Reply};
 
 use super::a2a::{busy, origin_of, response_of, Open};
 use crate::guard::Event;
-use crate::http::{plain, read_body, secure_request, ClientAddr, HttpState, TlsConnection};
+use crate::http::{plain, read_body, secure_request, ClientAddr, Closing, HttpState, TlsConnection};
 
 /// The largest request body.
 const MAX_BODY: usize = 4 * 1024 * 1024;
@@ -44,10 +44,11 @@ pub(crate) async fn document(
     response_of(mcp::server::document(&state.factory, &which, &origin))
 }
 
-/// `/mcp`.
+/// `/mcp`. A wait ends with the listener the request came over, or with the process when it came over none.
 pub(crate) async fn handle(
     State(state): State<Arc<HttpState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Closing(closing): Closing,
     request: Request,
 ) -> Response {
     let over_tls = request.extensions().get::<TlsConnection>().is_some();
@@ -117,12 +118,11 @@ pub(crate) async fn handle(
                 Err(full) => return busy(&full),
             };
             let (done, reply) = tokio::sync::oneshot::channel::<Reply>();
-            let shutdown = state.shutdown.clone();
             let spawned = std::thread::Builder::new()
                 .name("moqui-mcp-wait".to_string())
                 .spawn(move || {
                     let _open = open;
-                    let answered = finish(&|| *shutdown.borrow() || done.is_closed());
+                    let answered = finish(&|| *closing.borrow() || done.is_closed());
                     let _ = done.send(answered);
                 });
             if let Err(error) = spawned {

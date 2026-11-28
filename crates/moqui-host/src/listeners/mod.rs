@@ -58,6 +58,17 @@ pub(crate) use web::{HTTP, HTTPS};
 /// process stop keeps `web-protection/connections@shutdown-timeout` (plans/Runtime-Config.md §6).
 pub(crate) const LIVE_STOP_GRACE: Duration = Duration::from_secs(5);
 
+/// How often a pass runs again while a live listener is Failed or was Skipped for a busy port, so a port let go is
+/// taken without another change to ask for a pass (as the edge tunnels retry theirs).
+const RETRY_EVERY: Duration = Duration::from_secs(30);
+
+/// The cause of the pass [`RETRY_EVERY`] runs.
+const RETRY: &str = "retry";
+
+/// What ends a stopping listener's connections now, also once its stop has begun with a grace
+/// ([`Running::end_now`]).
+pub(crate) type EndNow = Arc<dyn Fn() + Send + Sync>;
+
 /// The boot pass a listener starts in: other boot work sits between them (plans/Runtime-Config.md §3.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Stage {
@@ -176,6 +187,21 @@ pub(crate) trait Listener: Send + 'static {
     }
     /// The port `bind` takes, for the pre-check of a change and to name a pending bind.
     fn target(&self, bind: &Self::Bind) -> Option<Target>;
+    /// Tell readers outside the registry what it does now, after each action, from what the registry knows rather than
+    /// from its row's words (HTTPS tells ACME whether it can answer a challenge). Nothing by default.
+    fn published(&self, _ctx: &Ctx, _now: Now<'_, Self::InPlace>) {}
+}
+
+/// What a listener does now, as [`Listener::published`] is told it.
+pub(crate) enum Now<'a, P> {
+    /// No pass has acted on it yet.
+    NotYet,
+    /// It runs with these in-place settings.
+    Running(&'a P),
+    /// It is off (or skipped), for the reason its `wanted` gave.
+    Off(&'a str),
+    /// Its start failed and nothing runs.
+    Failed,
 }
 
 /// A started listener.
@@ -187,6 +213,16 @@ pub(crate) trait Running<P>: Send {
     fn apply(&mut self, _in_place: &P) {}
     /// Begin to stop: no new connections, and the connections end as `how` says. Never waits out the grace.
     fn begin_stop(&mut self, how: StopHow);
+    /// What ends its connections now once its stop has begun, for "end connections now" asked while it drains; none
+    /// when its stop does not drain.
+    fn end_now(&self) -> Option<EndNow> {
+        None
+    }
+    /// Wait up to `wait`, its stop begun, until its port is let go, which a listener that drains does before its
+    /// connections finish: a new bind of the same port waits for this, not for the drain. By default, until it finished.
+    fn released(&mut self, wait: Duration) -> bool {
+        self.finished(wait)
+    }
     /// Wait up to `wait` for the stop to finish; false when it did not, and dropping it ends what is left.
     fn finished(&mut self, wait: Duration) -> bool;
     /// The connections it holds, when it counts them.
@@ -237,8 +273,10 @@ impl<T: Send, P> Running<P> for Wrapped<T> {
 
 /// The entries the boot starts through the registry, in their fixed order: SSH, the cluster port, call media (with
 /// TURN), SIP, XMPP and SMTP in the order they started before the registry, then HTTP, HTTPS and gRPC. The edge conf
-/// tunnels stay inside `edge_link::start` until RC8.
+/// tunnels stay inside `edge_link::start` until RC8. HTTP on an address the caller named (`start_server`,
+/// `moqui test --serve`) stops the start when it does not bind, as that caller asked for that port.
 pub(crate) fn add_boot_entries(registry: &Registry) {
+    let named = matches!(registry.0.boot.bind, ListenBind::Address(_));
     #[cfg(feature = "ssh")]
     registry.add(ssh::Ssh);
     registry.add(cluster::Cluster);
@@ -246,10 +284,10 @@ pub(crate) fn add_boot_entries(registry: &Registry) {
     registry.add(comms::Sip);
     registry.add(comms::Xmpp);
     registry.add(comms::Smtp);
-    registry.add(web::Http);
+    registry.add(web::Http { named });
     registry.add(web::Https);
     #[cfg(feature = "grpc")]
-    registry.add(web::Grpc);
+    registry.add(web::Grpc::default());
 }
 
 /// What a wrapped start of today left on `name`'s row: the state the registry records for it once it runs, so the
@@ -269,6 +307,27 @@ fn recorded_state(factory: &ExecutionContextFactory, name: &str) -> State {
     }
 }
 
+/// The address each listener of a factory's registry is bound to now, by its row's name, as the registry last published
+/// it: what `Server::address`, `https_address` and `listener_address` read, since a listener binds again, stops and
+/// starts while the server runs (plans/Runtime-Config.md §8.3). A factory extension.
+#[derive(Default)]
+pub(crate) struct Addresses(Mutex<std::collections::HashMap<&'static str, SocketAddr>>);
+
+impl Addresses {
+    /// The address `name` is bound to now, when it runs.
+    pub(crate) fn get(&self, name: &str) -> Option<SocketAddr> {
+        lock(&self.0).get(name).copied()
+    }
+
+    fn set(&self, name: &'static str, address: Option<SocketAddr>) {
+        let mut addresses = lock(&self.0);
+        match address {
+            Some(address) => addresses.insert(name, address),
+            None => addresses.remove(name),
+        };
+    }
+}
+
 /// What the boot hands every entry.
 pub(crate) struct BootInputs {
     pub(crate) bind: ListenBind,
@@ -281,10 +340,14 @@ pub(crate) struct BootInputs {
 }
 
 /// What an entry reads while a pass runs. RC0's wrapped starts read their settings as they did before the registry,
-/// the process-wide `conf_env::setting` among them; from RC1 each entry reads the factory's running conf (its keyed
-/// selector) instead, so two servers in one process do not share a value.
+/// the process-wide `conf_env::setting` among them; the live entries read `conf`, one reading of the factory's running
+/// conf for the whole pass, so two servers in one process do not share a value and a pass never sees half of a change
+/// of several settings.
 pub(crate) struct Ctx<'a> {
     pub(crate) factory: &'a Arc<ExecutionContextFactory>,
+    pub(crate) conf: moqui_core::context::ConfSnapshot,
+    /// Where a stop begun in the pass leaves what ends its connections now, while it drains ([`Draining`]).
+    pub(crate) draining: &'a Arc<Draining>,
     pub(crate) boot: &'a BootInputs,
     /// What `http::listen` built for the web listeners, once it has ([`Registry::install_web`]).
     pub(crate) web: Option<&'a crate::http::WebContext>,
@@ -313,6 +376,83 @@ struct Published {
     address: Option<SocketAddr>,
 }
 
+/// The listeners draining now, by name, with what ends their connections now: outside the entries' lock, so a request
+/// to end a listener's connections now acts at once on a stop a pass has begun and is waiting for
+/// (plans/Runtime-Config.md §3.1). The names such a request asked for are kept until the worker takes its job into a
+/// pass: a pass already running when it came may begin that listener's stop after it, which then ends at once.
+#[derive(Default)]
+pub(crate) struct Draining {
+    stops: Mutex<DrainingNow>,
+    next: std::sync::atomic::AtomicU64,
+}
+
+#[derive(Default)]
+struct DrainingNow {
+    stops: Vec<(u64, &'static str, EndNow)>,
+    /// The names of the requests to end now whose jobs no pass has taken yet, once for each.
+    asked: Vec<String>,
+}
+
+impl Draining {
+    /// Keep `end_now` for `name` until the returned guard drops, when its stop has finished; a request waiting to end
+    /// `name` now ends it at once.
+    pub(crate) fn add(self: &Arc<Self>, name: &'static str, end_now: EndNow) -> DrainGuard {
+        let id = self.next.fetch_add(1, Ordering::SeqCst);
+        let asked = {
+            let mut now = lock(&self.stops);
+            now.stops.push((id, name, Arc::clone(&end_now)));
+            now.asked.iter().any(|asked| asked == name)
+        };
+        if asked {
+            end_now();
+        }
+        DrainGuard {
+            draining: Arc::clone(self),
+            id,
+        }
+    }
+
+    /// A request asks to end `names` now: end the connections of each of them draining now, and remember the names
+    /// until its job is taken ([`Draining::taken`]); how many were draining.
+    pub(crate) fn end_now(&self, names: &[String]) -> usize {
+        let ending: Vec<EndNow> = {
+            let mut now = lock(&self.stops);
+            now.asked.extend(names.iter().cloned());
+            now.stops
+                .iter()
+                .filter(|(_, name, _)| names.iter().any(|named| named == name))
+                .map(|(_, _, end_now)| Arc::clone(end_now))
+                .collect()
+        };
+        for end_now in &ending {
+            end_now();
+        }
+        ending.len()
+    }
+
+    /// A pass took the job of a request to end `names` now: the pass ends them itself from here on.
+    pub(crate) fn taken(&self, names: &[String]) {
+        let mut now = lock(&self.stops);
+        for name in names {
+            if let Some(index) = now.asked.iter().position(|asked| asked == name) {
+                now.asked.remove(index);
+            }
+        }
+    }
+}
+
+/// A draining listener's place in [`Draining`], given up when its stop has finished.
+pub(crate) struct DrainGuard {
+    draining: Arc<Draining>,
+    id: u64,
+}
+
+impl Drop for DrainGuard {
+    fn drop(&mut self) {
+        lock(&self.draining.stops).stops.retain(|(id, _, _)| *id != self.id);
+    }
+}
+
 /// The registry: a handle that clones share. [`Registry::close`] ends it; until then its entries own what runs.
 #[derive(Clone)]
 pub(crate) struct Registry(Arc<Inner>);
@@ -331,6 +471,10 @@ struct Inner {
     /// What `http::listen` built for the web listeners, set once before the web pass and taken out when the web
     /// phase stops, so it goes with `http::listen` as it did before the registry.
     web: Mutex<Option<Arc<crate::http::WebContext>>>,
+    /// The listeners whose stops drain now, which a request ends at once ([`Draining`]).
+    draining: Arc<Draining>,
+    /// A pass to try a Failed or busy listener again is waiting ([`RETRY_EVERY`]).
+    retrying: AtomicBool,
 }
 
 impl Registry {
@@ -344,6 +488,8 @@ impl Registry {
             shutting_down: AtomicBool::new(false),
             worker: Mutex::new(worker::State::Idle),
             web: Mutex::new(None),
+            draining: Arc::default(),
+            retrying: AtomicBool::new(false),
         }))
     }
 
@@ -382,8 +528,12 @@ impl Registry {
     pub(crate) fn run(&self, scope: Scope, cause: Cause) -> Result<Vec<Outcome>, Error> {
         let boot = cause == Cause::Boot;
         let mut entries = lock(&self.0.entries);
-        self.0
-            .pass(&mut entries, scope, std::slice::from_ref(&cause), &[], boot)
+        let outcomes = self
+            .0
+            .pass(&mut entries, scope, std::slice::from_ref(&cause), &[], boot);
+        drop(entries);
+        retry_if_failing(&self.0);
+        outcomes
     }
 
     /// Ask the worker for a pass over every entry after `delay`, merged with whatever else waits; the receiver gets
@@ -520,6 +670,8 @@ impl Inner {
     fn ctx<'a>(&'a self, cause: &'a Cause, web: Option<&'a crate::http::WebContext>) -> Ctx<'a> {
         Ctx {
             factory: &self.factory,
+            conf: self.factory.conf_snapshot(),
+            draining: &self.draining,
             boot: &self.boot,
             web,
             cause,
@@ -553,6 +705,11 @@ impl Inner {
         };
         let web = self.web();
         let ctx = self.ctx(cause, web.as_deref());
+        if !boot {
+            // a setting set while running, or one a reload changed, is the conf's from now on for a server started on
+            // an address (`crate::http::AddressHold`)
+            web::release_held(&ctx, causes);
+        }
         let mut outcomes = Vec::new();
         let mut fatal = None;
         let mut started = Vec::new();
@@ -654,13 +811,36 @@ impl Inner {
     }
 
     fn publish(&self, index: usize, entry: &dyn Entry, ctx: &Ctx) {
+        entry.tell(ctx);
         let published = Published {
             info: entry.info(ctx),
             address: entry.address(),
         };
+        self.factory
+            .extension(|_| Addresses::default())
+            .set(entry.name(), published.address);
         if let Some(slot) = lock(&self.published).get_mut(index) {
             *slot = published;
         }
+    }
+}
+
+/// Ask for a pass after [`RETRY_EVERY`] while a live listener is Failed, was Skipped for a busy port or was kept on its
+/// old settings, unless one is waiting already: the port may have been let go since.
+fn retry_if_failing(inner: &Arc<Inner>) {
+    // Failed or busy, or kept on its old settings because the new ones did not bind (`last_error` while it runs)
+    let failing = lock(&inner.published).iter().any(|published| {
+        published.info.live
+            && (matches!(published.info.state, State::Failed(_) | State::Skipped(_))
+                || published.info.last_error.is_some())
+    });
+    if failing && !inner.shutting_down.load(Ordering::SeqCst) && !inner.retrying.swap(true, Ordering::SeqCst) {
+        // nobody waits for the answer: the pass records each row
+        drop(worker::submit(
+            inner,
+            ReconcileRequest::new(Cause::Signal(RETRY)),
+            RETRY_EVERY,
+        ));
     }
 }
 

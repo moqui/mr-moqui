@@ -271,7 +271,8 @@ impl WebFront {
                 let server = Arc::clone(&self.server);
                 let client = std::net::SocketAddr::new(peer.client, peer.remote.port());
                 let https = peer.https;
-                Box::pin(async move { forward(server, node, sticky, request, client, https).await })
+                let closing = peer.listener.as_ref().map(|listener| listener.closing.clone());
+                Box::pin(async move { forward(server, node, sticky, request, client, https, closing).await })
             }
             Target::Offline => {
                 self.server.count("moqui.edgelink.offline", "terminate");
@@ -578,7 +579,8 @@ pub(crate) async fn send_once_more(
     }
 }
 
-/// Send `request` down a link of `node`'s pool as the edge node's request for `client`, and its answer back.
+/// Send `request` down a link of `node`'s pool as the edge node's request for `client`, and its answer back. A
+/// WebSocket's pipe ends with the listeners' stop or with `closing`, the closing of the listener it came over.
 async fn forward<B>(
     server: Arc<EdgeServer>,
     node: String,
@@ -586,6 +588,7 @@ async fn forward<B>(
     request: http::Request<B>,
     client: std::net::SocketAddr,
     https: bool,
+    closing: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Response
 where
     B: hyper::body::Body<Data = bytes::Bytes> + Send + 'static,
@@ -766,14 +769,13 @@ where
             }
         };
         let (mut client, mut local) = (TokioIo::new(client), TokioIo::new(local));
-        let mut shutdown = server.shutdown();
         tokio::select! {
             piped = tokio::io::copy_bidirectional(&mut client, &mut local) => {
                 if let Err(err) = piped {
                     tracing::trace!("Edge WebSocket to {node} ended: {err}");
                 }
             }
-            _ = shutdown.wait_for(|stopped| *stopped) => {}
+            () = super::tunnel::stopped(server.shutdown(), closing) => {}
         }
         drop(active);
     });

@@ -80,28 +80,36 @@ fn settings_read_on_each_use_are_live() {
     assert!(!live(&["search-facade"], "backend"));
 }
 
-/// The web listeners' HTTPS port and HTTP address are read once when they bind, as the ports beside them are, so a
-/// change waits for a restart rather than falling under the webapp's live default (plans/Runtime-Config.md §3.2).
+/// The web listeners' switches, ports and addresses apply while the server runs: the listener registry's hook binds
+/// them again (plans/Runtime-Config.md §3.3, RC2); the ports of the URLs the server writes still wait for a restart.
 #[test]
-fn the_https_port_and_http_bind_are_listener_settings() {
+fn the_web_listener_settings_apply_through_the_listeners_hook() {
     let webapp = unit(&["webapp-list", "webapp"]).expect("the webapp unit");
-    assert_eq!(webapp.attr_class("https-listen-port"), super::LISTENER);
-    assert_eq!(webapp.attr_class("http-bind"), super::LISTENER);
-    assert_eq!(webapp.attr_class("http-host"), super::Class::Live);
     assert_eq!(super::Group::Listeners.name(), "listeners");
-    // the switches wait for a restart as the ports beside them do, until RC2 makes the web listeners live
-    for switch in ["http-listen-enabled", "https-listen-enabled", "grpc-listen-enabled"] {
-        assert_eq!(webapp.attr_class(switch), super::LISTENER, "{switch}");
+    for setting in [
+        "http-listen-enabled",
+        "http-listen-port",
+        "https-listen-enabled",
+        "https-listen-port",
+        "http-bind",
+        "grpc-listen-enabled",
+        "grpc-listen-port",
+        "grpc-listen-bind",
+    ] {
+        assert_eq!(webapp.attr_class(setting), super::LISTENERS, "{setting}");
     }
+    assert_eq!(webapp.attr_class("http-port"), super::LISTENER);
+    assert_eq!(webapp.attr_class("http-host"), super::Class::Live);
 }
 
 /// `attribute_class` walks the catalog as the reload's diff does: a keyed unit's own class, an attribute's class in
 /// its unit, the nearest unit's class for an element no unit names, and a component's class at the top.
 #[test]
 fn attribute_class_walks_the_catalog_as_the_diff_does() {
-    use super::{attribute_class, Class, Group, COMPONENT, LISTENER, UNKNOWN};
+    use super::{attribute_class, Class, Group, COMPONENT, LISTENER, LISTENERS, UNKNOWN};
     let webapp = ["webapp-list", "webapp"];
-    assert_eq!(attribute_class(&webapp, "https-listen-port"), LISTENER);
+    assert_eq!(attribute_class(&webapp, "https-listen-port"), LISTENERS);
+    assert_eq!(attribute_class(&webapp, "http-port"), LISTENER);
     assert_eq!(attribute_class(&webapp, "http-host"), Class::Live);
     // a keyed unit below it
     let rate_limit = ["webapp-list", "webapp", "web-protection", "rate-limit"];

@@ -28,7 +28,7 @@ use axum::extract::{Extension, State};
 use axum::http::request::Parts;
 use axum::response::Response;
 
-use crate::http::{plain, ClientAddr, HttpState, HttpsRequest};
+use crate::http::{plain, ClientAddr, Closing, HttpState, HttpsRequest};
 
 pub(crate) const PATH: &str = "/xmpp-websocket";
 
@@ -60,6 +60,7 @@ pub(crate) async fn upgrade(
     ws: WebSocketUpgrade,
     Extension(ClientAddr(client)): Extension<ClientAddr>,
     secured: Secured,
+    Closing(mut closing): Closing,
     State(state): State<Arc<HttpState>>,
 ) -> Response {
     let Some(server) = super::server_of(&state.factory) else {
@@ -72,18 +73,18 @@ pub(crate) async fn upgrade(
         return plain(429, "too many XMPP connections");
     };
     let limit = server.config.max_stanza_bytes;
-    let mut shutdown = state.shutdown.clone();
     ws.protocols(["xmpp"])
         .max_message_size(limit)
         .max_frame_size(limit)
         .on_upgrade(move |socket| async move {
             let frames: Box<dyn moqui_xmpp::conn::FrameIo> = Box::new(Frames(socket));
-            // the HTTP listener's stop closes the socket, as it does `/notws`, so its drain does not wait for the
-            // session (plans/archive/High-Level-Review.md HL-027); the client reconnects to the server once it is back
+            // the stop of the listener it came over closes the socket, as it does `/notws`, so its drain does not wait
+            // for the session (plans/archive/High-Level-Review.md HL-027, plans/Runtime-Config.md §8.3); the client
+            // reconnects once a listener takes it
             tokio::select! {
                 () = moqui_xmpp::conn::serve_frames(server, frames, client, secured.https, secured.exporter) => {}
-                _ = shutdown.wait_for(|stopped| *stopped) => {
-                    tracing::debug!("XMPP WebSocket from {client} closed: the server is stopping");
+                _ = closing.wait_for(|closing| *closing) => {
+                    tracing::debug!("XMPP WebSocket from {client} closed: its listener is stopping");
                 }
             }
             drop(admitted);

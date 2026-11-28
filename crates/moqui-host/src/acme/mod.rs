@@ -76,10 +76,26 @@ pub(crate) struct Acme {
     wanted: tokio::sync::watch::Sender<bool>,
     /// The HTTPS listener's address while it is bound, for the screen.
     listening: Mutex<Option<SocketAddr>>,
-    /// Whether this process has an HTTPS listener, bound or standing by; with none a challenge cannot be answered.
-    https: std::sync::atomic::AtomicBool,
+    /// What the HTTPS listener does now, as the listener registry tells it.
+    https: Mutex<HttpsState>,
     /// The names this process is ordering now.
     ordering: Mutex<HashSet<String>>,
+}
+
+/// What this process's HTTPS listener does, as the listener registry tells it (`crate::listeners`): whether it can
+/// answer an ACME challenge, bound or once a name is set up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HttpsState {
+    /// Off: its switch, no web bind, its port not one, or its TLS settings not built.
+    Off,
+    /// On, with no certificate: it binds once ACME wants it.
+    StandingBy,
+    /// Bound, answering ACME's challenges alone until a certificate is there.
+    AcmeOnly,
+    /// Bound and serving.
+    Serving,
+    /// On, but its start failed (its port held by another, say).
+    Failed,
 }
 
 #[derive(Default)]
@@ -97,7 +113,7 @@ impl Default for Acme {
             reasons: Mutex::default(),
             wanted: tokio::sync::watch::channel(false).0,
             listening: Mutex::default(),
-            https: std::sync::atomic::AtomicBool::new(false),
+            https: Mutex::new(HttpsState::Off),
             ordering: Mutex::default(),
         }
     }
@@ -149,17 +165,17 @@ impl Acme {
         self.wanted.subscribe()
     }
 
+    /// What the HTTPS listener does now ([`HttpsState`]), as the listener registry tells it after each action.
+    pub(crate) fn set_https(&self, state: HttpsState) {
+        *sync::lock(&self.https) = state;
+    }
+
+    pub(crate) fn https(&self) -> HttpsState {
+        *sync::lock(&self.https)
+    }
+
     pub(crate) fn set_listening(&self, address: Option<SocketAddr>) {
         *sync::lock(&self.listening) = address;
-    }
-
-    /// This process has an HTTPS listener, bound or standing by.
-    pub(crate) fn set_https(&self) {
-        self.https.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    pub(crate) fn has_https(&self) -> bool {
-        self.https.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub(crate) fn listening(&self) -> Option<SocketAddr> {

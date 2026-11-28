@@ -443,6 +443,24 @@ binds, `http-port` and `https-port` what its URLs say.
   setting, where it was set and the switch to set, and that listener's row on System Home says it. Setting the switch
   either way ends it.
 
+**The web listeners apply live** ([plan](../plans/Runtime-Config.md), §3.3). The webroot webapp's
+`http-listen-enabled`, `http-listen-port`, `http-bind`, `https-listen-enabled`, `https-listen-port`,
+`grpc-listen-enabled`, `grpc-listen-port` and `grpc-listen-bind` take effect while the server runs, from System › Conf,
+`systemctl reload moqui` (SIGHUP) or a setting a service sets, and Conf › Changes no longer lists them as waiting for a
+restart. A listener turned off takes no new connection at once, closes its sockets (`/notws`, `/termws`, the call and
+XMPP sockets, event streams, the edge and manager links on it) and gives its requests in flight 5 seconds before their
+connections end, or none when it is turned off with "end connections now", which also cuts short a grace already
+running; the process stop keeps `web-protection/connections@shutdown-timeout`. A new port or address binds
+before the old one closes (on the same port, the old one closes first); one that cannot bind keeps the listener where
+it was, and its row on System Home says so, and a Failed one is tried again every 30 seconds. A web port that cannot
+bind at the start is a Failed row there, and the server starts without it: the HTTP and HTTPS ports are no longer
+required by the start's port check (a server started on an address it was given, as `moqui test --serve` is, still
+refuses to start without it). HTTPS with no
+certificate binds while ACME wants it and serves once one is added, without a restart; the TLS settings are made at the
+start even with HTTPS off, so it can be turned on later. An edge node takes edge links on HTTPS turned on after the
+start only after a restart. The gRPC services' own switches (`telemetry/receiver@grpc-enabled`,
+`pass-authority@grpc-enabled`) still wait for a restart.
+
 The settings most deployments set or should know. Their defaults are in `MoquiDefaultConf.xml`.
 
 | Setting | Default | What it does |
@@ -1016,8 +1034,8 @@ naming the fix: `moqui dev-cert --replace` (`./moq moqui dev-cert --replace` in 
 `cert/replaced-<time>` and issues a managed leaf; a key the seal held for that pair is replaced at the server's next
 renewal. Outside dev with no
 certificate, the HTTPS listener does not start until a name is set up with ACME (below) or a certificate is added to
-`runtime/cert` (seen within a minute). HTTPS switched on (`webapp-list/webapp[webroot]@https-listen-enabled`, the default)
-with no certificate does not fail the start: the listener waits the same way.
+`runtime/cert` (seen within seconds, without a restart). HTTPS switched on (`webapp-list/webapp[webroot]@https-listen-enabled`,
+the default) with no certificate does not fail the start: the listener waits the same way.
 
 **System › Certificates** lists the names this node answers (its own host, its sites' hosts, the SMTP host, the XMPP
 domain, an edge node's terminate hosts, the files in `runtime/cert`) and the certificate each is served: its issuer,
@@ -1034,8 +1052,8 @@ asked for a name nobody set up there.
   to about 20 seconds, and the screen waits for it.
 - **The first certificate.** A node with no certificate at all starts its HTTPS listener when a name is set up (on any
   member of its cluster), and for the length of a check. Until a certificate is there it answers only the challenges
-  of names set up and refuses every other handshake. An edge node that started with no certificate takes no links
-  either: restart it once it has one.
+  of names set up and refuses every other handshake, and serves once one is there. An edge node that started with no
+  certificate, or with HTTPS off, takes no links either: restart it once it has one.
 - **Behind an edge node.** For a passthrough host the challenge goes down the tunnel untouched, so the local node sets
   the name up on its own Certificates screen and gets its own certificate. For a terminate host the edge node sets it
   up on its own screen.

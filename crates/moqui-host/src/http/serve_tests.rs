@@ -133,9 +133,12 @@ async fn listen(label: &str, web: impl FnOnce(Router, ListenLimits) -> WebApp, h
         }),
         web,
         Arc::new(Semaphore::new(limits.connections)),
-        async move {
+        "HTTPS",
+        super::super::Listening::default(),
+        super::super::StopSignal::once(async move {
             let _ = stopped.await;
-        },
+            super::super::Grace::of(limits.shutdown)
+        }),
     ));
     Listener {
         address,

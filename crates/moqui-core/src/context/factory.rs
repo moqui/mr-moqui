@@ -1034,6 +1034,20 @@ impl ExecutionContextFactory {
             .cloned()
     }
 
+    /// One reading of the running conf, for a reader of several settings that must see them as one: a set of several
+    /// settings, or a reload, after it is not in it, half or whole (the listener registry's pass,
+    /// plans/Runtime-Config.md §8.3). Its live overrides are those of now.
+    pub fn conf_snapshot(&self) -> ConfSnapshot {
+        let overlay = self
+            .conf_overlaid
+            .load(std::sync::atomic::Ordering::Acquire)
+            .then(|| Arc::new(read(&self.conf_overlay).clone()));
+        ConfSnapshot {
+            state: self.conf.load_full(),
+            overlay,
+        }
+    }
+
     /// Set the attribute at `selector` in the running conf over the conf files, or with `value` `None` put back what the
     /// files and the environment give ([`super::conf_reload::set_value`]): kept in `runtime/.env` with `persist`, else
     /// as a process property until the process ends. Answers what that environment name held before.
@@ -1874,6 +1888,30 @@ impl ConfState {
     fn values(&self) -> &std::collections::HashMap<String, super::conf_env::ConfValue> {
         self.values
             .get_or_init(|| super::conf_env::attribute_values(&self.text))
+    }
+}
+
+/// One reading of the running conf ([`ExecutionContextFactory::conf_snapshot`]).
+#[derive(Clone)]
+pub struct ConfSnapshot {
+    state: Arc<ConfState>,
+    overlay: Option<Arc<std::collections::HashMap<String, String>>>,
+}
+
+impl ConfSnapshot {
+    /// The attribute at `selector`, as [`ExecutionContextFactory::conf_value`] reads it from the conf files (a live
+    /// override first), untrimmed; `None` when the conf has no such attribute or `selector` is not one. No secret is
+    /// read from the seal's store.
+    #[must_use]
+    pub fn value(&self, selector: &str) -> Option<String> {
+        let path = moqui_lib::node::path::AttrPath::parse(selector).ok()?;
+        if let Some(value) = self.overlay.as_ref().and_then(|overlay| overlay.get(&path.selector())) {
+            return Some(value.clone());
+        }
+        self.state
+            .values()
+            .get(&super::conf_env::compare_key(&path))
+            .map(|found| found.value.clone())
     }
 }
 

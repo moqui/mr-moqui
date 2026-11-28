@@ -35,7 +35,9 @@ use tokio::sync::mpsc;
 
 use crate::channel_body::{ChannelBody, Chunk};
 use crate::guard::Event;
-use crate::http::{forwarded, forwarded_https, plain, read_body, secure_request, ClientAddr, HttpState, TlsConnection};
+use crate::http::{
+    forwarded, forwarded_https, plain, read_body, secure_request, ClientAddr, Closing, HttpState, TlsConnection,
+};
 
 /// The largest request body.
 const MAX_BODY: usize = 4 * 1024 * 1024;
@@ -165,10 +167,12 @@ pub(crate) async fn card(
     response_of(a2a::card::public(&state.factory, &origin))
 }
 
-/// `/a2a` and `/a2a/{*rest}`.
+/// `/a2a` and `/a2a/{*rest}`. A wait or a stream ends with the listener the request came over, or with the process
+/// when it came over none.
 pub(crate) async fn handle(
     State(state): State<Arc<HttpState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Closing(closing): Closing,
     request: Request,
 ) -> Response {
     let over_tls = request.extensions().get::<TlsConnection>().is_some();
@@ -239,13 +243,12 @@ pub(crate) async fn handle(
                 Err(full) => return busy(&full),
             };
             let (done, reply) = tokio::sync::oneshot::channel::<Reply>();
-            let shutdown = state.shutdown.clone();
             let spawned = std::thread::Builder::new()
                 .name("moqui-a2a-wait".to_string())
                 .spawn(move || {
                     let _open = open;
-                    // the wait stops when the server does or the client closed the request (its receiver dropped)
-                    let answered = finish(&|| *shutdown.borrow() || done.is_closed());
+                    // the wait stops when its listener closes or the client closed the request (its receiver dropped)
+                    let answered = finish(&|| *closing.borrow() || done.is_closed());
                     let _ = done.send(answered);
                 });
             if let Err(error) = spawned {
@@ -262,12 +265,11 @@ pub(crate) async fn handle(
                 Err(full) => return busy(&full),
             };
             let (tx, rx) = mpsc::channel::<Chunk>(64);
-            let shutdown = state.shutdown.clone();
             let spawned = std::thread::Builder::new()
                 .name("moqui-a2a-sse".to_string())
                 .spawn(move || {
                     let _open = open;
-                    write_stream(write, &tx, &shutdown, super::sse::SEND_STALL);
+                    write_stream(write, &tx, &closing, super::sse::SEND_STALL);
                 });
             if let Err(error) = spawned {
                 return crate::http::internal_error(&format!("the A2A stream did not start: {error}"));

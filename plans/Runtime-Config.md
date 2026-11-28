@@ -2,7 +2,7 @@
 
 Status 2026-11-27: reviewed against the code and being built, RC0 to RC10 in one run. Its open points were decided
 with the user the same day (§6). The review's corrections are in place below, and the implementation design is §8.
-Built so far: RC0, RC1.
+Built so far: RC0, RC1, RC2.
 
 Goal: an administrator turns services and ports on and off while the server runs, from a dialog on System Home, from
 the terminal, or by editing the conf, and no listener setting waits for a restart. It serves two tasks: setting a

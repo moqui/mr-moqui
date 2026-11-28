@@ -84,6 +84,7 @@ mod gateway;
 mod git_hosting;
 mod git_resources;
 mod git_storage;
+mod listener_control;
 mod llm;
 mod load_feed;
 mod lock_then_insert;

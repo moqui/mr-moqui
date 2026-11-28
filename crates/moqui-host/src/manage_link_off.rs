@@ -62,7 +62,12 @@ pub(crate) mod accept {
             match *self {}
         }
 
-        pub(crate) async fn serve(&self, _stream: TlsStream<TcpStream>, _remote: SocketAddr) {
+        pub(crate) async fn serve(
+            &self,
+            _stream: TlsStream<TcpStream>,
+            _remote: SocketAddr,
+            _closing: tokio::sync::watch::Receiver<bool>,
+        ) {
             match *self {}
         }
 

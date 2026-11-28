@@ -277,10 +277,11 @@ impl Acceptor {
         Ok(Secured::Http(start.into_stream(Arc::clone(http)).await?))
     }
 
-    /// Serve a connection the link took until it closes.
-    pub(crate) async fn serve(&self, handoff: Handoff, remote: SocketAddr) {
+    /// Serve a connection the link took until it closes, the listeners stop, or `closing` turns true: the closing of
+    /// the listener it came over, which ends it with that listener alone (plans/Runtime-Config.md §8.3).
+    pub(crate) async fn serve(&self, handoff: Handoff, remote: SocketAddr, closing: watch::Receiver<bool>) {
         match handoff {
-            Handoff::Link(stream) => Arc::clone(&self.server).serve(stream, remote).await,
+            Handoff::Link(stream) => Arc::clone(&self.server).serve(stream, remote, closing).await,
             Handoff::Passthrough {
                 stream,
                 hello,
@@ -294,6 +295,7 @@ impl Acceptor {
                     &node,
                     member.as_deref(),
                     remote,
+                    closing,
                 )
                 .await;
             }
@@ -1514,7 +1516,9 @@ impl EdgeServer {
         lock(&self.pair_attempts).allowed(ip, Instant::now(), self.config.pair_window, self.config.pair_attempts)
     }
 
-    async fn serve(self: Arc<Self>, mut stream: TlsStream<LinkIo>, remote: SocketAddr) {
+    /// Serve a link connection from `remote` by the role it names, until it ends, the listeners stop or `closing`
+    /// (its listener's closing) turns true.
+    async fn serve(self: Arc<Self>, mut stream: TlsStream<LinkIo>, remote: SocketAddr, closing: watch::Receiver<bool>) {
         let (fingerprint, alpn) = {
             let tls = stream.get_ref().1;
             let fingerprint = tls
@@ -1532,16 +1536,16 @@ impl EdgeServer {
         }
         let pairing = alpn.as_deref() == Some(ALPN_PAIR);
         match (role[0], pairing) {
-            (ROLE_CHECK, true) => self.serve_pairing(stream, remote, None).await,
+            (ROLE_CHECK, true) => self.serve_pairing(stream, remote, None, closing).await,
             (ROLE_PAIR, true) => match fingerprint {
-                Some(fingerprint) => self.serve_pairing(stream, remote, Some(fingerprint)).await,
+                Some(fingerprint) => self.serve_pairing(stream, remote, Some(fingerprint), closing).await,
                 None => {
                     let message = "pairing needs the local node's client certificate";
                     let _ = write_answer(&mut stream, Answer::Refused, message).await;
                 }
             },
-            (ROLE_UP, false) => self.serve_up(stream, remote, fingerprint).await,
-            (ROLE_DOWN, false) => self.serve_down(stream, remote, fingerprint).await,
+            (ROLE_UP, false) => self.serve_up(stream, remote, fingerprint, closing).await,
+            (ROLE_DOWN, false) => self.serve_down(stream, remote, fingerprint, closing).await,
             (other, _) => {
                 tracing::debug!("Edge link from {remote}: role {other} on the wrong protocol, or unknown");
                 let _ = write_answer(&mut stream, Answer::Failed, "unknown role for this protocol").await;
@@ -1551,7 +1555,13 @@ impl EdgeServer {
 
     /// A check connection (no key) or a pairing connection (the new key's fingerprint): a few calls, for a short time,
     /// two streams at a time.
-    async fn serve_pairing(self: Arc<Self>, mut stream: TlsStream<LinkIo>, remote: SocketAddr, key: Option<String>) {
+    async fn serve_pairing(
+        self: Arc<Self>,
+        mut stream: TlsStream<LinkIo>,
+        remote: SocketAddr,
+        key: Option<String>,
+        listener: watch::Receiver<bool>,
+    ) {
         if write_answer(&mut stream, Answer::Ok, "").await.is_err() {
             return;
         }
@@ -1567,10 +1577,17 @@ impl EdgeServer {
             streams: Some(2),
             hello: None,
         };
-        self.serve_h2(stream, link_server(service), None, limits).await;
+        self.serve_h2(stream, link_server(service), None, listener, limits)
+            .await;
     }
 
-    async fn serve_up(self: Arc<Self>, mut stream: TlsStream<LinkIo>, remote: SocketAddr, key: Option<String>) {
+    async fn serve_up(
+        self: Arc<Self>,
+        mut stream: TlsStream<LinkIo>,
+        remote: SocketAddr,
+        key: Option<String>,
+        listener: watch::Receiver<bool>,
+    ) {
         const NOT_PAIRED: &str = "this node's key is not paired with this edge node, or was revoked; pair again";
         let Some(fingerprint) = key else {
             let message = "a link needs this node's client certificate";
@@ -1647,19 +1664,22 @@ impl EdgeServer {
             streams: None,
             hello: Some((self.config.handshake_timeout, helloed)),
         };
-        self.serve_h2(stream, link_server(service), Some(closed), limits).await;
+        self.serve_h2(stream, link_server(service), Some(closed), listener, limits)
+            .await;
         if let Some(member) = member.get() {
             self.unregister(&node, member, generation);
             tracing::debug!("Edge link of {node} member {member} (generation {generation}) closed");
         }
     }
 
-    /// Serve `service` on an HTTP/2 connection until it ends, `closed` signals, the listener stops, or a limit is hit.
+    /// Serve `service` on an HTTP/2 connection until it ends, `closed` signals, the listeners stop, `listener` (the
+    /// closing of the listener it came over) turns true, or a limit is hit.
     async fn serve_h2<S>(
         &self,
         stream: TlsStream<LinkIo>,
         service: S,
         closed: Option<watch::Receiver<bool>>,
+        mut listener: watch::Receiver<bool>,
         limits: Limits,
     ) where
         S: tower::Service<
@@ -1719,10 +1739,17 @@ impl EdgeServer {
             () = expired => tracing::debug!("edge link: a pairing connection reached its time limit"),
             () = silent => tracing::debug!("edge link: an up connection sent no Hello in time"),
             _ = shutdown.wait_for(|stopped| *stopped) => {}
+            _ = listener.wait_for(|closing| *closing) => {}
         }
     }
 
-    async fn serve_down(self: Arc<Self>, mut stream: TlsStream<LinkIo>, remote: SocketAddr, key: Option<String>) {
+    async fn serve_down(
+        self: Arc<Self>,
+        mut stream: TlsStream<LinkIo>,
+        remote: SocketAddr,
+        key: Option<String>,
+        mut listener: watch::Receiver<bool>,
+    ) {
         let mut raw = [0_u8; 8 + super::DOWN_TOKEN];
         let read = tokio::time::timeout(self.config.handshake_timeout, stream.read_exact(&mut raw)).await;
         if !matches!(read, Ok(Ok(_))) {
@@ -1773,6 +1800,8 @@ impl EdgeServer {
         };
         let (close, mut closed) = watch::channel(false);
         let mut shutdown = self.shutdown.clone();
+        // its own task, which only the stops it watches end: the listener's closing among them, so a listener that
+        // stops ends its down connections, and the delivery and signaling that wait for the driver below
         let driver = tokio::spawn(async move {
             tokio::select! {
                 ended = connection => {
@@ -1782,6 +1811,7 @@ impl EdgeServer {
                 }
                 _ = closed.changed() => {}
                 _ = shutdown.wait_for(|stopped| *stopped) => {}
+                _ = listener.wait_for(|closing| *closing) => {}
             }
         });
         let mut client = super::local_link_client(send.clone());
@@ -2084,7 +2114,9 @@ impl EdgeServer {
         let handshake = tokio_rustls::StartHandshake::from_parts(accepted, stream).into_stream(config);
         match tokio::time::timeout(self.config.handshake_timeout, handshake).await {
             Ok(Ok(stream)) => {
-                self.serve(stream, remote).await;
+                // through a link this node dialed, on no listener of its own: it ends with the listeners' stop
+                let closing = self.shutdown.clone();
+                self.serve(stream, remote, closing).await;
             }
             Ok(Err(err)) => tracing::debug!("Edge link from {remote} through the front: TLS failed: {err}"),
             Err(_) => tracing::debug!("Edge link from {remote} through the front: TLS timed out"),

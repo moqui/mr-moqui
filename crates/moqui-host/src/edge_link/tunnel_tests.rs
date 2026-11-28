@@ -24,7 +24,7 @@ async fn a_passthrough_tunnel_starts_with_the_clients_address_then_its_hello() {
     let browser: SocketAddr = "203.0.113.9:51000".parse().unwrap();
     let edge: SocketAddr = "192.0.2.1:443".parse().unwrap();
     let relayed = tokio::spawn(relay(
-        shutdown,
+        stopped(shutdown, None),
         client_side,
         tunnel_side,
         b"\x16\x03\x01hello",
@@ -48,6 +48,32 @@ async fn a_passthrough_tunnel_starts_with_the_clients_address_then_its_hello() {
     assert_eq!(&back, b"back");
     drop((client, local));
     relayed.await.unwrap();
+}
+
+/// A passthrough connection ends with the listener it came over, while the others' and the listeners' stop are still
+/// to come (plans/Runtime-Config.md §8.3).
+#[tokio::test]
+async fn a_passthrough_tunnel_ends_when_its_listener_closes() {
+    let (client_side, _client) = tokio::io::duplex(4096);
+    let (tunnel_side, mut local) = tokio::io::duplex(4096);
+    let (_stop, shutdown) = tokio::sync::watch::channel(false);
+    let (closing, closing_rx) = tokio::sync::watch::channel(false);
+    let browser: SocketAddr = "203.0.113.9:51000".parse().unwrap();
+    let edge: SocketAddr = "192.0.2.1:443".parse().unwrap();
+    let relayed = tokio::spawn(relay(
+        stopped(shutdown, Some(closing_rx)),
+        client_side,
+        tunnel_side,
+        b"hello",
+        browser,
+        edge,
+    ));
+    let _ = crate::proxy_header::read(&mut local).await.unwrap();
+    closing.send(true).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), relayed)
+        .await
+        .expect("the tunnel did not end with its listener")
+        .unwrap();
 }
 
 /// E12: an all-in-one node's XMPP tunnel port may not take its own XMPP server's port.

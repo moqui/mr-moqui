@@ -56,7 +56,9 @@ struct Job {
 }
 
 /// Queue `request` for a pass after `delay`, starting the worker on the first request. A boot or shutdown cause is
-/// answered with an error at once: the staged boot passes and the stops are the server's own, never the worker's.
+/// answered with an error at once: the staged boot passes and the stops are the server's own, never the worker's. A
+/// listener it ends now whose stop is draining already (a pass turned it off with its grace) has its connections ended
+/// here, at once, without waiting for that pass (plans/Runtime-Config.md §3.1).
 pub(super) fn submit(inner: &Arc<Inner>, request: ReconcileRequest, delay: Duration) -> Receiver<Answer> {
     let (reply, answer) = mpsc::sync_channel(1);
     if matches!(request.cause, Cause::Boot | Cause::Shutdown) {
@@ -64,6 +66,9 @@ pub(super) fn submit(inner: &Arc<Inner>, request: ReconcileRequest, delay: Durat
         tracing::warn!("A listener reconcile was refused: {refused}");
         let _ = reply.send(Err(refused));
         return answer;
+    }
+    if !request.end_now.is_empty() {
+        inner.draining.end_now(&request.end_now);
     }
     let job = Job {
         request,
@@ -141,9 +146,18 @@ fn work(registry: &Weak<Inner>, queue: &Receiver<Job>) {
         // the requests that came while this pass waited for the lock (another pass, the boot) join it
         waiting.extend(queue.try_iter());
         let now = Instant::now();
-        let (due, later): (Vec<Job>, Vec<Job>) = waiting.drain(..).partition(|job| job.due <= now);
+        // a request after a conf change is answered by any pass, which reads the conf it applied
+        let (due, later): (Vec<Job>, Vec<Job>) = waiting
+            .drain(..)
+            .partition(|job| job.due <= now || matches!(job.request.cause, Cause::ConfReload | Cause::SetValue(_)));
         waiting = later;
         let (causes, end_now) = merge(&due);
+        for job in &due {
+            inner.draining.taken(&job.request.end_now);
+        }
+        if causes.contains(&Cause::Signal(super::RETRY)) {
+            inner.retrying.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
         let answer = catch_unwind(AssertUnwindSafe(|| {
             inner.pass(&mut entries, Scope::All, &causes, &end_now, false)
         }))
@@ -161,6 +175,7 @@ fn work(registry: &Weak<Inner>, queue: &Receiver<Job>) {
         for job in due {
             let _ = job.reply.send(answer.clone());
         }
+        super::retry_if_failing(&inner);
     }
 }
 

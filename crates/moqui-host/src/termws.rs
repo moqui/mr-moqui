@@ -44,7 +44,7 @@ use moqui_lib::object::Value;
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::http::{plain, HttpState};
+use crate::http::{plain, Closing, HttpState};
 use crate::notws::{origin_allowed, session_cookie, session_user, RequestSite};
 use crate::term::access::{self, Facts, Refusal};
 use crate::term::registry::Registry;
@@ -102,6 +102,7 @@ pub(crate) async fn upgrade(
     site: RequestSite,
     UpgradeFacts(facts): UpgradeFacts,
     RawQuery(query): RawQuery,
+    Closing(closing): Closing,
     State(state): State<Arc<HttpState>>,
 ) -> Response {
     let session = query.as_deref().and_then(session_of);
@@ -151,7 +152,7 @@ pub(crate) async fn upgrade(
         Ok(Err(err)) => return crate::http::internal_error(err.message()),
         Err(_) => return plain(500, "request worker stopped"),
     };
-    let shutdown = state.shutdown.clone();
+    // the socket closes with the listener it came over, or with the process when it came over none
     let factory = Arc::clone(&state.factory);
     ws.on_upgrade(move |socket| {
         run_socket(
@@ -169,7 +170,7 @@ pub(crate) async fn upgrade(
                     .and_then(|query| query_value(query, "ticket"))
                     .unwrap_or_default(),
             },
-            shutdown,
+            closing,
         )
     })
 }

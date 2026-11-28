@@ -1029,6 +1029,7 @@ pub(crate) async fn guest_upgrade(
     ws: axum::extract::ws::WebSocketUpgrade,
     headers: axum::http::HeaderMap,
     site: super::RequestSite,
+    crate::http::Closing(closing): crate::http::Closing,
     axum::extract::State(state): axum::extract::State<Arc<crate::http::HttpState>>,
 ) -> axum::response::Response {
     if !super::origin_allowed(&state.factory, &headers, &site, "call") {
@@ -1042,7 +1043,6 @@ pub(crate) async fn guest_upgrade(
         return state.guard.unavailable("too many call sockets are waiting to sign in");
     };
     let factory = Arc::clone(&state.factory);
-    let shutdown = state.shutdown.clone();
     let guard = Arc::clone(&state.guard);
     let failed = move || {
         if let Some(client) = client {
@@ -1053,9 +1053,10 @@ pub(crate) async fn guest_upgrade(
         .parse::<usize>()
         .unwrap_or(1 << 20);
     let frame_limit = MAX_FRAME.max(board_limit.saturating_mul(4) / 3 + 4096);
+    // the socket closes with the listener it came over, or with the process when it came over none
     ws.max_message_size(frame_limit)
         .max_frame_size(frame_limit)
-        .on_upgrade(move |socket| run_guest(socket, factory, shutdown, waiting, failed))
+        .on_upgrade(move |socket| run_guest(socket, factory, closing, waiting, failed))
 }
 
 /// The guest sockets on this node that may wait for their credential at once, and those of one client address.

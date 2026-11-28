@@ -93,11 +93,9 @@ async fn a_grpc_connection_with_nothing_sent_or_no_call_in_flight_closes() {
 fn the_pass_authority_serves_plain_h2c_only_on_loopback_unless_told() {
     let public: SocketAddr = "0.0.0.0:4317".parse().unwrap();
     let loopback: SocketAddr = "127.0.0.1:4317".parse().unwrap();
-    // with the property unset, as in every other test of this binary
-    if moqui_lib::env::get_prop_or_env(crate::pass_authority::INSECURE_PROPERTY).trim() != "true" {
-        assert!(!pass_allowed(public, false, false));
-    }
-    assert!(pass_allowed(public, true, false));
-    assert!(pass_allowed(loopback, false, false));
-    assert!(pass_allowed("[::1]:4317".parse().unwrap(), false, false));
+    assert!(!pass_allowed(public, false, false, false));
+    assert!(pass_allowed(public, false, true, false), "told to serve in clear");
+    assert!(pass_allowed(public, true, false, false));
+    assert!(pass_allowed(loopback, false, false, false));
+    assert!(pass_allowed("[::1]:4317".parse().unwrap(), false, false, false));
 }

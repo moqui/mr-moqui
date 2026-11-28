@@ -38,6 +38,8 @@ use crate::guard::{setting, Event, Guard, GuardConf};
 use crate::notws;
 
 pub(crate) mod admission;
+// each connection's listener and its closing signal, which long-lived handlers end on (plans/Runtime-Config.md §8.3)
+mod closing;
 // the web listeners' context and loops, which the listener registry starts and stops (plans/Runtime-Config.md §8.1)
 #[cfg(any(feature = "postgres", feature = "mysql"))]
 mod listening;
@@ -46,11 +48,15 @@ mod stream;
 pub(crate) mod test_peer;
 pub(crate) mod upload;
 
+pub(crate) use closing::{Closing, Grace, OnListener, StopSignal};
 #[cfg(any(feature = "postgres", feature = "mysql"))]
-pub(crate) use listening::{HttpsPlan, ServeTask, WebContext};
+pub(crate) use listening::{AddressHold, ServeTask, WebContext};
 #[cfg(feature = "edge")]
 pub(crate) use serve::h2_request_form;
-pub(crate) use serve::{http1_builder, run_connection, Activity, Http, Serving};
+pub(crate) use serve::{http1_builder, run_connection, Activity, Http, Listening, Serving};
+// the gRPC listener's connections end with its stop's grace as the web listeners' do
+#[cfg(feature = "grpc")]
+pub(crate) use serve::WriteStall;
 pub(crate) use serve::{DownServe, Forward, Peer, WebApp};
 pub(crate) use upload::read_to_spool;
 use upload::{read_multipart, upload_has_user};
@@ -236,13 +242,13 @@ type TokenRoutes = Arc<dyn Fn() -> Arc<moqui_core::screen::token_route::Redactio
 /// the web pass, plans/Runtime-Config.md §3.1), publish the local addresses, and serve until `stop` is dropped or a
 /// ctrl-c arrives; then stop the web listeners on a blocking thread. With no web bind nothing listens, and the app is
 /// reached in process only ([`crate::in_process::InProcess`], which every server has); `http` is then reported as
-/// port 0. `https` is the boot's HTTPS plan, `termination` the signal streams the caller registered before it said it
-/// serves.
+/// port 0. `tls` is the HTTPS listener's TLS material, built whenever there is a web bind so HTTPS can be turned on
+/// while the server runs; `termination` the signal streams the caller registered before it said it serves.
 #[cfg(any(feature = "postgres", feature = "mysql"))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn listen(
     factory: Arc<ExecutionContextFactory>,
-    https: Option<crate::tls::HttpsListen>,
+    tls: Option<crate::tls::Material>,
     cluster: SocketAddr,
     posts: Arc<std::sync::Mutex<Vec<String>>>,
     listeners: crate::listeners::Registry,
@@ -250,25 +256,23 @@ pub(crate) async fn listen(
     termination: Termination,
     ready: Sender<Result<ListenReport, String>>,
 ) -> Result<(), Error> {
-    // the HTTPS plan that serves (not standing by with no certificate yet): its certificates are the edge link's, its
-    // TLS settings the gRPC listener's, and its address ACME's once the web pass binds it; a failed bind of it stops the
-    // start, so the plan is what binds
-    let serving = https.as_ref().filter(|https| !https.standby);
-    let certs = serving.map(|https| Arc::clone(&https.certs) as Arc<dyn rustls::server::ResolvesServerCert>);
+    // the certificates are an edge node's link's only when HTTPS serves at boot: with HTTPS off, or with no
+    // certificate (no certificate to pair with), the node takes no links until a restart; its listener, turned on or
+    // waiting for ACME, answers the web and ACME's challenges alone (plans/Runtime-Config.md §3.3)
+    let https_at_boot = moqui_core::context::conf_env::switch_on(
+        &factory
+            .conf_value(moqui_core::listeners::HTTPS_SWITCH.enabled)
+            .map(|found| found.value)
+            .unwrap_or_default(),
+    );
+    let certs = tls
+        .as_ref()
+        .filter(|material| https_at_boot && !material.certs.is_empty())
+        .map(|material| Arc::clone(&material.certs) as Arc<dyn rustls::server::ResolvesServerCert>);
+    let cert_store = tls.as_ref().map(|material| Arc::clone(&material.certs));
     #[cfg(feature = "grpc")]
-    let https_serves = serving.is_some();
-    #[cfg(feature = "grpc")]
-    let grpc_tls = serving.map(|https| Arc::clone(&https.config));
-    let tls_config = https.as_ref().map(|https| Arc::clone(&https.config));
-    let https_plan = https.as_ref().map(|https| HttpsPlan {
-        bind: https.bind,
-        standby: https.standby,
-    });
-    // with no certificate yet the HTTPS listener binds only once a name is set up with ACME (crate::acme); an edge node
-    // standing by takes no links (no certificate to pair with), so its listener answers only ACME challenges
-    if https.is_some() {
-        crate::acme::Acme::of(&factory).set_https();
-    }
+    let grpc_tls = tls.as_ref().map(|material| Arc::clone(&material.config));
+    let tls_config = tls.as_ref().map(|material| Arc::clone(&material.config));
     let notws = endpoint_enabled(&factory, "/notws");
     let termws = cfg!(feature = "tui") && endpoint_enabled(&factory, "/termws");
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -410,9 +414,10 @@ pub(crate) async fn listen(
         edge: started.front,
         ..web
     };
-    // gRPC on the HTTPS listener over HTTP/2: the OTLP receiver's and the PASS authority's services, those that are on
+    // gRPC on the HTTPS listener over HTTP/2: the OTLP receiver's and the PASS authority's services, those that are on,
+    // whenever HTTPS can serve (it may be turned on later)
     #[cfg(feature = "grpc")]
-    let web_grpc = (https_serves && crate::tls::http2_enabled())
+    let web_grpc = (tls_config.is_some() && crate::tls::http2_enabled())
         .then(|| crate::grpc_listen::web_routes(&grpc_factory))
         .flatten();
     #[cfg(feature = "grpc")]
@@ -437,8 +442,9 @@ pub(crate) async fn listen(
     let manage = crate::manage_link::start(&link_factory, shutdown_rx.clone(), edge.is_some()).acceptor;
     let in_process =
         crate::in_process::InProcess::new(web.clone(), tokio::runtime::Handle::current(), shutdown_rx.clone());
-    // the web listeners' context, then the web pass: each binds and serves (HTTP, HTTPS or its standby for ACME, gRPC)
-    // and records its startup report row; a failed HTTP or HTTPS bind stops the start, as it did before the registry
+    // the web listeners' context, then the web pass: each binds and serves (HTTP, HTTPS, also while ACME wants it with
+    // no certificate yet, gRPC) and records its startup report row; one that fails to bind is a Failed row, and the
+    // start goes on (plans/Runtime-Config.md §6)
     let tls = tls_config.map(|config| Tls {
         acceptor: tokio_rustls::TlsAcceptor::from(config),
         edge: edge.clone(),
@@ -449,15 +455,15 @@ pub(crate) async fn listen(
     // registry (after the startup report, READY and the shutdown task)
     let (go_tx, go) = tokio::sync::watch::channel(false);
     listeners.install_web(WebContext {
-        factory: Arc::clone(&link_factory),
         handle: tokio::runtime::Handle::current(),
         web: web.clone(),
         permits: Arc::new(tokio::sync::Semaphore::new(limits.connections)),
         tls,
-        https: https_plan,
+        certs: cert_store.clone(),
         https_grpc,
         shutdown: shutdown_rx.clone(),
         go,
+        held: AddressHold::default(),
         #[cfg(feature = "grpc")]
         guard: Arc::clone(&guard),
         #[cfg(feature = "grpc")]
@@ -501,6 +507,15 @@ pub(crate) async fn listen(
     let https_address = listeners.address(crate::listeners::HTTPS);
     // the services and the conf reach the listeners through the factory from now on (plans/Runtime-Config.md §3.6)
     crate::listeners::control::install_control(&link_factory, &listeners);
+    // HTTPS with no certificate binds while ACME wants it, and serves once one is there: either change is a pass
+    if let Some(certs) = cert_store {
+        tokio::spawn(watch_https_signals(
+            listeners.clone(),
+            crate::acme::Acme::of(&link_factory),
+            certs,
+            shutdown_rx.clone(),
+        ));
+    }
     // ready once the routes and the edge link have read what they need of the properties: a test may set others for a
     // second server as soon as this one is ready
     let _ = ready.send(Ok(ListenReport {
@@ -544,6 +559,63 @@ pub(crate) async fn listen(
     Ok(())
 }
 
+/// How often the HTTPS listener's certificates are looked at for a first one added or the last one gone, as the
+/// listener's own lookups read the directory again ([`crate::tls`]).
+#[cfg(any(feature = "postgres", feature = "mysql"))]
+const CERTIFICATE_CHECK: Duration = Duration::from_secs(5);
+
+/// Ask `listeners` for a pass when ACME starts or stops wanting the HTTPS listener (`Signal("ACME")`), or when `certs`
+/// gets its first certificate or loses its last (`Signal("certificate")`), until the process stops: what HTTPS wants
+/// changes with them (plans/Runtime-Config.md §8.3). Nobody waits for those passes; each records its rows.
+#[cfg(any(feature = "postgres", feature = "mysql"))]
+async fn watch_https_signals(
+    listeners: crate::listeners::Registry,
+    acme: Arc<crate::acme::Acme>,
+    certs: Arc<crate::tls::CertStore>,
+    mut stopped: tokio::sync::watch::Receiver<bool>,
+) {
+    use moqui_core::listeners::{Cause, ReconcileRequest};
+    let ask = |signal: &'static str| {
+        drop(listeners.request(ReconcileRequest::new(Cause::Signal(signal)), Duration::ZERO));
+    };
+    let mut wanted = acme.wanted();
+    let empty = |certs: Arc<crate::tls::CertStore>| async move {
+        // the store reads its directory again when its listing is old: not on the runtime's threads
+        tokio::task::spawn_blocking(move || certs.is_empty()).await.ok()
+    };
+    let mut had_none = empty(Arc::clone(&certs)).await;
+    // its own timer, which an ACME change does not start again
+    let mut look_again = tokio::time::interval(CERTIFICATE_CHECK);
+    look_again.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    look_again.tick().await;
+    while !*stopped.borrow() {
+        // no watch's borrow is held across an await: it is not Send
+        let look = tokio::select! {
+            changed = stopped.changed() => {
+                if changed.is_err() {
+                    return;
+                }
+                false
+            }
+            changed = wanted.changed() => {
+                if changed.is_err() {
+                    return;
+                }
+                ask("ACME");
+                false
+            }
+            _ = look_again.tick() => true,
+        };
+        if look {
+            let none = empty(Arc::clone(&certs)).await;
+            if none.is_some() && none != had_none {
+                had_none = none;
+                ask("certificate");
+            }
+        }
+    }
+}
+
 /// How long the registry waits for each phase of the process stop: `web-protection/connections@shutdown-timeout`, which
 /// each web loop gives its connections, and [`STOP_MARGIN`]; with no timeout (0), as long as they take.
 #[cfg(any(feature = "postgres", feature = "mysql"))]
@@ -572,84 +644,6 @@ async fn sweep(guard: Arc<Guard>, mut stopped: tokio::sync::watch::Receiver<bool
             () = tokio::time::sleep(Duration::from_secs(30)) => guard.sweep(),
         }
     }
-}
-
-/// The HTTPS listener of a node with no certificate yet (`crate::acme`): bound while it is wanted (a name set up with
-/// ACME on any member, a certificate added to `runtime/cert`, or a set-up check running) and closed when it no longer
-/// is, which only a check's end does. Until a certificate is there it answers only the challenges of names set up and
-/// refuses every other handshake.
-async fn standing_by(
-    factory: &Arc<ExecutionContextFactory>,
-    bind: SocketAddr,
-    tls: Tls,
-    web: WebApp,
-    permits: Arc<tokio::sync::Semaphore>,
-    shutdown: tokio::sync::watch::Receiver<bool>,
-) {
-    use moqui_core::startup::{listener, State};
-    let acme = crate::acme::Acme::of(factory);
-    let mut wanted = acme.wanted();
-    loop {
-        let mut stop = shutdown.clone();
-        let go = tokio::select! {
-            _ = stop.wait_for(|stopped| *stopped) => false,
-            changed = wanted.wait_for(|wanted| *wanted) => changed.is_ok(),
-        };
-        if !go {
-            return;
-        }
-        let listener_bound = match TcpListener::bind(bind).await {
-            Ok(bound) => bound,
-            Err(err) => {
-                tracing::error!("The HTTPS listener could not bind {bind} for ACME: {err}");
-                listener(factory, "HTTPS", State::failed(format!("could not bind {bind}: {err}")));
-                acme_cause(factory);
-                return;
-            }
-        };
-        let local = listener_bound.local_addr().ok();
-        acme.set_listening(local);
-        let shown = local.map_or_else(|| bind.to_string(), |local| local.to_string());
-        listener(
-            factory,
-            "HTTPS",
-            State::On(format!("tcp {shown} TLS, started for ACME")),
-        );
-        acme_cause(factory);
-        tracing::info!(
-            "The HTTPS listener started on {shown} for ACME; with no certificate yet it answers only the challenges \
-             of names set up"
-        );
-        let mut unwanted = acme.wanted();
-        let mut stop = shutdown.clone();
-        let until = async move {
-            tokio::select! {
-                _ = stop.wait_for(|stopped| *stopped) => {}
-                _ = unwanted.wait_for(|wanted| !*wanted) => {}
-            }
-        };
-        serve(
-            listener_bound,
-            Some(tls.clone()),
-            web.clone(),
-            Arc::clone(&permits),
-            until,
-        )
-        .await;
-        acme.set_listening(None);
-        if *shutdown.borrow() {
-            return;
-        }
-        listener(factory, "HTTPS", State::off(STANDBY));
-        acme_cause(factory);
-        tracing::info!("The HTTPS listener started for a set-up check closed again: nothing is set up with ACME");
-    }
-}
-
-/// The cause of the HTTPS row standing by records as ACME wants it: a signal, in the listener registry's terms.
-fn acme_cause(factory: &ExecutionContextFactory) {
-    let cause = moqui_core::listeners::Cause::Signal("ACME").to_string();
-    moqui_core::startup::set_cause(factory, moqui_core::startup::Section::Listener, "HTTPS", cause);
 }
 
 /// The HTTPS listener's handshake: its own settings, or on an edge node the link's for a client that offers
@@ -688,33 +682,45 @@ impl Tls {
     }
 }
 
-/// Serve `web` until `stop` resolves, taking one of `permits` for each open connection, then let every open connection
-/// finish, as `axum::serve` does, for up to `limits.shutdown`; the connections still open then are dropped with the
-/// runtime. Each connection is served here rather than by `axum::serve`, which gives hyper no timer, so that
-/// `header_read_timeout` takes effect. With `tls` the handshake runs in the connection's own task, so a slow client
-/// cannot hold up accepting. The guard admits each connection before its handshake and checks each request before the
-/// router.
+/// Serve `web` as the listener `name`, telling `listening` its connections and when its port is let go, until `stop`
+/// comes, taking one of `permits` for each open connection; then let the port go at once and every open connection
+/// finish, as `axum::serve` does, for the grace `stop` gives (plans/Runtime-Config.md §3.1: `limits.shutdown` for the
+/// process stop, `LIVE_STOP_GRACE` or none for a live stop), or until it says to end them now; what is still open then
+/// is dropped, upgraded sockets included. Each connection is served here rather than by
+/// `axum::serve`, which gives hyper no timer, so that `header_read_timeout` takes effect. With `tls` the handshake runs
+/// in the connection's own task, so a slow client cannot hold up accepting. The guard admits each connection before
+/// its handshake and checks each request before the router. Each request carries `name` and the listener's closing
+/// signal ([`OnListener`]), which the handlers of long-lived connections end on.
 async fn serve(
     listener: TcpListener,
     tls: Option<Tls>,
     web: WebApp,
     permits: Arc<tokio::sync::Semaphore>,
-    stop: impl Future<Output = ()>,
+    name: &'static str,
+    listening: Listening,
+    stop: StopSignal,
 ) {
+    let StopSignal {
+        grace: mut stop,
+        now: mut end_now,
+    } = stop;
     let limits = web.limits;
+    // turns true as the listener stops taking connections: each shuts down gracefully, and its sockets close
     let (closing, closing_rx) = tokio::sync::watch::channel(false);
+    // turns true once the grace has passed: what is left of the connections is dropped
+    let (ended, ended_rx) = tokio::sync::watch::channel(false);
     let builder = http1_builder(&limits);
-    let mut stop = std::pin::pin!(stop);
-    loop {
+    let grace = loop {
         let permit = tokio::select! {
-            () = &mut stop => break,
+            grace = &mut stop => break grace,
             permit = Arc::clone(&permits).acquire_owned() => permit,
         };
         let Ok(permit) = permit else {
-            break;
+            // the permits are never closed; were they, the listener stops as the process stop has it
+            break Grace::of(limits.shutdown);
         };
         let accepted = tokio::select! {
-            () = &mut stop => break,
+            grace = &mut stop => break grace,
             accepted = listener.accept() => accepted,
         };
         let (stream, remote) = match accepted {
@@ -742,80 +748,131 @@ async fn serve(
         tune_socket(&stream, limits.write);
         // the hold keeps a watch on `closing` too, so an upgraded socket (which outlives its connection's task) is one
         // the stop's drain waits for, as it waits for a connection (plans/archive/High-Level-Review.md HL-027)
-        let hold: serve::ConnectionHold = Box::new((slot, permit, closing_rx.clone()));
-        let builder = builder.clone();
-        let closing = closing_rx.clone();
-        let tls = tls.clone();
-        let web = web.clone();
-        tokio::spawn(async move {
-            let mut serving = Serving {
-                remote,
-                web,
-                builder,
-                closing,
-                exporter: None,
-                hold: Some(hold),
-                via: moqui_core::web::RequestVia::Direct,
-            };
-            match tls {
-                None => run_connection(stream, false, Http::One, serving).await,
-                Some(tls) => {
-                    let handshake = tls.accept(stream);
-                    let secured = match limits.header {
-                        Some(limit) => tokio::time::timeout(limit, handshake).await.ok(),
-                        None => Some(handshake.await),
-                    };
-                    match secured {
-                        Some(Ok(Accepted::Manage(stream))) => {
-                            // a managed instance's link: it ends with the listeners' stop, and holds its connection
-                            // slots until then
-                            let hold = serving.hold.take();
-                            drop(serving);
-                            if let Some(manage) = &tls.manage {
-                                manage.serve(stream, remote).await;
-                            }
-                            drop(hold);
-                        }
-                        Some(Ok(Accepted::Edge(crate::edge_link::Secured::Link(handoff)))) => {
-                            // a link, or a passthrough tunnel: each ends with the listeners' stop on its own, and holds
-                            // its connection slots until then
-                            let hold = serving.hold.take();
-                            drop(serving);
-                            if let Some(edge) = &tls.edge {
-                                edge.serve(handoff, remote).await;
-                            }
-                            drop(hold);
-                        }
-                        Some(Ok(Accepted::Edge(crate::edge_link::Secured::Http(stream)))) => {
-                            // the TLS session's exporter, for XMPP channel binding over /xmpp-websocket (RFC 9266)
-                            #[cfg(feature = "xmpp")]
-                            let serving = Serving {
-                                exporter: moqui_xmpp::conn::exporter(stream.get_ref().1).map(Arc::new),
-                                ..serving
-                            };
-                            let http = Http::of(stream.get_ref().1);
-                            run_connection(stream, true, http, serving).await
-                        }
-                        Some(Err(err)) => tracing::debug!("TLS handshake with {remote} failed: {err}"),
-                        None => tracing::debug!("TLS handshake with {remote} timed out"),
-                    }
-                }
-            }
-        });
-    }
-    drop(closing_rx);
+        let hold: serve::ConnectionHold = Box::new((slot, permit, closing_rx.clone(), listening.opened()));
+        let serving = Serving {
+            remote,
+            web: web.clone(),
+            builder: builder.clone(),
+            closing: closing_rx.clone(),
+            exporter: None,
+            hold: Some(hold),
+            via: moqui_core::web::RequestVia::Direct,
+            listener: Some(name),
+            ended: Some(ended_rx.clone()),
+        };
+        tokio::spawn(connection(stream, remote, tls.clone(), limits.header, serving));
+    };
+    // no new connection: the port is let go at once, not after the drain, and the open connections are told to close
+    drop(listener);
+    listening.port_freed();
+    drop((closing_rx, ended_rx));
     let _ = closing.send(true);
-    match limits.shutdown {
-        Some(deadline) => {
-            if tokio::time::timeout(deadline, closing.closed()).await.is_err() {
-                tracing::warn!(
-                    "{} HTTP connections were still open {} seconds after the stop; the listener stops without them",
-                    closing.receiver_count(),
-                    deadline.as_secs()
-                );
+    let drained = async {
+        match grace {
+            Grace::Upto(limit) => tokio::time::timeout(limit, closing.closed())
+                .await
+                .is_err()
+                .then_some(limit),
+            Grace::Unbounded => {
+                closing.closed().await;
+                None
             }
         }
-        None => closing.closed().await,
+    };
+    let unfinished = tokio::select! {
+        unfinished = drained => unfinished,
+        () = &mut end_now => (!closing.is_closed()).then_some(Duration::ZERO),
+    };
+    match unfinished {
+        Some(limit) if limit.is_zero() => {
+            tracing::info!("The {name} listener's open connections were closed at once");
+        }
+        Some(limit) => tracing::warn!(
+            "{} {name} connections were still open {} seconds after the stop; they are closed",
+            listening.connections(),
+            limit.as_secs()
+        ),
+        None => {}
+    }
+    let _ = ended.send(true);
+}
+
+/// One connection the listener accepted: HTTP, or after the HTTPS handshake (bounded by `header`) HTTP, or the edge or
+/// manager link's. Its HTTP and its handshake are dropped once the listener's stop has ended its connections; a link
+/// ends with the listener's closing, which comes first, and runs what it does as it ends (its registry's rows, the
+/// tasks it started) to the end.
+async fn connection(
+    stream: tokio::net::TcpStream,
+    remote: SocketAddr,
+    tls: Option<Tls>,
+    header: Option<Duration>,
+    mut serving: Serving,
+) {
+    let ended = serving.ended.clone();
+    let Some(tls) = tls else {
+        until_ended(run_connection(stream, false, Http::One, serving), ended, remote).await;
+        return;
+    };
+    let handshake = async {
+        match header {
+            Some(limit) => tokio::time::timeout(limit, tls.accept(stream)).await.ok(),
+            None => Some(tls.accept(stream).await),
+        }
+    };
+    let Some(secured) = until_ended(handshake, ended.clone(), remote).await else {
+        return;
+    };
+    match secured {
+        Some(Ok(Accepted::Manage(stream))) => {
+            // a managed instance's link: it ends with the listener's closing, and holds its connection slots until then
+            let (hold, closing) = (serving.hold.take(), serving.closing.clone());
+            drop(serving);
+            if let Some(manage) = &tls.manage {
+                manage.serve(stream, remote, closing).await;
+            }
+            drop(hold);
+        }
+        Some(Ok(Accepted::Edge(crate::edge_link::Secured::Link(handoff)))) => {
+            // a link, or a passthrough tunnel: each ends with the listener's closing, and holds its connection slots
+            // until then
+            let (hold, closing) = (serving.hold.take(), serving.closing.clone());
+            drop(serving);
+            if let Some(edge) = &tls.edge {
+                edge.serve(handoff, remote, closing).await;
+            }
+            drop(hold);
+        }
+        Some(Ok(Accepted::Edge(crate::edge_link::Secured::Http(stream)))) => {
+            // the TLS session's exporter, for XMPP channel binding over /xmpp-websocket (RFC 9266)
+            #[cfg(feature = "xmpp")]
+            let serving = Serving {
+                exporter: moqui_xmpp::conn::exporter(stream.get_ref().1).map(Arc::new),
+                ..serving
+            };
+            let http = Http::of(stream.get_ref().1);
+            until_ended(run_connection(stream, true, http, serving), ended, remote).await;
+        }
+        Some(Err(err)) => tracing::debug!("TLS handshake with {remote} failed: {err}"),
+        None => tracing::debug!("TLS handshake with {remote} timed out"),
+    }
+}
+
+/// `run` until it finishes, or until `ended` turns true (the listener's stop has ended its connections), when it is
+/// dropped with what it holds of the connection from `remote`: none then.
+async fn until_ended<T>(
+    run: impl Future<Output = T>,
+    ended: Option<tokio::sync::watch::Receiver<bool>>,
+    remote: SocketAddr,
+) -> Option<T> {
+    let Some(mut ended) = ended else {
+        return Some(run.await);
+    };
+    tokio::select! {
+        done = run => Some(done),
+        _ = ended.wait_for(|ended| *ended) => {
+            tracing::debug!("The connection from {remote} was closed: its listener's stop ended its connections");
+            None
+        }
     }
 }
 

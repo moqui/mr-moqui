@@ -20,8 +20,8 @@ use moqui_lib::env;
 use moqui_lib::node::MNode;
 
 use super::{
-    apply_conf, on_apply, pending_restart, preview_conf, set_class, set_with, Applying, ConfReport, Inputs, Kept,
-    Outcome, SetOutcome,
+    apply_conf, on_apply, pending_restart, preview_conf, set_class, set_with, set_with_holding, Applying, ConfReport,
+    Inputs, Kept, Outcome, SetOutcome,
 };
 use crate::context::conf_env::{self, RetiredValue, Source};
 use crate::context::conf_schema::{self, Class, Group, CATALOG};
@@ -412,6 +412,75 @@ fn a_set_runs_its_groups_hook_once_after_the_lock() {
         &inputs(&runtime, &no_environment, &[]),
     )
     .unwrap();
+    let _ = std::fs::remove_dir_all(&runtime);
+}
+
+/// A set that holds a group runs none of its hooks, and the other groups' as ever: the listener services apply their
+/// settings and then ask the listener registry for the one pass that applies them (plans/Runtime-Config.md §3.6).
+#[test]
+fn a_set_holding_a_group_runs_the_other_groups_hooks_only() {
+    let factory = factory(RUNNING);
+    let runtime = runtime("holding");
+    let (listeners, _) = counting(&factory, Group::Listeners);
+    let (protection, _) = counting(&factory, Group::WebProtection);
+    let port = "webapp-list/webapp[webroot]@http-listen-port";
+    let limit = format!("{RATE_LIMIT}[rc2-held]@limit");
+    let given = inputs(&runtime, &no_environment, &[]);
+    let outcomes = set_with_holding(
+        &factory,
+        &[(port, Some("8181")), (limit.as_str(), Some("5"))],
+        true,
+        &given,
+        Some(Group::Listeners),
+    )
+    .unwrap();
+    assert_eq!(outcomes[0].class, Class::Apply(Group::Listeners));
+    assert_eq!(
+        listeners.load(Ordering::SeqCst),
+        0,
+        "the held group's hooks did not run"
+    );
+    assert_eq!(protection.load(Ordering::SeqCst), 1);
+    assert_eq!(value(&factory, port).as_deref(), Some("8181"));
+    set_with(&factory, &[(port, None), (limit.as_str(), None)], true, &given).unwrap();
+    assert_eq!(
+        listeners.load(Ordering::SeqCst),
+        1,
+        "a set that holds nothing runs them"
+    );
+    let _ = std::fs::remove_dir_all(&runtime);
+}
+
+/// A snapshot of the running conf reads every setting as of when it was taken: a set after it is not in it.
+#[test]
+fn a_conf_snapshot_keeps_the_settings_of_when_it_was_taken() {
+    let factory = factory(RUNNING);
+    let runtime = runtime("snapshot");
+    let given = inputs(&runtime, &no_environment, &[]);
+    let (port, bind) = (
+        "webapp-list/webapp[webroot]@http-listen-port",
+        "webapp-list/webapp[webroot]@http-bind",
+    );
+    set_with(
+        &factory,
+        &[(port, Some("8181")), (bind, Some("127.0.0.1"))],
+        true,
+        &given,
+    )
+    .unwrap();
+    let before = factory.conf_snapshot();
+    set_with(
+        &factory,
+        &[(port, Some("8282")), (bind, Some("127.0.0.2"))],
+        true,
+        &given,
+    )
+    .unwrap();
+    assert_eq!(before.value(port).as_deref(), Some("8181"));
+    assert_eq!(before.value(bind).as_deref(), Some("127.0.0.1"));
+    assert_eq!(factory.conf_snapshot().value(port).as_deref(), Some("8282"));
+    assert_eq!(before.value("not a selector"), None);
+    set_with(&factory, &[(port, None), (bind, None)], true, &given).unwrap();
     let _ = std::fs::remove_dir_all(&runtime);
 }
 

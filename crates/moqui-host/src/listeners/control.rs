@@ -107,7 +107,9 @@ fn listen_to_conf(factory: &ExecutionContextFactory, registry: &Registry) {
 }
 
 /// The `listeners` group hook: a pass for each of `causes` queued on the worker of `factory`'s registry, when one is
-/// installed and running.
+/// installed and running. A caller that ends connections now applies its settings holding this hook
+/// (`conf_reload::set_many_holding`) and asks for the one pass itself, with `end_now`; a stop already draining is ended
+/// at once whatever the order ([`super::worker::submit`]).
 fn request_reconcile(factory: &ExecutionContextFactory, causes: &[HookCause]) {
     let Some(hook) = factory.extension_if_present::<ConfHook>() else {
         return;

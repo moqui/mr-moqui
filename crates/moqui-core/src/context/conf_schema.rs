@@ -158,6 +158,9 @@ const DERIVED: Class = Class::Apply(Group::Derived);
 const TELEMETRY: Class =
     Class::Restart("read once at boot; Monitor › Settings changes its levels and rates for a while");
 const WEB_PROTECTION: Class = Class::Apply(Group::WebProtection);
+/// A live listener's switch, port or address: the host's registry starts, stops or binds it again (plans/Runtime-Config.md
+/// §3.1).
+const LISTENERS: Class = Class::Apply(Group::Listeners);
 const LLM: Class = Class::Restart("the agent runtime is built at boot");
 const DATABASES: Class = Class::Restart("the database dialects are read when the entity facade is opened");
 const EDGE: Class = Class::Restart("the edge link starts at boot");
@@ -203,16 +206,16 @@ pub static CATALOG: &[Unit] = &[
     single("webapp-list", BOOT).children(&[keyed("webapp", &["name"], Class::Live)
         .attrs(&[
             ("http-port", LISTENER),
-            // the web listeners' switches and ports, read once when they bind until RC2 makes them live
-            // (plans/Runtime-Config.md §3.2)
-            ("http-listen-enabled", LISTENER),
-            ("http-listen-port", LISTENER),
-            ("https-listen-enabled", LISTENER),
-            ("https-listen-port", LISTENER),
-            ("http-bind", LISTENER),
-            ("grpc-listen-enabled", LISTENER),
-            ("grpc-listen-port", LISTENER),
-            ("grpc-listen-bind", LISTENER),
+            // the web listeners' switches, ports and addresses, which the listener registry applies while the server
+            // runs (plans/Runtime-Config.md §3.3, RC2)
+            ("http-listen-enabled", LISTENERS),
+            ("http-listen-port", LISTENERS),
+            ("https-listen-enabled", LISTENERS),
+            ("https-listen-port", LISTENERS),
+            ("http-bind", LISTENERS),
+            ("grpc-listen-enabled", LISTENERS),
+            ("grpc-listen-port", LISTENERS),
+            ("grpc-listen-bind", LISTENERS),
             ("https-port", LISTENER),
             ("https-enabled", LISTENER),
             ("client-ip-header", BOOT),

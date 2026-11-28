@@ -103,7 +103,14 @@ fn adapters() -> Vec<(&'static str, Handler)> {
         }),
         #[cfg(feature = "llm")]
         ("mcp", |state| {
-            Box::pin(crate::llm::mcp::handle(State(state), peer(), request("POST", "/mcp")))
+            // a request over no listener waits on the process-wide stop
+            let closing = crate::http::Closing(state.shutdown.clone());
+            Box::pin(crate::llm::mcp::handle(
+                State(state),
+                peer(),
+                closing,
+                request("POST", "/mcp"),
+            ))
         }),
     ]
 }

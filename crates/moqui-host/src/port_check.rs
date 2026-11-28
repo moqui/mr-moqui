@@ -2,9 +2,10 @@
 //! so a port another process holds is found before the database opens. Each busy port is named with the process
 //! holding it when this user can see it (`/proc` on Linux, `lsof` elsewhere).
 //!
-//! The same list names the listeners of the startup report (`crate::startup_report`): HTTP, HTTPS, cluster and SSH are
-//! required, and a busy one stops the start; the others (gRPC, SMTP, call media, TURN, SIP, XMPP, the edge tunnels)
-//! are optional, and a busy one is warned about and left out: its start asks [`busy`] and records it skipped instead
+//! The same list names the listeners of the startup report (`crate::startup_report`): the cluster port and SSH are
+//! required, and a busy one stops the start; the others are optional and a busy one is warned about. HTTP and HTTPS,
+//! live (plans/Runtime-Config.md §3.3, §6), try their bind anyway and record it Failed, naming the holder; the rest
+//! (gRPC, SMTP, call media, TURN, SIP, XMPP, the edge tunnels) ask [`busy`] at the start and record it skipped instead
 //! of trying the port again.
 
 // Without a server boot only the busy list is read (by the optional listeners that are built).
@@ -84,6 +85,10 @@ struct Holder {
     exe: Option<std::path::PathBuf>,
 }
 
+/// The live listeners that try a port busy at the check anyway, recording it Failed and trying it again later
+/// (plans/Runtime-Config.md §3.3): not left out as skipped.
+const TRIED_ANYWAY: [&str; 2] = ["HTTP", "HTTPS"];
+
 /// The optional listeners whose port was busy at the last check, with the port.
 static BUSY: Mutex<Vec<(&'static str, u16)>> = Mutex::new(Vec::new());
 
@@ -121,9 +126,10 @@ fn conf_setting(conf: &MNode, path: &str, name: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Every listener's ports, resolved as each listener resolves its own: HTTP, HTTPS, cluster and SSH (from the merged
-/// `conf`, so not while `ssh-server` `enabled` is not true), required; then the optional ones that are configured. The
-/// on-demand ranges (TURN relays, SIP RTP legs) are not here.
+/// Every listener's ports, resolved as each listener resolves its own: cluster and SSH (from the merged `conf`, so not
+/// while `ssh-server` `enabled` is not true), required; then the optional ones that are configured, HTTP and HTTPS
+/// among them. A web setting that does not parse is left to its listener's row. The on-demand ranges (TURN relays, SIP
+/// RTP legs) are not here.
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
 #[cfg_attr(not(feature = "ssh"), allow(unused_variables))]
 fn targets(bind: &ListenBind, runtime_dir: &Path, conf: &MNode) -> Result<Vec<Target>, Error> {
@@ -143,16 +149,32 @@ fn targets(bind: &ListenBind, runtime_dir: &Path, conf: &MNode) -> Result<Vec<Ta
             &format!("{}@{name}", moqui_core::context::conf_env::WEBROOT),
         )
     };
-    let http = crate::listen_address(bind, &webroot)?;
+    let http = match crate::listen_address(bind, &webroot) {
+        Ok(http) => http,
+        Err(err) => {
+            tracing::warn!("The web listeners' ports are not checked: {err}");
+            None
+        }
+    };
     #[cfg_attr(not(feature = "grpc"), allow(unused_variables))]
     let mut https = false;
     if let Some(http) = http {
         if let Some(port) = http.http_port {
-            targets.push(required("HTTP", "http-listen-port", http.ip.to_string(), port));
+            targets.push(Target::optional("HTTP", "http-listen-port", http.ip, port, Proto::Tcp));
         }
-        if let Some(port) = crate::tls::planned_port(runtime_dir, &crate::tls::Listen::of(&webroot))? {
-            https = true;
-            targets.push(required("HTTPS", "https-listen-port", http.ip.to_string(), port));
+        match crate::tls::planned_port(runtime_dir, &crate::tls::Listen::of(&webroot)) {
+            Ok(Some(port)) => {
+                https = true;
+                targets.push(Target::optional(
+                    "HTTPS",
+                    "https-listen-port",
+                    http.ip,
+                    port,
+                    Proto::Tcp,
+                ));
+            }
+            Ok(None) => {}
+            Err(err) => tracing::warn!("The HTTPS port is not checked: {err}"),
         }
         targets.push(required(
             "Cluster",
@@ -218,6 +240,11 @@ fn check(targets: &[Target]) -> Result<Vec<(&'static str, u16)>, Error> {
         let text = explain(target, &err);
         if target.required {
             busy_required.push(text);
+        } else if TRIED_ANYWAY.contains(&target.listener) {
+            tracing::warn!(
+                "Port {text}; {} tries it as it starts, and says on its row that it failed while the port is held",
+                target.listener
+            );
         } else {
             tracing::warn!("Port {text}; {} will not start", target.listener);
             busy_optional.push((target.listener, target.port));

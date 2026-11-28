@@ -22,12 +22,19 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
 
-use super::{header_map, serve, status_allowed, status_request_allowed, ListenLimits, TlsConnection, WebApp};
+use super::{header_map, serve, status_allowed, status_request_allowed, Grace, ListenLimits, TlsConnection, WebApp};
 use crate::guard::Guard;
 use crate::tls;
 
 fn unguarded() -> Arc<Guard> {
     Arc::new(Guard::disabled())
+}
+
+/// A test listener's stop: once `stopped` resolves (its sender dropped), with the grace of `limits.shutdown`, as the
+/// process stop gives it.
+async fn process_stop(stopped: tokio::sync::oneshot::Receiver<()>, limits: ListenLimits) -> Grace {
+    let _ = stopped.await;
+    Grace::of(limits.shutdown)
 }
 
 async fn read_all(stream: &mut TcpStream) -> String {
@@ -514,9 +521,9 @@ async fn a_slow_request_head_is_closed_and_holds_no_connection_slot() {
         None,
         WebApp::new(app, limits, unguarded()),
         permits,
-        async move {
-            let _ = stopped.await;
-        },
+        "HTTP",
+        super::Listening::default(),
+        super::StopSignal::once(process_stop(stopped, limits)),
     ));
 
     // The one slot is taken by a client that never finishes its request head.
@@ -565,9 +572,9 @@ async fn a_stop_waits_for_open_requests_only_until_the_shutdown_deadline() {
         None,
         WebApp::new(app, limits, unguarded()),
         permits,
-        async move {
-            let _ = stopped.await;
-        },
+        "HTTP",
+        super::Listening::default(),
+        super::StopSignal::once(process_stop(stopped, limits)),
     ));
     let mut stuck = TcpStream::connect(address).await.unwrap();
     stuck.write_all(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").await.unwrap();
@@ -627,18 +634,18 @@ async fn a_request_over_tls_is_marked_secure() {
                 }),
                 WebApp::new(app.clone(), limits, unguarded()),
                 Arc::clone(&permits),
-                async move {
-                    let _ = secure_stopped.await;
-                },
+                "HTTPS",
+                super::Listening::default(),
+                super::StopSignal::once(process_stop(secure_stopped, limits)),
             ),
             serve(
                 plain_listener,
                 None,
                 WebApp::new(app, limits, unguarded()),
                 permits,
-                async move {
-                    let _ = plain_stopped.await;
-                }
+                "HTTP",
+                super::Listening::default(),
+                super::StopSignal::once(process_stop(plain_stopped, limits)),
             ),
         );
     });
@@ -693,9 +700,9 @@ async fn guarded(
         None,
         WebApp::new(app, limits, guard),
         permits,
-        async move {
-            let _ = stopped.await;
-        },
+        "HTTP",
+        super::Listening::default(),
+        super::StopSignal::once(process_stop(stopped, limits)),
     ));
     (address, stop, server)
 }
@@ -880,6 +887,7 @@ async fn a_websocket_over_extended_connect_is_checked_as_a_get() {
         https: true,
         exporter: None,
         via: moqui_core::web::RequestVia::Direct,
+        listener: None,
     };
     let connect = || {
         axum::http::Request::builder()
@@ -922,6 +930,7 @@ async fn a_test_peer_header_is_dropped_and_not_honoured_off_a_test_server() {
         https: false,
         exporter: None,
         via: moqui_core::web::RequestVia::Direct,
+        listener: None,
     };
     let request = axum::http::Request::builder()
         .uri("/")
@@ -954,9 +963,9 @@ async fn listening(
         None,
         WebApp::new(app, limits, guard),
         permits,
-        async move {
-            let _ = stopped.await;
-        },
+        "HTTP",
+        super::Listening::default(),
+        super::StopSignal::once(process_stop(stopped, limits)),
     ));
     (address, stop, server)
 }
@@ -1144,6 +1153,148 @@ async fn the_shutdown_drain_waits_for_an_open_websocket() {
         .await
         .expect("the drain ended once the socket closed")
         .unwrap();
+}
+
+// ---- one listener's stop: its closing, its grace and its end (plans/Runtime-Config.md §8.3, RC2-a) ----------------
+
+/// A listener serving `app` until `stop` gives its grace, as the registry's stop of it does.
+async fn stopped_by(
+    app: Router,
+    limits: ListenLimits,
+    stop: impl std::future::Future<Output = Grace> + Send + 'static,
+) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+    let stop = super::StopSignal::once(stop);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let permits = Arc::new(Semaphore::new(limits.connections));
+    let web = WebApp::new(app, limits, unguarded());
+    let server = tokio::spawn(serve(
+        listener,
+        None,
+        web,
+        permits,
+        "HTTP",
+        super::Listening::default(),
+        stop,
+    ));
+    (address, server)
+}
+
+/// A live stop gives a request in flight its own grace, not `shutdown-timeout`, and then closes its connection rather
+/// than leaving it to the runtime; the port is let go at once.
+#[tokio::test]
+async fn a_live_stop_closes_what_is_left_once_its_grace_passes() {
+    let app = Router::new().route("/", get(std::future::pending::<&'static str>));
+    let limits = ListenLimits {
+        header: None,
+        shutdown: Some(Duration::from_secs(30)),
+        ..ListenLimits::defaults()
+    };
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let (address, server) = stopped_by(app, limits, async move {
+        let _ = stopped.await;
+        Grace::Upto(Duration::from_millis(300))
+    })
+    .await;
+    let mut stuck = TcpStream::connect(address).await.unwrap();
+    stuck.write_all(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let started = Instant::now();
+    drop(stop);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(TcpStream::connect(address).await.is_err(), "the port is let go at once");
+    tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .expect("the listener waited past its grace")
+        .unwrap();
+    assert!(
+        started.elapsed() >= Duration::from_millis(250),
+        "{:?}",
+        started.elapsed()
+    );
+    let answered = read_all(&mut stuck).await;
+    assert!(answered.is_empty(), "{answered}");
+    assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+}
+
+/// Ending a listener's connections at once closes an upgraded socket too, even one whose handler waits on nothing but
+/// its client: its socket fails once the listener has ended its connections.
+#[tokio::test]
+async fn ending_at_once_closes_an_upgraded_socket_whatever_its_handler_waits_on() {
+    use axum::extract::ws::WebSocketUpgrade;
+    let app = Router::new().route(
+        "/notws",
+        get(|ws: WebSocketUpgrade| async {
+            ws.on_upgrade(|mut socket| async move { while let Some(Ok(_)) = socket.recv().await {} })
+        }),
+    );
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let (address, server) = stopped_by(app, ListenLimits::defaults(), async move {
+        let _ = stopped.await;
+        Grace::Upto(Duration::ZERO)
+    })
+    .await;
+    let (mut socket, head) = upgraded(address, "/notws").await;
+    assert!(head.starts_with("HTTP/1.1 101"), "{head}");
+
+    let started = Instant::now();
+    drop(stop);
+    tokio::time::timeout(Duration::from_secs(2), server)
+        .await
+        .expect("the listener did not end at once")
+        .unwrap();
+    let mut buf = Vec::new();
+    let read = tokio::time::timeout(Duration::from_secs(2), socket.read_to_end(&mut buf))
+        .await
+        .expect("the upgraded socket was not closed");
+    assert!(read.is_err() || buf.is_empty(), "{buf:?}");
+    assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+}
+
+/// Each request carries its listener's name and closing signal ([`super::OnListener`]): a socket that ends on it closes
+/// as the listener stops, so the drain does not wait out `shutdown-timeout` for it.
+#[tokio::test]
+async fn a_socket_that_ends_on_its_listener_closes_as_the_listener_stops() {
+    use axum::extract::ws::WebSocketUpgrade;
+    let (_process, process) = tokio::sync::watch::channel(false);
+    let app = Router::new().route(
+        "/notws",
+        get(move |ws: WebSocketUpgrade, request: Request| {
+            let named = request.extensions().get::<super::OnListener>().map(|on| on.name);
+            let mut closing = super::closing::closing_of(request.extensions(), &process);
+            async move {
+                assert_eq!(named, Some("HTTP"));
+                ws.on_upgrade(move |mut socket| async move {
+                    tokio::select! {
+                        _ = closing.wait_for(|closing| *closing) => {}
+                        () = async { while let Some(Ok(_)) = socket.recv().await {} } => {}
+                    }
+                })
+            }
+        }),
+    );
+    let limits = ListenLimits {
+        shutdown: Some(Duration::from_secs(10)),
+        ..ListenLimits::defaults()
+    };
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let (address, server) = stopped_by(app, limits, process_stop(stopped, limits)).await;
+    let (mut socket, head) = upgraded(address, "/notws").await;
+    assert!(head.starts_with("HTTP/1.1 101"), "{head}");
+
+    let started = Instant::now();
+    drop(stop);
+    let mut buf = Vec::new();
+    let read = tokio::time::timeout(Duration::from_secs(2), socket.read_to_end(&mut buf))
+        .await
+        .expect("the socket did not close with its listener");
+    assert!(read.is_err() || buf.len() < 64, "{buf:?}");
+    tokio::time::timeout(Duration::from_secs(2), server)
+        .await
+        .expect("the drain waited for a socket that closed")
+        .unwrap();
+    assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
 }
 
 /// The first segments of the paths the host registers routes for, from its source: each `.route("/...")` literal,

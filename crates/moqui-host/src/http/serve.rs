@@ -38,7 +38,7 @@ use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use moqui_lib::sync::lock;
 use tower::ServiceExt as _;
 
-use super::{forwarded_https, plain, ClientAddr, HttpsRequest, ListenLimits, TlsConnection};
+use super::{forwarded_https, plain, ClientAddr, HttpsRequest, ListenLimits, OnListener, TlsConnection};
 use crate::guard::Guard;
 
 /// Whether a `Host` header names a public-site host.
@@ -126,6 +126,8 @@ pub(crate) struct Peer {
     pub exporter: Option<Arc<Vec<u8>>>,
     /// How the request reached this server (plans/Terminal-Fancy.md §8.2).
     pub via: moqui_core::web::RequestVia,
+    /// The listener the connection came over, with its closing signal; none in process or down the edge link.
+    pub listener: Option<OnListener>,
 }
 
 /// A terminate host's request on an edge node, taken from the request by the router's edge-forward layer, inside the
@@ -279,6 +281,8 @@ pub(crate) async fn serve_tunneled<S>(
         exporter,
         hold: None,
         via: moqui_core::web::RequestVia::Edge,
+        listener: None,
+        ended: None,
     };
     run_connection(stream, true, http, serving).await;
 }
@@ -295,6 +299,21 @@ pub(crate) struct Serving {
     pub hold: Option<ConnectionHold>,
     /// How the connection reached this server.
     pub via: moqui_core::web::RequestVia,
+    /// The name of the listener that accepted it, whose closing `closing` is; none in process or down the edge link.
+    pub listener: Option<&'static str>,
+    /// The listener's end of its stop's grace, after which the connection's socket fails ([`WriteStall`]), an upgraded
+    /// one's too.
+    pub ended: Option<tokio::sync::watch::Receiver<bool>>,
+}
+
+impl Serving {
+    /// The listener its requests came over, with its closing signal ([`OnListener`]).
+    fn on_listener(&self) -> Option<OnListener> {
+        self.listener.map(|name| OnListener {
+            name,
+            closing: self.closing.clone(),
+        })
+    }
 }
 
 /// Serve one connection as `http` until it closes or `serving.closing` turns true, then shut it down gracefully.
@@ -312,6 +331,7 @@ async fn run_http1<S>(stream: S, secure: bool, serving: Serving)
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
+    let listener = serving.on_listener();
     let Serving {
         remote,
         web,
@@ -320,8 +340,10 @@ where
         exporter,
         hold,
         via,
+        ended,
+        ..
     } = serving;
-    let io = WriteStall::new(Lingering::new(stream), web.limits.write, hold);
+    let io = WriteStall::new(Lingering::new(stream), web.limits.write, hold, ended);
     let service = hyper::service::service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
         let client = web.guard.client_of(remote.ip(), request.headers());
         let https = secure || forwarded_https(request.headers(), remote.ip(), web.guard.conf().addressing());
@@ -332,6 +354,7 @@ where
             https,
             exporter: exporter.clone(),
             via,
+            listener: listener.clone(),
         };
         serve_request(&web, request, &peer)
     });
@@ -357,6 +380,7 @@ async fn run_http2<S>(stream: S, serving: Serving)
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
+    let listener = serving.on_listener();
     let Serving {
         remote,
         web,
@@ -364,9 +388,10 @@ where
         exporter,
         hold,
         via,
+        ended,
         ..
     } = serving;
-    let io = WriteStall::new(Lingering::new(stream), web.limits.write, hold);
+    let io = WriteStall::new(Lingering::new(stream), web.limits.write, hold, ended);
     let idle_limit = web.limits.header;
     let builder = http2_builder(&web.limits);
     let activity = Arc::new(Activity::new());
@@ -377,7 +402,7 @@ where
         hyper::service::service_fn(move |mut request: hyper::Request<hyper::body::Incoming>| -> Answer {
             activity.started();
             h2_request_form(&mut request);
-            let answer = h2_answer(&web, request, remote, exporter.clone(), via);
+            let answer = h2_answer(&web, request, remote, exporter.clone(), via, listener.clone());
             let (activity, close) = (Arc::clone(&activity), close.clone());
             Box::pin(async move {
                 let mut response = answer.await?;
@@ -433,6 +458,7 @@ fn h2_answer(
     remote: SocketAddr,
     exporter: Option<Arc<Vec<u8>>>,
     via: moqui_core::web::RequestVia,
+    listener: Option<OnListener>,
 ) -> Answer {
     #[cfg(feature = "grpc")]
     if let Some(grpc) = grpc_routes(web, &request) {
@@ -464,6 +490,7 @@ fn h2_answer(
         https: true,
         exporter,
         via,
+        listener,
     };
     Box::pin(serve_request(web, request, &peer))
 }
@@ -611,6 +638,10 @@ where
     request.extensions_mut().insert(ConnectInfo(remote));
     request.extensions_mut().insert(ClientAddr(client));
     request.extensions_mut().insert(peer.via);
+    // which listener the request came over, and its closing for the handlers of long-lived connections
+    if let Some(listener) = &peer.listener {
+        request.extensions_mut().insert(listener.clone());
+    }
     if peer.secure {
         request.extensions_mut().insert(TlsConnection);
     }
@@ -767,26 +798,118 @@ pub(crate) fn ci_token_answer(
 /// What a connection holds until its socket closes: its slot of the listeners' connections and its client's slot.
 pub(crate) type ConnectionHold = Box<dyn Send + Sync>;
 
+/// What one listener's loop tells the registry while it runs: its open connections, upgraded sockets included (each
+/// holds an [`OpenConnection`] until its socket closes, so the count is the listener's own where the connection permits
+/// are shared by HTTP and HTTPS), and when it has let its port go after a stop, so a new bind of the same port need
+/// not wait for its connections' grace (plans/Runtime-Config.md §3.1).
+#[derive(Clone, Default)]
+pub(crate) struct Listening {
+    open: Arc<AtomicUsize>,
+    freed: Arc<(Mutex<bool>, std::sync::Condvar)>,
+}
+
+impl Listening {
+    /// A connection opened, counted until the returned guard drops.
+    pub(crate) fn opened(&self) -> OpenConnection {
+        self.open.fetch_add(1, Ordering::SeqCst);
+        OpenConnection(Arc::clone(&self.open))
+    }
+
+    pub(crate) fn connections(&self) -> usize {
+        self.open.load(Ordering::SeqCst)
+    }
+
+    /// The listener's port is let go: nothing takes a connection there any more.
+    pub(crate) fn port_freed(&self) {
+        let (freed, waiting) = &*self.freed;
+        *lock(freed) = true;
+        waiting.notify_all();
+    }
+
+    /// Wait up to `wait`, on a plain thread, for the port to be let go; false when it was not by then.
+    pub(crate) fn wait_freed(&self, wait: std::time::Duration) -> bool {
+        let (freed, waiting) = &*self.freed;
+        let deadline = Instant::now().checked_add(wait);
+        let mut guard = lock(freed);
+        while !*guard {
+            let left = deadline.map_or(wait, |deadline| deadline.saturating_duration_since(Instant::now()));
+            if left.is_zero() {
+                return false;
+            }
+            guard = moqui_lib::sync::wait_timeout(waiting, guard, left).0;
+        }
+        true
+    }
+}
+
+/// A connection [`Listening`] counts while it lives.
+pub(crate) struct OpenConnection(Arc<AtomicUsize>);
+
+impl Drop for OpenConnection {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 /// A stream whose write fails once it has made no progress for `limit`, so a client that stops reading cannot keep its
 /// connection, or a push loop's write, past it (`plans/archive/High-Level-Review.md` HL-027). A write that moves any bytes starts
 /// the time again: a slow download that is still progressing goes on, and so does backpressure. The stream carries the
 /// connection's [`ConnectionHold`], so an upgraded socket (a WebSocket hyper handed off) keeps its connection slots
-/// until it closes.
+/// until it closes. Once its listener's stop has ended its connections (`http::serve`'s `ended`, after the grace)
+/// every read and write fails, so an upgraded socket ends then too, whatever its handler waits on
+/// (plans/Runtime-Config.md §3.1).
 pub(crate) struct WriteStall<S> {
     inner: S,
     limit: Option<Duration>,
     stalled: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
+    ended: Ended,
     _hold: Option<ConnectionHold>,
 }
 
+/// Whether a connection's listener has ended its connections: never for one with no listener.
+enum Ended {
+    Never,
+    Waiting(std::pin::Pin<Box<dyn Future<Output = ()> + Send>>),
+    Done,
+}
+
 impl<S> WriteStall<S> {
-    pub(crate) fn new(inner: S, limit: Option<Duration>, hold: Option<ConnectionHold>) -> Self {
+    pub(crate) fn new(
+        inner: S,
+        limit: Option<Duration>,
+        hold: Option<ConnectionHold>,
+        ended: Option<tokio::sync::watch::Receiver<bool>>,
+    ) -> Self {
+        let ended = match ended {
+            // a sender gone is a listener gone: its connections end with it
+            Some(mut ended) => Ended::Waiting(Box::pin(async move {
+                let _ = ended.wait_for(|ended| *ended).await;
+            })),
+            None => Ended::Never,
+        };
         Self {
             inner,
             limit,
             stalled: None,
+            ended,
             _hold: hold,
         }
+    }
+
+    /// The error every read and write gives once the listener has ended its connections; else none, and a wake when
+    /// it does.
+    fn ended(&mut self, cx: &mut std::task::Context<'_>) -> Option<std::io::Error> {
+        if let Ended::Waiting(ending) = &mut self.ended {
+            if ending.as_mut().poll(cx).is_ready() {
+                self.ended = Ended::Done;
+            }
+        }
+        matches!(self.ended, Ended::Done).then(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "the listener closed its connections",
+            )
+        })
     }
 
     /// After a write or flush that could not go on: the error once it has waited `limit`, else wake at that time.
@@ -825,6 +948,9 @@ impl<S: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for WriteStall<S> {
         cx: &mut std::task::Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
+        if let Some(err) = self.ended(cx) {
+            return std::task::Poll::Ready(Err(err));
+        }
         std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
     }
 }
@@ -835,6 +961,9 @@ impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for WriteStall<S> {
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
+        if let Some(err) = self.ended(cx) {
+            return std::task::Poll::Ready(Err(err));
+        }
         let polled = std::pin::Pin::new(&mut self.inner).poll_write(cx, buf);
         self.progress(polled, cx)
     }
@@ -844,6 +973,9 @@ impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for WriteStall<S> {
         cx: &mut std::task::Context<'_>,
         bufs: &[std::io::IoSlice<'_>],
     ) -> std::task::Poll<std::io::Result<usize>> {
+        if let Some(err) = self.ended(cx) {
+            return std::task::Poll::Ready(Err(err));
+        }
         let polled = std::pin::Pin::new(&mut self.inner).poll_write_vectored(cx, bufs);
         self.progress(polled, cx)
     }
@@ -856,6 +988,9 @@ impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for WriteStall<S> {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
+        if let Some(err) = self.ended(cx) {
+            return std::task::Poll::Ready(Err(err));
+        }
         let polled = std::pin::Pin::new(&mut self.inner).poll_flush(cx);
         self.progress(polled, cx)
     }

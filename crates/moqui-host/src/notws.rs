@@ -39,7 +39,7 @@ use moqui_core::web::origin::{origin_credentialed_by, own_origins, request_site,
 use moqui_lib::object::Value;
 use moqui_lib::sync::lock;
 
-use crate::http::{plain, HttpState, HttpsRequest};
+use crate::http::{plain, Closing, HttpState, HttpsRequest};
 
 // CalcGrid's rooms (moqui-calc), linked under the xlsx feature
 #[cfg(feature = "xlsx")]
@@ -319,6 +319,7 @@ pub(crate) async fn upgrade(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
     site: RequestSite,
+    Closing(closing): Closing,
     State(state): State<Arc<HttpState>>,
 ) -> Response {
     if !origin_allowed(&state.factory, &headers, &site, "notification") {
@@ -376,11 +377,11 @@ pub(crate) async fn upgrade(
         Ok(Err(err)) => return crate::http::internal_error(err.message()),
         Err(_) => return plain(500, "request worker stopped"),
     };
-    let shutdown = state.shutdown.clone();
+    // the socket closes with the listener it came over, or with the process when it came over none
     let factory = Arc::clone(&state.factory);
     ws.max_message_size(moqui_core::cluster::MAX_CLUSTER_BODY)
         .max_frame_size(moqui_core::cluster::MAX_CLUSTER_BODY)
-        .on_upgrade(move |socket| run_socket(socket, factory, session_id, user_id, credential, shutdown))
+        .on_upgrade(move |socket| run_socket(socket, factory, session_id, user_id, credential, closing))
 }
 
 /// The origin a request was made to (scheme, host and port), as the screens' CORS check works it out

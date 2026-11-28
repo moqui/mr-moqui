@@ -19,7 +19,8 @@
 //!   `moqui_conf__pass_authority__grpc_enabled=true` (the `edge` feature; in Maximal and Enterprise).
 //!
 //! The webroot webapp's grpc-listen-enabled, grpc-listen-port and grpc-listen-bind select the dedicated socket for both
-//! services (plans/Runtime-Config.md §3.2).
+//! services (plans/Runtime-Config.md §3.2); the listener registry starts, stops and binds it again as they change
+//! (`crate::listeners`, §8.3), and builds its routes at each start.
 //! With the HTTPS listener's certificates it serves TLS (ALPN h2), else
 //! plain h2c; then the PASS authority, whose clients send their secrets, is left off (an error logged) unless the
 //! address is loopback or `moqui_conf__pass_authority__grpc_insecure=true`. The edge guard admits each connection as it does for HTTP.
@@ -33,24 +34,9 @@ use moqui_core::context::ExecutionContextFactory;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpListener;
 
-/// The address the gRPC listener bound, for `Server::grpc_address`.
-#[derive(Default)]
-pub struct GrpcAddress(pub std::sync::Mutex<Option<SocketAddr>>);
-
-/// Address shared by the enabled services on the dedicated listener.
-pub(crate) fn bind_address(factory: &ExecutionContextFactory, ip: std::net::IpAddr, tls: bool) -> Option<SocketAddr> {
-    bind_address_by(
-        &|path, name| factory.conf_setting(path, name),
-        &moqui_core::context::conf_env::webroot_setting,
-        ip,
-        tls,
-        true,
-    )
-}
-
-/// [`bind_address`] from the settings `setting` and `webroot`: none while `grpc-listen-enabled` is not true or no
-/// service is on. The PASS authority's h2c refusal is logged when `log` (the listener's own start), not by the port
-/// check before it, so it is logged once.
+/// The address the enabled services share on the dedicated listener, from the settings `setting` and `webroot`, for
+/// the port check: none while `grpc-listen-enabled` is not true or no service is on. The PASS authority's h2c refusal
+/// is logged when `log`.
 pub(crate) fn bind_address_by(
     setting: crate::monitor::grpc::Setting,
     webroot: &dyn Fn(&str) -> String,
@@ -83,16 +69,16 @@ pub(crate) fn bind_address_by(
         },
     };
     let address = SocketAddr::new(ip, port);
+    let insecure = setting("pass-authority", "grpc-insecure") == "true";
     (crate::monitor::grpc::enabled_by(setting)
-        || (crate::pass_authority::direct_enabled() && pass_allowed(address, tls, log)))
+        || (crate::pass_authority::direct_enabled() && pass_allowed(address, tls, insecure, log)))
     .then_some(address)
 }
 
-/// Whether the PASS authority may serve on `bind`: with TLS, on a loopback address, or with
-/// `moqui_conf__pass_authority__grpc_insecure=true`; else a client's secret would cross the network in clear, so it is left off
-/// (logged when `log`).
-fn pass_allowed(bind: SocketAddr, tls: bool, log: bool) -> bool {
-    let insecure = moqui_core::context::conf_env::setting(crate::pass_authority::INSECURE_PROPERTY).trim() == "true";
+/// Whether the PASS authority may serve on `bind`: with TLS, on a loopback address, or when `insecure`
+/// (`pass-authority@grpc-insecure`, `moqui_conf__pass_authority__grpc_insecure=true`); else a client's secret would cross
+/// the network in clear, so it is left off (logged when `log`).
+pub(crate) fn pass_allowed(bind: SocketAddr, tls: bool, insecure: bool, log: bool) -> bool {
     if tls || bind.ip().is_loopback() || insecure {
         return true;
     }
@@ -106,23 +92,15 @@ fn pass_allowed(bind: SocketAddr, tls: bool, log: bool) -> bool {
     false
 }
 
-/// The routes of the services that are on, and their names for the log.
-fn routes(
+/// The OTLP receiver's routes when `otlp`, and the PASS authority's when `pass`.
+fn service_routes(
     factory: &Arc<ExecutionContextFactory>,
-    bind: SocketAddr,
-    tls: bool,
+    otlp: bool,
+    pass: bool,
 ) -> (tonic::service::Routes, Vec<&'static str>) {
-    service_routes(
-        factory,
-        crate::pass_authority::direct_enabled() && pass_allowed(bind, tls, true),
-    )
-}
-
-/// The OTLP receiver's routes when it is on, and the PASS authority's when `pass`.
-fn service_routes(factory: &Arc<ExecutionContextFactory>, pass: bool) -> (tonic::service::Routes, Vec<&'static str>) {
     let mut routes = tonic::service::Routes::default();
     let mut names = Vec::new();
-    if crate::monitor::grpc::enabled(factory) {
+    if otlp {
         routes = crate::monitor::grpc::add_routes(routes, factory);
         names.push("OTLP/gRPC receiver");
     }
@@ -137,7 +115,11 @@ fn service_routes(factory: &Arc<ExecutionContextFactory>, pass: bool) -> (tonic:
 /// that is always TLS, so the PASS authority's are there whenever `moqui_conf__pass_authority__grpc_enabled=true`, with their names
 /// for the startup report. `None` when no service is on. The gRPC listener's own port stays, opened by the same settings.
 pub(crate) fn web_routes(factory: &Arc<ExecutionContextFactory>) -> Option<(tonic::service::Routes, String)> {
-    let (routes, names) = service_routes(factory, crate::pass_authority::direct_enabled());
+    let (routes, names) = service_routes(
+        factory,
+        crate::monitor::grpc::enabled(factory),
+        crate::pass_authority::direct_enabled(),
+    );
     if names.is_empty() {
         return None;
     }
@@ -152,87 +134,133 @@ pub(crate) struct Bound {
     acceptor: Option<tokio_rustls::TlsAcceptor>,
 }
 
-/// Bind `bind` before the startup report, so the report has its address. A bind failure is logged and recorded, and
-/// the HTTP listeners go on without gRPC; a port that was busy at the start check is not tried.
+/// Bind `bind` with the routes of the OTLP receiver when `otlp` and the PASS authority when `pass`, and TLS when `tls`:
+/// the listener and its address, and the names of its services. A failed bind is explained with the port check's text,
+/// the processes holding the port included.
 pub(crate) async fn open(
     factory: &Arc<ExecutionContextFactory>,
     bind: SocketAddr,
     tls: Option<Arc<rustls::ServerConfig>>,
-) -> Option<Bound> {
-    use moqui_core::startup::{listener as record, State};
-    if let Some(busy) = crate::port_check::busy(LISTENER) {
-        record(factory, LISTENER, State::Skipped(busy));
-        return None;
-    }
-    let (routes, names) = routes(factory, bind, tls.is_some());
+    services: (bool, bool),
+) -> Result<(Bound, SocketAddr), String> {
+    let (otlp, pass) = services;
+    let (routes, names) = service_routes(factory, otlp, pass);
     let label = names.join(" and ");
-    let listener = match TcpListener::bind(bind).await {
-        Ok(listener) => listener,
-        Err(error) => {
-            tracing::error!("could not bind the gRPC listener ({label}) on {bind}: {error}");
-            record(
-                factory,
-                LISTENER,
-                State::failed(format!("{bind} did not bind: {error}")),
-            );
-            return None;
-        }
-    };
+    let listener = TcpListener::bind(bind).await.map_err(|err| {
+        let target = crate::port_check::Target::optional(
+            LISTENER,
+            "grpc-listen-port",
+            bind.ip(),
+            bind.port(),
+            crate::port_check::Proto::Tcp,
+        );
+        crate::port_check::explain(&target, &err)
+    })?;
     let local = listener.local_addr().unwrap_or(bind);
-    *moqui_lib::sync::lock(&factory.extension(|_| GrpcAddress::default()).0) = Some(local);
-    record(
-        factory,
-        LISTENER,
-        State::on(format!(
-            "tcp {local}{}, {label}",
-            if tls.is_some() { " TLS" } else { "" }
-        )),
-    );
     let acceptor = tls.map(|config| {
         // gRPC is HTTP/2 only; the HTTPS listener's config offers http/1.1 too.
         let mut config = (*config).clone();
         config.alpn_protocols = vec![b"h2".to_vec()];
         tokio_rustls::TlsAcceptor::from(Arc::new(config))
     });
-    Some(Bound {
-        listener,
-        routes,
-        label,
-        acceptor,
-    })
+    Ok((
+        Bound {
+            listener,
+            routes,
+            label,
+            acceptor,
+        },
+        local,
+    ))
+}
+
+impl Bound {
+    /// The names of the services it serves, for its row.
+    pub(crate) fn label(&self) -> &str {
+        &self.label
+    }
 }
 
 /// The startup report's name for this listener.
 pub(crate) const LISTENER: &str = "gRPC";
 
-/// Serve the bound listener until `stop`.
-pub(crate) async fn serve(bound: Bound, guard: Arc<crate::guard::Guard>, stop: impl std::future::Future<Output = ()>) {
+/// Serve the bound listener until `stop` gives its grace, telling `listening` when its port is let go; then let the
+/// open connections finish for that long, or until `stop` says to end them now; what is still open then fails, as the
+/// web listeners' connections do (plans/Runtime-Config.md §3.1): tonic's own shutdown waits for every connection, so
+/// each connection's socket ends with the grace instead.
+pub(crate) async fn serve(
+    bound: Bound,
+    guard: Arc<crate::guard::Guard>,
+    listening: crate::http::Listening,
+    stop: crate::http::StopSignal,
+) {
     let Bound {
         listener,
         routes,
         label,
         acceptor,
     } = bound;
+    let crate::http::StopSignal {
+        grace: stop,
+        now: end_now,
+    } = stop;
     let (connections, incoming) = tokio::sync::mpsc::channel::<std::io::Result<Connection>>(64);
-    // the accept task owns the listener: aborted when this serve ends or is dropped (a stop past its wait aborts it),
-    // so the port is freed either way
-    let _accepting = AbortOnDrop(tokio::spawn(accept(listener, acceptor, guard, connections)));
+    // turns true once the stop's grace has passed: each connection's socket fails from then on
+    let (ended, ended_rx) = tokio::sync::watch::channel(false);
+    let (graced, grace) = tokio::sync::oneshot::channel();
+    let (stop_accepting, accepting_stopped) = tokio::sync::oneshot::channel::<()>();
+    // the accept task owns the listener: it lets it go when the stop comes, and is aborted when this serve ends or is
+    // dropped (a stop past its wait aborts it), so the port is freed either way
+    let _accepting = AbortOnDrop(tokio::spawn(accept(
+        listener,
+        acceptor,
+        guard,
+        connections,
+        ended_rx,
+        Stopping {
+            stop: accepting_stopped,
+            freed: listening,
+        },
+    )));
+    let signal = async move {
+        let given = stop.await;
+        let _ = stop_accepting.send(());
+        let _ = graced.send(given);
+    };
+    // with no limit, or when the serve ends before any stop, the sender stays until this task is aborted with the
+    // serve, which ends what is left
+    let _ending = AbortOnDrop(tokio::spawn(async move {
+        let Ok(grace) = grace.await else {
+            return std::future::pending::<()>().await;
+        };
+        let limit = async move {
+            match grace {
+                crate::http::Grace::Upto(limit) => tokio::time::sleep(limit).await,
+                crate::http::Grace::Unbounded => std::future::pending::<()>().await,
+            }
+        };
+        tokio::select! {
+            () = limit => {}
+            () = end_now => {}
+        }
+        let _ = ended.send(true);
+        std::future::pending::<()>().await;
+    }));
     let incoming = futures_util::stream::unfold(incoming, |mut incoming| async move {
         incoming.recv().await.map(|connection| (connection, incoming))
     });
     // before any credential, on the OTLP receiver's and the PASS authority's port: a peer that stops answering pings
     // goes, a connection has at most as many streams as a cluster one, and a call waits for its answer at most
     // CALL_TIMEOUT; a connection with no call in flight for CONNECTION_IDLE closes (`Idle`) (SEC-CLU-88)
-    if let Err(error) = tonic::transport::Server::builder()
+    let serving = tonic::transport::Server::builder()
         .http2_keepalive_interval(Some(PING_EVERY))
         .http2_keepalive_timeout(Some(PING_TIMEOUT))
         .max_concurrent_streams(MAX_STREAMS)
         .timeout(CALL_TIMEOUT)
         .layer(tower::layer::layer_fn(|inner| Track { inner }))
         .add_routes(routes)
-        .serve_with_incoming_shutdown(incoming, stop)
-        .await
-    {
+        .serve_with_incoming_shutdown(incoming, signal);
+    if let Err(error) = serving.await {
         tracing::error!("the gRPC listener ({label}) stopped: {error}");
     }
 }
@@ -246,15 +274,29 @@ impl Drop for AbortOnDrop {
     }
 }
 
-/// Accept connections, each TLS handshake in a task of its own so a slow client does not hold up the others.
+/// When the accept loop stops, and whom it tells that its port is let go.
+struct Stopping {
+    stop: tokio::sync::oneshot::Receiver<()>,
+    freed: crate::http::Listening,
+}
+
+/// Accept connections until `stopping` says to stop, each TLS handshake in a task of its own so a slow client does not
+/// hold up the others; each connection's socket fails once `ended` turns true. The port is let go as it stops.
 async fn accept(
     listener: TcpListener,
     acceptor: Option<tokio_rustls::TlsAcceptor>,
     guard: Arc<crate::guard::Guard>,
     connections: tokio::sync::mpsc::Sender<std::io::Result<Connection>>,
+    ended: tokio::sync::watch::Receiver<bool>,
+    stopping: Stopping,
 ) {
+    let Stopping { mut stop, freed } = stopping;
     loop {
-        let (stream, remote) = match listener.accept().await {
+        let accepted = tokio::select! {
+            _ = &mut stop => break,
+            accepted = listener.accept() => accepted,
+        };
+        let (stream, remote) = match accepted {
             Ok(pair) => pair,
             Err(error) => {
                 tracing::debug!("gRPC accept failed: {error}");
@@ -269,7 +311,9 @@ async fn accept(
         let connections = connections.clone();
         let acceptor = acceptor.clone();
         let guard = Arc::clone(&guard);
+        let ended = ended.clone();
         tokio::spawn(async move {
+            let stream = crate::http::WriteStall::new(stream, None, None, Some(ended));
             let io: Box<dyn Io> = match acceptor {
                 None => Box::new(stream),
                 Some(acceptor) => {
@@ -295,6 +339,8 @@ async fn accept(
                 .await;
         });
     }
+    drop(listener);
+    freed.port_freed();
 }
 
 trait Io: AsyncRead + AsyncWrite + Unpin + Send {}

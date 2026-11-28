@@ -37,7 +37,7 @@ use tokio::sync::{mpsc, oneshot};
 use super::a2a::{response_of, Full, Open};
 use crate::channel_body::{ChannelBody, Chunk};
 use crate::guard::Event;
-use crate::http::{read_body, secure_request, ClientAddr, HttpState, TlsConnection};
+use crate::http::{read_body, secure_request, ClientAddr, Closing, HttpState, TlsConnection};
 
 /// The largest request body (embeddings of many texts).
 const MAX_BODY: usize = 16 * 1024 * 1024;
@@ -52,7 +52,8 @@ enum Head {
 struct HostRespond {
     head: Option<oneshot::Sender<Head>>,
     body: Option<mpsc::Sender<Chunk>>,
-    shutdown: tokio::sync::watch::Receiver<bool>,
+    /// The closing of the listener the request came over, or the process-wide stop when it came over none.
+    closing: tokio::sync::watch::Receiver<bool>,
     gone: CancelToken,
 }
 
@@ -80,7 +81,7 @@ impl Respond for HostRespond {
         };
         let mut chunk = Ok(Bytes::from(text.to_string()));
         loop {
-            if *self.shutdown.borrow() {
+            if *self.closing.borrow() {
                 self.gone.cancel();
                 return false;
             }
@@ -174,6 +175,7 @@ async fn authenticate_head(state: &HttpState, client: std::net::IpAddr, request:
 pub(crate) async fn handle(
     State(state): State<Arc<HttpState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Closing(closing): Closing,
     request: Request,
 ) -> Response {
     let over_tls = request.extensions().get::<TlsConnection>().is_some();
@@ -260,7 +262,6 @@ pub(crate) async fn handle(
     let gone = CancelToken::new();
     let mut cancel_on_drop = CancelOnDrop(Some(gone.clone()));
     let (head, first) = oneshot::channel::<Head>();
-    let shutdown = state.shutdown.clone();
     let spawned = std::thread::Builder::new()
         .name("moqui-llm-gateway".to_string())
         .spawn(move || {
@@ -268,7 +269,7 @@ pub(crate) async fn handle(
             let mut respond = HostRespond {
                 head: Some(head),
                 body: None,
-                shutdown,
+                closing,
                 gone,
             };
             work(&mut respond);

@@ -37,7 +37,7 @@ use moqui_core::listeners::{Action, ListenerInfo, Outcome};
 use moqui_core::startup::{Section, State};
 use moqui_lib::error::Error;
 
-use super::{panic_text, Ctx, Listener, Pass, Running, Stage, StopHow, StopPhase, Wanted, LIVE_STOP_GRACE};
+use super::{panic_text, Ctx, Listener, Now, Pass, Running, Stage, StopHow, StopPhase, Wanted, LIVE_STOP_GRACE};
 
 /// How long a stop waits past its grace for the listener to report it finished; one still not finished is dropped,
 /// which ends what is left.
@@ -79,29 +79,55 @@ pub(crate) trait Entry: Send {
     fn take_running(&mut self) -> Option<Box<dyn Send>>;
     fn address(&self) -> Option<SocketAddr>;
     fn info(&self, ctx: &Ctx) -> ListenerInfo;
+    /// Tell its listener's readers what it does now ([`Listener::published`]); a panic there is logged.
+    fn tell(&self, ctx: &Ctx);
 }
 
 /// A started listener as a stop waits for it, whatever its listener's types.
 trait Finishing: Send {
+    fn released(&mut self, wait: Duration) -> bool;
     fn finished(&mut self, wait: Duration) -> bool;
 }
 
 struct RunOf<L: Listener>(L::Run);
 
 impl<L: Listener> Finishing for RunOf<L> {
+    fn released(&mut self, wait: Duration) -> bool {
+        self.0.released(wait)
+    }
+
     fn finished(&mut self, wait: Duration) -> bool {
         self.0.finished(wait)
     }
 }
 
-/// A listener whose stop has begun, waited for until its deadline and then dropped on the calling thread.
+/// A listener whose stop has begun, waited for until its deadline and then dropped on the calling thread. While it
+/// drains, what ends its connections now is in the registry's [`super::Draining`].
 pub(crate) struct Stopping {
     name: &'static str,
     run: Box<dyn Finishing>,
     deadline: Instant,
+    _draining: Option<super::DrainGuard>,
 }
 
 impl Stopping {
+    /// Wait until the deadline for its port to be let go, which comes before its connections finish; false when it
+    /// was not by then.
+    fn released(&mut self) -> bool {
+        let wait = self.deadline.saturating_duration_since(Instant::now());
+        match catch_unwind(AssertUnwindSafe(|| self.run.released(wait))) {
+            Ok(released) => released,
+            Err(panic) => {
+                tracing::error!(
+                    "The {} listener's stop panicked: {}",
+                    self.name,
+                    panic_text(panic.as_ref())
+                );
+                false
+            }
+        }
+    }
+
     /// Wait until the deadline for the stop to finish, then drop it here; one that does not finish is dropped
     /// anyway, which ends what is left. A panic in either is logged naming the listener.
     pub(crate) fn finish(self) {
@@ -109,6 +135,7 @@ impl Stopping {
             name,
             mut run,
             deadline,
+            _draining,
         } = self;
         let wait = deadline.saturating_duration_since(Instant::now());
         match catch_unwind(AssertUnwindSafe(|| run.finished(wait))) {
@@ -165,6 +192,8 @@ pub(crate) struct Slot<L: Listener> {
     last_error: Option<String>,
     /// Its failed start's error in a boot pass, when it is fatal at boot, for the pass to return.
     boot_error: Option<Error>,
+    /// Why it is off (or skipped), as its `wanted` said, since the pass that turned it off or found it off.
+    off: Option<String>,
 }
 
 impl<L: Listener> Slot<L> {
@@ -178,6 +207,7 @@ impl<L: Listener> Slot<L> {
             pending: None,
             last_error: None,
             boot_error: None,
+            off: None,
         }
     }
 
@@ -266,18 +296,21 @@ impl<L: Listener> Slot<L> {
         }
     }
 
-    /// Begin to stop `run`: it takes no new connections, and its connections end as `how` says.
-    fn begin(&self, mut run: L::Run, how: StopHow) -> Stopping {
+    /// Begin to stop `run`: it takes no new connections, and its connections end as `how` says; while it drains, a
+    /// request may end them now ([`super::Draining`]).
+    fn begin(&self, ctx: &Ctx, mut run: L::Run, how: StopHow) -> Stopping {
         if let Err(err) = self.guard("stop", || run.begin_stop(how)) {
             tracing::error!(
                 "The {} listener did not stop cleanly, it is dropped: {err}",
                 self.name()
             );
         }
+        let draining = run.end_now().map(|end_now| ctx.draining.add(self.name(), end_now));
         Stopping {
             name: self.name(),
             run: Box::new(RunOf::<L>(run)),
             deadline: super::deadline_after(wait_for(how)),
+            _draining: draining,
         }
     }
 
@@ -285,10 +318,11 @@ impl<L: Listener> Slot<L> {
     fn turn_off(&mut self, ctx: &Ctx, pass: &Pass, state: State, stopping: &mut Vec<Stopping>) -> Outcome {
         self.found_off = None;
         self.last_error = None;
+        self.off = Some(state.detail().to_string());
         let detail = state.detail().to_string();
         match self.running.take() {
             Some(current) => {
-                stopping.push(self.begin(current.run, self.live_stop(pass)));
+                stopping.push(self.begin(ctx, current.run, self.live_stop(pass)));
                 self.record_stopped(ctx, pass, state);
                 self.outcome(Action::Stopped, detail)
             }
@@ -339,6 +373,7 @@ impl<L: Listener> Slot<L> {
         self.running = Some(current);
         self.found_off = None;
         self.last_error = None;
+        self.off = None;
         if own_row {
             self.recorded = None;
         } else {
@@ -390,13 +425,16 @@ impl<L: Listener> Slot<L> {
     }
 
     /// A new bind failed and `current`, the old settings, runs again or still: recorded on with the failure, which
-    /// the outcome reports as "kept on …".
+    /// the outcome reports as "kept on …". Logged in a boot pass or when the error is new, as a failed start is, so a
+    /// retried pass does not log it again.
     fn kept(&mut self, ctx: &Ctx, pass: &Pass, current: Current<L>, err: Error) -> Outcome {
         let err = err.to_string();
-        tracing::error!(
-            "The {} listener kept its old settings, the new ones did not bind: {err}",
-            self.name()
-        );
+        if pass.boot || self.last_error.as_deref() != Some(err.as_str()) {
+            tracing::error!(
+                "The {} listener kept its old settings, the new ones did not bind: {err}",
+                self.name()
+            );
+        }
         let state = current.run.state();
         let at = current
             .run
@@ -460,25 +498,36 @@ impl<L: Listener> Slot<L> {
             // a new address binds before the old one closes, so the listener is never closed between
             return match self.call_start(ctx, &bind, &in_place) {
                 Ok(Some(run)) => {
-                    stopping.push(self.begin(old.run, how));
+                    stopping.push(self.begin(ctx, old.run, how));
                     self.started(ctx, pass, Action::Rebound, Current { bind, in_place, run })
                 }
                 Ok(None) => {
-                    stopping.push(self.begin(old.run, how));
+                    stopping.push(self.begin(ctx, old.run, how));
                     self.found_off(ctx, pass, bind, in_place);
                     self.outcome(Action::Stopped, self.row_detail(ctx))
                 }
                 Err(err) => self.kept(ctx, pass, old, err),
             };
         }
-        // the new bind would collide with the old: the old stops first, waited for here since the new one takes its
-        // port, and binds again when the new one fails
+        // the new bind would collide with the old: the old stops first and lets its port go, waited for here since the
+        // new one takes it, then drains with the pass's other stops; it binds again when the new one fails
         let Current {
             bind: old_bind,
             in_place: old_in_place,
             run: old_run,
         } = old;
-        self.begin(old_run, how).finish();
+        let mut old_stop = self.begin(ctx, old_run, how);
+        if old_stop.released() {
+            stopping.push(old_stop);
+        } else {
+            // dropped now, which ends its loop and what it holds, so neither the new bind nor the old one's fallback
+            // waits on a loop that still holds the port
+            tracing::warn!(
+                "The {} listener did not let its port go within its stop's wait; it is dropped before the new bind",
+                self.name()
+            );
+            old_stop.finish();
+        }
         match self.call_start(ctx, &bind, &in_place) {
             Ok(Some(run)) => self.started(ctx, pass, Action::Rebound, Current { bind, in_place, run }),
             Ok(None) => {
@@ -630,10 +679,15 @@ impl<L: Listener> Entry for Slot<L> {
             return;
         };
         // dropped before the row says off: a wrapped listener of today stops in its drop
+        let draining = current
+            .run
+            .end_now()
+            .map(|end_now| ctx.draining.add(self.name(), end_now));
         Stopping {
             name: self.name(),
             run: Box::new(RunOf::<L>(current.run)),
             deadline,
+            _draining: draining,
         }
         .finish();
         self.pending = None;
@@ -648,6 +702,18 @@ impl<L: Listener> Entry for Slot<L> {
 
     fn address(&self) -> Option<SocketAddr> {
         self.running.as_ref().and_then(|current| current.run.address())
+    }
+
+    fn tell(&self, ctx: &Ctx) {
+        let now = match (&self.running, &self.last_error, &self.off) {
+            (Some(current), _, _) => Now::Running(&current.in_place),
+            (None, Some(_), _) => Now::Failed,
+            (None, None, Some(reason)) => Now::Off(reason),
+            (None, None, None) => Now::NotYet,
+        };
+        if let Err(err) = self.guard("report", || self.listener.published(ctx, now)) {
+            tracing::error!("The {} listener did not tell what it does: {err}", self.name());
+        }
     }
 
     fn info(&self, ctx: &Ctx) -> ListenerInfo {

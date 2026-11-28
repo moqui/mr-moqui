@@ -45,7 +45,6 @@
 #![cfg_attr(not(feature = "axum"), allow(dead_code))]
 
 use std::collections::{HashMap, HashSet};
-use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, RwLock, TryLockError};
 use std::time::{Duration, Instant, SystemTime};
@@ -72,16 +71,15 @@ const RECHECK: Duration = Duration::from_secs(5);
 const MISS_WARNING_EVERY: Duration = Duration::from_secs(60);
 const CERT_EXTENSIONS: [&str; 3] = ["crt", "pem", "cer"];
 
-/// What `lib.rs` hands to the listener: where to bind and how to answer handshakes.
-pub(crate) struct HttpsListen {
-    pub bind: SocketAddr,
+/// What the HTTPS listener answers handshakes with (plans/Runtime-Config.md §3.3, §8.3): built once at boot whenever
+/// the server has a web bind, even with HTTPS off, so the listener can be turned on while the server runs. Where it
+/// binds is read from the conf at each start (`crate::listeners`), not here.
+pub(crate) struct Material {
     pub config: Arc<rustls::ServerConfig>,
-    /// The certificates `config` serves, which an edge node's link settings share (`edge_link`).
+    /// The certificates `config` serves, which an edge node's link settings share (`edge_link`). With none loading
+    /// the listener binds only while ACME wants it, and then answers only its challenges (`crate::acme`); a local
+    /// node's passthrough tunnel uses `config` the same way.
     pub certs: Arc<CertStore>,
-    /// No certificate loads: the listener binds only once a name is set up with ACME, and then answers only its
-    /// challenges until a certificate is there (`crate::acme`). A local node's passthrough tunnel uses `config` the
-    /// same way.
-    pub standby: bool,
 }
 
 /// The webroot webapp's HTTPS listener settings: its switch and its port (plans/Runtime-Config.md §3.2).
@@ -102,7 +100,7 @@ impl Listen {
     }
 
     /// The port to bind, or `None` when the listener is off.
-    fn port(&self) -> Result<Option<u16>, Error> {
+    pub(crate) fn port(&self) -> Result<Option<u16>, Error> {
         if !self.enabled {
             return Ok(None);
         }
@@ -115,13 +113,10 @@ impl Listen {
     }
 }
 
-/// The HTTPS listener to start on `ip`, or `None` when it is off. With no certificate it stands by
-/// ([`HttpsListen::standby`]): a name with no certificate gets no HTTPS, and with none at all nothing listens until a
-/// name is set up with ACME.
-pub(crate) fn plan(runtime_dir: &Path, ip: IpAddr, listen: &Listen) -> Result<Option<HttpsListen>, Error> {
-    let Some(port) = listen.port()? else {
-        return Ok(None);
-    };
+/// The HTTPS listener's TLS material for `runtime_dir`: a dev instance's certificate made (and checked daily), the
+/// certificates of `runtime/cert` and the settings that serve them. With no certificate the listener binds only while
+/// ACME wants it (`crate::listeners`), so a name with no certificate gets no HTTPS.
+pub(crate) fn material(runtime_dir: &Path) -> Result<Material, Error> {
     let dir = runtime_dir.join("cert");
     if moqui_core::context::conf_env::instance_purpose() == "dev" {
         if let Err(err) = ensure_dev_cert(&dir) {
@@ -132,22 +127,11 @@ pub(crate) fn plan(runtime_dir: &Path, ip: IpAddr, listen: &Listen) -> Result<Op
         }
         renew_dev_cert_daily(&dir);
     }
-    let store = CertStore::new(dir.clone());
-    let standby = store.is_empty();
-    if standby {
-        tracing::warn!(
-            "The HTTPS listener is not started: no usable certificate in {}; add <domain>.crt and <domain>.key there, \
-             or set a name up with ACME on System › Certificates, which starts it",
-            dir.display()
-        );
-    }
-    let certs = Arc::new(store);
-    Ok(Some(HttpsListen {
-        bind: SocketAddr::new(ip, port),
+    let certs = Arc::new(CertStore::new(dir));
+    Ok(Material {
         config: Arc::new(server_config(Arc::clone(&certs))?),
         certs,
-        standby,
-    }))
+    })
 }
 
 /// The port [`plan`] binds at the start, without generating a certificate, for the port check, which requires it: when
@@ -252,8 +236,9 @@ impl CertStore {
         }
     }
 
-    /// Whether no pair in the directory loads.
-    fn is_empty(&self) -> bool {
+    /// Whether no pair in the directory loads, as of the last read (at most [`RECHECK`] old). It reads the directory
+    /// again when that is older: call it off an async thread.
+    pub(crate) fn is_empty(&self) -> bool {
         self.index().pairs.values().all(|pair| pair.loaded.is_none())
     }
 

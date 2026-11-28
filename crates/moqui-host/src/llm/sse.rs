@@ -43,7 +43,7 @@ use serde_json::{json, Value as Json};
 use tokio::sync::mpsc;
 
 use crate::channel_body::{ChannelBody, Chunk};
-use crate::http::{plain, HttpState};
+use crate::http::{plain, Closing, HttpState};
 use crate::notws::{key_user, origin_allowed, session_cookie, session_user, RequestSite};
 
 /// Event streams open at once on this node; one more is answered 503, and the client tries again.
@@ -203,6 +203,7 @@ pub(crate) async fn events(
     Path(run_id): Path<String>,
     Query(query): Query<HashMap<String, String>>,
     headers: HeaderMap,
+    Closing(closing): Closing,
     site: RequestSite,
 ) -> Response {
     let user_id = match owner_checked(&state, &headers, &site, &run_id).await {
@@ -216,12 +217,12 @@ pub(crate) async fn events(
     };
     let (tx, rx) = mpsc::channel::<Chunk>(64);
     let factory = Arc::clone(&state.factory);
-    let shutdown = state.shutdown.clone();
+    // the stream ends with the listener the request came over, or with the process when it came over none
     let spawned = std::thread::Builder::new()
         .name("moqui-agent-sse".to_string())
         .spawn(move || {
             let _open = open;
-            stream(&factory, &run_id, after, &tx, &shutdown);
+            stream(&factory, &run_id, after, &tx, &closing);
         });
     if let Err(error) = spawned {
         return crate::http::internal_error(&format!("the event stream did not start: {error}"));

@@ -47,7 +47,7 @@ pub use conf::{
     merge_conf, merge_files, merge_files_with, runtime_conf_file, ConfFile, ConfRole,
 };
 pub use factory::{
-    default_framework_dir, AgentOrigin, BeforeInit, BootOptions, ContextGuard, ExecutionContext,
+    default_framework_dir, AgentOrigin, BeforeInit, BootOptions, ConfSnapshot, ContextGuard, ExecutionContext,
     ExecutionContextFactory, Executor,
 };
 pub use identity::secret_parameter;

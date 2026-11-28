@@ -370,10 +370,31 @@ pub struct Server {
 }
 
 impl Server {
-    /// The address the plain HTTP listener bound. A port of 0 in the request is replaced with the real port.
+    /// The address the plain HTTP listener is bound to: where it is now, as it binds again while the server runs
+    /// ([`Server::listener_address`]). While HTTP is off (turned off, or a server whose conf leaves it off or whose
+    /// HTTP port did not bind at the start), where it bound at the start, or port 0 of 127.0.0.1 when it never bound.
+    /// A port of 0 in the request is replaced with the real port.
     #[must_use]
     pub fn address(&self) -> std::net::SocketAddr {
-        self.address
+        self.listener_address("HTTP").unwrap_or(self.address)
+    }
+
+    /// The address the listener whose startup report row is `name` (`HTTP`, `HTTPS`, `gRPC`, `SSH`) is bound to now,
+    /// as the listener registry last published it; none while it does not run, or once the server stops.
+    #[must_use]
+    pub fn listener_address(&self, name: &str) -> Option<std::net::SocketAddr> {
+        #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
+        {
+            self.factory
+                .as_ref()?
+                .extension_if_present::<listeners::Addresses>()?
+                .get(name)
+        }
+        #[cfg(not(all(feature = "axum", any(feature = "postgres", feature = "mysql"))))]
+        {
+            let _ = name;
+            None
+        }
     }
 
     /// The SSH server's address, when `ssh-server@enabled` is true and this build has the `ssh` feature.
@@ -454,21 +475,14 @@ impl Server {
     /// (`moqui_conf__pass_authority__grpc_enabled=true`).
     #[must_use]
     pub fn grpc_address(&self) -> Option<std::net::SocketAddr> {
-        #[cfg(feature = "grpc")]
-        {
-            let factory = self.factory.as_ref()?;
-            *lock(&factory.extension(|_| grpc_listen::GrpcAddress::default()).0)
-        }
-        #[cfg(not(feature = "grpc"))]
-        {
-            None
-        }
+        self.listener_address("gRPC")
     }
 
-    /// The public HTTPS listener, when one is running (`webapp-list/webapp[webroot]@https-listen-port`, certificates in `runtime/cert`).
+    /// The public HTTPS listener, when one is running (`webapp-list/webapp[webroot]@https-listen-port`, certificates in
+    /// `runtime/cert`): where it is now ([`Server::listener_address`]), else where it bound at the start.
     #[must_use]
     pub fn https_address(&self) -> Option<std::net::SocketAddr> {
-        self.https_address
+        self.listener_address("HTTPS").or(self.https_address)
     }
 
     /// The node's web app in this process, with or without ports: requests and sockets of a program that hosts the
@@ -524,6 +538,35 @@ impl Drop for Server {
         if let Some(thread) = self.thread.take() {
             join_server(thread);
         }
+    }
+}
+
+/// [`start_server`] with the web listeners from the conf and the properties set before it (each one's switch and port,
+/// `webapp-list/webapp[webroot]@http-bind`), as `moqui run` reads them, rather than on an address: a web port that does
+/// not bind is a Failed row on System Home, and the server starts without it (plans/Runtime-Config.md §6).
+///
+/// # Errors
+///
+/// Returns an error when this build has no HTTP server, boot fails, or a required port (the cluster port, SSH) cannot
+/// be bound.
+pub fn start_server_by_conf(
+    runtime_dir: impl AsRef<std::path::Path>,
+    framework_dir: impl AsRef<std::path::Path>,
+    cluster_dir: impl AsRef<std::path::Path>,
+) -> Result<Server, moqui_lib::error::Error> {
+    #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
+    {
+        start_server_in(
+            runtime_dir.as_ref().to_path_buf(),
+            framework_dir.as_ref().to_path_buf(),
+            cluster_dir.as_ref().to_path_buf(),
+            ListenBind::Property,
+        )
+    }
+    #[cfg(not(all(feature = "axum", any(feature = "postgres", feature = "mysql"))))]
+    {
+        let _ = (runtime_dir, framework_dir, cluster_dir);
+        Err(moqui_lib::error::Error::new("http server is not in this build"))
     }
 }
 
@@ -1734,13 +1777,12 @@ fn serve_thread(
             return Err(err);
         }
     };
-    let address = match listen_address(&bind, &moqui_core::context::conf_env::webroot_setting) {
-        Ok(address) => address,
-        Err(err) => {
-            ready.fail(&err);
-            return Err(err);
-        }
-    };
+    // a web setting that does not parse is the listener's own Failed or Off row, and the start goes on
+    // (plans/Runtime-Config.md §6); the address read here is only for the warnings below
+    let address = listen_address(&bind, &moqui_core::context::conf_env::webroot_setting).unwrap_or_else(|err| {
+        tracing::warn!("The web listeners' settings: {err}");
+        None
+    });
     // no port: the addresses a server reports are port 0
     let unbound = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 0));
     let factory = process
@@ -1817,14 +1859,17 @@ fn serve_thread(
         .runtime
         .as_ref()
         .ok_or_else(|| moqui_lib::error::Error::new("http server has no runtime"))?;
-    // After the boot, as for the HTTP port: conf defaults and runtime/.env are read there.
-    let https_listen = tls::Listen::of(&moqui_core::context::conf_env::webroot_setting);
-    let https = match address.map(|address| tls::plan(&runtime_dir, address.ip, &https_listen)) {
-        None => None,
-        Some(Ok(https)) => https,
-        Some(Err(err)) => {
-            ready.fail(&err);
-            return Err(err);
+    // The HTTPS listener's TLS material, whenever there is a web bind, so HTTPS can be turned on while the server runs
+    // (plans/Runtime-Config.md §3.3): one that does not build leaves HTTPS Off, saying so, and the start goes on.
+    let https = if matches!(bind, ListenBind::None) {
+        None
+    } else {
+        match tls::material(&runtime_dir) {
+            Ok(material) => Some(material),
+            Err(err) => {
+                tracing::error!("The HTTPS listener has no TLS settings, it stays off: {err}");
+                None
+            }
         }
     };
     // The certificates the listener serves, for the resource readings: when each expires (System home, the gauge).
@@ -1909,20 +1954,28 @@ fn listen_address(
             } else {
                 None
             };
-            // http-bind: the address to listen on, every address when empty (127.0.0.1 keeps a dev instance local);
-            // http-host stays the host name of the URLs the server writes
-            let host = webroot("http-bind");
-            let ip = if host.trim().is_empty() {
-                std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
-            } else if host.trim() == "localhost" {
-                std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
-            } else {
-                host.trim().parse().map_err(|_| {
-                    moqui_lib::error::Error::new(format!("the webroot webapp's http-bind {host} is not an IP address"))
-                })?
-            };
-            Ok(Some(WebBind { ip, http_port }))
+            Ok(Some(WebBind {
+                ip: web_bind_ip(&webroot("http-bind"))?,
+                http_port,
+            }))
         }
+    }
+}
+
+/// The webroot webapp's `http-bind` `host`: the address the web listeners listen on, every address when empty
+/// (127.0.0.1 keeps a dev instance local); `http-host` stays the host name of the URLs the server writes.
+///
+/// # Errors
+///
+/// When it is not an IP address (or `localhost`).
+#[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
+pub(crate) fn web_bind_ip(host: &str) -> Result<std::net::IpAddr, moqui_lib::error::Error> {
+    match host.trim() {
+        "" => Ok(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)),
+        "localhost" => Ok(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+        text => text.parse().map_err(|_| {
+            moqui_lib::error::Error::new(format!("the webroot webapp's http-bind {text} is not an IP address"))
+        }),
     }
 }
 
@@ -1932,7 +1985,7 @@ fn listen_address(
 ///
 /// When it is not a port, empty included (a retired value the boot refuses by name; plans/Runtime-Config.md §8.2).
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
-fn web_listen_port(name: &str, text: &str) -> Result<u16, moqui_lib::error::Error> {
+pub(crate) fn web_listen_port(name: &str, text: &str) -> Result<u16, moqui_lib::error::Error> {
     text.trim().parse().map_err(|_| {
         moqui_lib::error::Error::new(format!("the webroot webapp's {name} \"{}\" is not a port", text.trim()))
     })
