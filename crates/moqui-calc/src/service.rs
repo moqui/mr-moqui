@@ -698,7 +698,8 @@ fn room_out(facade: &EntityFacade, room: &Room, user_id: &str) -> BTreeMap<Strin
 }
 
 /// A workbook file as a model: the engine's reader for an xlsx it takes, else the cells of each sheet as values
-/// (`read#Spreadsheet`'s reader: xls, xlsb, ods, and an xlsx without the parts the engine needs).
+/// (`read#Spreadsheet`'s reader: xls, xlsb, ods, and an xlsx without the parts the engine needs), read from the file
+/// once, each value in its own cell: a sheet's rows start at its used area's first column, which is not always A.
 fn workbook_model(bytes: &[u8], name: &str) -> Result<moqui_core::workbook::ironcalc::base::Model<'static>, Error> {
     // refused before either reader parses it (SEC-TLS-114)
     moqui_core::service::spreadsheet::check_expanded_size(bytes, moqui_core::service::spreadsheet::MAX_EXPANDED_BYTES)
@@ -706,22 +707,20 @@ fn workbook_model(bytes: &[u8], name: &str) -> Result<moqui_core::workbook::iron
     match workbook::open_xlsx(bytes, name) {
         Ok(model) => Ok(model),
         Err(engine_error) => {
-            let first = moqui_core::service::spreadsheet::read_sheet_bytes(bytes, "", 0).map_err(|_| engine_error)?;
+            let sheets = moqui_core::service::spreadsheet::read_book_bytes(bytes).map_err(|_| engine_error)?;
             let mut writer = workbook::WorkbookWriter::new()?;
             let plain = writer.style(&workbook::CellStyle::default());
             let zone = moqui_core::l10n::time_zone();
-            for (index, sheet_name) in first.sheet_names.iter().enumerate() {
-                let data = if index == 0 {
-                    first.clone()
-                } else {
-                    moqui_core::service::spreadsheet::read_sheet_bytes(bytes, sheet_name, index)
-                        .map_err(|err| Error::new(err.to_string()))?
-                };
-                let sheet = writer.add_sheet(sheet_name)?;
+            for read in sheets {
+                let data = read.map_err(|err| Error::new(err.to_string()))?;
+                let sheet = writer.add_sheet(&data.sheet_name)?;
+                let first_column =
+                    usize::try_from(data.first_column.max(1)).map_err(|_| Error::new("Too many columns"))?;
                 for (row, number) in data.rows.iter().zip(&data.row_numbers) {
                     let row_number = i32::try_from(*number).map_err(|_| Error::new("Too many rows for a sheet"))?;
                     for (column, value) in row.iter().enumerate() {
-                        let column = i32::try_from(column + 1).map_err(|_| Error::new("Too many columns"))?;
+                        let column =
+                            i32::try_from(first_column + column).map_err(|_| Error::new("Too many columns"))?;
                         match cell_data(value, &zone) {
                             CellData::Empty => {}
                             CellData::Text(found) => writer.text(sheet, row_number, column, &found, plain)?,

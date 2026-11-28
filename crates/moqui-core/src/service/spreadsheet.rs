@@ -93,6 +93,8 @@ pub struct SheetData {
     pub rows: Vec<Vec<Value>>,
     /// The sheet row number of each of `rows`.
     pub row_numbers: Vec<u32>,
+    /// The sheet column number (from 1) of the first value of each of `rows`: the used area's first column.
+    pub first_column: u32,
 }
 
 /// Read sheet `sheet_name` (by index `sheet_index` when empty) of a spreadsheet's bytes (xlsx, xlsm, xlsb, xls or
@@ -119,9 +121,29 @@ pub fn read_sheet_bytes(bytes: &[u8], sheet_name: &str, sheet_index: usize) -> R
             names.join(", ")
         )));
     };
-    let range = sheet_range(&mut book, &chosen)?;
+    book_sheet(&mut book, names, chosen)
+}
+
+/// Every sheet of a spreadsheet's bytes, in order, from one read of the file: what [`read_sheet_bytes`] answers for
+/// each, a sheet that cannot be read or is too large as its error.
+///
+/// # Errors
+///
+/// Returns an error when the bytes are not a spreadsheet.
+pub fn read_book_bytes(bytes: &[u8]) -> Result<Vec<Result<SheetData, LibError>>, LibError> {
+    let mut book = open_book(bytes)?;
+    let names = book.sheet_names();
+    Ok(names
+        .iter()
+        .map(|name| book_sheet(&mut book, names.clone(), name.clone()))
+        .collect())
+}
+
+/// Sheet `chosen` of an open book whose sheets are `names`.
+fn book_sheet(book: &mut Sheets<Cursor<Vec<u8>>>, names: Vec<String>, chosen: String) -> Result<SheetData, LibError> {
+    let range = sheet_range(book, &chosen)?;
     let zone = crate::l10n::time_zone();
-    let first_row = range.start().map_or(0, |(row, _)| row);
+    let (first_row, first_column) = range.start().unwrap_or((0, 0));
     let mut rows = Vec::new();
     let mut row_numbers = Vec::new();
     for (index, row) in range.rows().enumerate() {
@@ -141,6 +163,7 @@ pub fn read_sheet_bytes(bytes: &[u8], sheet_name: &str, sheet_index: usize) -> R
         sheet_name: chosen,
         rows,
         row_numbers,
+        first_column: first_column.saturating_add(1),
     })
 }
 
