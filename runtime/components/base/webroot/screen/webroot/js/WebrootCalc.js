@@ -19,7 +19,8 @@
  *     dragged on the grid (on any sheet; a data sheet's as its table's columns), a cell's editor on a double click,
  *     Delete, a paste of rows of
  *     cells, a column's width and a row's height, the fill handle dragged down, up or across (the engine's autofill),
- *     and sheets added, renamed and deleted. Each edit is sent to the server, which answers the
+ *     cells merged and unmerged (a merged cell drawn as one box, each row its own slice of it), and sheets added,
+ *     renamed and deleted. Each edit is sent to the server, which answers the
  *     room's new state (emitted as changed, for the holder of room to take); the cells are then asked again. A data
  *     sheet is not edited. It also emits selection (sheet, row, column, lastRow, lastColumn and the range's name).
  *     A saved document's room (room.shared) is edited together: the sheet joins it on the notification socket
@@ -157,6 +158,47 @@
         }
         if (!decor.hide) part("m-calc-value", found.text);
         return box;
+    };
+
+    /** The merged cell (`row`, `column`, `width`, `height`, as the layout and a block give them) that holds a cell, or null. */
+    calc.boxAt = (boxes, row, column) => (boxes || []).find((box) => row >= box.row && row < box.row + box.height && column >= box.column && column < box.column + box.width) || null;
+    /** A range (row, column, lastRow, lastColumn) grown to the merged cells it meets, as a selection of one is the whole box. */
+    calc.expandToMerges = (range, boxes) => {
+        const out = Object.assign({}, range);
+        for (let grown = true; grown;) {
+            grown = false;
+            for (const box of boxes || []) {
+                const lastRow = box.row + box.height - 1, lastColumn = box.column + box.width - 1;
+                if (box.row > out.lastRow || lastRow < out.row || box.column > out.lastColumn || lastColumn < out.column) continue;
+                if (box.row < out.row) { out.row = box.row; grown = true; }
+                if (box.column < out.column) { out.column = box.column; grown = true; }
+                if (lastRow > out.lastRow) { out.lastRow = lastRow; grown = true; }
+                if (lastColumn > out.lastColumn) { out.lastColumn = lastColumn; grown = true; }
+            }
+        }
+        return out;
+    };
+    /**
+     * What a cell of a merged cell draws (plans/IronCalc-DB2.md CG2.6): its slice of the box, the anchor's content (a
+     * cell of the cache, calc.blockRows) laid over the whole box and shifted by the cell's place in it (`x`, `y`, pixels),
+     * the box `width` and `height` wide and high. The slice reaches a pixel into the cell's right border and the row's
+     * lower one where the box goes on (`right`, `below`), so no grid line crosses it. Each row draws its own, as the
+     * table draws the rows as they come into view.
+     */
+    calc.sliceNode = (anchor, place) => {
+        const doc = root.document, css = (anchor && anchor.css) || {};
+        const slice = doc.createElement("div");
+        slice.className = "m-calc-slice";
+        slice.style.right = place.right ? "-1px" : "0";
+        slice.style.bottom = place.below ? "-1px" : "0";
+        if (css["background-color"]) slice.style.backgroundColor = css["background-color"];
+        const content = doc.createElement("div");
+        content.className = "m-calc-box";
+        Object.assign(content.style, { left: -place.x + "px", top: -place.y + "px", width: Math.max(0, place.width) + "px", height: Math.max(0, place.height) + "px" });
+        for (const name of ["text-align", "color", "font-weight", "font-style", "text-decoration", "white-space"]) if (css[name]) content.style.setProperty(name, css[name]);
+        content.appendChild(calc.cellNode(anchor));
+        slice.appendChild(content);
+        return slice;
     };
 
     /** The kinds of rule the conditional formats dialog makes (calc.ruleOf), and a cell value rule's comparisons. */
@@ -514,6 +556,9 @@
             + '<q-item clickable v-close-popup @click="freeze(true)"><q-item-section>Freeze down to this row and column</q-item-section></q-item>'
             + '<q-item clickable v-close-popup @click="freeze(false)"><q-item-section>Unfreeze</q-item-section></q-item>'
             + '<q-item clickable v-close-popup @click="fillDown"><q-item-section>Fill the first row selected down</q-item-section></q-item>'
+            + '<q-separator></q-separator>'
+            + '<q-item clickable v-close-popup @click="merge(true)"><q-item-section>Merge the cells selected</q-item-section></q-item>'
+            + '<q-item clickable v-close-popup @click="merge(false)"><q-item-section>Unmerge the cells selected</q-item-section></q-item>'
             + '</q-list></q-btn-dropdown>'
             + '<q-btn flat dense round size="sm" icon="rule" aria-label="Conditional formats" @click="openRules"><q-tooltip>Conditional formats</q-tooltip></q-btn>'
             + '<q-btn flat dense no-caps size="sm" icon="insert_chart" label="Chart" @click="openChart"><q-tooltip>A chart of the cells selected</q-tooltip></q-btn>'
@@ -636,7 +681,7 @@
             this.seq = Number((this.room && this.room.seq) || 0); this.socket = null; this.peerMap = new Map(); this.editingCell = false; this.rereadWaiting = false;
             // a reference being pointed at into the formula bar: the cell typed into (sheet, row, column), and where in the
             // bar's text the reference goes (from, to); armed once the grid of the sheet shown is pressed
-            this.pointing = null; this.reselect = null;
+            this.pointing = null; this.reselect = null; this.boxes = []; this.boxKeys = new Set(); this.widthsBuilt = []; this.rowDrawn = 0;
             this.clientId = "calc-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
         },
         mounted() {
@@ -756,9 +801,13 @@
                 const rowCount = extent.rows, columnCount = extent.columns;
                 this.columnCount = columnCount; this.rowCount = rowCount;
                 this.built = { frozenRows: Number(sheet.frozenRows || 0), frozenColumns: Number(sheet.frozenColumns || 0), widths: JSON.stringify((sheet.widths || []).slice(0, columnCount)), name: sheet.name,
-                    heights: JSON.stringify(sheet.heights || []) };
+                    heights: JSON.stringify(sheet.heights || []), merges: JSON.stringify(sheet.merges || []) };
                 // the rows with a height of their own (fill::layout), in pixels
                 this.heights = new Map((sheet.heights || []).map(([row, height]) => [Number(row), Number(height)]));
+                // the merged cells: the layout's, and those of the blocks loaded (a sheet with more than the layout gives)
+                this.boxes = (sheet.merges || []).slice(); this.boxKeys = new Set(this.boxes.map((box) => box.row + ":" + box.column));
+                this.widthsBuilt = [];
+                for (let c = 1; c <= columnCount; c++) this.widthsBuilt.push(Math.max(30, Number((sheet.widths || [])[c - 1]) || 90));
                 const formatter = (cell) => {
                     const row = cell.getRow().getData().id, column = cell.getColumn().getDefinition().calcColumn;
                     const cells = vm.rows().get(row);
@@ -768,7 +817,9 @@
                     // another's place: an outline in their colour
                     const peer = vm.peerMap.get(row + ":" + column);
                     element.style.boxShadow = peer ? "inset 0 0 0 2px " + peer : "";
-                    return calc.cellNode(found);
+                    const box = vm.boxes.length ? calc.boxAt(vm.boxes, row, column) : null;
+                    element.classList.toggle("m-calc-merged", !!box);
+                    return box ? vm.boxSlice(box, row, column) : calc.cellNode(found);
                 };
                 // a copy takes the texts on screen: the table holds no data of its own
                 const accessorClipboard = (value, data, type, params, column) => {
@@ -804,6 +855,8 @@
                     // a click on a cell keeps the formula bar's focus while a reference is pointed at
                     if (vm.editable) calc.holdFocus(vm.table, () => !!vm.pointing);
                     if (vm.reselect) vm.selectAgain();
+                    // the height a row is drawn at, for the merged cells over rows not drawn yet
+                    try { const first = vm.table.getRows()[0]; vm.rowDrawn = (first && first._row && first._row.getHeight()) || vm.rowDrawn; } catch (_) { /* no rows */ }
                     // the fill handle's drop is the engine's autofill, as Fill down is
                     if (cellEdits) calc.takeFillHandle(vm.table, (source, target) => vm.fillTo(source, target));
                     if (topRow && topRow > 1) vm.table.scrollToRow(Math.min(topRow, rowCount), "top", false).then(() => vm.load(), () => vm.load()); else vm.load();
@@ -839,6 +892,10 @@
                     const target = this.cache.get(sheetIndex) || rows;
                     if (!this.cache.has(sheetIndex)) this.cache.set(sheetIndex, target);
                     for (const [row, cells] of calc.blockRows(block)) target.set(row, cells);
+                    if (this.table === table) for (const box of block.merges || []) {
+                        const key = box.row + ":" + box.column;
+                        if (!this.boxKeys.has(key)) { this.boxKeys.add(key); this.boxes.push(box); }
+                    }
                     // the sheet may have changed while the request ran: its rows are kept, and nothing of this table is drawn
                     if (this.table !== table || this.sheetIndex !== sheetIndex) return;
                     for (const row of table.getRows("visible")) row.reformat();
@@ -861,6 +918,8 @@
                 const next = { row: Math.min(rowOf(bounds.start), rowOf(bounds.end)), column: Math.min(columnOf(bounds.start), columnOf(bounds.end)),
                     lastRow: Math.max(rowOf(bounds.start), rowOf(bounds.end)), lastColumn: Math.max(columnOf(bounds.start), columnOf(bounds.end)) };
                 if (this.pointing) { this.pointAt(next); return; }
+                // a merged cell is selected whole, its anchor the cell typed into
+                if (this.boxes && this.boxes.length) Object.assign(next, calc.expandToMerges(next, this.boxes));
                 const moved = next.row !== this.active.row || next.column !== this.active.column;
                 this.active = next;
                 this.$emit("selection", Object.assign({ sheet: this.sheetIndex, name: calc.rangeName(next, (this.sheet() || {}).name) }, next));
@@ -1021,7 +1080,8 @@
                     const same = this.table && extent.rows <= this.rowCount && extent.columns <= this.columnCount && built.name === sheet.name
                         && built.frozenRows === Number(sheet.frozenRows || 0) && built.frozenColumns === Number(sheet.frozenColumns || 0)
                         && built.widths === JSON.stringify((sheet.widths || []).slice(0, this.columnCount))
-                        && built.heights === JSON.stringify(sheet.heights || []);
+                        && built.heights === JSON.stringify(sheet.heights || [])
+                        && built.merges === JSON.stringify(sheet.merges || []);
                     if (same) this.load(); else this.build(top);
                     // what is being typed in the bar is left as it is
                     const typing = this.$refs.bar && root.document && root.document.activeElement === this.$refs.bar && this.barText !== this.barOriginal;
@@ -1046,6 +1106,22 @@
                 return this.edit([edit]);
             },
             freeze(on) { return this.edit([{ op: "freeze", sheet: this.sheetIndex, rows: on ? this.active.row : 0, columns: on ? this.active.column - 1 : 0 }]); },
+            merge(on) { return this.edit([Object.assign({ op: on ? "merge" : "unmerge" }, this.selection())]); },
+            // a merged cell's slice for the cell at row, column of it (calc.sliceNode), from the widths the table was built
+            // with and the rows' heights as drawn
+            boxSlice(box, row, column) {
+                const cells = this.rows().get(box.row), anchor = cells ? cells[box.column - 1] : null;
+                const width = (c) => this.widthsBuilt[c - 1] || 90;
+                const height = (r) => {
+                    let drawn = 0;
+                    try { const at = this.table && this.table.getRow(r); drawn = at && at._row ? at._row.getHeight() : 0; } catch (_) { drawn = 0; }
+                    return drawn || (this.heights.get(r) ? this.heights.get(r) + 1 : this.rowDrawn || 29);
+                };
+                const place = { x: 0, y: 0, width: -1, height: -1, right: column < box.column + box.width - 1, below: row < box.row + box.height - 1 };
+                for (let c = box.column; c < box.column + box.width; c++) { if (c < column) place.x += width(c); place.width += width(c); }
+                for (let r = box.row; r < box.row + box.height; r++) { if (r < row) place.y += height(r); place.height += height(r); }
+                return calc.sliceNode(anchor, place);
+            },
             fillDown() {
                 if (this.active.lastRow <= this.active.row) return null;
                 return this.edit([{ op: "fill", sheet: this.sheetIndex, row: this.active.row, column: this.active.column, width: this.active.lastColumn - this.active.column + 1, height: 1, toRow: this.active.lastRow }]);
@@ -1065,6 +1141,9 @@
             // a cell's editor: what was typed into it (asked when it opens), set on Enter, Tab or leaving it
             cellEditor(cell, onRendered, success, cancel) {
                 const vm = this, at = { sheet: this.sheetIndex, row: cell.getRow().getData().id, column: cell.getColumn().getDefinition().calcColumn };
+                // a merged cell is typed into at its anchor
+                const box = calc.boxAt(this.boxes, at.row, at.column);
+                if (box) { at.row = box.row; at.column = box.column; }
                 const input = document.createElement("input");
                 input.className = "m-calc-cell-editor"; input.spellcheck = false; input.autocomplete = "off";
                 const shown = (vm.rows().get(at.row) || [])[at.column - 1];

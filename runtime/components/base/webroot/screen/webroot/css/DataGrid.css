@@ -173,5 +173,10 @@ body.body--light .m-calc-suggest { background: #fff; }
 .m-calc-value { position: relative; }
 .m-calc-icon { position: relative; float: left; margin-right: 4px; }
 .m-calc-icon-off { opacity: .3; }
+/* a merged cell: each of its cells draws its slice of the box, over its own grid lines */
+.m-data-grid.tabulator .tabulator-row .tabulator-cell.m-calc-merged { overflow: visible; }
+.m-calc-slice { position: absolute; left: 0; top: 0; overflow: hidden; background-color: var(--m-panel-bg); }
+.m-calc-box { position: absolute; display: flex; flex-direction: column; justify-content: flex-end; padding: 4px; box-sizing: border-box; overflow: hidden;
+    white-space: nowrap; text-overflow: ellipsis; }
 /* pointing at a reference for the formula bar */
 .m-calc-pointing .tabulator-cell { cursor: cell; }

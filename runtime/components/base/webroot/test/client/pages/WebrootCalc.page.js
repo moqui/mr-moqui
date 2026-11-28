@@ -294,3 +294,24 @@ test("a conditional format's form is the engine's rule, and a rule of the sheet 
     assert.equal(calc.ruleLabel({ type: "DuplicateValues" }), "Duplicate Values");
 });
 
+test("a merged cell is selected whole and each of its cells draws its slice of the box", () => {
+    const boxes = [{ row: 2, column: 2, width: 2, height: 3 }, { row: 1, column: 4, width: 3, height: 1 }];
+    assert.deepEqual(calc.boxAt(boxes, 4, 3), boxes[0]);
+    assert.equal(calc.boxAt(boxes, 5, 3), null);
+    assert.equal(calc.boxAt([], 1, 1), null);
+    // a selection meeting a box takes it whole, and a box it then meets
+    assert.deepEqual(calc.expandToMerges({ row: 3, column: 3, lastRow: 3, lastColumn: 3 }, boxes), { row: 2, column: 2, lastRow: 4, lastColumn: 3 });
+    assert.deepEqual(calc.expandToMerges({ row: 1, column: 3, lastRow: 2, lastColumn: 4 }, boxes), { row: 1, column: 2, lastRow: 4, lastColumn: 6 });
+    assert.deepEqual(calc.expandToMerges({ row: 9, column: 9, lastRow: 9, lastColumn: 9 }, boxes), { row: 9, column: 9, lastRow: 9, lastColumn: 9 });
+    // the anchor's content over the box, shifted to the cell's place in it, a pixel over the lines inside it
+    const anchor = { text: "Total", css: { "font-weight": "600", "background-color": "#FFF9C4", "text-align": "center" } };
+    const slice = calc.sliceNode(anchor, { x: 90, y: 28, width: 179, height: 83, right: false, below: true });
+    assert.equal(slice.className, "m-calc-slice");
+    assert.deepEqual([slice.style.right, slice.style.bottom, slice.style.backgroundColor], ["0px", "-1px", "rgb(255, 249, 196)"]);
+    const box = slice.firstChild;
+    assert.deepEqual([box.style.left, box.style.top, box.style.width, box.style.height, box.style.textAlign, box.style.fontWeight],
+        ["-90px", "-28px", "179px", "83px", "center", "600"]);
+    assert.equal(box.textContent, "Total");
+    assert.equal(calc.sliceNode(null, { x: 0, y: 0, width: 10, height: 10, right: true, below: false }).firstChild.textContent, "", "an anchor not loaded yet");
+});
+
