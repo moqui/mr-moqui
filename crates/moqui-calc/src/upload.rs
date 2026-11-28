@@ -37,8 +37,10 @@
 //! inflated-size check and the stored overlay's 8 MB ([`prepare_for_room`]).
 
 use moqui_core::context::Error;
-use moqui_core::workbook::ironcalc::base::types::{Cell, SheetState, Worksheet};
-use moqui_core::workbook::ironcalc::base::Model;
+use moqui_core::workbook::ironcalc::base::types::{Cell, Col, Row, SheetState, Worksheet};
+use moqui_core::workbook::ironcalc::base::{
+    Model, COLUMN_WIDTH_FACTOR, DEFAULT_COLUMN_WIDTH, DEFAULT_ROW_HEIGHT, ROW_HEIGHT_FACTOR,
+};
 
 use crate::fill::{self, table_name, SheetRows};
 use crate::service::{MAX_OVERLAY_BYTES, MAX_WORKBOOK_BYTES};
@@ -56,14 +58,16 @@ fn is_ignorable(ch: char) -> bool {
         | '\u{1d173}'..='\u{1d17a}' | '\u{e0000}'..='\u{e0fff}')
 }
 
-/// A name as names are compared here: in Unicode's composed form (NFC), without the characters it may hold unseen
-/// ([`is_ignorable`]), trimmed, in capitals as the engine compares sheet names. A name of other letters that only look
+/// A name as names are compared here: without the characters it may hold unseen ([`is_ignorable`]), first, so one
+/// between a letter and its accent does not keep them apart, then in Unicode's composed form (NFC), trimmed, in
+/// capitals as the engine compares sheet names. A name of other letters that only look
 /// alike (a Cyrillic `О` for a Latin `O`) is another name: it is not caught, and needs not be, since such a sheet is
 /// never taken as a data sheet and holds only what its author typed.
 pub(crate) fn name_key(name: &str) -> String {
     use unicode_normalization::UnicodeNormalization;
-    name.nfc()
+    name.chars()
         .filter(|ch| !is_ignorable(*ch))
+        .nfc()
         .collect::<String>()
         .trim()
         .to_uppercase()
@@ -124,9 +128,25 @@ pub fn overlay_refusal(model: &Model<'_>, data_sheets: &[String]) -> Option<Stri
     refusal(model, data_sheets, false)
 }
 
+/// The narrowest a data sheet's column is, in pixels: a width below it would hide the column for every reader, as
+/// hiding it would, so a room's width edit of a data sheet is held to it (room.rs `apply`) and a saved overlay's
+/// narrower one is not kept.
+pub(crate) const MIN_DATA_WIDTH: f64 = 20.0;
+/// The lowest a data sheet's row is, in pixels (as [`MIN_DATA_WIDTH`]).
+pub(crate) const MIN_DATA_HEIGHT: f64 = 12.0;
+
+fn too_narrow(col: &Col) -> bool {
+    col.width * COLUMN_WIDTH_FACTOR < MIN_DATA_WIDTH
+}
+
+fn too_low(row: &Row) -> bool {
+    row.height * ROW_HEIGHT_FACTOR < MIN_DATA_HEIGHT
+}
+
 /// Whether a data sheet of a saved overlay holds what its stored form does not: a cell below its header, or what a
 /// view draws over its rows or hides of them (conditional formats, merged cells, comments, drawings, links, a row's or
-/// column's style or hiding, the sheet hidden). Its widths, heights and frozen panes are an author's to set.
+/// column's style or hiding, a width or height that hides one, the sheet hidden). Its widths, heights and frozen panes
+/// are an author's to set.
 fn holds_more(worksheet: &Worksheet) -> bool {
     worksheet.sheet_data.rows().into_iter().any(|row| row > 1)
         || !worksheet.conditional_formatting.is_empty()
@@ -138,8 +158,11 @@ fn holds_more(worksheet: &Worksheet) -> bool {
         || worksheet
             .rows
             .iter()
-            .any(|row| row.hidden || row.s != 0 || row.custom_format)
-        || worksheet.cols.iter().any(|col| col.hidden || col.style.is_some())
+            .any(|row| row.hidden || row.s != 0 || row.custom_format || too_low(row))
+        || worksheet
+            .cols
+            .iter()
+            .any(|col| col.hidden || col.style.is_some() || too_narrow(col))
 }
 
 /// A data sheet of a saved overlay back to its stored form: no cell below its header, nothing drawn over its rows or
@@ -158,11 +181,55 @@ fn to_stored_form(worksheet: &mut Worksheet) {
         row.hidden = false;
         row.s = 0;
         row.custom_format = false;
+        if too_low(row) {
+            row.height = DEFAULT_ROW_HEIGHT / ROW_HEIGHT_FACTOR;
+            row.custom_height = false;
+        }
     }
     for col in &mut worksheet.cols {
         col.hidden = false;
         col.style = None;
+        if too_narrow(col) {
+            col.width = DEFAULT_COLUMN_WIDTH / COLUMN_WIDTH_FACTOR;
+            col.custom_width = false;
+        }
     }
+}
+
+/// The most characters of a sheet's name (the engine's `is_valid_sheet_name`).
+const MAX_SHEET_NAME: usize = 31;
+
+/// Rename the sheet at `index`, one that looks like the data sheet `data`, to a name no sheet and no data sheet has:
+/// `<data> (renamed)`, then `(renamed 2)` and on, `data` cut so the name fits the engine's 31 characters, else
+/// `Renamed <n>`. The name the engine took, or None when it took none (each refusal logged).
+fn rename_lookalike(model: &mut Model<'static>, index: u32, data: &str, data_sheets: &[String]) -> Option<String> {
+    let fits = |suffix: &str| {
+        let room = MAX_SHEET_NAME.saturating_sub(suffix.chars().count());
+        let cut: String = data.chars().take(room).collect();
+        format!("{}{suffix}", cut.trim_end())
+    };
+    let candidates = (1..=20)
+        .map(|n| {
+            fits(&if n == 1 {
+                " (renamed)".to_string()
+            } else {
+                format!(" (renamed {n})")
+            })
+        })
+        .chain((1..=20).map(|n| format!("Renamed {n}")));
+    for renamed in candidates {
+        let taken = model.workbook.get_worksheet_names();
+        if taken.iter().any(|one| same(one, &renamed)) || data_sheets.iter().any(|sheet| same(sheet, &renamed)) {
+            continue;
+        }
+        match model.rename_sheet_by_index(index, &renamed) {
+            Ok(()) => return Some(renamed),
+            Err(error) => {
+                tracing::warn!(renamed = %renamed, %error, "The engine refused a sheet's new name; trying another")
+            }
+        }
+    }
+    None
 }
 
 /// A saved document's overlay as a room opens it, whatever wrote it (plans/IronCalc-DB2.md CG4 review): refused for a
@@ -186,16 +253,13 @@ pub fn saved_overlay(mut model: Model<'static>, data_sheets: &[String]) -> Resul
         let Some(data) = data_sheets.iter().find(|sheet| !is_data(name) && same(sheet, name)) else {
             continue;
         };
-        let taken = model.workbook.get_worksheet_names();
-        let mut renamed = format!("{data} (renamed)");
-        for again in 2.. {
-            if !taken.iter().any(|one| same(one, &renamed)) && !data_sheets.iter().any(|sheet| same(sheet, &renamed)) {
-                break;
-            }
-            renamed = format!("{data} (renamed {again})");
-        }
         let index = u32::try_from(index).map_err(|_| Error::new("Too many sheets"))?;
-        model.rename_sheet_by_index(index, &renamed).map_err(engine)?;
+        let Some(renamed) = rename_lookalike(&mut model, index, data, data_sheets) else {
+            // the engine took no name: the tab stays as it is, which no fill takes for the data sheet (fill.rs
+            // `sheet_index`), and the document still opens
+            tracing::error!(sheet = %name, "A saved CalcGrid overlay's sheet named like a data sheet could not be renamed; it is left");
+            continue;
+        };
         tracing::warn!(sheet = %name, renamed = %renamed, "A saved CalcGrid overlay held a sheet named like a data sheet; it is renamed");
         let message = format!("The sheet {name:?} looked like the data sheet {data} and is renamed {renamed}; save the document to keep it so");
         moqui_core::context::ExecutionContext::with_current(|ec| ec.message().add_message_typed(message, "warning"));

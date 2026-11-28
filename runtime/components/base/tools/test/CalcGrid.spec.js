@@ -801,6 +801,10 @@ feature("a saved overlay written without CalcGrid brings no row into a data shee
         const sheetNames = sheets.map(sheet => sheet.name)
         // in the room of that document, no sheet is renamed like the data sheet
         const lookalikeRename = ask("edit#CalcDocument", {roomId: opened.out.roomId, ops: [{op: "renameSheet", sheet: sheetNames.indexOf("Summary"), name: "enumeration "}]})
+        // nor is a data sheet's column made too narrow to see
+        const dataIndex = (sheets.find(sheet => sheet.data) || {}).index
+        const narrowed = ask("edit#CalcDocument", {roomId: opened.out.roomId, ops: [{op: "width", sheet: dataIndex, column: 1, width: 0}]})
+        const narrowest = (Array.from(narrowed.out.sheets || []).find(sheet => sheet.data) || {widths: [0]}).widths[0]
         const summary = sheets.find(sheet => sheet.name == "Summary") || {index: -1}, data = sheets.find(sheet => sheet.data) || {}
         const block = ask("get#CalcCells", {roomId: opened.out.roomId, sheet: summary.index, row: 1, column: 1, width: 1, height: 1})
         const counted = (Array.from(block.errors ? [] : JSON.parse(String(block.out.blockJson)).texts || [])[0] || {}).text
@@ -820,10 +824,11 @@ feature("a saved overlay written without CalcGrid brings no row into a data shee
         if (alone.out.roomId) ask("close#CalcDocument", {roomId: alone.out.roomId})
         const over = ask("open#CalcDocument", {workbookBytes: bigBytes, workbookName: "big.xlsx", source: {type: "entity", entityName: "moqui.basic.Enumeration"}})
         if (over.out.roomId) ask("close#CalcDocument", {roomId: over.out.roomId})
-        return {plantedRows, resaved, opened: opened.errors, sheetNames, lookalikeRename: lookalikeRename.errors, dataRows: data.dataRows, dataName: data.name,
+        return {plantedRows, resaved, opened: opened.errors, sheetNames, lookalikeRename: lookalikeRename.errors, narrowed: narrowed.errors, narrowest,
+            dataRows: data.dataRows, dataName: data.name,
             counted, filled: filled.errors, alone, over}
     },
-    then({plantedRows, resaved, opened, sheetNames, lookalikeRename, dataRows, dataName, counted, filled, alone, over}) {
+    then({plantedRows, resaved, opened, sheetNames, lookalikeRename, narrowed, narrowest, dataRows, dataName, counted, filled, alone, over}) {
         resaved == ""
         opened == ""
         dataName == "Enumeration"
@@ -832,6 +837,8 @@ feature("a saved overlay written without CalcGrid brings no row into a data shee
         sheetNames.includes("Enumeration (renamed)")
         !sheetNames.some(name => name == "Enumeration\u200b")
         lookalikeRename.includes("is a data sheet's name")
+        narrowed == ""
+        narrowest >= 20
         filled == ""
         alone.errors == ""
         !!alone.out.roomId

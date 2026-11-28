@@ -154,6 +154,15 @@ fn a_sheet_that_only_looks_like_the_data_sheets_is_refused() {
         overlay_refusal(&model, &["Caf\u{e9}".to_string()]).is_some(),
         "compared composed"
     );
+    // and with an unseen joiner or variation selector between the letter and its accent
+    for between in ["\u{34f}", "\u{fe0f}"] {
+        let mut model = uploaded();
+        model.add_sheet(&format!("Cafe{between}\u{301}")).unwrap();
+        assert!(
+            overlay_refusal(&model, &["Caf\u{e9}".to_string()]).is_some(),
+            "{between:?} between a letter and its accent"
+        );
+    }
     let mut model = uploaded();
     model.add_sheet("ÉTÉ").unwrap();
     assert!(
@@ -273,4 +282,83 @@ fn a_saved_overlay_draws_nothing_over_a_data_sheet() {
     assert!(sheet.rows.iter().all(|row| !row.hidden));
     assert_eq!(opened.get_column_width(1, 2).unwrap(), 140.0, "a width stays");
     assert_eq!(sheet.frozen_rows, 1, "the frozen header stays");
+    // a width or a height that hides a column or a row is not kept
+    let mut model = stored();
+    model.set_column_width(1, 1, 0.0).unwrap();
+    model.set_row_height(1, 1, 0.0).unwrap();
+    let opened = saved_overlay(model, &data).unwrap();
+    assert!(opened.get_column_width(1, 1).unwrap() >= MIN_DATA_WIDTH);
+    assert!(opened.get_row_height(1, 1).unwrap() >= MIN_DATA_HEIGHT);
+}
+
+/// A tab named like a data sheet whose name is long (up to the engine's 31 characters) still gets a name the engine
+/// takes, so the document opens.
+#[test]
+fn a_lookalike_of_a_long_data_sheet_is_renamed_within_the_engines_limit() {
+    for long in ["FinancialAccountTransaction", "ThirtyOneCharactersOfDataSheetX"] {
+        let data = [long.to_string()];
+        let rows = SheetRows {
+            name: long.to_string(),
+            ..orders(1)
+        };
+        let model = fill::fill(fill::new_model("Summary").unwrap(), &[rows]).unwrap();
+        let mut model =
+            fill::open_stored(&fill::stored_form(&model.to_bytes(), &[(long.to_string(), 1)]).unwrap()).unwrap();
+        let lookalike: String = format!("{}\u{200b}", &long[..long.len() - 1]) + &long[long.len() - 1..];
+        // as a forged body holds it: past the engine's own check of a name typed
+        model.add_sheet("Placeholder").unwrap();
+        let mut workbook = model.workbook;
+        workbook.worksheets[2].name = lookalike;
+        let model = Model::from_workbook(workbook, "en").unwrap();
+        let opened = saved_overlay(model, &data).unwrap();
+        let names = opened.workbook.get_worksheet_names();
+        assert_eq!(names.len(), 3, "{names:?}");
+        let renamed = &names[2];
+        assert!(renamed.chars().count() <= 31, "{renamed}");
+        assert!(renamed.ends_with("(renamed)"), "{renamed}");
+        assert!(!crate::upload::same(renamed, long));
+    }
+}
+
+/// A data cell's look is not the overlay's style 0, which a forged body or an upload could make hide every value.
+#[test]
+fn a_data_cell_is_drawn_in_the_plain_style_not_the_workbooks_first() {
+    let mut workbook = stored().workbook;
+    workbook
+        .styles
+        .num_fmts
+        .push(moqui_core::workbook::ironcalc::base::types::NumFmt {
+            num_fmt_id: 200,
+            format_code: ";;;".to_string(),
+        });
+    workbook.styles.cell_xfs[0].num_fmt_id = 200;
+    let forged = Model::from_workbook(workbook, "en").unwrap();
+    let mut filled = fill::fill(forged, &[orders(2)]).unwrap();
+    filled.evaluate();
+    assert_eq!(filled.get_formatted_cell_value(1, 2, 1).unwrap(), "Customer 1");
+    assert_eq!(filled.get_formatted_cell_value(1, 2, 2).unwrap(), "10");
+}
+
+/// A date is written in the workbook's own date system: an Excel for Mac workbook (1904) shows the same day.
+#[test]
+fn a_data_date_shows_the_same_day_in_a_1904_workbook() {
+    use moqui_core::workbook::ironcalc::base::types::DateSystem;
+    let dated = SheetRows {
+        name: "Orders".to_string(),
+        columns: vec!["placed".to_string()],
+        // 2026-11-28, counted from 1899-12-30
+        rows: vec![vec![CellData::Date(46_354.0)]],
+        truncated: false,
+    };
+    for system in [DateSystem::IronCalc, DateSystem::Excel1904] {
+        let mut model = fill::new_model("Summary").unwrap();
+        model.set_date_system(system);
+        let mut filled = fill::fill(model, std::slice::from_ref(&dated)).unwrap();
+        filled.evaluate();
+        assert_eq!(
+            filled.get_formatted_cell_value(1, 2, 1).unwrap(),
+            "2026-11-28",
+            "{system:?}"
+        );
+    }
 }

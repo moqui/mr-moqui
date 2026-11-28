@@ -905,11 +905,11 @@ impl Room {
         }
         // nor is another sheet named like one, which a reader would take for it and the next open renames (upload.rs)
         if kind == "renameSheet" {
-            let wanted = op["name"].as_str().unwrap_or_default();
+            let wanted = text("name");
             if let Some(data) = self
                 .data_sheets
                 .iter()
-                .find(|data| crate::upload::same(&data.name, wanted))
+                .find(|data| crate::upload::same(&data.name, &wanted))
             {
                 return Err(Error::new(format!(
                     "{} is a data sheet's name; choose another",
@@ -964,7 +964,11 @@ impl Room {
                     sheet,
                     column,
                     small("columnEnd", i64::from(column)),
-                    op["width"].as_f64().unwrap_or(90.0),
+                    // a data sheet's column is not hidden by its width (upload.rs MIN_DATA_WIDTH)
+                    op["width"]
+                        .as_f64()
+                        .unwrap_or(90.0)
+                        .max(self.data_floor(sheet, crate::upload::MIN_DATA_WIDTH)),
                 )
             }
             "height" => {
@@ -973,7 +977,10 @@ impl Room {
                     sheet,
                     row,
                     small("rowEnd", i64::from(row)),
-                    op["height"].as_f64().unwrap_or(25.0),
+                    op["height"]
+                        .as_f64()
+                        .unwrap_or(25.0)
+                        .max(self.data_floor(sheet, crate::upload::MIN_DATA_HEIGHT)),
                 )
             }
             "freeze" => self
@@ -998,6 +1005,15 @@ impl Room {
             other => Err(format!("{other:?} is not an edit")),
         }
         .map_err(engine)
+    }
+
+    /// `floor` for a data sheet, else no floor.
+    fn data_floor(&self, sheet: u32, floor: f64) -> f64 {
+        if self.data_sheet_name(sheet).is_some() {
+            floor
+        } else {
+            0.0
+        }
     }
 
     /// A `restore` edit: each cell set as typed (an empty one cleared), then each cell's style.

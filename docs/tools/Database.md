@@ -242,8 +242,10 @@ What a person reads there is set in the authorization data, not in a document. A
   name. The data sheet holds only the rows its reader may read. Over an entity, without its data it is at most 8 MB,
   as a saved document is. A saved document's workbook is held the same way when it opens, whatever wrote its
   definition: what a data sheet holds below its header, and what is drawn over its rows or hides them (conditional
-  formats, merged cells, comments, drawings, links, hidden rows, columns or sheet), is taken off, its widths, heights
-  and frozen panes kept; a tab named like a data sheet is renamed (`Orders (renamed)`), with a warning, so the
+  formats, merged cells, comments, drawings, links, hidden rows, columns or sheet, a width or height too small to
+  see), is taken off, its widths, heights and frozen panes kept; its cells are drawn in a plain style of their own,
+  never the workbook's first, and its dates in the workbook's date system (a 1904 workbook from Excel for Mac shows the
+  same days); a tab named like a data sheet is renamed (`Orders (renamed)`), with a warning, so the
   document still opens; and a table or name of the data sheet's elsewhere refuses it. In a room no sheet is renamed
   like a data sheet.
 - **Add to dashboard** puts the cells selected (or the sheet's used area) of a saved document on one of the viewer's

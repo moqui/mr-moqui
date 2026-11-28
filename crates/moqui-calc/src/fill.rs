@@ -25,8 +25,10 @@
 use std::collections::HashMap;
 
 use moqui_core::context::Error;
+use moqui_core::workbook::ironcalc::base::formatter::dates::from_ironcalc_serial;
 use moqui_core::workbook::ironcalc::base::types::{
-    Alignment, Cell, HorizontalAlignment, Style, Table, TableColumn, TableStyleInfo, VerticalAlignment, Workbook,
+    Alignment, Cell, DateSystem, HorizontalAlignment, Style, Table, TableColumn, TableStyleInfo, VerticalAlignment,
+    Workbook,
 };
 use moqui_core::workbook::ironcalc::base::{Model, UserModel};
 use serde_json::{json, Value as Json};
@@ -39,7 +41,8 @@ const FIT_PAD: f64 = 16.0;
 const FIT_MIN: f64 = 50.0;
 const FIT_MAX: f64 = 360.0;
 
-/// A cell of a data sheet. A date, a time and a time stamp are Excel serial numbers, shown by their formats.
+/// A cell of a data sheet. A date, a time and a time stamp are Excel serial numbers, shown by their formats: a date's
+/// counted from 1899-12-30, which a fill writes in the workbook's own date system.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CellData {
     Empty,
@@ -150,15 +153,20 @@ fn table(sheet: &str, columns: &[String], rows: i32) -> Table {
 
 /// The style indexes a fill writes with, found or made in the workbook.
 struct Styles {
+    /// A text, a number and a boolean: the plain style, never the workbook's style 0, which an overlay's author could
+    /// make one that hides or alters every data cell (a `;;;` format, a white font).
+    plain: i32,
     header: i32,
     date: i32,
     time: i32,
     date_time: i32,
+    /// The workbook's date system: a date's serial is written in it (an Excel for Mac workbook counts from 1904).
+    dates: DateSystem,
 }
 
 impl Styles {
-    /// The styles of a header, a date, a time and a time stamp.
-    fn specs() -> [Style; 4] {
+    /// The styles of a plain cell, a header, a date, a time and a time stamp.
+    fn specs() -> [Style; 5] {
         let mut header = Style::default();
         header.font.b = true;
         let format = |format: &str| Style {
@@ -171,6 +179,7 @@ impl Styles {
             ..Style::default()
         };
         [
+            Style::default(),
             header,
             format("yyyy-mm-dd"),
             format("hh:mm:ss"),
@@ -179,28 +188,32 @@ impl Styles {
     }
 
     fn of(workbook: &mut Workbook) -> Self {
-        let [header, date, time, date_time] = Self::specs().map(|style| {
+        let [plain, header, date, time, date_time] = Self::specs().map(|style| {
             workbook
                 .styles
                 .get_style_index(&style)
                 .unwrap_or_else(|| workbook.styles.create_new_style(&style))
         });
         Self {
+            plain,
             header,
             date,
             time,
             date_time,
+            dates: workbook.settings.date_system,
         }
     }
 
     /// The styles a fill made, if the workbook has them all.
     fn found(workbook: &Workbook) -> Option<Self> {
-        let [header, date, time, date_time] = Self::specs().map(|style| workbook.styles.get_style_index(&style));
+        let [plain, header, date, time, date_time] = Self::specs().map(|style| workbook.styles.get_style_index(&style));
         Some(Self {
+            plain: plain?,
             header: header?,
             date: date?,
             time: time?,
             date_time: date_time?,
+            dates: workbook.settings.date_system,
         })
     }
 }
@@ -221,15 +234,27 @@ fn row_cells(
                 CellData::Text(text) => (
                     Cell::SharedString {
                         si: shared(text),
-                        s: 0,
+                        s: styles.plain,
                     },
                     text.chars().count(),
                 ),
-                CellData::Number(number) => (Cell::NumberCell { v: *number, s: 0 }, 10),
-                CellData::Bool(flag) => (Cell::BooleanCell { v: *flag, s: 0 }, 5),
-                CellData::Date(number) => (
+                CellData::Number(number) => (
                     Cell::NumberCell {
                         v: *number,
+                        s: styles.plain,
+                    },
+                    10,
+                ),
+                CellData::Bool(flag) => (
+                    Cell::BooleanCell {
+                        v: *flag,
+                        s: styles.plain,
+                    },
+                    5,
+                ),
+                CellData::Date(number) => (
+                    Cell::NumberCell {
+                        v: from_ironcalc_serial(*number, styles.dates),
                         s: styles.date,
                     },
                     10,
@@ -243,7 +268,7 @@ fn row_cells(
                 ),
                 CellData::DateTime(number) => (
                     Cell::NumberCell {
-                        v: *number,
+                        v: from_ironcalc_serial(*number, styles.dates),
                         s: styles.date_time,
                     },
                     19,
@@ -297,7 +322,14 @@ pub fn refill(model: &mut UserModel<'static>, sheets: &[SheetRows]) -> Result<bo
         let rows: Vec<Vec<(i32, Cell)>> = sheet
             .rows
             .iter()
-            .map(|cells| row_cells(cells, &styles, &mut |text| model.intern_shared_string(text), &mut widths))
+            .map(|cells| {
+                row_cells(
+                    cells,
+                    &styles,
+                    &mut |text| model.intern_shared_string(text),
+                    &mut widths,
+                )
+            })
             .collect();
         let count = i32::try_from(sheet.rows.len()).map_err(|_| Error::new("Too many rows for a sheet"))?;
         model

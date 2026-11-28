@@ -154,9 +154,8 @@ fn choices(ec: &ExecutionContext, dataset_id: &str, name: &str, spec: &Json, ans
     let answered = answers
         .0
         .entry(key)
-        .or_insert_with(|| answer(ec, dataset_id, name, spec))
-        .clone();
-    let Some(answered) = answered else {
+        .or_insert_with(|| answer(ec, dataset_id, name, spec));
+    let Some(answered) = answered.as_ref() else {
         return Vec::new();
     };
     let (value_field, label_field) = (text(spec, "value", ""), text(spec, "label", ""));
