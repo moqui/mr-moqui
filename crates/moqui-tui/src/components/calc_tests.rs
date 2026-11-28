@@ -361,6 +361,36 @@ fn a_cells_colours_and_italic_are_drawn_but_not_on_the_cursor() {
     assert_eq!((cursor.color, cursor.fill), (None, None));
 }
 
+/// CG3.5: the status line has the last evaluation's time, a warning past the room's `slowMs`, else past 250 ms.
+#[test]
+fn the_status_line_has_the_calculation_time_and_warns_when_it_is_slow() {
+    let status = |room: Value| {
+        let mut props = props(true);
+        for (key, value) in room.as_object().unwrap() {
+            props["room"][key] = value.clone();
+        }
+        let state = ComponentState {
+            rows: 30,
+            ..ComponentState::default()
+        };
+        CalcGrid
+            .lines(&props, &state, 100, false)
+            .into_iter()
+            .find(|line| line_text(line).contains("calculated"))
+            .unwrap()
+    };
+    let quick = status(json!({"evaluateMs": 12.4}));
+    assert!(quick
+        .iter()
+        .any(|span| span.text == "calculated in 12 ms" && span.role == Role::Muted));
+    let slow = status(json!({"evaluateMs": 300.0}));
+    assert!(slow
+        .iter()
+        .any(|span| span.text.ends_with("300 ms, slow") && span.role == Role::Warning));
+    let allowed = status(json!({"evaluateMs": 300.0, "slowMs": 500}));
+    assert!(allowed.iter().all(|span| span.role != Role::Warning), "{allowed:?}");
+}
+
 /// The menu's item `at` chosen.
 fn menu(props: &Value, state: &mut ComponentState, at: usize) -> Vec<Act> {
     CalcGrid.key(props, state, &KeyPress::plain(Key::Char('m')), false);

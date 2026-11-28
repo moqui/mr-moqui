@@ -64,6 +64,8 @@ const POLL_MILLIS: u64 = 1_500;
 /// A column's width in characters is its width in pixels over this, as a browser's average character.
 const PIXELS_PER_CHARACTER: f64 = 8.0;
 const ROOM_GONE: &str = "ROOM_GONE";
+/// The evaluation time past which the status line warns, when the room's state does not send its `slowMs`.
+const SLOW_MILLIS: f64 = 250.0;
 
 /// Text being typed: into a cell (`cell`), or a sheet's new name (`rename`).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -1636,8 +1638,23 @@ fn status_line(view: &View, props: &Value, lines: &mut Vec<Line>) {
         });
     }
     let mut line = vec![Span::new(parts.join(" · "), Role::Muted)];
-    if !view.message.is_empty() {
+    // the last evaluation's time, a warning past the slow threshold the room's state sends (`calc@slow-ms`)
+    if let Some(millis) = view.room["evaluateMs"].as_f64() {
+        let slow = view.room["slowMs"]
+            .as_f64()
+            .filter(|slow| *slow > 0.0)
+            .unwrap_or(SLOW_MILLIS);
         if !parts.is_empty() {
+            line.push(Span::new(" · ", Role::Muted));
+        }
+        line.push(if millis > slow {
+            Span::new(format!("calculated in {millis:.0} ms, slow"), Role::Warning)
+        } else {
+            Span::new(format!("calculated in {millis:.0} ms"), Role::Muted)
+        });
+    }
+    if !view.message.is_empty() {
+        if line.iter().any(|span| !span.text.is_empty()) {
             line.push(Span::new(" · ", Role::Muted));
         }
         line.push(Span::new(view.message.clone(), Role::Warning));
