@@ -54,6 +54,31 @@ fn the_key_file_is_the_owners_alone() {
         .ends_with("moqui/tui/localhost_8080.toml"));
 }
 
+/// CG3.4: the rooms a client joined are joined again on a new socket, without a place (one sent behind its join is
+/// refused: the server takes a place before the join it follows), and a room it left is not; what comes on the
+/// socket is a room's frame only on a `calc:` topic with no message of its own.
+#[test]
+fn a_new_socket_joins_the_rooms_again_and_frames_are_told_from_notifications() {
+    let frame = |calc: &str, room: &str| serde_json::json!({"calc": calc, "room": room, "client": "t1"});
+    let mut rooms = Rooms::default();
+    rooms.note(&frame("select", "r0"));
+    rooms.note(&frame("join", "r1"));
+    rooms.note(&frame("join", "r2"));
+    let mut place = frame("select", "r1");
+    place["sheet"] = serde_json::json!(1);
+    rooms.note(&place);
+    rooms.note(&frame("leave", "r2"));
+    assert_eq!(rooms.again(), [frame("join", "r1")]);
+    let changed = serde_json::json!({"topic": "calc:r1", "type": "changed", "seq": 4});
+    let pushed = crate::tui::socket_push(&changed);
+    assert!(pushed.frame && pushed.message == changed);
+    let notice = serde_json::json!({"topic": "calc:r1", "title": "Hi", "message": {"type": "changed"}});
+    assert!(
+        !crate::tui::socket_push(&notice).frame,
+        "a notification is not a frame, whatever its topic"
+    );
+}
+
 /// A request the fake server took.
 #[derive(Debug, Clone)]
 struct Taken {

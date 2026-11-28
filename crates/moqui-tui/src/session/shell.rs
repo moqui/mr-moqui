@@ -807,7 +807,12 @@ impl Session {
     }
 
     /// A notification came: the counters are read now, and its title goes on the message line unless an error holds it.
+    /// A room's frame goes to the component that joined its topic instead, and reads no counter.
     pub fn on_push(&mut self, push: &crate::link::Push) {
+        if push.frame {
+            self.component_push(push);
+            return;
+        }
         self.read_counts();
         if !push.title.is_empty() && !self.message_is_error() {
             self.set_message(push.title.clone(), false);

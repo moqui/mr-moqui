@@ -20,21 +20,32 @@
 //! viewer); `editable`; `profileId`, the access profile each call is made under. The cells come from `calcCells` (the
 //! rows and columns on screen), a cell's content as typed from `calcContent`, the room's state from `calcState`, and an
 //! edit is posted to `calcEdit` ([`Act::Call`]); `calcRefresh`, `calcSave`, `calcRevert` and `calcExport` (as JSON)
-//! are the menu's. A saved document's room is read again every second and a half for the others' edits and places:
-//! the reads ask `since` the view's last edit, and a room that did not change answers only who is where.
+//! are the menu's. A saved document's room is followed on its topic `calc:<roomId>` when the session's link pushes
+//! frames ([`ComponentState::pushed`]): the sheet joins the room as the browser's does, sends its place as it moves,
+//! shows who comes and goes, and on another's edit reads the room's state again, and the cells only when the edit
+//! changed one it holds (docs/ui/Qvt-Client.md, CalcGrid rooms). It is read again every 15 seconds then, in case a
+//! frame was missed; a link that cannot push reads it every second and a half for the others' edits and places. The
+//! reads ask `since` the view's last edit, and a room that did not change answers only who is where.
 //!
-//! The data sheets are read only. Colours of the workbook are not drawn (the theme's roles are); bold and underline
-//! are, numbers stand right, and a text runs on into empty cells beside it.
+//! The charts are drawn below the sheet (`c`); an author adds one of the selection from the menu, and changes the
+//! chosen one's (`C`) title, labels, series and type or removes it, each sent as the `charts` edit of the whole list,
+//! as the browser's toolbar and chart dialog do.
+//!
+//! The data sheets are read only. A cell's font colour and fill are drawn where the terminal has colours, through the
+//! theme's contrast rule ([`crate::theme::Theme::readable`]: a dark text on a dark terminal is drawn in the theme's
+//! text colour, and a text on a fill in black or white when its own does not read there); the active cell, the
+//! selection and the others' places are drawn in the theme's roles. Bold, italic and underline are drawn, numbers
+//! stand right, and a text runs on into empty cells beside it. Borders are not drawn.
 
 use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::{Act, Component, ComponentState, Line, Span};
+use super::{Act, Component, ComponentState, Line, Span, Topic};
 use crate::keys::{Key, KeyPress};
 use crate::layout::{display_width, truncate_width};
-use crate::theme::Role;
+use crate::theme::{parse_color, Rgb, Role};
 
 pub struct CalcGrid;
 
@@ -54,9 +65,14 @@ const LAST_COLUMN: i32 = 16_384;
 const MAX_FROZEN_ROWS: i32 = 200;
 const MAX_FROZEN_COLUMNS: i32 = 100;
 const POLL_MILLIS: u64 = 1_500;
+/// While the room's frames are pushed, it is read again this often in case one was missed, which also keeps the view's
+/// place among the others' (`together::PRESENCE_TTL` is a minute).
+const PUSHED_POLL_MILLIS: u64 = 15_000;
 /// A column's width in characters is its width in pixels over this, as a browser's average character.
 const PIXELS_PER_CHARACTER: f64 = 8.0;
 const ROOM_GONE: &str = "ROOM_GONE";
+/// The evaluation time past which the status line warns, when the room's state does not send its `slowMs`.
+const SLOW_MILLIS: f64 = 250.0;
 
 /// Text being typed: into a cell (`cell`), or a sheet's new name (`rename`).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -119,6 +135,10 @@ struct View {
     editing: Option<Editing>,
     menu: Option<usize>,
     charts: bool,
+    /// The chart the menu's chart items act on, by its place in the document's list.
+    chart: usize,
+    /// A chart of the selection waiting for its title, which the menu's add asks for.
+    new_chart: Option<Value>,
     kiosk: bool,
     /// The terminal's rows, as the session last gave them (0 before it has), which bound the frozen rows drawn.
     #[serde(skip)]
@@ -133,6 +153,11 @@ struct View {
     message: String,
     /// The room is no longer on the server: Enter draws the screen again, which opens it.
     gone: bool,
+    /// The session joined the room's topic and the server said `joined`: its frames come pushed, and the poll is only
+    /// a fallback.
+    live: bool,
+    /// Another's edit changed only values outside the cells held: the room's state at this edit keeps them.
+    keep_cells_at: Option<i64>,
 }
 
 /// One cell as drawn.
@@ -145,6 +170,9 @@ struct Cell {
     underline: bool,
     /// `left`, `center` or `right` when the cell's style says so.
     align: String,
+    /// The font's colour and the fill, when the cell has them.
+    color: Option<Rgb>,
+    fill: Option<Rgb>,
 }
 
 const MENU: &[&str] = &[
@@ -164,8 +192,20 @@ const MENU: &[&str] = &[
     "Save the document",
     "Discard the unsaved edits",
     "Export as XLSX",
+    "Chart: add one of the selection",
+    "Chart: change the title",
+    "Chart: change the labels",
+    "Chart: change the series",
+    "Chart type: columns",
+    "Chart type: bars",
+    "Chart type: line",
+    "Chart type: area",
+    "Chart type: pie",
+    "Chart: remove it",
 ];
 
+/// The menu's items drawn at once, around the one chosen.
+const MENU_SHOWN: usize = 12;
 /// 1 is A, 27 is AA.
 fn column_name(number: i32) -> String {
     let mut name = String::new();
@@ -246,8 +286,10 @@ fn cells(block: &Value) -> HashMap<(i32, i32), Cell> {
         let style = &style["style"];
         let font = &style["font"];
         let (bold, italic, underline) = (font["b"] == true, font["i"] == true, font["u"] == true);
+        let color = font["color"].as_str().and_then(parse_color);
         let align = style["alignment"]["horizontal"].as_str().unwrap_or("").to_string();
-        if !(bold || italic || underline || matches!(align.as_str(), "left" | "center" | "right")) || width < 1 {
+        let aligned = matches!(align.as_str(), "left" | "center" | "right");
+        if !(bold || italic || underline || aligned || color.is_some()) || width < 1 {
             continue;
         }
         let at = i32::try_from(at).unwrap_or(i32::MAX);
@@ -258,9 +300,20 @@ fn cells(block: &Value) -> HashMap<(i32, i32), Cell> {
                 italic,
                 underline,
                 align,
+                color,
                 ..Cell::default()
             },
         );
+    }
+    // the fills, as runs along the rows; a run of no colour is the cells without one
+    for run in block["fills"].as_array().map(Vec::as_slice).unwrap_or_default() {
+        let Some(fill) = run["color"].as_str().and_then(parse_color) else {
+            continue;
+        };
+        let (row, first) = (number(&run["row"]), number(&run["column"]));
+        for at in first..first.saturating_add(number(&run["width"]).clamp(0, width.max(0))) {
+            out.entry((row, at)).or_default().fill = Some(fill);
+        }
     }
     for text in block["texts"].as_array().map(Vec::as_slice).unwrap_or_default() {
         let cell = out.entry((number(&text["row"]), number(&text["column"]))).or_default();
@@ -535,6 +588,18 @@ impl View {
         self.need_cells |= !self.covers(terminal_rows);
     }
 
+    /// A frame of the room for the push channel, `join`, `select` or `leave`, as the browser's sheet sends it.
+    fn frame(&self, kind: &str) -> Value {
+        let room = self.room_id().unwrap_or_default();
+        let mut frame = json!({"calc": kind, "room": room, "client": self.client});
+        if kind == "select" {
+            let (top, left, bottom, right) = self.area();
+            frame["sheet"] = json!(self.sheet);
+            frame["area"] = json!({"row": top, "column": left, "width": right - left + 1, "height": bottom - top + 1});
+        }
+        frame
+    }
+
     fn show_sheet(&mut self, index: u32) {
         self.sheet = index;
         self.row = 1;
@@ -590,6 +655,7 @@ fn editing_key(view: &mut View, props: &Value, press: &KeyPress, terminal_rows: 
     match press.key {
         Key::Escape => {
             view.editing = None;
+            view.new_chart = None;
             return Vec::new();
         }
         Key::Char(ch) if !press.ctrl && !press.alt => {
@@ -638,6 +704,9 @@ fn editing_key(view: &mut View, props: &Value, press: &KeyPress, terminal_rows: 
         return Vec::new();
     };
     view.editing = None;
+    if editing.target.starts_with("chart") {
+        return charts::chart_text(view, props, &editing.target, &editing.text);
+    }
     if editing.target == "rename" {
         let name = editing.text.trim().to_string();
         if name.is_empty() {
@@ -721,7 +790,7 @@ fn menu_choice(view: &mut View, props: &Value, choice: usize) -> Vec<Act> {
             call(view, props, "calcSave", &[("title", title)])
         }
         14 => call(view, props, "calcRevert", &[]),
-        _ => {
+        15 => {
             let mut url = format!("calcExport?json=true&roomId={}", view.room_id().unwrap_or(""));
             if let Some(profile) = props["profileId"].as_str().filter(|profile| !profile.is_empty()) {
                 url.push_str("&profileId=");
@@ -729,6 +798,12 @@ fn menu_choice(view: &mut View, props: &Value, choice: usize) -> Vec<Act> {
             }
             vec![Act::DownloadReport(url)]
         }
+        // the charts: an author's only, as every edit is
+        _ if props["editable"] != true => {
+            view.message = "This document is read only for you".to_string();
+            Vec::new()
+        }
+        choice => charts::menu_choice(view, props, choice),
     }
 }
 
@@ -800,7 +875,11 @@ impl Component for CalcGrid {
         }
         if value["roomId"].is_string() && value["sheets"].is_array() {
             let functions = view.room["functions"].clone();
-            let kept = changed_outside_block(&view, &value);
+            let pushed_kept = view
+                .keep_cells_at
+                .take()
+                .is_some_and(|seq| value["seq"].as_i64() == Some(seq));
+            let kept = changed_outside_block(&view, &value) || pushed_kept;
             view.room = value;
             if !view.room["functions"].is_array() {
                 view.room["functions"] = functions;
@@ -869,13 +948,17 @@ impl Component for CalcGrid {
         tab_line(&view, &mut lines);
         status_line(&view, props, &mut lines);
         if let Some(chosen) = view.menu {
-            for (at, item) in MENU.iter().enumerate() {
+            // a window of the menu around the choice, so it fits under the sheet
+            let first = chosen
+                .saturating_sub(MENU_SHOWN / 2)
+                .min(MENU.len().saturating_sub(MENU_SHOWN));
+            for (at, item) in MENU.iter().enumerate().skip(first).take(MENU_SHOWN) {
                 let span = Span::new(format!("  {item}"), Role::Text);
                 lines.push(vec![if at == chosen { span.reverse() } else { span }]);
             }
         }
         if view.charts {
-            chart_lines(&view, width, &mut lines);
+            charts::chart_lines(&view, width, &mut lines);
         }
         lines
     }
@@ -888,6 +971,7 @@ impl Component for CalcGrid {
         }
         view.room_id()?;
         view.message.clear();
+        let place = (view.sheet, view.area());
         let acts = if view.editing.is_some() {
             editing_key(&mut view, props, press, rows)
         } else if let Some(chosen) = view.menu {
@@ -1036,6 +1120,12 @@ impl Component for CalcGrid {
                         view.charts = !view.charts;
                         Vec::new()
                     }
+                    Key::Char('C') => {
+                        let count = view.room["charts"].as_array().map_or(0, Vec::len);
+                        view.charts = true;
+                        view.chart = if count == 0 { 0 } else { (view.chart + 1) % count };
+                        Vec::new()
+                    }
                     Key::Char('z') => {
                         view.kiosk = !view.kiosk;
                         view.need_cells = !view.covers(rows);
@@ -1050,6 +1140,11 @@ impl Component for CalcGrid {
                 }
             }
         };
+        let mut acts = acts;
+        // where the view is now, to the others at once, while the room's frames are pushed
+        if state.pushed && view.live && (view.sheet, view.area()) != place {
+            acts.push(Act::Frame(view.frame("select")));
+        }
         view.store(state);
         Some(acts)
     }
@@ -1081,7 +1176,98 @@ impl Component for CalcGrid {
 
     fn poll_millis(&self, props: &Value, state: &ComponentState) -> Option<u64> {
         let view = View::of(props, state);
-        (view.room["shared"] == true && !view.gone).then_some(POLL_MILLIS)
+        let every = if state.pushed && view.live {
+            PUSHED_POLL_MILLIS
+        } else {
+            POLL_MILLIS
+        };
+        (view.room["shared"] == true && !view.gone).then_some(every)
+    }
+
+    /// A saved document's room, `calc:<roomId>`, while the session sends frames, once the view is kept: its client id
+    /// is made with it, and the join and the view's later frames name the same one.
+    fn topics(&self, props: &Value, state: &ComponentState) -> Vec<Topic> {
+        if state.local.get("client").is_none() {
+            return Vec::new();
+        }
+        let view = View::of(props, state);
+        match view.room_id() {
+            Some(room) if state.pushed && view.room["shared"] == true => vec![Topic {
+                name: format!("calc:{room}"),
+                join: view.frame("join"),
+                leave: view.frame("leave"),
+            }],
+            _ => Vec::new(),
+        }
+    }
+
+    /// The room's frames (docs/ui/Qvt-Client.md, CalcGrid rooms), as the browser's `calc.receive` takes them: who is
+    /// there and where, and another's edit, after which the room's state is read again and the cells only when the
+    /// edit changed one held or changed more than values.
+    fn push(&self, props: &Value, state: &mut ComponentState, frame: &Value) -> Vec<Act> {
+        let mut view = View::of(props, state);
+        if view.gone {
+            return Vec::new();
+        }
+        let client = frame["client"].as_str().unwrap_or_default();
+        let at = view
+            .peers
+            .iter()
+            .position(|peer| peer["client"].as_str() == Some(client));
+        let mut acts = Vec::new();
+        match frame["type"].as_str().unwrap_or_default() {
+            "joined" if client == view.client => {
+                view.live = true;
+                view.peers = frame["peers"].as_array().cloned().unwrap_or_default();
+                // the place it had before the join, for the others
+                acts.push(Act::Frame(view.frame("select")));
+            }
+            // a join refused (not logged in, the room not open, a cap, the server busy) leaves the view polling; a
+            // place refused before its join is in (409) does not
+            "error" if client == view.client && matches!(frame["code"].as_i64(), Some(401 | 403 | 429 | 503)) => {
+                view.live = false;
+            }
+            "peer" if frame["joined"] == false => {
+                if let Some(at) = at {
+                    view.peers.remove(at);
+                }
+            }
+            kind @ ("peer" | "select") if client != view.client && !client.is_empty() => {
+                let mut peer = at.map_or_else(|| json!({}), |at| view.peers[at].clone());
+                peer["client"] = json!(client);
+                peer["userId"] = frame["userId"].clone();
+                peer["name"] = frame["name"].clone();
+                if kind == "select" {
+                    peer["sheet"] = frame["sheet"].clone();
+                    peer["area"] = frame["area"].clone();
+                }
+                match at {
+                    Some(at) => view.peers[at] = peer,
+                    None => view.peers.push(peer),
+                }
+            }
+            "changed" if frame["reopen"] == true => {
+                view.gone = true;
+                view.live = false;
+                view.message = "This document is no longer open here: Enter opens it again".to_string();
+            }
+            "changed" => {
+                let seq = frame["seq"].as_i64().unwrap_or(0);
+                let kind = frame["kind"].as_str().unwrap_or_default();
+                if seq > view.seq || kind == "refresh" || kind == "save" {
+                    // values only, from the edit after the view's, outside the cells held: those cells stay
+                    let values_only = frame["changed"].is_array() && frame["from"].as_i64() == Some(view.seq);
+                    if values_only && changed_outside_block(&view, &json!({"changed": frame["changed"]})) {
+                        view.keep_cells_at = Some(seq);
+                    }
+                    view.need_state = true;
+                    acts.push(Act::Reload);
+                }
+            }
+            _ => {}
+        }
+        view.store(state);
+        acts
     }
 
     fn kiosk(&self, props: &Value, state: &ComponentState) -> bool {
@@ -1105,11 +1291,12 @@ impl Component for CalcGrid {
             ("F", "Freeze the rows above and the columns left of the cell"),
             ("d", "Fill the first row selected down"),
             ("c", "Show or hide the charts"),
+            ("C", "Choose the next chart, which the menu's chart items change"),
             ("z", "The sheet alone on the terminal, or back"),
             ("R", "Read the data again"),
             (
                 "m",
-                "More: rows and columns, sheets, number formats, save, discard, export",
+                "More: rows and columns, sheets, number formats, save, discard, export, charts",
             ),
         ]
     }
@@ -1129,8 +1316,15 @@ fn bar_lines(view: &View, width: usize, lines: &mut Vec<Line>) {
                 .get(at + 1..)
                 .map(|rest| rest.iter().collect())
                 .unwrap_or_default();
-            if editing.target == "rename" {
-                line.push(Span::new("Sheet name: ", Role::Muted));
+            let label = match editing.target.as_str() {
+                "rename" => "Sheet name: ",
+                "chartTitle" => "Chart title: ",
+                "chartLabels" => "Labels (a range): ",
+                "chartSeries" => "Series (ranges, commas between): ",
+                _ => "",
+            };
+            if !label.is_empty() {
+                line.push(Span::new(label, Role::Muted));
             }
             line.push(Span::new(before, Role::Field));
             line.push(Span::new(under, Role::Field).reverse());
@@ -1259,11 +1453,13 @@ fn grid_lines(view: &View, terminal_rows: u16, width: usize, lines: &mut Vec<Lin
         } else {
             Span::new(label, Role::Muted)
         }];
-        // a text runs on into the empty cells to its right
+        // a text runs on into the empty cells to its right, in its own colour
         let mut carry = String::new();
-        for column in &columns {
+        let mut carry_color = None;
+        for (index, column) in columns.iter().enumerate() {
             let w = view.width_of(*column);
             let cell = source.get(&(row, *column)).cloned().unwrap_or_default();
+            let mut color = cell.color;
             let at_cursor = (row, *column) == (view.row, view.column);
             let selected = (top..=bottom).contains(&row) && (left..=right).contains(column);
             let text = if !cell.text.is_empty() {
@@ -1283,11 +1479,13 @@ fn grid_lines(view: &View, terminal_rows: u16, width: usize, lines: &mut Vec<Lin
                 } else {
                     let shown = truncate_width(&cell.text, w);
                     carry = cell.text.chars().skip(shown.chars().count()).collect();
+                    carry_color = cell.color;
                     format!("{shown:<w$}")
                 }
             } else if !carry.is_empty() && !at_cursor && !selected {
                 let shown = truncate_width(&carry, w);
                 carry = carry.chars().skip(shown.chars().count()).collect();
+                color = carry_color;
                 format!("{shown:<w$}")
             } else {
                 carry.clear();
@@ -1309,14 +1507,32 @@ fn grid_lines(view: &View, terminal_rows: u16, width: usize, lines: &mut Vec<Lin
             if at_cursor {
                 span = span.reverse();
             }
+            // the place of the cursor, the selection and the others is the theme's to show
+            let own_colors = !at_cursor && !selected && peer.is_none();
+            if own_colors {
+                span = span.colors(color, cell.fill);
+            }
             if cell.bold {
                 span = span.bold();
+            }
+            if cell.italic {
+                span = span.italic();
             }
             if cell.underline || peer.is_some() {
                 span = span.underline();
             }
             line.push(span);
-            line.push(Span::new(" ", Role::Text));
+            // the gap between two cells of one fill is filled too, so a run of them is one band
+            let next_fill = columns
+                .get(index + 1)
+                .and_then(|next| source.get(&(row, *next)))
+                .and_then(|next| next.fill);
+            let gap = Span::new(" ", Role::Text);
+            line.push(if own_colors && cell.fill.is_some() && next_fill == cell.fill {
+                gap.colors(None, cell.fill)
+            } else {
+                gap
+            });
         }
         lines.push(line);
     }
@@ -1374,8 +1590,23 @@ fn status_line(view: &View, props: &Value, lines: &mut Vec<Line>) {
         });
     }
     let mut line = vec![Span::new(parts.join(" · "), Role::Muted)];
-    if !view.message.is_empty() {
+    // the last evaluation's time, a warning past the slow threshold the room's state sends (`calc@slow-ms`)
+    if let Some(millis) = view.room["evaluateMs"].as_f64() {
+        let slow = view.room["slowMs"]
+            .as_f64()
+            .filter(|slow| *slow > 0.0)
+            .unwrap_or(SLOW_MILLIS);
         if !parts.is_empty() {
+            line.push(Span::new(" · ", Role::Muted));
+        }
+        line.push(if millis > slow {
+            Span::new(format!("calculated in {millis:.0} ms, slow"), Role::Warning)
+        } else {
+            Span::new(format!("calculated in {millis:.0} ms"), Role::Muted)
+        });
+    }
+    if !view.message.is_empty() {
+        if line.iter().any(|span| !span.text.is_empty()) {
             line.push(Span::new(" · ", Role::Muted));
         }
         line.push(Span::new(view.message.clone(), Role::Warning));
@@ -1383,29 +1614,8 @@ fn status_line(view: &View, props: &Value, lines: &mut Vec<Line>) {
     lines.push(line);
 }
 
-/// The document's charts as the chart component draws a dataset: a table with a bar for the first series.
-fn chart_lines(view: &View, width: usize, lines: &mut Vec<Line>) {
-    let charts = view.room["charts"].as_array().map(Vec::as_slice).unwrap_or_default();
-    if charts.is_empty() {
-        lines.push(vec![Span::new("No chart: add one in a browser", Role::Muted)]);
-        return;
-    }
-    for chart in charts {
-        if let Some(error) = chart["error"].as_str() {
-            lines.push(vec![Span::new(format!("! {error}"), Role::Negative)]);
-            continue;
-        }
-        let props = json!({"title": chart["title"], "labels": chart["labels"],
-            "series": chart["series"].as_array().map(|series| series.iter()
-                .map(|one| json!({"name": one["name"], "data": one["data"]})).collect::<Vec<Value>>())});
-        lines.extend(super::chart::Chart.lines(
-            &props,
-            &ComponentState::default(),
-            u16::try_from(width).unwrap_or(u16::MAX),
-            false,
-        ));
-    }
-}
+#[path = "calc_charts.rs"]
+mod charts;
 
 #[cfg(test)]
 #[path = "calc_tests.rs"]

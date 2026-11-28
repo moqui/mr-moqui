@@ -25,7 +25,7 @@ use revue::widget::{Border, RenderContext, View};
 pub use crate::keys::Target;
 use crate::layout::{char_width, display_width};
 use crate::model::clean_text;
-use crate::theme::{Role, Theme};
+use crate::theme::{Rgb, Role, Theme};
 
 /// How a run of text looks.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -37,6 +37,9 @@ pub struct Look {
     pub underline: bool,
     pub reverse: bool,
     pub italic: bool,
+    /// A document's own text color and fill, drawn in place of the roles' as [`Theme::readable`] decides.
+    pub color: Option<Rgb>,
+    pub fill: Option<Rgb>,
 }
 
 impl Look {
@@ -74,6 +77,13 @@ impl Look {
 
     pub fn on(mut self, bg: Role) -> Self {
         self.bg = Some(bg);
+        self
+    }
+
+    /// A document's own colors, each None for the role's.
+    pub fn colors(mut self, color: Option<Rgb>, fill: Option<Rgb>) -> Self {
+        self.color = color;
+        self.fill = fill;
         self
     }
 
@@ -139,10 +149,25 @@ impl Painter<'_, '_> {
         Some(Color::rgb(rgb.0, rgb.1, rgb.2))
     }
 
-    fn cell(&self, ch: char, look: Look) -> Cell {
+    /// The foreground and background of a look: a document's colors where [`Theme::readable`] draws them, else the
+    /// roles'. Worked out once for a run of text, not for each of its cells.
+    fn colors(&self, look: Look) -> (Option<Color>, Option<Color>) {
+        let rgb = |rgb: Rgb| Color::rgb(rgb.0, rgb.1, rgb.2);
+        let (color, fill) = if look.color.is_some() || look.fill.is_some() {
+            self.theme.readable(look.color, look.fill, look.role)
+        } else {
+            (None, None)
+        };
+        (
+            color.map(rgb).or_else(|| self.color(look.role)),
+            fill.map(rgb).or_else(|| self.color(look.bg)),
+        )
+    }
+
+    fn cell(&self, ch: char, look: Look, (fg, bg): (Option<Color>, Option<Color>)) -> Cell {
         let mut cell = Cell::new(ch);
-        cell.fg = self.color(look.role);
-        cell.bg = self.color(look.bg);
+        cell.fg = fg;
+        cell.bg = bg;
         let mut modifier = Modifier::empty();
         if look.bold {
             modifier |= Modifier::BOLD;
@@ -198,6 +223,7 @@ impl Painter<'_, '_> {
         let mut col = usize::from(x);
         let stop = (usize::from(x) + max).min(right);
         let mut used = 0;
+        let colors = self.colors(look);
         for ch in text.chars() {
             // A control character or a bidirectional override has no width, so it never reaches a cell; a tab or a
             // newline is a space of the one column it is laid out in (SEC-CLI-93).
@@ -213,16 +239,17 @@ impl Painter<'_, '_> {
             if col + width > stop {
                 break;
             }
-            let mut cell = self.cell(ch, look);
+            let mut cell = self.cell(ch, look, colors);
             cell.hyperlink_id = link;
             let Ok(cx) = u16::try_from(col) else {
                 break;
             };
+            let bg = cell.bg;
             self.ctx.set(cx, row, cell);
             self.cover(Rect::new(cx, row, u16::try_from(width).unwrap_or(1), 1));
             if width == 2 {
                 let mut spacer = Cell::continuation();
-                spacer.bg = self.color(look.bg);
+                spacer.bg = bg;
                 if let Ok(next) = u16::try_from(col + 1) {
                     self.ctx.set(next, row, spacer);
                 }
@@ -235,9 +262,10 @@ impl Painter<'_, '_> {
 
     pub fn fill_row(&mut self, x: u16, row: u16, width: usize, look: Look) {
         let stop = (usize::from(x) + width).min(usize::from(self.right));
+        let colors = self.colors(look);
         for col in usize::from(x)..stop {
             if let Ok(cx) = u16::try_from(col) {
-                let cell = self.cell(' ', look);
+                let cell = self.cell(' ', look, colors);
                 self.ctx.set(cx, row, cell);
             }
         }

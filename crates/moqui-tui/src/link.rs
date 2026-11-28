@@ -322,18 +322,39 @@ impl Reply {
 
 /// A notification the server pushed to the logged-in user: the counters change, and its title is worth a line. The
 /// `message` is the notification's JSON payload (an `AgentRun` signal's `runId`, `conversationId` and `event`).
+///
+/// With `frame`, it is instead a frame of a room the session joined ([`Pushes::frame`]; a CalcGrid room's on
+/// `calc:<room>`): `message` is the whole frame, it goes to the component that wants its topic, and no counter is read
+/// for it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Push {
     pub topic: String,
     pub title: String,
     pub message: serde_json::Value,
+    pub frame: bool,
 }
 
 /// Called on the link's own thread with each push.
 pub type PushSink = Arc<dyn Fn(Push) + Send + Sync>;
 
+/// A push subscription: held open until it is dropped, which ends it and leaves what its frames joined.
+pub trait Pushes: Send {
+    /// Whether [`Self::frame`] sends: the link has a channel of its own to the server (a socket, or a sink in the
+    /// server's process). A session whose subscription takes none reads a room by polling.
+    fn takes_frames(&self) -> bool {
+        false
+    }
+
+    /// Send a frame to the server on the push channel, after those sent before it: a CalcGrid room's `join`,
+    /// `select` or `leave` (docs/ui/Qvt-Client.md, CalcGrid rooms). The server answers on the frame's topic, through
+    /// the sink the subscription was made with. False when it took none.
+    fn frame(&self, _frame: serde_json::Value) -> bool {
+        false
+    }
+}
+
 /// Holds a push subscription open; dropping it ends the subscription.
-pub type Subscription = Box<dyn Send>;
+pub type Subscription = Box<dyn Pushes>;
 
 /// The server as the client sees it. Calls run on worker threads, so a link is `Send + Sync`.
 pub trait ScreenLink: Send + Sync {

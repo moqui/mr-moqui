@@ -414,6 +414,7 @@ fn follow_navigates_and_fills_the_screen_and_a_hand_off_focuses_save() {
         topic: "AgentRun".to_string(),
         title: String::new(),
         message: json!({"runId": "r1", "conversationId": "c1", "event": "approval.decided"}),
+        ..Push::default()
     });
     view.run_requests();
     assert_eq!(view.session().path(), "/apps/tasks/Tasks");

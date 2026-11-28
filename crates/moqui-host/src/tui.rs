@@ -29,7 +29,7 @@ use moqui_lib::object::Value;
 use moqui_lib::sync::lock;
 use moqui_tui::{
     counts_of, query_parameters, AdminAccount, AdminSetup, Choice, CodeAsk, LinkError, MenuItem, Messages, Push,
-    PushSink, RawBody, Reply, ScreenLink, ScreenModel, Sendable, ShellAction, ShellInfo, Subscription,
+    PushSink, Pushes, RawBody, Reply, ScreenLink, ScreenModel, Sendable, ShellAction, ShellInfo, Subscription,
     TransitionOutcome, ValidationError,
 };
 
@@ -637,8 +637,15 @@ impl Transport for InProcess {
         lock(&self.user).clone()
     }
 
-    /// The notification topic of this process, filtered to the link's user as `/notws` filters a socket's.
+    /// The notification topic of this process, filtered to the link's user as `/notws` filters a socket's, and the
+    /// CalcGrid rooms' frames through a sink beside the sockets' (`notws::calc::LinkFrames`), with a socket's checks.
     fn subscribe(&self, sink: PushSink) -> Option<Subscription> {
+        let frames_sink = Arc::clone(&sink);
+        let frames = crate::notws::calc::LinkFrames::start(
+            Weak::clone(&self.factory),
+            Arc::clone(&self.user_id),
+            Box::new(move |frame: &serde_json::Value| frames_sink(frame_push(frame))),
+        );
         let user_id = Arc::clone(&self.user_id);
         let listener = move |message: &moqui_core::notify::TopicMessage| {
             let Some(me) = lock(&user_id).clone() else {
@@ -654,12 +661,31 @@ impl Transport for InProcess {
             }
         };
         match moqui_core::notify::subscribe(moqui_core::notify::NOTIFICATION_MESSAGE, Arc::new(listener)) {
-            Ok(subscription) => Some(Box::new(subscription)),
+            Ok(subscription) => Some(Box::new(InProcessPushes {
+                _notifications: subscription,
+                frames,
+            })),
             Err(err) => {
                 tracing::warn!("TUI notifications not pushed: {err}");
                 None
             }
         }
+    }
+}
+
+/// The in-process link's subscription: the notifications, and the rooms' frames when the host has the rooms.
+struct InProcessPushes {
+    _notifications: moqui_core::notify::Subscription,
+    frames: crate::notws::calc::LinkFrames,
+}
+
+impl Pushes for InProcessPushes {
+    fn takes_frames(&self) -> bool {
+        self.frames.takes_frames()
+    }
+
+    fn frame(&self, frame: serde_json::Value) -> bool {
+        self.frames.send(frame)
     }
 }
 
@@ -669,6 +695,27 @@ pub(crate) fn push_of(body: &serde_json::Value) -> Push {
         topic: json_field(body, "topic"),
         title: json_field(body, "title"),
         message: body.get("message").cloned().unwrap_or_default(),
+        frame: false,
+    }
+}
+
+/// A room's frame (`calc:<room>`), the whole frame as the push's message.
+pub(crate) fn frame_push(frame: &serde_json::Value) -> Push {
+    Push {
+        topic: json_field(frame, "topic"),
+        title: String::new(),
+        message: frame.clone(),
+        frame: true,
+    }
+}
+
+/// What came on a notification socket: a room's frame (on a `calc:` topic, with no message of its own, which a
+/// notification always has), else a notification.
+pub(crate) fn socket_push(body: &serde_json::Value) -> Push {
+    if json_field(body, "topic").starts_with("calc:") && body.get("message").is_none() {
+        frame_push(body)
+    } else {
+        push_of(body)
     }
 }
 

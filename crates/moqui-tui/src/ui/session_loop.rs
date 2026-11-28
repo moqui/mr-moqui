@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::decode::{Decoded, Decoder, MAX_PASTE};
-use crate::link::{Push, Reply, ScreenLink};
+use crate::link::{Push, Pushes, Reply, ScreenLink};
 use crate::session::Session;
 use crate::theme::Theme;
 
@@ -155,11 +155,14 @@ fn run<L: ScreenLink + 'static, W: Write>(
         let _ = pushes.send(SessionEvent::Push(push));
     }));
     view.session_mut().set_pushed(subscription.is_some());
+    let pushes = subscription.as_deref().filter(|pushes| pushes.takes_frames());
+    view.session_mut().set_frames(pushes.is_some());
     view.session_mut().set_log_offered(options.log);
     view.session_mut().set_login_name(options.login_name.clone());
     let input_queued = options.input_queued.clone();
     let mut minute = jiff::Zoned::now().minute();
     settle(&mut view, &link, &done, options.notes, out)?;
+    send_frames(&mut view, pushes);
     screen.draw(&view, out)?;
     loop {
         let now = Instant::now();
@@ -250,6 +253,7 @@ fn run<L: ScreenLink + 'static, W: Write>(
         minute = current;
         changed |= view.session().is_busy();
         settle(&mut view, &link, &done, options.notes, out)?;
+        send_frames(&mut view, pushes);
         if changed {
             screen.draw(&view, out)?;
         }
@@ -345,6 +349,16 @@ where
     }
     send(view, link, done);
     Ok(())
+}
+
+/// The frames the components asked for, on the push channel: their rooms' joins, places and leaves.
+pub(super) fn send_frames<L: ScreenLink>(view: &mut AppView<Arc<L>>, pushes: Option<&dyn Pushes>) {
+    let frames = view.session_mut().take_frames();
+    if let Some(pushes) = pushes {
+        for frame in frames {
+            pushes.frame(frame);
+        }
+    }
 }
 
 /// When the clock on the title line next changes.
