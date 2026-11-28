@@ -23,6 +23,10 @@
 //! are the menu's. A saved document's room is read again every second and a half for the others' edits and places:
 //! the reads ask `since` the view's last edit, and a room that did not change answers only who is where.
 //!
+//! The charts are drawn below the sheet (`c`); an author adds one of the selection from the menu, and changes the
+//! chosen one's (`C`) title, labels, series and type or removes it, each sent as the `charts` edit of the whole list,
+//! as the browser's toolbar and chart dialog do.
+//!
 //! The data sheets are read only. A cell's font colour and fill are drawn where the terminal has colours, through the
 //! theme's contrast rule ([`crate::theme::Theme::readable`]: a dark text on a dark terminal is drawn in the theme's
 //! text colour, and a text on a fill in black or white when its own does not read there); the active cell, the
@@ -122,6 +126,10 @@ struct View {
     editing: Option<Editing>,
     menu: Option<usize>,
     charts: bool,
+    /// The chart the menu's chart items act on, by its place in the document's list.
+    chart: usize,
+    /// A chart of the selection waiting for its title, which the menu's add asks for.
+    new_chart: Option<Value>,
     kiosk: bool,
     /// The terminal's rows, as the session last gave them (0 before it has), which bound the frozen rows drawn.
     #[serde(skip)]
@@ -170,7 +178,152 @@ const MENU: &[&str] = &[
     "Save the document",
     "Discard the unsaved edits",
     "Export as XLSX",
+    "Chart: add one of the selection",
+    "Chart: change the title",
+    "Chart: change the labels",
+    "Chart: change the series",
+    "Chart type: columns",
+    "Chart type: bars",
+    "Chart type: line",
+    "Chart type: area",
+    "Chart type: pie",
+    "Chart: remove it",
 ];
+
+/// The menu's items drawn at once, around the one chosen.
+const MENU_SHOWN: usize = 12;
+/// The chart types the menu offers, from its first chart type item on, as the browser's dialog names them.
+const CHART_TYPES: [&str; 5] = ["column", "bar", "line", "area", "pie"];
+/// The menu's first chart item.
+const CHART_MENU: usize = 16;
+
+/// A range as a formula names it, as the browser's `calc.rangeName` does: `Sheet!A2:A8`, the sheet's name quoted
+/// when it is not a plain name.
+fn range_name(sheet: &str, row: i32, column: i32, last_row: i32, last_column: i32) -> String {
+    let mut cells = format!("{}{row}", column_name(column));
+    if last_row > row || last_column > column {
+        cells.push_str(&format!(":{}{last_row}", column_name(last_column)));
+    }
+    let plain = sheet
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+        && sheet.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+    if plain {
+        format!("{sheet}!{cells}")
+    } else {
+        format!("'{}'!{cells}", sheet.replace('\'', "''"))
+    }
+}
+
+/// The document's charts as the `charts` edit takes them, the whole list (as the browser's `chartDefinitions`): each
+/// chart's `title`, `type`, `categories` and `series` of `name` and `values`, without what the room read for them.
+fn chart_definitions(view: &View) -> Vec<Value> {
+    view.room["charts"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .map(|chart| {
+            let series: Vec<Value> = chart["series"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+                .iter()
+                .map(|one| json!({"name": one["name"], "values": one["values"]}))
+                .collect();
+            json!({"title": chart["title"], "type": chart["type"], "categories": chart["categories"], "series": series})
+        })
+        .collect()
+}
+
+/// A chart of the selection, as the browser's toolbar Chart makes one: its first column the labels and each other
+/// column a series when it has more than one column, else the one column a series with no labels. None when the
+/// selection is one row.
+fn chart_of_selection(view: &View) -> Option<Value> {
+    let (row, column, last_row, last_column) = view.area();
+    if last_row <= row {
+        return None;
+    }
+    let sheet = view.layout()["name"].as_str().unwrap_or("").to_string();
+    let several = last_column > column;
+    let first = if several { column + 1 } else { column };
+    let series: Vec<Value> = (first..=last_column)
+        .enumerate()
+        .map(|(at, each)| {
+            json!({"name": format!("Series {}", at + 1), "values": range_name(&sheet, row, each, last_row, each)})
+        })
+        .collect();
+    let categories = if several {
+        range_name(&sheet, row, column, last_row, column)
+    } else {
+        String::new()
+    };
+    Some(json!({"title": "", "type": "column", "categories": categories, "series": series}))
+}
+
+/// The charts edit: the whole list, with `change` applied to the chart the menu acts on.
+fn chart_edit(view: &mut View, props: &Value, change: impl FnOnce(&mut Vec<Value>, usize)) -> Vec<Act> {
+    let mut charts = chart_definitions(view);
+    if charts.is_empty() {
+        view.message = "No chart yet: add one of the selection first".to_string();
+        return Vec::new();
+    }
+    let at = view.chart.min(charts.len() - 1);
+    change(&mut charts, at);
+    view.chart = at.min(charts.len().saturating_sub(1));
+    edit(view, props, vec![json!({"op": "charts", "charts": charts})])
+}
+
+/// Text typed for a chart (its title, labels or series), set: a new chart's title adds it.
+fn chart_text(view: &mut View, props: &Value, target: &str, text: &str) -> Vec<Act> {
+    let text = text.trim().to_string();
+    if target == "chartTitle" {
+        if let Some(mut chart) = view.new_chart.take() {
+            chart["title"] = json!(text);
+            let mut charts = chart_definitions(view);
+            charts.push(chart);
+            view.chart = charts.len() - 1;
+            view.charts = true;
+            return edit(view, props, vec![json!({"op": "charts", "charts": charts})]);
+        }
+    }
+    chart_edit(view, props, |charts, at| match target {
+        "chartTitle" => charts[at]["title"] = json!(text),
+        "chartLabels" => charts[at]["categories"] = json!(text),
+        _ => {
+            let names: Vec<Value> = charts[at]["series"]
+                .as_array()
+                .map(|series| series.iter().map(|one| one["name"].clone()).collect())
+                .unwrap_or_default();
+            let series: Vec<Value> = text
+                .split(',')
+                .map(str::trim)
+                .filter(|values| !values.is_empty())
+                .enumerate()
+                .map(|(index, values)| {
+                    let name = names
+                        .get(index)
+                        .filter(|name| name.as_str().is_some_and(|name| !name.is_empty()))
+                        .cloned()
+                        .unwrap_or_else(|| json!(format!("Series {}", index + 1)));
+                    json!({"name": name, "values": values})
+                })
+                .collect();
+            charts[at]["series"] = Value::Array(series);
+        }
+    })
+}
+
+/// Start typing a chart's text in the formula bar, with what it has now.
+fn chart_prompt(view: &mut View, target: &str, text: String) {
+    view.editing = Some(Editing {
+        cursor: text.chars().count(),
+        text,
+        target: target.to_string(),
+        choice: 0,
+    });
+}
 
 /// 1 is A, 27 is AA.
 fn column_name(number: i32) -> String {
@@ -609,6 +762,7 @@ fn editing_key(view: &mut View, props: &Value, press: &KeyPress, terminal_rows: 
     match press.key {
         Key::Escape => {
             view.editing = None;
+            view.new_chart = None;
             return Vec::new();
         }
         Key::Char(ch) if !press.ctrl && !press.alt => {
@@ -657,6 +811,9 @@ fn editing_key(view: &mut View, props: &Value, press: &KeyPress, terminal_rows: 
         return Vec::new();
     };
     view.editing = None;
+    if editing.target.starts_with("chart") {
+        return chart_text(view, props, &editing.target, &editing.text);
+    }
     if editing.target == "rename" {
         let name = editing.text.trim().to_string();
         if name.is_empty() {
@@ -740,7 +897,7 @@ fn menu_choice(view: &mut View, props: &Value, choice: usize) -> Vec<Act> {
             call(view, props, "calcSave", &[("title", title)])
         }
         14 => call(view, props, "calcRevert", &[]),
-        _ => {
+        15 => {
             let mut url = format!("calcExport?json=true&roomId={}", view.room_id().unwrap_or(""));
             if let Some(profile) = props["profileId"].as_str().filter(|profile| !profile.is_empty()) {
                 url.push_str("&profileId=");
@@ -748,6 +905,52 @@ fn menu_choice(view: &mut View, props: &Value, choice: usize) -> Vec<Act> {
             }
             vec![Act::DownloadReport(url)]
         }
+        // the charts: an author's only, as every edit is
+        _ if props["editable"] != true => {
+            view.message = "This document is read only for you".to_string();
+            Vec::new()
+        }
+        CHART_MENU => {
+            if let Some(chart) = chart_of_selection(view) {
+                view.new_chart = Some(chart);
+                chart_prompt(view, "chartTitle", String::new());
+            } else {
+                view.message =
+                    "Select the chart's cells first: a column of labels, then a column for each series".into();
+            }
+            Vec::new()
+        }
+        choice if choice <= CHART_MENU + 3 => {
+            let charts = chart_definitions(view);
+            let Some(chart) = charts.get(view.chart.min(charts.len().saturating_sub(1))) else {
+                view.message = "No chart yet: add one of the selection first".to_string();
+                return Vec::new();
+            };
+            let (target, text) = match choice - CHART_MENU {
+                1 => ("chartTitle", chart["title"].as_str().unwrap_or("").to_string()),
+                2 => ("chartLabels", chart["categories"].as_str().unwrap_or("").to_string()),
+                _ => (
+                    "chartSeries",
+                    chart["series"]
+                        .as_array()
+                        .map(Vec::as_slice)
+                        .unwrap_or_default()
+                        .iter()
+                        .filter_map(|one| one["values"].as_str())
+                        .collect::<Vec<&str>>()
+                        .join(", "),
+                ),
+            };
+            chart_prompt(view, target, text);
+            Vec::new()
+        }
+        choice if choice < CHART_MENU + 4 + CHART_TYPES.len() => {
+            let kind = CHART_TYPES[choice - CHART_MENU - 4];
+            chart_edit(view, props, |charts, at| charts[at]["type"] = json!(kind))
+        }
+        _ => chart_edit(view, props, |charts, at| {
+            charts.remove(at);
+        }),
     }
 }
 
@@ -888,7 +1091,11 @@ impl Component for CalcGrid {
         tab_line(&view, &mut lines);
         status_line(&view, props, &mut lines);
         if let Some(chosen) = view.menu {
-            for (at, item) in MENU.iter().enumerate() {
+            // a window of the menu around the choice, so it fits under the sheet
+            let first = chosen
+                .saturating_sub(MENU_SHOWN / 2)
+                .min(MENU.len().saturating_sub(MENU_SHOWN));
+            for (at, item) in MENU.iter().enumerate().skip(first).take(MENU_SHOWN) {
                 let span = Span::new(format!("  {item}"), Role::Text);
                 lines.push(vec![if at == chosen { span.reverse() } else { span }]);
             }
@@ -1055,6 +1262,12 @@ impl Component for CalcGrid {
                         view.charts = !view.charts;
                         Vec::new()
                     }
+                    Key::Char('C') => {
+                        let count = view.room["charts"].as_array().map_or(0, Vec::len);
+                        view.charts = true;
+                        view.chart = if count == 0 { 0 } else { (view.chart + 1) % count };
+                        Vec::new()
+                    }
                     Key::Char('z') => {
                         view.kiosk = !view.kiosk;
                         view.need_cells = !view.covers(rows);
@@ -1124,11 +1337,12 @@ impl Component for CalcGrid {
             ("F", "Freeze the rows above and the columns left of the cell"),
             ("d", "Fill the first row selected down"),
             ("c", "Show or hide the charts"),
+            ("C", "Choose the next chart, which the menu's chart items change"),
             ("z", "The sheet alone on the terminal, or back"),
             ("R", "Read the data again"),
             (
                 "m",
-                "More: rows and columns, sheets, number formats, save, discard, export",
+                "More: rows and columns, sheets, number formats, save, discard, export, charts",
             ),
         ]
     }
@@ -1148,8 +1362,15 @@ fn bar_lines(view: &View, width: usize, lines: &mut Vec<Line>) {
                 .get(at + 1..)
                 .map(|rest| rest.iter().collect())
                 .unwrap_or_default();
-            if editing.target == "rename" {
-                line.push(Span::new("Sheet name: ", Role::Muted));
+            let label = match editing.target.as_str() {
+                "rename" => "Sheet name: ",
+                "chartTitle" => "Chart title: ",
+                "chartLabels" => "Labels (a range): ",
+                "chartSeries" => "Series (ranges, commas between): ",
+                _ => "",
+            };
+            if !label.is_empty() {
+                line.push(Span::new(label, Role::Muted));
             }
             line.push(Span::new(before, Role::Field));
             line.push(Span::new(under, Role::Field).reverse());
@@ -1428,15 +1649,30 @@ fn status_line(view: &View, props: &Value, lines: &mut Vec<Line>) {
 fn chart_lines(view: &View, width: usize, lines: &mut Vec<Line>) {
     let charts = view.room["charts"].as_array().map(Vec::as_slice).unwrap_or_default();
     if charts.is_empty() {
-        lines.push(vec![Span::new("No chart: add one in a browser", Role::Muted)]);
+        lines.push(vec![Span::new(
+            "No chart: select its cells, then m and Chart: add one of the selection",
+            Role::Muted,
+        )]);
         return;
     }
-    for chart in charts {
+    let chosen = view.chart.min(charts.len() - 1);
+    for (at, chart) in charts.iter().enumerate() {
+        let title = chart["title"]
+            .as_str()
+            .filter(|title| !title.is_empty())
+            .map_or_else(|| format!("Chart {}", at + 1), str::to_string);
+        let kind = chart["type"].as_str().unwrap_or("line");
+        let head = Span::new(
+            format!("{} {title} · {kind}", if at == chosen { ">" } else { " " }),
+            Role::Text,
+        )
+        .bold();
+        lines.push(vec![if at == chosen { head.reverse() } else { head }]);
         if let Some(error) = chart["error"].as_str() {
             lines.push(vec![Span::new(format!("! {error}"), Role::Negative)]);
             continue;
         }
-        let props = json!({"title": chart["title"], "labels": chart["labels"],
+        let props = json!({"labels": chart["labels"],
             "series": chart["series"].as_array().map(|series| series.iter()
                 .map(|one| json!({"name": one["name"], "data": one["data"]})).collect::<Vec<Value>>())});
         lines.extend(super::chart::Chart.lines(

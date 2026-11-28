@@ -24,7 +24,8 @@ fn props(editable: bool) -> Value {
             {"index": 0, "name": "Orders", "rows": 4, "columns": 2, "widths": [80, 96], "frozenRows": 1, "frozenColumns": 0, "data": true, "dataRows": 3},
             {"index": 1, "name": "Sum", "rows": 2, "columns": 1, "widths": [120], "frozenRows": 0, "frozenColumns": 0, "data": false}
         ],
-        "charts": [{"title": "By order", "labels": ["O1", "O2"], "series": [{"name": "Total", "data": [110, 220]}]}]
+        "charts": [{"title": "By order", "type": "bar", "categories": "Orders!A2:A3", "labels": ["O1", "O2"],
+            "series": [{"name": "Total", "values": "Orders!B2:B3", "data": [110, 220]}]}]
     }})
 }
 
@@ -358,4 +359,86 @@ fn a_cells_colours_and_italic_are_drawn_but_not_on_the_cursor() {
     let cursor = grid[3].iter().find(|span| span.reverse).unwrap();
     assert!(cursor.text.contains("110"));
     assert_eq!((cursor.color, cursor.fill), (None, None));
+}
+
+/// The menu's item `at` chosen.
+fn menu(props: &Value, state: &mut ComponentState, at: usize) -> Vec<Act> {
+    CalcGrid.key(props, state, &KeyPress::plain(Key::Char('m')), false);
+    for _ in 0..at {
+        CalcGrid.key(props, state, &KeyPress::plain(Key::Down), false);
+    }
+    CalcGrid.key(props, state, &KeyPress::plain(Key::Enter), false).unwrap()
+}
+
+/// The `charts` edit an answer posts: the document's whole list of charts.
+fn charts_sent(acts: &[Act]) -> Value {
+    let [Act::Call { url, parameters }] = acts else {
+        panic!("{acts:?}")
+    };
+    assert_eq!(url, "calcEdit");
+    let ops: Value = serde_json::from_str(&parameters["opsJson"]).unwrap();
+    assert_eq!(ops[0]["op"], "charts", "{ops}");
+    ops[0]["charts"].clone()
+}
+
+fn type_text(props: &Value, state: &mut ComponentState, text: &str) {
+    for ch in text.chars() {
+        CalcGrid.key(props, state, &KeyPress::plain(Key::Char(ch)), false);
+    }
+}
+
+/// CG3.3: a chart is added from the selection as the browser's toolbar makes one (its first column the labels, a
+/// series for each other column), its type and series changed and it removed, each sent as the `charts` edit of the
+/// whole list; a reader is refused, and a selection of one row makes no chart.
+#[test]
+fn the_menu_adds_a_chart_of_the_selection_changes_its_type_and_removes_it() {
+    let (props, mut state) = loaded(true);
+    let by_order = json!({"title": "By order", "type": "bar", "categories": "Orders!A2:A3",
+        "series": [{"name": "Total", "values": "Orders!B2:B3"}]});
+    // one row selected is no chart
+    assert!(menu(&props, &mut state, CHART_MENU).is_empty());
+    assert!(View::of(&props, &state).message.contains("Select the chart's cells"));
+    let shift = |key| KeyPress {
+        shift: true,
+        ..KeyPress::plain(key)
+    };
+    for key in [Key::Down, Key::Down, Key::Right, Key::Right] {
+        CalcGrid.key(&props, &mut state, &shift(key), false);
+    }
+    assert!(
+        menu(&props, &mut state, CHART_MENU).is_empty(),
+        "the title is asked first"
+    );
+    assert!(texts(&props, &state, 80)[0].contains("Chart title:"));
+    type_text(&props, &mut state, "Totals");
+    let acts = CalcGrid
+        .key(&props, &mut state, &KeyPress::plain(Key::Enter), false)
+        .unwrap();
+    assert_eq!(
+        charts_sent(&acts),
+        json!([by_order, {"title": "Totals", "type": "column", "categories": "Orders!A1:A3", "series": [
+            {"name": "Series 1", "values": "Orders!B1:B3"}, {"name": "Series 2", "values": "Orders!C1:C3"}]}])
+    );
+    assert_eq!(View::of(&props, &state).chart, 1, "the new chart is the one chosen");
+    // the room still has the one chart, which the type, the series and the removal act on
+    state.local["chart"] = json!(0);
+    let mut columns = by_order.clone();
+    columns["type"] = json!("column");
+    assert_eq!(charts_sent(&menu(&props, &mut state, CHART_MENU + 4)), json!([columns]));
+    assert!(menu(&props, &mut state, CHART_MENU + 3).is_empty());
+    assert_eq!(View::of(&props, &state).editing.unwrap().text, "Orders!B2:B3");
+    type_text(&props, &mut state, ", Orders!C2:C3");
+    let acts = CalcGrid
+        .key(&props, &mut state, &KeyPress::plain(Key::Enter), false)
+        .unwrap();
+    assert_eq!(
+        charts_sent(&acts)[0]["series"],
+        json!([{"name": "Total", "values": "Orders!B2:B3"}, {"name": "Series 2", "values": "Orders!C2:C3"}])
+    );
+    assert_eq!(charts_sent(&menu(&props, &mut state, MENU.len() - 1)), json!([]));
+    assert_eq!(range_name("Q 4", 1, 1, 2, 1), "'Q 4'!A1:A2");
+    // a reader is refused
+    let (props, mut state) = loaded(false);
+    assert!(menu(&props, &mut state, CHART_MENU + 4).is_empty());
+    assert!(View::of(&props, &state).message.contains("read only"));
 }
