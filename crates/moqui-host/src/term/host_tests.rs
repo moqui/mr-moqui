@@ -112,6 +112,7 @@ fn the_environment_leaves_out_the_confs_names_and_sets_the_terminals() {
         runtime: Path::new("/srv/runtime"),
         username: "john.doe",
         profile: &profile,
+        drive: Some(("token".to_string(), "http://127.0.0.1:8080".to_string())),
     });
     let get = |name: &str| env.iter().find(|(key, _)| key == name).map(|(_, value)| value.as_str());
     assert_eq!(get("PATH"), Some("/usr/bin"));
@@ -123,4 +124,6 @@ fn the_environment_leaves_out_the_confs_names_and_sets_the_terminals() {
     assert_eq!(get("MOQUI_TERMINAL_SESSION"), Some("s1"));
     assert_eq!(get("MOQUI_USER"), Some("john.doe"));
     assert_eq!(get("EDITOR"), Some("vi"));
+    assert_eq!(get("MOQUI_TERMINAL_TOKEN"), Some("token"));
+    assert_eq!(get("MOQUI_TERMINAL_URL"), Some("http://127.0.0.1:8080"));
 }

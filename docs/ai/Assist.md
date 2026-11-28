@@ -1178,7 +1178,12 @@ whose tool policy pins a dev tool (the seeded `dev` agent, Dev Assist), and the 
 (READ, also listed over MCP), `propose_edit` (WRITE), `try_service` (the sim; a real run is an approval), `vcs` (lazy)
 and `hosting` (lazy; a connected group server's merge requests, threads, checks, job logs and issues, the server's text
 as untrusted data; a merge request, comment or reply is an EXTERNAL approval; never an approve, merge, re-run, resolve
-or signature; [Dev-AIDE](../tools/Dev-AIDE.md#group-servers)). A conversation with a worktree of a root (the Workspace's
+or signature; [Dev-AIDE](../tools/Dev-AIDE.md#group-servers)) and `terminal` (lazy, also over MCP; the user's command lines and
+shells read, typed into, waited on and ended through the framework's driving services: the first read or keystroke of
+a session in a run is an EXTERNAL approval naming the session, which then covers that session for the rest of the run
+(an executed approval of target `terminal:<sessionId>`, `approval::executed_in_run`); ending one is a DESTRUCTIVE
+approval each time; over MCP each write call is a run of its own, so each asks; a screen is untrusted data;
+[Terminal](../ui/Terminal.md#driving-a-session)). A conversation with a worktree of a root (the Workspace's
 Sessions tab) has its file and git tools rooted in the worktree in place of that root.
 
 - **A change set** is an approval of target kind `file`: its arguments are the files with their base hashes and changes

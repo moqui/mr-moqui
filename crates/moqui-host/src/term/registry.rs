@@ -32,6 +32,8 @@ use super::{terminal_number, Admission, Ended, Sessions, Start, Terminal, Who};
 const DETACH_SECONDS: usize = 120;
 const HOST_DETACH_HOURS: usize = 72;
 const REPLAY_KB: usize = 2048;
+/// The lines a session's screen as text keeps above what it shows (plans/Terminal-Fancy2.md §4.2).
+const SCREEN_SCROLLBACK: usize = 1000;
 /// The pipe between an apps or command session's program and its pump, each way.
 const PIPE: usize = 1 << 20;
 
@@ -48,6 +50,9 @@ pub(crate) struct Registry {
     pub host_detach: Duration,
     /// The output a command or host session keeps for a window that comes back.
     pub replay: usize,
+    /// The scrollback of a session's screen as text (`terminal@screen-scrollback`).
+    #[cfg_attr(not(feature = "devtools"), allow(dead_code))]
+    pub screen_scrollback: usize,
 }
 
 impl Registry {
@@ -60,6 +65,7 @@ impl Registry {
             registry.host_detach =
                 Duration::from_secs(terminal_number(factory, "host-detach-hours", HOST_DETACH_HOURS) as u64 * 3600);
             registry.replay = terminal_number(factory, "replay-kb", REPLAY_KB) * 1024;
+            registry.screen_scrollback = terminal_number(factory, "screen-scrollback", SCREEN_SCROLLBACK);
             registry
         })
     }
@@ -71,6 +77,7 @@ impl Registry {
             detach,
             host_detach: Duration::from_secs(HOST_DETACH_HOURS as u64 * 3600),
             replay: REPLAY_KB * 1024,
+            screen_scrollback: SCREEN_SCROLLBACK,
         }
     }
 
@@ -192,6 +199,7 @@ impl Registry {
             held: false,
             agent: false,
             attend: None,
+            adopted: false,
         };
         Ok(session::spawn(self, spec, program))
     }
@@ -302,6 +310,7 @@ impl Registry {
             held: false,
             agent: false,
             attend: Some(super::notice::hook(factory)),
+            adopted: false,
         };
         Ok(session::spawn(self, spec, program))
     }
@@ -387,6 +396,7 @@ impl Registry {
             held: in_holder,
             agent: spec.profile.agent,
             attend: Some(super::notice::hook(factory)),
+            adopted: false,
         };
         Ok(session::spawn(self, spec, program))
     }
@@ -411,6 +421,7 @@ impl Registry {
             held: true,
             agent: adopted.agent,
             attend: Some(super::notice::hook(factory)),
+            adopted: true,
         };
         session::spawn(self, spec, adopted.program);
     }

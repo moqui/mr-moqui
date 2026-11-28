@@ -700,6 +700,139 @@ fn a_host_session_runs_a_program_on_a_pty() {
     socket.send(Message::Binary(b"exit\r".to_vec().into())).unwrap();
 }
 
+/// The Terminal screen with transitions for the driving services, as a program's page would call them.
+const DRIVE_TRANSITIONS: &str = r#"<screen-extend>
+    <transition name="send" method="post" begin-transaction="false" authz-action="view">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'send#TerminalInput', names: ['sessionId', 'text', 'keys']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="wait" method="post" begin-transaction="false" authz-action="view">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'wait#TerminalSession', names: ['sessionId', 'pattern', 'prompt', 'timeoutSeconds']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="events" read-only="true" begin-transaction="false">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'find#TerminalEvents', names: ['sessionId', 'after']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+</screen-extend>
+"#;
+
+/// Sessions driven by a program (plans/Terminal-Fancy2.md §4.3): a shell typed into, waited on and read as text through
+/// the services, by its user; and through the REST by the session's own token from inside it, which reaches the user's
+/// shells and nothing with a wrong token. Another user's session answers as one that does not exist.
+#[test]
+fn a_shell_is_driven_through_the_services_and_by_its_token() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let helper = helper_property();
+    let gate = crate::common::start_with_conf_files(
+        "termws-drive",
+        Some(PLAIN_USER),
+        r#"<terminal><host-profile name="plain" title="Plain sh" command="sh"/></terminal>"#,
+        &[("moqui_conf__instance__purpose", "dev"), (helper.0, &helper.1)],
+        &[
+            (
+                "components/addon/term-drive/component.xml",
+                r#"<component name="term-drive"/>"#,
+            ),
+            (
+                "components/addon/term-drive/screen-extend/webroot/screen/webroot/apps/Terminal.xml",
+                DRIVE_TRANSITIONS,
+            ),
+        ],
+    );
+    let address = gate.server.address();
+    let page = Page::signed_in(address, "john.doe");
+    let plain = Page::signed_in(address, "plain.user");
+    gate.server.factory().flush_sessions().unwrap();
+    let opened = page.call(
+        "open",
+        Some(serde_json::json!({"kind": "host", "profileName": "plain", "cols": 80, "rows": 24})),
+    );
+    let id = opened["sessionId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{opened}"))
+        .to_string();
+
+    let sent = page.call(
+        "send",
+        Some(serde_json::json!({"sessionId": id, "text": "echo drive-$((4+5))", "keys": "Enter"})),
+    );
+    assert!(sent["count"].as_u64().is_some(), "{sent}");
+    let waited = page.call(
+        "wait",
+        Some(serde_json::json!({"sessionId": id, "pattern": "^drive-9$", "timeoutSeconds": 10})),
+    );
+    assert_eq!(waited["matched"], "pattern", "{waited}");
+    let screen = page.call(&format!("screen?sessionId={id}&scope=last&lines=3"), None);
+    let lines: Vec<&str> = screen["lines"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{screen}"))
+        .iter()
+        .filter_map(|line| line.as_str())
+        .collect();
+    assert!(lines.contains(&"drive-9"), "{screen}");
+    assert_eq!(screen["kind"], "host");
+    let events = page.call(&format!("events?sessionId={id}&after=0"), None);
+    assert!(events["events"].is_array(), "{events}");
+    // another user's session is not there for them
+    let refused = plain.call(&format!("screen?sessionId={id}"), None);
+    assert_eq!(refused["reasonCode"], "notFound", "{refused}");
+    // a bad key name is refused before anything is typed
+    let bad = page.call("send", Some(serde_json::json!({"sessionId": id, "keys": "Hyper"})));
+    assert_eq!(bad["reasonCode"], "badInput", "{bad}");
+
+    // the shell's own token, from its environment: good on the REST from this machine, for this user's shells
+    page.call(
+        "send",
+        Some(serde_json::json!({"sessionId": id, "text": "echo \"T=$MOQUI_TERMINAL_TOKEN\"", "keys": "Enter"})),
+    );
+    let waited = page.call(
+        "wait",
+        Some(serde_json::json!({"sessionId": id, "pattern": "^T=\\S+$", "timeoutSeconds": 10})),
+    );
+    assert_eq!(waited["matched"], "pattern", "the shell has its token: {waited}");
+    let token = waited["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|line| line.as_str())
+        .find_map(|line| line.strip_prefix("T="))
+        .unwrap()
+        .to_string();
+    let rest = |token: &str| {
+        crate::common::exchange(
+            address,
+            &crate::common::http_request(
+                "GET",
+                &format!("/rest/s1/moqui/terminal/{id}/screen?scope=last&lines=5"),
+                &[
+                    ("x-moqui-terminal-session", id.as_str()),
+                    ("x-moqui-terminal-token", token),
+                    ("Accept", "application/json"),
+                ],
+                "",
+            ),
+        )
+    };
+    let (status, _, text) = rest(&token);
+    assert_eq!(status, 200, "{text}");
+    let by_token: serde_json::Value = serde_json::from_str(&text).unwrap_or_else(|err| panic!("{err}: {text}"));
+    assert!(
+        by_token["lines"]
+            .as_array()
+            .is_some_and(|lines| lines.iter().any(|line| line == "drive-9")),
+        "{by_token}"
+    );
+    let (_, _, text) = rest("not-the-token");
+    assert!(!text.contains("drive-9"), "a wrong token reads nothing: {text}");
+    page.call(
+        "send",
+        Some(serde_json::json!({"sessionId": id, "text": "exit", "keys": "Enter"})),
+    );
+}
+
 /// The holder (plans/archive/Terminal-Fancy.md §7.5): a host session's program runs on through a restart of the server,
 /// and the next window gets its output again and goes on with it.
 #[test]

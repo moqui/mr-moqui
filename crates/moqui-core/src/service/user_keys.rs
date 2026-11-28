@@ -759,7 +759,7 @@ fn renew_device_key(
 }
 
 /// `create#UserScopedKey`: a new key of the current user that opens only `scope` (`gateway`, the LLM gateway, by
-/// default; `git` or `tasks`, the REST resources that declare them, `user::KEY_SCOPES`), named `deviceName` in the
+/// default; `git`, `tasks` or `terminal`, the REST resources that declare them, `user::KEY_SCOPES`), named `deviceName` in the
 /// user's device list, given once as `loginKey` (`user::get_scoped_key`): what a client keeps where the account's own
 /// key would open everything.
 fn create_scoped_key(

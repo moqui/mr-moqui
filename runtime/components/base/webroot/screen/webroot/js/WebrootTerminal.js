@@ -799,6 +799,15 @@
             return session;
         },
 
+        // The last `lines` lines of the session `key`'s screen, read on the server (get#TerminalScreen, Terminal-Fancy2
+        // §4.2): the session list's preview. None for an apps session, which keeps no screen, or when the read fails.
+        preview(key, lines) {
+            const info = state.sessions[key];
+            if (!info || info.kind === "apps") return Promise.resolve([]);
+            const query = "?sessionId=" + encodeURIComponent(key) + "&scope=last&lines=" + (lines || 3);
+            return request("screen" + query).then((out) => (Array.isArray(out.lines) ? out.lines : []), () => []);
+        },
+
         // Past MAX_LIVE terminals, the one shown longest ago that no view holds is let go; its session goes on.
         letGoOldest() {
             if (sessions.size <= MAX_LIVE) return;

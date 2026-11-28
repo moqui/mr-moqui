@@ -128,9 +128,9 @@ iOS the copy from a timer is refused, so the "did not allow the copy" dialog ope
 
 ### 4.2 TF2: the screen model
 
-- **The crate.** `vt100` (0.18.1, MIT): a parser and screen with the alternate screen, scrollback, and the screen
-  written back as escape sequences. `avt` (0.21.0, Apache-2.0) is the second choice. Both are checked again on
-  crates.io when TF2 starts; the choice and its size go in this section then. `term/screen.rs` wraps it.
+- **The crate.** `vt100` (0.18.1, MIT, checked on crates.io Nov 27, 2026; it brings `vte` 0.15, and `unicode-width`
+  and `itoa`, already in the tree): a parser and screen with the alternate screen, scrollback, and the screen written
+  back as escape sequences. `term/screen.rs` wraps it.
 - **Made on first use.** A session gets a screen the first time something reads text (TF3, the list's preview). It is
   built by feeding the replay a new client would get (`Ring::replay_from_rest`, `term/ring.rs:80`, after the modes'
   preamble), then fed in `Pump::output` (`term/session.rs:606`) beside the tracker. It follows each resize. It is
@@ -145,8 +145,8 @@ iOS the copy from a timer is refused, so the "did not allow the copy" dialog ope
   *n* lines, the cursor, whether the alternate screen is on, and the screen as escape sequences for a preview.
 - **The list's preview.** The session list shows the last three lines of a session on hover, read through TF3's
   service, which makes the screen.
-- **Memory.** The size of a screen of 200 by 50 with 1000 lines of scrollback is measured when TF2 is built and written
-  here.
+- **Memory.** A cell is 32 bytes, so a screen of 200 by 50 with its 1000 lines of scrollback full is about 6.7 MB
+  (measured Nov 27, 2026), held only while something reads it (D6) and dropped after 10 minutes unread.
 
 ### 4.3 TF3: sessions driven by a program
 
@@ -173,8 +173,13 @@ iOS the copy from a timer is refused, so the "did not allow the copy" dialog ope
   `confirm#TerminalUser` for the recent sign-in, as a socket attached by key does (`termws.rs:337`). Input a program
   sends never renews the HTTP session.
 - **Reached.** The screen's transitions (`apps/Terminal.xml`, `TerminalWeb.js`) for the page; for a program, a REST
-  resource `terminal` in `moqui.rest.xml` with these four services only, `key-scope="terminal"` (a new scope in
-  `KEY_SCOPES`, `moqui-core/src/user/login.rs:1399`).
+  resource `terminal` in `moqui.rest.xml` with these four services and `find#DrivableTerminalSessions` (what
+  `moqui term list` and the tool's `list` read, under a token too), `key-scope="terminal"` (a new scope in
+  `KEY_SCOPES`, `moqui-core/src/user/login.rs:1399`). The paths ask for no sign-in, since a token's program has none;
+  each service decides its caller. A GET only reads and is taken as the request's own origin, as listing is; a call
+  with no request (the agent tool's) is this machine. A token is taken from a loopback peer on the server's own
+  listener with no forwarding header, whatever its origin (`Facts::loopback_direct`).
+- **Patterns** of a wait match at each line's ends (`^`, `$` multi-line), at most 1024 characters.
 
 **`moqui term`**, a command of the `moqui` binary: `moqui term list`, `capture <id>`, `send <id> [--keys …] [text]`,
 `wait <id> …`, `events <id>`.

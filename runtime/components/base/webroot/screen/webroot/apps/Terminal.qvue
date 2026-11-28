@@ -57,6 +57,8 @@ along with this software (see the LICENSE.md file). If not, see
             <div class="text-subtitle2 q-py-xs">{{labels.sessions}}</div>
             <q-list dense separator class="col scroll">
                 <q-item v-for="id in terminalState.order" :key="id" :id="'TerminalSession-' + id">
+                    <q-tooltip v-if="terminalState.sessions[id].kind !== 'apps'" anchor="center left" self="center right" max-width="480px"
+                        @before-show="loadPreview(id)"><pre class="m-terminal-preview">{{(previews[id] || []).join('\n') || labels.noPreview}}</pre></q-tooltip>
                     <q-item-section avatar style="min-width: 0"><span class="m-terminal-dot" :class="'m-terminal-dot-' + dotOf(terminalState.sessions[id])"></span></q-item-section>
                     <q-item-section>
                         <q-item-label class="ellipsis">{{terminalState.sessions[id].title || id}}</q-item-label>
@@ -137,10 +139,12 @@ module.exports = {
         return { height: 400, ready: !!store, terminalState: store ? store.state : { sessions: {}, order: [] },
             solo: !!soloSession, soloSession,
             tabs: [], active: "", focusedPane: "", listOpen: false, settingsOpen: false, draft: {}, profileDraft: [], failed: "",
+            // a session's last lines, read when its row is hovered (plans/Terminal-Fancy2.md §4.2)
+            previews: {},
             labels: { notLoaded: localize("The terminal could not load."), new: localize("New"), sessions: localize("Sessions"),
                 settings: localize("Settings"), closeTab: localize("Close tab"), showHere: localize("Show here"),
                 rename: localize("Rename"), end: localize("End session"), forget: localize("Remove from the list"),
-                noSessions: localize("No sessions"), opening: localize("Opening a terminal…"), tryAgain: localize("Try again"),
+                noSessions: localize("No sessions"), noPreview: localize("Nothing shown yet"), opening: localize("Opening a terminal…"), tryAgain: localize("Try again"),
                 apps: localize("Apps"), command: localize("Command line"), fontSize: localize("Font size"),
                 fontFamily: localize("Font"), fontFamilyHint: localize("A CSS font list; empty for the default"),
                 scrollback: localize("Scrollback lines"), opensFirst: localize("Opens first"), cancel: localize("Cancel"),
@@ -262,6 +266,9 @@ module.exports = {
             if (!info) return "idle";
             if (info.state === "ended") return "ended";
             return info.status || "idle";
+        },
+        loadPreview(id) {
+            if (this.ready) moqui.terminal.preview(id).then((lines) => (this.previews[id] = lines));
         },
         placeOf(id) {
             const info = this.terminalState.sessions[id] || {};

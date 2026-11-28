@@ -52,10 +52,12 @@ fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<
     moqui_core::rust_service!(map, confirm_terminal_user)?;
     moqui_core::rust_service!(map, find_all_terminal_sessions)?;
     moqui_core::rust_service!(map, end_terminal_session_of)?;
+    #[cfg(feature = "devtools")]
+    super::drive::register(map)?;
     Ok(())
 }
 
-type Out = Result<BTreeMap<String, Value>, LibError>;
+pub(super) type Out = Result<BTreeMap<String, Value>, LibError>;
 
 /// A server whose command line or host sessions are reachable from other machines says so at start (§8.2).
 fn warn_remote(factory: &ExecutionContextFactory) {
@@ -72,13 +74,13 @@ fn warn_remote(factory: &ExecutionContextFactory) {
 /// The refusal that tells nothing about why: a kind this server does not offer here, for this user, from this place.
 pub(crate) const NOT_AVAILABLE: &str = "notAvailable";
 
-fn factory() -> Result<Arc<ExecutionContextFactory>, LibError> {
+pub(super) fn factory() -> Result<Arc<ExecutionContextFactory>, LibError> {
     ExecutionContext::with_current(|ec| Arc::clone(ec.factory()))
         .ok_or_else(|| LibError::new("a terminal service needs an execution context"))
 }
 
 /// The signed-in user, or a refusal.
-fn username() -> Result<String, Out> {
+pub(super) fn username() -> Result<String, Out> {
     match moqui_core::user::current_username() {
         Ok(Some(username)) if !username.is_empty() => Ok(username),
         _ => Err(refuse("notSignedIn", "Sign in to use the terminal")),
@@ -92,7 +94,7 @@ pub(crate) fn refuse(reason_code: &str, message: &str) -> Out {
     Ok(BTreeMap::from([("reasonCode".to_string(), Value::string(reason_code))]))
 }
 
-fn text(parameters: &BTreeMap<String, Value>, key: &str) -> String {
+pub(super) fn text(parameters: &BTreeMap<String, Value>, key: &str) -> String {
     parameters
         .get(key)
         .filter(|value| !is_empty(value))
@@ -113,12 +115,12 @@ fn dimension(parameters: &BTreeMap<String, Value>, key: &str, least: u16, defaul
         })
 }
 
-fn answer(key: &str, value: &serde_json::Value) -> Out {
+pub(super) fn answer(key: &str, value: &serde_json::Value) -> Out {
     Ok(BTreeMap::from([(key.to_string(), from_json(value))]))
 }
 
 /// A permission of the signed-in user; a check that fails is a no.
-fn permitted(permission: &str) -> bool {
+pub(super) fn permitted(permission: &str) -> bool {
     moqui_core::user::has_permission(permission).unwrap_or(false)
 }
 

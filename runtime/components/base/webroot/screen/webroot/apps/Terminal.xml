@@ -30,6 +30,11 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'find#TerminalSessions', names: []})</script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- a session's last lines, for the list's preview (plans/Terminal-Fancy2.md §4.3): get#TerminalScreen -->
+    <transition name="screen" read-only="true" begin-transaction="false">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'get#TerminalScreen', names: ['sessionId', 'scope', 'lines', 'format']})</script></actions>
+        <default-response type="none"/>
+    </transition>
     <transition name="open" method="post" begin-transaction="false" authz-action="view">
         <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'open#TerminalSession', names: ['kind', 'profileName', 'directory', 'title', 'cols', 'rows', 'resume', 'ticket']})</script></actions>
         <default-response type="none"/>

@@ -269,6 +269,9 @@ pub(crate) struct EnvFor<'a> {
     pub runtime: &'a Path,
     pub username: &'a str,
     pub profile: &'a Profile,
+    /// The session's token and the server's own address on this machine, for `moqui term` inside it
+    /// (plans/Terminal-Fancy2.md §4.3); none while the conf has no token key or no web listener runs.
+    pub drive: Option<(String, String)>,
 }
 
 pub(crate) fn environment(of: &EnvFor<'_>) -> Vec<(String, String)> {
@@ -296,6 +299,10 @@ pub(crate) fn environment(of: &EnvFor<'_>) -> Vec<(String, String)> {
     env.insert("MOQUI_TERMINAL_SESSION".to_string(), of.session_id.to_string());
     env.insert("MOQUI_RUNTIME".to_string(), of.runtime.to_string_lossy().into_owned());
     env.insert("MOQUI_USER".to_string(), of.username.to_string());
+    if let Some((token, url)) = &of.drive {
+        env.insert("MOQUI_TERMINAL_TOKEN".to_string(), token.clone());
+        env.insert("MOQUI_TERMINAL_URL".to_string(), url.clone());
+    }
     for (name, value) in &of.profile.env {
         env.insert(name.clone(), value.clone());
     }
@@ -359,6 +366,26 @@ fn integrate(launch: &mut Launch, runtime: &Path) {
     }
 }
 
+/// The server's own address on this machine for a program in one of its sessions: plain HTTP while it runs, else
+/// HTTPS by `localhost` (the name a development certificate is for).
+fn local_url(factory: &ExecutionContextFactory) -> Option<String> {
+    #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
+    {
+        let addresses = factory.extension_if_present::<crate::listeners::Addresses>()?;
+        if let Some(http) = addresses.get("HTTP") {
+            return Some(format!("http://127.0.0.1:{}", http.port()));
+        }
+        addresses
+            .get("HTTPS")
+            .map(|https| format!("https://localhost:{}", https.port()))
+    }
+    #[cfg(not(all(feature = "axum", any(feature = "postgres", feature = "mysql"))))]
+    {
+        let _ = factory;
+        None
+    }
+}
+
 /// What a host program is started with.
 #[derive(Clone)]
 pub(crate) struct Launch {
@@ -395,6 +422,7 @@ impl Launch {
             runtime,
             username,
             profile,
+            drive: super::token::token(session_id).zip(local_url(factory)),
         });
         let mut launch = Self {
             argv,

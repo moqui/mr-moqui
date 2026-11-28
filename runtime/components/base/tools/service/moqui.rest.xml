@@ -363,7 +363,22 @@ along with this software (see the LICENSE.md file). If not, see
             git or tasks: scope), made by the account's key only, and the end of a key it holds, when it is let go, which
             a scoped key may ask for itself alone -->
         <resource name="gatewayKey"><method type="post"><service name="org.moqui.impl.UserServices.create#UserScopedKey"/></method></resource>
-        <resource name="keyRevoke" key-scope="git tasks gateway"><method type="post"><service name="org.moqui.impl.UserServices.revoke#UserHeldKey"/></method></resource>
+        <resource name="keyRevoke" key-scope="git tasks gateway terminal"><method type="post"><service name="org.moqui.impl.UserServices.revoke#UserHeldKey"/></method></resource>
+    </resource>
+
+    <!-- Terminal sessions driven by a program (plans/Terminal-Fancy2.md §4.3, docs/ui/Terminal.md): moqui term, signed
+        in by a login key or a key made for the terminal alone (key-scope), or inside one of the user's shells by that
+        session's token (the x-moqui-terminal-token header, from this machine only). Each service checks who may drive
+        which session itself, so the paths ask for no sign-in (a token's program has none): an attach's checks for the
+        user, the token's reach for a program, and nothing without one or the other. -->
+    <resource name="terminal" description="Read and drive your terminal sessions" key-scope="terminal" require-authentication="false">
+        <method type="get" require-authentication="false"><service name="org.moqui.terminal.TerminalServices.find#DrivableTerminalSessions"/></method>
+        <id name="sessionId">
+            <resource name="screen" require-authentication="false"><method type="get" require-authentication="false"><service name="org.moqui.terminal.TerminalServices.get#TerminalScreen"/></method></resource>
+            <resource name="input" require-authentication="false"><method type="post" require-authentication="false"><service name="org.moqui.terminal.TerminalServices.send#TerminalInput"/></method></resource>
+            <resource name="wait" require-authentication="false"><method type="post" require-authentication="false"><service name="org.moqui.terminal.TerminalServices.wait#TerminalSession"/></method></resource>
+            <resource name="events" require-authentication="false"><method type="get" require-authentication="false"><service name="org.moqui.terminal.TerminalServices.find#TerminalEvents"/></method></resource>
+        </id>
     </resource>
 
     <!-- A source server's deploy step (docs/tools/Component-Deploy.md "The gate"): no session; the attestation, signed

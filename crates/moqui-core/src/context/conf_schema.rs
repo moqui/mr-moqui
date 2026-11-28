@@ -453,7 +453,9 @@ pub static CATALOG: &[Unit] = &[
             ("shell-enabled", LISTENERS),
         ])
         .secrets(&[("host-key", Secret::Generated)]),
-    single("terminal", Class::Live).children(&[keyed("host-profile", &["name"], Class::Live)]),
+    single("terminal", Class::Live)
+        .secrets(&[("token-key", Secret::Generated)])
+        .children(&[keyed("host-profile", &["name"], Class::Live)]),
     single("git-server", Class::Live)
         .attrs(&[("max-concurrent", LISTENER), ("max-queued", LISTENER)])
         .secrets(&[

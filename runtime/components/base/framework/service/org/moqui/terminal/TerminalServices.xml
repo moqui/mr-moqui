@@ -120,6 +120,102 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="reasonCode"/></out-parameters>
     </service>
+    <!-- Sessions driven by a program (plans/Terminal-Fancy2.md §4.3): a command line or a host session, never an apps
+        session. The caller is the signed-in user, with an attach's checks for the kind and the place (from another
+        machine a sign-in within remote-reauth-minutes, or a ticket of confirm#TerminalUser for a program signed in by a
+        login key), or a program in one of the user's command lines or shells with that session's MOQUI_TERMINAL_TOKEN in
+        the x-moqui-terminal-token header and its id in x-moqui-terminal-session, from this machine only, reaching the
+        user's command lines and shells. So they authenticate no one themselves (anonymous-all) and are reached over
+        REST (the terminal resource of moqui.rest.xml, key-scope terminal) as well as the Terminal screen. -->
+    <service verb="find" noun="DrivableTerminalSessions" type="rust" location="moqui_host::term::drive::find_drivable_terminal_sessions"
+            authenticate="anonymous-all" allow-remote="true" transaction="ignore">
+        <description>The sessions the caller may drive, as find#TerminalSessions lists them: the signed-in user's command
+            lines and shells, or those a session's token reaches (moqui term list).</description>
+        <out-parameters>
+            <parameter name="sessions" type="List"><parameter name="session" type="Map"/></parameter>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="TerminalScreen" type="rust" location="moqui_host::term::drive::get_terminal_screen"
+            authenticate="anonymous-all" allow-remote="true" transaction="ignore">
+        <description>The session's screen as text: scope visible (the rows on the screen, the default), scrollback (what
+            scrolled off, oldest first, then the screen) or last (its last lines, the empty rows below the cursor left
+            out); format ansi adds the screen as escape sequences. Answers lines, cursor (row, col), cols, rows,
+            alternate, rebuilt (made from kept output written across sizes: a full-screen program's may be partial until
+            it draws again), title, cwd, status, state, count (the bytes of output so far) and lastEvent.</description>
+        <in-parameters>
+            <parameter name="sessionId" required="true"/>
+            <parameter name="scope" default-value="visible"/>
+            <parameter name="lines" type="Integer" default-value="24"/>
+            <parameter name="format" default-value="text"/>
+            <parameter name="ticket"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="lines" type="List"/><parameter name="cursor" type="Map"/>
+            <parameter name="cols" type="Integer"/><parameter name="rows" type="Integer"/>
+            <parameter name="alternate" type="Boolean"/><parameter name="rebuilt" type="Boolean"/>
+            <parameter name="ansi"/><parameter name="sessionId"/><parameter name="kind"/><parameter name="title"/>
+            <parameter name="cwd"/><parameter name="status"/><parameter name="state"/><parameter name="exitStatus" type="Integer"/>
+            <parameter name="count" type="Long"/><parameter name="lastEvent" type="Long"/><parameter name="reasonCode"/>
+        </out-parameters>
+    </service>
+    <service verb="send" noun="TerminalInput" type="rust" location="moqui_host::term::drive::send_terminal_input"
+            authenticate="anonymous-all" allow-remote="true" transaction="ignore">
+        <description>Input to the session as typed: text (a line end is Enter; several lines to a program that asked
+            for bracketed paste go as one paste), then keys, named and separated by commas (Enter, Tab, Esc, Backspace,
+            Up, Down, Left, Right, Home, End, PageUp, PageDown, Insert, Delete, F1 to F12, S-Tab, C-c for Ctrl, M-x for
+            Alt), in the program's cursor mode. At most 64 KiB, and no NUL. Never under an agent's fence or in a sim.
+            Answers count, the bytes of output so far.</description>
+        <in-parameters>
+            <parameter name="sessionId" required="true"/>
+            <parameter name="text"/>
+            <parameter name="keys"/>
+            <parameter name="ticket"/>
+        </in-parameters>
+        <out-parameters><parameter name="count" type="Long"/><parameter name="reasonCode"/></out-parameters>
+    </service>
+    <service verb="wait" noun="TerminalSession" type="rust" location="moqui_host::term::drive::wait_terminal_session"
+            authenticate="anonymous-all" allow-remote="true" transaction="ignore">
+        <description>Wait until the session's status is one of status (comma separated: idle, working, done, blocked,
+            error, ended), its screen's last rows match pattern (a regular expression; ^ and $ match at each line's ends), its shell marks a prompt
+            (OSC 133 A, after the wait began), its output is quiet for quietMs, or it ended; at most timeoutSeconds
+            (300). An ended session ends any wait. A user has at most 4 waits at once. Answers matched (status, pattern,
+            prompt, quiet, ended; empty with timedOut true when the time ran out) and the screen's last ten lines.</description>
+        <in-parameters>
+            <parameter name="sessionId" required="true"/>
+            <parameter name="status"/>
+            <parameter name="pattern"/>
+            <parameter name="prompt" type="Boolean"/>
+            <parameter name="quietMs" type="Integer"/>
+            <parameter name="ended" type="Boolean"/>
+            <parameter name="timeoutSeconds" type="Integer" default-value="300"/>
+            <parameter name="ticket"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="matched"/><parameter name="timedOut" type="Boolean"/><parameter name="lines" type="List"/>
+            <parameter name="sessionId"/><parameter name="kind"/><parameter name="title"/><parameter name="cwd"/>
+            <parameter name="status"/><parameter name="state"/><parameter name="exitStatus" type="Integer"/>
+            <parameter name="cols" type="Integer"/><parameter name="rows" type="Integer"/><parameter name="count" type="Long"/>
+            <parameter name="lastEvent" type="Long"/><parameter name="reasonCode"/>
+        </out-parameters>
+    </service>
+    <service verb="find" noun="TerminalEvents" type="rust" location="moqui_host::term::drive::find_terminal_events"
+            authenticate="anonymous-all" allow-remote="true" transaction="ignore">
+        <description>The session's events after number after (0 for all of its last 256), oldest first: each with
+            number, at (millis), kind (title, cwd, status, prompt, command with its exit status, bell, notify, attach,
+            detach, ended) and text.</description>
+        <in-parameters>
+            <parameter name="sessionId" required="true"/>
+            <parameter name="after" type="Long" default-value="0"/>
+            <parameter name="ticket"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="events" type="List"/><parameter name="sessionId"/><parameter name="kind"/><parameter name="title"/>
+            <parameter name="cwd"/><parameter name="status"/><parameter name="state"/><parameter name="exitStatus" type="Integer"/>
+            <parameter name="cols" type="Integer"/><parameter name="rows" type="Integer"/><parameter name="count" type="Long"/>
+            <parameter name="lastEvent" type="Long"/><parameter name="reasonCode"/>
+        </out-parameters>
+    </service>
     <service verb="clean" noun="TerminalSessions" authenticate="anonymous-all">
         <description>The job clean_TerminalSessions_daily: deletes the audit rows (moqui.terminal.TerminalSession) of
             sessions opened more than daysToKeep days ago.</description>

@@ -1394,9 +1394,10 @@ pub fn get_device_key(device: &str) -> Result<String, Error> {
 
 /// The scopes a key may be made for alone ([`get_scoped_key`]): `gateway`, the LLM gateway's `/llm/v1`; `git`
 /// ([`ACCESS_TOKEN_SCOPE`]), git over HTTP and the REST resources that declare it (the framework's git and hosting
-/// reads); `tasks`, the REST resources that declare it (Mantle's `my/tasks` and a repository's issues). A REST resource
-/// names the scopes it takes with `key-scope` ([`request_key_scopes`]).
-pub const KEY_SCOPES: [&str; 3] = ["gateway", ACCESS_TOKEN_SCOPE, "tasks"];
+/// reads); `tasks`, the REST resources that declare it (Mantle's `my/tasks` and a repository's issues); `terminal`, the
+/// framework's `terminal` resource (reading and driving terminal sessions, `moqui term`). A REST resource names the
+/// scopes it takes with `key-scope` ([`request_key_scopes`]).
+pub const KEY_SCOPES: [&str; 4] = ["gateway", ACCESS_TOKEN_SCOPE, "tasks", "terminal"];
 
 /// A new key of the logged-in user that opens only `scope` (one of [`KEY_SCOPES`]), named `device` in the user's
 /// device list and good for the conf's `login-key/@device-expire-hours`: a dev instance keeps one for each of a group

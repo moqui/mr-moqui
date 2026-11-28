@@ -35,8 +35,11 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 
 use super::attention::{Attention, Status};
+use super::events::{Event, Events};
 use super::registry::Registry;
 use super::ring::Ring;
+#[cfg(feature = "devtools")]
+use super::screen::{Read, Scope, Screen};
 use super::track::Tracker;
 use super::{Ended, SessionSlot};
 
@@ -151,6 +154,21 @@ enum Command {
     },
     /// Let go of a held session without ending it: the server is stopping, and the holder keeps it (§7.5).
     Release,
+    /// The screen as text (plans/Terminal-Fancy2.md §4.2), made on this first read; `None` for a session with no ring.
+    #[cfg(feature = "devtools")]
+    Screen {
+        scope: Scope,
+        ansi: bool,
+        reply: oneshot::Sender<Option<Read>>,
+    },
+    /// A program's input (§4.3): `text` as typed, then the named `keys`, in the modes in force; answers the count of
+    /// the output so far, or why it was refused.
+    #[cfg(feature = "devtools")]
+    Send {
+        text: String,
+        keys: Vec<String>,
+        reply: oneshot::Sender<Result<u64, String>>,
+    },
 }
 
 /// What the session list shows of a session.
@@ -196,6 +214,8 @@ pub(crate) struct Session {
     next_client: AtomicU64,
     /// The user typed since the pump last looked.
     typed: std::sync::atomic::AtomicBool,
+    /// Its last events, numbered (plans/Terminal-Fancy2.md §4.3).
+    events: Mutex<Events>,
 }
 
 /// What a session that wants its user while nobody looks tells (§11.1): the notification's sender.
@@ -237,6 +257,8 @@ pub(crate) struct Spec {
     pub agent: bool,
     /// What an attention is told to; none for a session that notifies nothing (the apps).
     pub attend: Option<Attend>,
+    /// Taken back from the holder after a restart: its kept output was written across sizes this server did not see.
+    pub adopted: bool,
 }
 
 pub(crate) fn now_millis() -> i64 {
@@ -322,6 +344,43 @@ impl Session {
         let _ = self.commands.try_send(Command::Release);
     }
 
+    /// The lines of the session's screen that `scope` names (plans/Terminal-Fancy2.md §4.2); with `ansi`, the screen as
+    /// escape sequences too. `None` for a session that keeps no ring (an apps session) or whose task is gone.
+    #[cfg(feature = "devtools")]
+    pub async fn screen(&self, scope: Scope, ansi: bool) -> Option<Read> {
+        let (reply, answer) = oneshot::channel();
+        self.commands.send(Command::Screen { scope, ansi, reply }).await.ok()?;
+        answer.await.ok().flatten()
+    }
+
+    /// `text` as typed, then the named `keys` (§4.3), from a program: it does not count as the user typing. Answers the
+    /// count of the session's output so far; `Err` with why for input refused, `Ok(Err)` when the task is gone.
+    #[cfg(feature = "devtools")]
+    pub async fn send_keys(&self, text: String, keys: Vec<String>) -> Result<u64, String> {
+        let (reply, answer) = oneshot::channel();
+        self.commands
+            .send(Command::Send { text, keys, reply })
+            .await
+            .map_err(|_| "the session has ended".to_string())?;
+        answer.await.map_err(|_| "the session has ended".to_string())?
+    }
+
+    /// The number of its last event, 0 before any.
+    #[cfg_attr(not(feature = "devtools"), allow(dead_code))]
+    pub fn last_event(&self) -> u64 {
+        lock(&self.events).last()
+    }
+
+    /// Its events after number `after`, oldest first.
+    #[cfg_attr(not(feature = "devtools"), allow(dead_code))]
+    pub fn events_after(&self, after: u64) -> Vec<Event> {
+        lock(&self.events).after(after)
+    }
+
+    fn event(&self, kind: &'static str, text: impl Into<String>, status: Option<i64>) {
+        lock(&self.events).push(now_millis(), kind, text, status);
+    }
+
     /// End the session: its program is asked to end, and killed when it has not.
     pub fn end(&self, reason: &str) {
         let _ = self.commands.try_send(Command::End {
@@ -382,6 +441,7 @@ pub(crate) fn spawn(registry: &Arc<Registry>, spec: Spec, program: Program) -> A
         input,
         next_client: AtomicU64::new(1),
         typed: std::sync::atomic::AtomicBool::new(false),
+        events: Mutex::new(Events::default()),
     });
     registry.insert(Arc::clone(&session));
     let pump = Pump {
@@ -398,6 +458,9 @@ pub(crate) fn spawn(registry: &Arc<Registry>, spec: Spec, program: Program) -> A
         on_end: spec.on_end,
         status: Status::for_agent(spec.agent),
         attend: spec.attend,
+        #[cfg(feature = "devtools")]
+        screen: None,
+        resized: spec.adopted,
     };
     crate::edge::handle().spawn(pump.run(program, commands_in, input_in));
     session
@@ -440,6 +503,11 @@ struct Pump {
     on_end: Option<Box<dyn FnOnce(u32, String) + Send>>,
     status: Status,
     attend: Option<Attend>,
+    /// The screen as text, once something read it (D6).
+    #[cfg(feature = "devtools")]
+    screen: Option<Screen>,
+    /// The kept output was written at more than one size (or before an adoption): a screen made from it is `rebuilt`.
+    resized: bool,
 }
 
 /// Write the client's input to the program until the session ends it or the program stops reading.
@@ -585,6 +653,8 @@ impl Pump {
         tracing::info!("{label} ended ({}): {reason}", ended.status);
         self.session
             .update_info(|info| info.ended = Some((ended.status, reason.clone())));
+        self.session
+            .event("ended", reason.clone(), Some(i64::from(ended.status)));
         // Its place in the limits goes back now; an ended session is only listed.
         self._slot = None;
         if let Some(on_end) = self.on_end.take() {
@@ -605,11 +675,18 @@ impl Pump {
     /// Bytes the program wrote: counted, kept, read for its state, and gathered for the client.
     fn output(&mut self, bytes: &[u8]) {
         let changes = self.tracker.feed(bytes);
+        #[cfg(feature = "devtools")]
+        if let Some(screen) = self.screen.as_mut() {
+            screen.feed(bytes);
+        }
         if let Some(ring) = self.ring.as_mut() {
             ring.push(bytes, self.count, &changes.rests);
         }
         self.count += bytes.len() as u64;
         let now = now_millis();
+        if changes.any() || !changes.marks.is_empty() {
+            lock(&self.session.events).changes(now, &changes);
+        }
         self.session.update_info(|info| {
             info.last_output = now;
             if let Some(title) = &changes.title {
@@ -680,6 +757,14 @@ impl Pump {
 
     /// Each second: typing answers a bell, and quiet output ends working.
     fn tick(&mut self) {
+        #[cfg(feature = "devtools")]
+        if self
+            .screen
+            .as_ref()
+            .is_some_and(|screen| screen.idle(std::time::Instant::now()))
+        {
+            self.screen = None;
+        }
         let mut changed = false;
         if self.session.typed.swap(false, Ordering::Relaxed) {
             changed |= self.status.input();
@@ -723,6 +808,7 @@ impl Pump {
     fn let_go(&mut self, reason: &str) {
         if let Some(client) = self.client.take() {
             let _ = client.out.try_send(Out::Close(reason.to_string()));
+            self.session.event("detach", reason, None);
         }
         self.pending.clear();
         self.detached_since = Some(Instant::now());
@@ -753,6 +839,7 @@ impl Pump {
             Command::Detach { client } => {
                 if self.client.as_ref().is_some_and(|current| current.id == client) {
                     self.client = None;
+                    self.session.event("detach", "", None);
                     self.pending.clear();
                     self.detached_since = Some(Instant::now());
                     self.session.update_info(|info| info.attached = false);
@@ -761,10 +848,7 @@ impl Pump {
             Command::Resize { client, cols, rows } => {
                 if self.client.as_ref().is_some_and(|current| current.id == client) {
                     (program.resize)(cols, rows);
-                    self.session.update_info(|info| {
-                        info.cols = cols;
-                        info.rows = rows;
-                    });
+                    self.sized(cols, rows);
                 }
             }
             Command::Ack { client, count } => {
@@ -785,8 +869,64 @@ impl Pump {
                     }
                 }
             }
+            #[cfg(feature = "devtools")]
+            Command::Screen { scope, ansi, reply } => {
+                let _ = reply.send(self.read_screen(scope, ansi));
+            }
+            #[cfg(feature = "devtools")]
+            Command::Send { text, keys, reply } => {
+                let sent = super::keys::send(&text, &keys, &self.tracker.modes()).and_then(|bytes| {
+                    self.session
+                        .input
+                        .try_send(bytes)
+                        .map_err(|_| "the session's program is not reading its input".to_string())
+                });
+                let _ = reply.send(sent.map(|()| self.count));
+            }
             Command::End { .. } | Command::Release => {}
         }
+    }
+
+    /// The window's size is the session's: the info, and the screen, follow it.
+    fn sized(&mut self, cols: u16, rows: u16) {
+        let info = self.session.info();
+        if self.count > 0 && (info.cols, info.rows) != (cols, rows) {
+            self.resized = true;
+        }
+        self.session.update_info(|info| {
+            info.cols = cols;
+            info.rows = rows;
+        });
+        #[cfg(feature = "devtools")]
+        if let Some(screen) = self.screen.as_mut() {
+            screen.resize(cols, rows);
+        }
+    }
+
+    /// The screen read, made first from the replay a new window would get when there is none (D6).
+    #[cfg(feature = "devtools")]
+    fn read_screen(&mut self, scope: Scope, ansi: bool) -> Option<Read> {
+        self.ring.as_ref()?;
+        if self.screen.is_none() {
+            let (from, _, replay) = self.replay(None);
+            let info = self.session.info();
+            let scrollback = self
+                .registry
+                .upgrade()
+                .map_or(super::screen::SCROLLBACK, |registry| registry.screen_scrollback);
+            self.screen = Some(Screen::new(
+                info.cols,
+                info.rows,
+                scrollback,
+                &replay,
+                from > 0 || self.resized,
+            ));
+        }
+        let count = self.count;
+        self.screen.as_mut().map(|screen| Read {
+            count,
+            ..screen.read(scope, ansi)
+        })
     }
 
     fn attach(&mut self, have: Option<u64>, cols: u16, rows: u16, program: &mut Program) -> Option<Attached> {
@@ -826,11 +966,9 @@ impl Pump {
             client.paused = client.behind() > HIGH_WATER;
         }
         self.detached_since = None;
-        self.session.update_info(|info| {
-            info.attached = true;
-            info.cols = cols;
-            info.rows = rows;
-        });
+        self.session.update_info(|info| info.attached = true);
+        self.session.event("attach", "", None);
+        self.sized(cols, rows);
         let alternate = self.tracker.alternate_screen();
         if reset && alternate && self.session.kind == Kind::Host {
             // A full-screen program repaints on a change of size; the replay alone may not hold its whole screen.

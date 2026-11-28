@@ -89,6 +89,12 @@ along with this software (see the LICENSE.md file). If not, see
     </artifactGroups>
     <!-- What the server offers and the repository behind a URL: any signed-in user (the offer also with no credentials,
         by its own anonymous-view), and the services check the repository's rights -->
+    <!-- Reading and driving terminal sessions (moqui term): any signed-in user, and a program by its session's token;
+        the services check who may drive which session (org.moqui.terminal.TerminalServices) -->
+    <artifactGroups artifactGroupId="MOQUI_API_TERMINAL" description="Moqui Tools REST API: terminal sessions">
+        <artifacts artifactTypeEnumId="AT_REST_PATH" inheritAuthz="Y" artifactName="/moqui/terminal"/>
+        <authz artifactAuthzId="MOQUI_API_TERMINAL_USERS" userGroupId="ALL_USERS" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    </artifactGroups>
     <artifactGroups artifactGroupId="MOQUI_API_HOSTING" description="Moqui Tools REST API: what the server offers">
         <artifacts artifactTypeEnumId="AT_REST_PATH" inheritAuthz="Y" artifactName="/moqui/hosting"/>
         <authz artifactAuthzId="MOQUI_API_HOSTING_USERS" userGroupId="ALL_USERS" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>

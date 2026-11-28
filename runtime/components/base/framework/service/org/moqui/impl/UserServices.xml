@@ -1403,7 +1403,7 @@ along with this software (see the LICENSE.md file). If not, see
             login-key/@device-expire-hours. Shown only in the out parameters. A dev instance keeps one of each for its
             group server (plans/archive/design-dev-aide.md 21.2, question 18), in place of the account's key.</description>
         <in-parameters>
-            <parameter name="scope" default-value="gateway"><description>gateway, git or tasks</description></parameter>
+            <parameter name="scope" default-value="gateway"><description>gateway, git, tasks or terminal</description></parameter>
             <parameter name="deviceName"><description>Who keeps it, as the device list shows it</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="loginKey"/><parameter name="scope"/></out-parameters>
