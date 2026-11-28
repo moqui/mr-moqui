@@ -169,8 +169,11 @@ workbook on the server's spreadsheet engine (IronCalc; plan [IronCalc-DB](../../
   definitions' ([Monitoring](Monitoring.md#the-dashboards-app)); it is at most 8 MB.
 - **Formulas over a data sheet** name its columns (`=SUM(Enumeration[sequenceNum])`): the sheet is a table named for
   it. An edit calculates only the formulas that read what it changed, and what reads those; inserting or deleting rows
-  or columns, and a refresh with another number of rows, calculate every formula. The toolbar shows the time when it
-  is over a quarter of a second, and how much of the server's memory the open workbook takes.
+  or columns, and a refresh with another number of rows, calculate every formula. The toolbar shows how much of the
+  server's memory the open workbook takes, and an author a warning with the time when the last calculation took
+  longer than `calc@slow-ms` (250 ms; [Conf settings](#conf-settings)); the server then logs one line naming the
+  document (or the room of one not saved) and the time. An edit's rows of the log, and those of the others it follows,
+  are applied under the log's lock and calculated once after it, so no editor waits on another's calculation.
 - **In the terminal** (`moqui tui`, over SSH, the browser's terminal): the grid's list of records has a link to Calc,
   and `?mode=calc` (or a document's `definitionId`) shows the workbook as a sheet, the `calcgrid` component
   ([TUI](../ui/TUI.md#components)): the cells that fit, the formula bar, the sheet tabs and who else has it open,
@@ -179,7 +182,9 @@ workbook on the server's spreadsheet engine (IronCalc; plan [IronCalc-DB](../../
   values, as a dashboard is scheduled (Dashboards › Reports, Scheduled reports): the run reads the saved version as
   its owner, under their current access, and a data sheet that is not available or over the row cap refuses the run.
   A recipient other than the owner is sent the owner's file only when their scope is the owner's
-  ([Report delivery](Monitoring.md#report-delivery)).
+  ([Report delivery](Monitoring.md#report-delivery)). In CalcGrid a saved document's Schedule (to one who may schedule
+  for themselves) opens the schedules screen with the document chosen: Tools' Scheduled reports, or the mount's
+  (`reportLinks.schedules`; BOSS: Insights › Scheduled reports, with Insights' recipient cap).
 
 ### CalcGrid and access profiles
 
@@ -236,14 +241,16 @@ What a person reads there is set in the authorization data, not in a document. A
   (`profileId`) or, with none, the viewer's current access: the one they chose while they hold it, else the Tools
   app's own when they have it, else the first profile they hold. A scheduled report runs as its owner, so under its
   owner's. A viewer who holds none gets "Not available". The document's room is kept for the viewer and read again,
-  its data read anew when over a minute old. A reader of the dataset holds `org.moqui.report.dataset.calcgrid`
-  (a member of `CALC_GRID`).
+  its data read anew when over a minute old. A reader of the dataset holds `org.moqui.report.dataset.calcgrid` and
+  `get#CalcFrame` as their own grant (both members of `CALC_GRID`; BOSS grants both to its Insights groups), and
+  `check#DefinitionRead`, which CalcGrid asks of a saved document on every call.
 
 The profile that ships is Mantle's **`sales`** (`mr-mantle/data/10-seed/Sales.xml`, group `CALC_PROFILE_SALES`):
 orders by their part (`OrderPart`, `OrderHeaderAndPart`, `OrderHeaderAndPartSummary`, `OrderItemAndPartSummary`),
 returns, invoices (`Invoice`, `InvoiceSummary`), payments, parties (`Party`, `PartyDetail`), products, categories and
-stores. It ships with no grant. BOSS grants it to its Sales administrators with `MANTLE_USER_ORG`,
-`MANTLE_ACTIVE_ORG` and `MANTLE_PRIVATE_CONTACT`, and `CALC_GRID_AUTHOR` with it. Another profile is data in the
+stores. It ships with no grant. BOSS grants it to its Sales administrators, managers and readers with
+`MANTLE_USER_ORG`, `MANTLE_ACTIVE_ORG` and `MANTLE_PRIVATE_CONTACT`, and `CALC_GRID_AUTHOR` to the administrators
+alone; each reaches CalcGrid as an Insights user. Another profile is data in the
 application that owns its entities: the group, its offers, and a grant with its filter sets.
 
 Specs: `mr-mantle/test/order/CalcGridSales.spec.js` (the profile's rules: own organization only, an entity not
@@ -575,6 +582,10 @@ cancel, table maintenance or entity sources.
     conf value beside the running one.
 - **`tools@database-audit-days`** (property, 90): how long `DatabaseAudit` rows are kept. The `DatabaseAuditPurge` ServiceJob
   also removes expired SQL tokens.
+- **`calc@slow-ms`** (default `250`): the time, in milliseconds, past which a Calc or CalcGrid calculation is slow. The
+  room's state carries it (`slowMs`, beside `evaluateMs`), an author sees a warning with the time, and the server logs
+  each slow calculation once, at warn, with the document and the time. Read at each calculation; a value that is not a
+  positive number keeps 250. The environment sets it as `moqui_conf__calc__slow_ms`.
 
 ```xml
 <entity-facade query-stats="true">
