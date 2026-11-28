@@ -31,7 +31,7 @@
     // account menu and the sign-in: the store listings link the same page.
     const PRIVACY_URL = "https://github.com/moqui/mr-moqui/blob/master/docs/Privacy.md";
     moqui.shellPrivacy = () => {
-        if (host && typeof host.openExternal === "function") host.openExternal(PRIVACY_URL);
+        if (host && typeof host.openExternal === "function") Promise.resolve(host.openExternal(PRIVACY_URL)).catch(() => window.open(PRIVACY_URL, "_blank", "noopener"));
         else window.open(PRIVACY_URL, "_blank", "noopener");
     };
 
