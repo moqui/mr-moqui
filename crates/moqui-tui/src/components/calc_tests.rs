@@ -831,3 +831,113 @@ fn a_box_across_a_frozen_edge_is_cut_there() {
     assert!(!row(11).contains("Tall box"));
     assert!(row(12).contains('f'));
 }
+
+/// The merged sheet's room as another's merge leaves it: the layout with `merges`.
+fn merged_room(props: &Value, merges: Value) -> Value {
+    let mut room = props["room"].clone();
+    room["seq"] = json!(2);
+    room["sheets"][0]["merges"] = merges;
+    room
+}
+
+/// CG3.2: the cell typed into is fixed when the typing starts, as the browser's editor fixes it: when another's merge
+/// covers it meanwhile, Enter refuses the edit rather than write it into the box's anchor.
+#[test]
+fn a_merge_that_covers_the_cell_being_typed_into_refuses_the_edit() {
+    let (props, mut state) = merged_sheet();
+    state.local["row"] = json!(5);
+    state.local["column"] = json!(4);
+    CalcGrid.key(&props, &mut state, &KeyPress::plain(Key::Char('e')), false);
+    type_text(&props, &mut state, "typed");
+    CalcGrid.receive(
+        &props,
+        &mut state,
+        merged_room(&props, json!([{"row": 4, "column": 3, "width": 2, "height": 3}])),
+    );
+    assert_eq!(at(&props, &state), (5, 4), "the cursor stays while typing");
+    let acts = CalcGrid
+        .key(&props, &mut state, &KeyPress::plain(Key::Enter), false)
+        .unwrap();
+    assert!(acts.is_empty(), "{acts:?}");
+    let view = View::of(&props, &state);
+    assert!(view.message.contains("D5 was merged"), "{}", view.message);
+    assert!(view.editing.is_none());
+}
+
+/// CG3.2: a merge that comes in under the cursor moves it onto the anchor and the screen there, keeping the
+/// selection's other corner.
+#[test]
+fn a_merge_under_the_cursor_moves_it_and_the_screen_to_the_anchor() {
+    let (props, mut state) = merged_sheet();
+    for (key, value) in [("row", 400), ("column", 13), ("top", 395), ("left", 5)] {
+        state.local[key] = json!(value);
+    }
+    state.local["anchor"] = json!([400, 14]);
+    CalcGrid.receive(
+        &props,
+        &mut state,
+        merged_room(&props, json!([{"row": 1, "column": 1, "width": 26, "height": 500}])),
+    );
+    let view = View::of(&props, &state);
+    assert_eq!(
+        ((view.row, view.column), (view.top, view.left), view.anchor),
+        ((1, 1), (1, 1), Some((400, 14)))
+    );
+    assert!(view.need_cells && view.need_content);
+}
+
+/// CG3.2: a box past the sheet's last row or column, from a crafted answer, is left out, and a list gives at most
+/// 2,000 (a sheet's most).
+#[test]
+fn boxes_past_the_sheet_and_past_a_sheets_count_are_left_out() {
+    let props = merged_props(
+        0,
+        0,
+        json!([{"row": 1, "column": 1, "width": i32::MAX, "height": 2},
+            {"row": 1_048_570, "column": 1, "width": 1, "height": 100}, {"row": 2, "column": 2, "width": 2, "height": 2}]),
+    );
+    let mut state = ComponentState {
+        rows: 30,
+        ..ComponentState::default()
+    };
+    serve(&props, &mut state, MERGED_TEXTS);
+    let boxes = View::of(&props, &state).boxes();
+    assert_eq!(
+        boxes
+            .iter()
+            .map(|merged| (merged.row, merged.column, merged.width, merged.height))
+            .collect::<Vec<_>>(),
+        [(2, 2, 2, 2)]
+    );
+    let many: Vec<Value> = (1..=3_000)
+        .map(|row| json!({"row": row + 10, "column": 1, "width": 2, "height": 1}))
+        .collect();
+    state.local["block"]["merges"] = json!(many);
+    assert_eq!(View::of(&props, &state).boxes().len(), 2_001);
+}
+
+/// CG3.2: `d` on one merged cell alone fills nothing (its covered cells are all there is below it); with a row past
+/// the box it fills down from the box's first row.
+#[test]
+fn filling_down_one_box_alone_sends_nothing() {
+    let (props, mut state) = merged_sheet();
+    press(&props, &mut state, Key::Down, false);
+    press(&props, &mut state, Key::Right, false);
+    let acts = CalcGrid
+        .key(&props, &mut state, &KeyPress::plain(Key::Char('d')), false)
+        .unwrap();
+    assert!(acts.is_empty(), "{acts:?}");
+    assert!(View::of(&props, &state).message.contains("Select the rows to fill"));
+    press(&props, &mut state, Key::Down, true);
+    let acts = CalcGrid
+        .key(&props, &mut state, &KeyPress::plain(Key::Char('d')), false)
+        .unwrap();
+    let [Act::Call { parameters, .. }] = acts.as_slice() else {
+        panic!("{acts:?}")
+    };
+    let ops: Value = serde_json::from_str(&parameters["opsJson"]).unwrap();
+    assert_eq!(
+        ops,
+        json!([{"op": "fill", "sheet": 0, "row": 2, "column": 2, "width": 2, "height": 1, "toRow": 4}])
+    );
+}

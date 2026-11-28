@@ -673,7 +673,9 @@ text.
 
 The cursor stands on a box's anchor: a move onto any of its cells lands there, and a move on from it steps past the
 box's far side (Down from the anchor goes to the row below the box). A selection that meets a box takes all of it, as
-the browser's does, and that is the place the others are told. A cell is typed into and read at its anchor. An author
+the browser's does, and that is the place the others are told. A cell is typed into and read at its anchor; the cell
+is fixed when the typing starts, and when another's merge covers it meanwhile, Enter refuses the edit rather than set
+the box's anchor. A merge that comes in under the cursor moves it, and the screen, to the anchor. An author
 merges the selection and unmerges the boxes in it from the menu (`m`), sent as the browser's `merge` and `unmerge`
 edits; a data sheet and a reader are not offered them.
 

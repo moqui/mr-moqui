@@ -27,6 +27,10 @@ use serde_json::Value;
 use super::{edit, int, View, LAST_COLUMN, LAST_ROW, MAX_CELLS};
 use crate::components::Act;
 
+/// The most boxes taken from one list, the layout's or a block's: a sheet holds at most 2,000 (the server's
+/// `MAX_SHEET_MERGES`), and the layout carries them all.
+const MAX_LISTED: usize = 2_000;
+
 /// A merged cell: its anchor (the top left cell, which holds its content) and its size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Merged {
@@ -44,7 +48,14 @@ impl Merged {
             width: int(&value["width"]),
             height: int(&value["height"]),
         };
-        (merged.row >= 1 && merged.column >= 1 && merged.width >= 1 && merged.height >= 1).then_some(merged)
+        // inside the sheet, as the server keeps them
+        let inside = merged.row >= 1
+            && merged.column >= 1
+            && merged.width >= 1
+            && merged.height >= 1
+            && i64::from(merged.row) + i64::from(merged.height) - 1 <= i64::from(LAST_ROW)
+            && i64::from(merged.column) + i64::from(merged.width) - 1 <= i64::from(LAST_COLUMN);
+        inside.then_some(merged)
     }
 
     pub(super) fn last_row(self) -> i32 {
@@ -73,14 +84,32 @@ impl Merged {
     }
 }
 
-/// The boxes of the lists given, each once (by its anchor).
+/// The boxes of the lists given (at most [`MAX_LISTED`] of each), each once (by its anchor), from the top down.
 fn boxes_of(lists: &[&Value]) -> Vec<Merged> {
     let mut anchors = HashSet::new();
-    lists
+    let mut boxes: Vec<Merged> = lists
         .iter()
-        .flat_map(|list| list.as_array().map(Vec::as_slice).unwrap_or_default())
+        .flat_map(|list| {
+            list.as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+                .iter()
+                .take(MAX_LISTED)
+        })
         .filter_map(Merged::of)
         .filter(|merged| anchors.insert((merged.row, merged.column)))
+        .collect();
+    boxes.sort_unstable_by_key(|merged| (merged.row, merged.column));
+    boxes
+}
+
+/// The boxes that meet a rectangle (top, left, bottom, right).
+pub(super) fn meeting(boxes: &[Merged], area: (i32, i32, i32, i32)) -> Vec<Merged> {
+    let (top, left, bottom, right) = area;
+    boxes
+        .iter()
+        .copied()
+        .filter(|merged| merged.meets(top, left, bottom, right))
         .collect()
 }
 
@@ -147,12 +176,13 @@ impl View {
         box_at(&boxes, row, column).map_or((row, column), |merged| (merged.row, merged.column))
     }
 
-    /// The active cell on its box's anchor, when a merge came in under it (the view's own, or another's).
+    /// The active cell on its box's anchor, when a merge came in under it (the view's own, or another's), and the
+    /// screen on it; the selection's other corner stays.
     pub(super) fn snap(&mut self) {
         let at = self.anchor_of(self.row, self.column);
         if at != (self.row, self.column) {
             (self.row, self.column) = at;
-            self.need_content = true;
+            self.scroll_to_cursor(self.terminal_rows);
         }
     }
 
