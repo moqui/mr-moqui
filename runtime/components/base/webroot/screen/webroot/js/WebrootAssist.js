@@ -20,9 +20,9 @@
  *     meter, response actions, Save as skill, the Memory and My skills panes, and the pure part of the inline text actions of
  *     m-rich-text (textActionParams, proposalEdit, applyTextProposal); a feature whose call answers 501 or 404 goes away;
  *   - the components: m-assist-button (the header), m-shell-assist (one right q-drawer) and m-assist-body (all that is in it,
- *     held in a teleport that moves it into a float while Assist is undocked, plans/Terminal-Fancy.md §10.5), m-assist-thread,
- *     m-assist-markdown, m-assist-card, m-assist-composer, m-assist-history, m-assist-tasks, m-assist-memory, m-assist-skills
- *     and m-assist-skill-editor.
+ *     held in a teleport that moves it into a float while Assist is undocked, plans/archive/Terminal-Fancy.md §10.5),
+ *     m-assist-thread, m-assist-markdown, m-assist-card, m-assist-composer, m-assist-history, m-assist-tasks,
+ *     m-assist-memory, m-assist-skills and m-assist-skill-editor.
  *
  * Loaded after WebrootChat.js and before WebrootVue.qvt.js (qapps.xml): its components are in moqui.qvtComponents, which
  * WebrootVue.qvt.js registers (and precompiles into WebrootVue.qvt.render.js); loaded later, they go through
@@ -55,9 +55,10 @@
     const DEFAULT_SECRETS = { contains: ["password", "passwd", "token", "secret", "credential", "salt"], endsWith: ["key"], names: [] };
     const CHIP_RE = /\[\[record:([^:\]|\n]+):([^\]|\n]+)(?:\|([^\]\n]*))?\]\]/g;
     const TAG_FOR = 8000;
-    // The mark of what is out of Assist's reach wherever it is (plans/Terminal-Fancy.md §10.7, D18): Assist's own body, docked in
-    // the drawer or floated (data-assist-self="assist"), and a terminal's element in a pane or a float ("terminal"). A form or a
-    // dialog inside an element with the attribute is never read, filled or followed, whatever assistReach lists.
+    // The mark of what is out of Assist's reach wherever it is (plans/archive/Terminal-Fancy.md §10.7, D18): Assist's
+    // own body, docked in the drawer or floated (data-assist-self="assist"), and a terminal's element in a pane or a
+    // float ("terminal"). A form or a dialog inside an element with the attribute is never read, filled or followed,
+    // whatever assistReach lists.
     const SELF = "[data-assist-self]";
     const MAX_CHIPS = 5;
 
@@ -1616,7 +1617,7 @@
             if (assist.shown() && (!fromKey || inside)) assist.hide();
             else assist.openDrawer(true);
         },
-        // ---- undocked (plans/Terminal-Fancy.md §10.5): the body in a float of kind assist, the drawer shut ----
+        // ---- undocked (plans/archive/Terminal-Fancy.md §10.5): the body floated, the drawer shut ----
         floatOf() { return moqui.floats ? moqui.floats.find("assist", "") : null; },
         floatShown() { const float = assist.floatOf(); return !!float && moqui.floats.shown(float); },
         // whether Assist is in view: the drawer open, or its float shown
@@ -2789,9 +2790,10 @@
 
     // The drawer: one right q-drawer in the shell's layout, mounted on first open and kept, persistent (an overlay q-drawer would hide on every navigation and on Esc; the drawer closes by its own Close, Mod+J and a second Esc). Docked 420 px (320–720 by the handle,
     // kept as ASSIST_WIDTH), the full width below 600 px; it pushes the page from 1440 px and overlays it below.
-    // Undocked (plans/Terminal-Fancy.md §10.5, D17) the drawer is shut and its body is in a float: the teleport targets the
-    // float's body while there is one (moqui.floats.target, only once that body is mounted) and is off while docked, so the
-    // body is the same instance in both places and keeps its run, its draft and its panes. Shut, the drawer pushes nothing.
+    // Undocked (plans/archive/Terminal-Fancy.md §10.5, D17) the drawer is shut and its body is in a float: the teleport
+    // targets the float's body while there is one (moqui.floats.target, only once that body is mounted) and is off
+    // while docked, so the body is the same instance in both places and keeps its run, its draft and its panes. Shut,
+    // the drawer pushes nothing.
     components["m-shell-assist"] = {
         name: "mShellAssist",
         computed: {

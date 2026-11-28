@@ -1,7 +1,8 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
-// The tray's tabs undocked (plans/Terminal-Fancy.md §10.6, §10.7, §10.9), in the page: Vue and Quasar, the shell's root options,
-// m-shell-tray in a q-layout and the float layer. A tab's screen is a stand-in m-dynamic-container with a draft of its own, so
-// what is checked is the tray's: the same instance in the strip and in a float, its count, its reloads, Esc and the reach.
+// The tray's tabs undocked (plans/archive/Terminal-Fancy.md §10.6, §10.7, §10.9), in the page: Vue and Quasar, the
+// shell's root options, m-shell-tray in a q-layout and the float layer. A tab's screen is a stand-in
+// m-dynamic-container with a draft of its own, so what is checked is the tray's: the same instance in the strip and in
+// a float, its count, its reloads, Esc and the reach.
 "use strict";
 const floats = moqui.floats;
 const qvt = moqui.qvt;

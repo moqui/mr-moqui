@@ -7,7 +7,8 @@ browser.runInPage({
     test: "/files/component/webroot/test/client/pages/WebrootAssist.page.js",
 })
 
-// Assist undocked (plans/Terminal-Fancy.md §10.5, §10.7): the drawer and the float layer mounted with Vue and Quasar.
+// Assist undocked (plans/archive/Terminal-Fancy.md §10.5, §10.7): the drawer and the float layer mounted with Vue and
+// Quasar.
 browser.runInPage({
     styles: ["/libs/quasar/quasar.prod.css", "/css/WebrootVue.qvt.css"],
     scripts: ["/libs/vue/vue.global.prod.js", "/libs/quasar/quasar.umd.prod.js", "/js/MoquiLib.js", "/js/MoquiL10n.js", "/js/WebrootFloats.js", "/js/WebrootAssist.js",

@@ -13,36 +13,47 @@ The MR Moqui terminal is built ([docs/ui/Terminal.md](../../docs/ui/Terminal.md)
 `moqui term-hold` (sessions survive a server restart), `moqui term-exec`, attention tracking (OSC 7501, OSC 133,
 bell), flow control and the phone key bar. Agent Code uses it. It does not add a second PTY stack.
 
+What thread terminals need beyond that is the framework's, planned in [Terminal-Fancy2](../Terminal-Fancy2.md) (Nov 27,
+2026): the `thread` kind with a policy this component registers (TF7), viewers (TF4), history as a bounded recording
+(TF5), the screen as text and driven sessions (TF2, TF3), and OS accounts (TF6). The rows below say which part gives
+each.
+
 ### 1.2 New: thread terminals
 
 | T3 rule | MR Moqui |
 |---|---|
 | The environment server owns PTYs and output. Every client attaches through the connection. | Same: `/termws` from web, desktop, phone and peer links. |
-| Terminal ids are chosen by the client. Key `{threadId, terminalId}`, at most 128 chars. | New kind `thread` on `TerminalSession` with `conversationId` + `clientTerminalId` (unique together). `open#TerminalSession` gains `conversationId`, `clientTerminalId`, `worktreePath`, `env`, `providerInstanceId`, `stopOnSettle`. |
-| `cols` 1-1000, `rows` 1-500 | Today 20x10 to 500x500. Raise the top to 1000x500 for all kinds. Keep the bottom. |
-| `env` at most 128 keys, value at most 8,192 chars | Same check in `open#TerminalSession`. Names of Moqui conf properties are still removed. |
-| Attach: `restartIfNotRunning?`, `resume?`, `maxHistoryBytes?` | `/termws` attach frame gains `restart`, `resume`, `maxHistory`. |
-| Observe (read-only watch) | `/termws?session=...&observe=1`. Input frames are dropped. A second window no longer takes over an observer. |
+| Terminal ids are chosen by the client. Key `{threadId, terminalId}`, at most 128 chars. | Kind `thread` (Terminal-Fancy2 TF7) with `conversationId` + `clientTerminalId` (unique together among a user's live sessions: an open of an existing one answers it). `open#TerminalSession` gains `conversationId`, `clientTerminalId`, `label`, `env`, `workRootId`, `providerInstanceId`, `stopOnSettle`; the worktree path is its `directory`, checked by this component's policy. |
+| `cols` 1-1000, `rows` 1-500 | TF7 raises the top from 500x500 to 1000x500 for all kinds and keeps the bottom (20x10). |
+| `env` at most 128 keys, value at most 8,192 chars | TF7's check in `open#TerminalSession`. Names of Moqui conf properties are still removed. |
+| Attach: `restartIfNotRunning?`, `resume?`, `maxHistoryBytes?` | TF7: the attach frame gains `restart` and `maxHistory`; `resume` is the attach's existing `have`. |
+| Observe (read-only watch) | TF4: `/termws?session=...&observe=1`, any number of viewers, input dropped, never paused or resized by them. A second writer makes the first a viewer instead of closing it, and nothing takes over a viewer. TF4 also shares a session with other users (read-only, write with the kind's permission). |
 | Status starting, running, exited, error | Map from the session state. `TerminalSession.exitStatus` and `endReason` hold the end. |
-| Events started, output, exited, closed, error, cleared, restarted, activity; metadata stream snapshot, upsert, remove | `/termws` text frames `state`, `ended` exist. Add `cleared`, `restarted`. The metadata stream is `/agentws` `terminal.metadata` ([09](09-Wire-API.md)). |
-| Retention 5,000 lines and 8 MiB UTF-8 per terminal; oldest evicted on code-point edges; client buffer 512 KiB | Thread terminals keep a history file (`historyLocation`) with these limits. Other kinds keep `replay-kb` (2 MiB). |
-| Coalesced persistence; clear, restart and close drain first; restore skips an incomplete UTF-8 prefix | Port into `crates/moqui-host/src/term/ring.rs` and a new `history.rs`. |
-| Terminal query and response traffic stripped from history | Same filter in `history.rs`. |
+| Events started, output, exited, closed, error, cleared, restarted, activity; metadata stream snapshot, upsert, remove | `/termws` text frames `state`, `ended` exist; TF7 adds `cleared`, `restarted`, and TF3's `find#TerminalEvents` keeps the last events. The metadata stream is `/agentws` `terminal.metadata` ([09](09-Wire-API.md)). |
+| Retention 5,000 lines and 8 MiB UTF-8 per terminal; oldest evicted on code-point edges; client buffer 512 KiB | TF5's history mode: a bounded recording (`historyLocation`) of 8 MiB at code-point edges; 5,000 lines is the client's scrollback. Other kinds keep `replay-kb` (2 MiB). |
+| Coalesced persistence; clear, restart and close drain first; restore skips an incomplete UTF-8 prefix | In TF5's recorder (`term/record.rs`), written by the holder for a held session; no separate `history.rs`. |
+| Terminal query and response traffic stripped from history | TF5's recorder leaves the terminal's queries out. |
 | Shell from `T3CODE_TERMINAL_SHELL`, with fallbacks | Conf setting `agent-code@terminal-shell` (empty by default), else the user's login shell, else `/bin/bash`, else `/bin/sh`. Not used for provider commands or setup scripts. |
 | fish starts with `no-query-term` | Same flag for fish. |
 | Keys Shift+PageUp/PageDown, Ctrl(Cmd)+Shift+Home/End, Select all, **Jump to latest** | Add to `moqui.keymap` defaults for the terminal view. |
-| iPhone/iPad long-press paste or **Select Text** | Same in the phone terminal. |
-| Renderer `libghostty-vt` (WASM on web) | Keep the MR Moqui terminal renderer. A switch to `libghostty-vt` is open decision O8 ([16](16-Phases.md)). |
+| iPhone/iPad long-press paste or **Select Text** | Terminal-Fancy2 TF1: a long press selects the line and opens the terminal's menu (Copy, Paste, Select all, Find). |
+| Renderer `libghostty-vt` (WASM on web) | Keep the MR Moqui terminal renderer. A switch to `libghostty-vt` is open decision O8 ([16](16-Phases.md)). The server's screen model (TF2, `vt100`) is for reading text, not drawing. |
 
 ### 1.3 Access
 
-- A thread terminal is a host session. Today host sessions need `TERMINAL_HOST` and a dev instance.
-- New rule: a thread terminal needs `AgentCodeHost` ([14](14-Security.md)) and the project's work root. It does not
-  need a dev instance. It runs as the account of `agent-code@run-as` (14 §5), not as the server user when that is set.
-- Remote use keeps the remote rules: HTTPS, `terminal_remote`, and a recent sign-in ticket. The desktop and phone
+- A thread terminal is a host session in every way but its policy. Host sessions need `TERMINAL_HOST` and a dev
+  instance.
+- New rule, the `thread` policy this component registers (Terminal-Fancy2 TF7): a thread terminal needs
+  `AgentCodeHost` ([14](14-Security.md)) and the project's work root. It does not need a dev instance. It runs as the
+  account of `agent-code@run-as` (14 §5) when that is set, through Terminal-Fancy2 TF6's sudo-gated `term-exec`
+  supervisor, not as the server user.
+- Remote use keeps the remote rules: HTTPS, `terminal@remote` (`moqui_conf__terminal__remote=true`), and a recent
+  sign-in ticket. The desktop and phone
   apps ask **Confirm it is you** as today.
 - The directory is always inside the thread's work root. `cwd` outside it is refused.
 - Each thread terminal writes a `TerminalSession` audit row, as other host sessions.
+- Driving: an agent reads and types in a thread terminal through Terminal-Fancy2 TF3's services and `terminal` tool,
+  with one approval per session per run; another of the user's windows watches as a TF4 viewer.
 
 ### 1.4 Thread links
 

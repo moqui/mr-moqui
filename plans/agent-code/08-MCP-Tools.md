@@ -238,6 +238,20 @@ Preview tools are classed W but are allowed in every runtime mode. They act on a
 | `code_theme_set` | `themeId?`, `theme?`, `appearance?` | W (user preference) |
 | `tool_search` | `query` | R |
 
+### 2.8a Terminals
+
+Reading and driving a thread terminal is the framework's ([Terminal-Fancy2](../Terminal-Fancy2.md) TF3): the services
+`get#TerminalScreen`, `find#TerminalEvents`, `send#TerminalInput` and `wait#TerminalSession`, and the dev tools'
+`terminal` tool with one approval per session per run. Agent Code offers them under its scopes, not as tools of its
+own:
+
+| Tool | Inputs | Class |
+|---|---|---|
+| `terminal_read` | `threadId`, `terminalId`, `scope?` (visible, scrollback, last), `lines?` (`get#TerminalScreen`) | R (`code:terminal-read`) |
+| `terminal_events` | `threadId`, `terminalId`, `after?` (`find#TerminalEvents`) | R (`code:terminal-read`) |
+| `terminal_send` | `threadId`, `terminalId`, `text?`, `keys?` (`send#TerminalInput`) | W (`code:terminal`) |
+| `terminal_wait` | `threadId`, `terminalId`, one of `status`, `pattern`, `prompt`, `quietMs`, `ended`; `timeoutSeconds` (`wait#TerminalSession`) | R (`code:terminal`) |
+
 ### 2.9 Native-only coding tools
 
 The native engine also needs file, shell and git tools that a harness has built in. They are in

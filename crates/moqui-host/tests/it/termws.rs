@@ -353,8 +353,9 @@ pub(crate) fn read_messages_until(socket: &mut Ws, want: &str) -> Result<(Vec<St
     Ok((texts, seen))
 }
 
-/// A kept apps session (plans/Terminal-Fancy.md §5): opened by the screen's transition, it outlives its socket, draws its
-/// whole screen again for the next one, is its own user's only, counts toward the limits, and ends when closed.
+/// A kept apps session (plans/archive/Terminal-Fancy.md §5): opened by the screen's transition, it outlives its socket,
+/// draws its whole screen again for the next one, is its own user's only, counts toward the limits, and ends when
+/// closed.
 #[test]
 fn a_kept_session_outlives_its_socket_and_draws_again_on_reattach() {
     if !crate::common::own_process() {
@@ -437,7 +438,7 @@ fn a_kept_session_outlives_its_socket_and_draws_again_on_reattach() {
     }
 }
 
-/// The `moqui>` command line in the browser (plans/Terminal-Fancy.md §6, §8): on a dev instance for a user with
+/// The `moqui>` command line in the browser (plans/archive/Terminal-Fancy.md §6, §8): on a dev instance for a user with
 /// SSH_SHELL, from this machine; refused to a user without it and to a request through a proxy while remote is off; a
 /// window that comes back goes on with nothing repeated; an audit row is written.
 #[test]
@@ -575,10 +576,11 @@ const OPEN_WITH_INPUT: &str = r#"<screen-extend>
 </screen-extend>
 "#;
 
-/// A host session (plans/Terminal-Fancy.md §7): a program on a pty for a user with TERMINAL_HOST on a dev instance,
-/// refused to one without; it echoes, takes the window's size, replays its output to a window that comes back, and
-/// ends with its exit status. One opened with `input` runs it as typed, and its output shows what it ran. The pty is
-/// Unix's: this module is `cfg(unix)`, as the host sessions are, so Windows, with no host session, has none to test.
+/// A host session (plans/archive/Terminal-Fancy.md §7): a program on a pty for a user with TERMINAL_HOST on a dev
+/// instance, refused to one without; it echoes, takes the window's size, replays its output to a window that comes
+/// back, and ends with its exit status. One opened with `input` runs it as typed, and its output shows what it ran. The
+/// pty is Unix's: this module is `cfg(unix)`, as the host sessions are, so Windows, with no host session, has none to
+/// test.
 #[test]
 fn a_host_session_runs_a_program_on_a_pty() {
     if !crate::common::own_process() {
@@ -698,8 +700,8 @@ fn a_host_session_runs_a_program_on_a_pty() {
     socket.send(Message::Binary(b"exit\r".to_vec().into())).unwrap();
 }
 
-/// The holder (plans/Terminal-Fancy.md §7.5): a host session's program runs on through a restart of the server, and the
-/// next window gets its output again and goes on with it.
+/// The holder (plans/archive/Terminal-Fancy.md §7.5): a host session's program runs on through a restart of the server,
+/// and the next window gets its output again and goes on with it.
 #[test]
 fn a_host_session_outlives_a_restart_of_the_server() {
     if !crate::common::own_process() {
@@ -756,8 +758,9 @@ fn a_host_session_outlives_a_restart_of_the_server() {
     assert!(read_messages_until(&mut back, "never").is_err());
 }
 
-/// Attention (plans/Terminal-Fancy.md §11): bash with the shell integration says when a command runs and how it ended,
-/// and a session that asks for its user while the page does not look at it sends a TerminalAttention notification.
+/// Attention (plans/archive/Terminal-Fancy.md §11): bash with the shell integration says when a command runs and how it
+/// ended, and a session that asks for its user while the page does not look at it sends a TerminalAttention
+/// notification.
 #[test]
 fn a_session_says_its_status_and_notifies_when_nobody_looks() {
     if !crate::common::own_process() {
@@ -868,9 +871,9 @@ fn integrated_bash_on_path() -> bool {
         .is_some_and(|bash| !(cfg!(target_os = "macos") && bash == std::path::Path::new("/bin/bash")))
 }
 
-/// The Desktop and Mobile apps' way in (plans/Terminal-Fancy.md §12): the host signs requests and the socket in by the
-/// device's login key, with no session to keep a sign-in in. From another machine a command line then takes a ticket
-/// of confirm#TerminalUser (the password, in that one request) at its opening and at its socket's attach.
+/// The Desktop and Mobile apps' way in (plans/archive/Terminal-Fancy.md §12): the host signs requests and the socket in
+/// by the device's login key, with no session to keep a sign-in in. From another machine a command line then takes a
+/// ticket of confirm#TerminalUser (the password, in that one request) at its opening and at its socket's attach.
 #[test]
 fn a_device_key_opens_a_remote_command_line_with_a_ticket() {
     if !crate::common::own_process() {
@@ -950,8 +953,8 @@ fn a_device_key_opens_a_remote_command_line_with_a_ticket() {
     read_messages_until(&mut attached, "moqui> ").unwrap();
 }
 
-/// System › Terminal sessions (plans/Terminal-Fancy.md P9): an administrator lists every user's sessions and ends
-/// another user's, which is an audit row; a plain user may do neither.
+/// System › Terminal sessions (plans/archive/Terminal-Fancy.md P9): an administrator lists every user's sessions and
+/// ends another user's, which is an audit row; a plain user may do neither.
 #[test]
 fn an_administrator_lists_and_ends_another_users_session() {
     if !crate::common::own_process() {

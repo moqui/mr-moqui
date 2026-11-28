@@ -1,10 +1,14 @@
 # Terminal: sessions, the command line, server shells and floating panels
 
+**Archived Nov 27, 2026.** The next batch (the phone's long press, a screen model on the server, sessions driven by a
+program, mirrored and shared viewers, recording, OS accounts per person, the `thread` kind and more kinds of float) is
+[Terminal-Fancy2](../Terminal-Fancy2.md); what neither plan builds is in Remaining-Work's Browser terminal table.
+
 Nov 11, 2026 · **Built** the same day, P0 to P9 ([§13](#13-phases)), and a second round that evening
 ([§13.1](#131-the-second-round)): three items of §15, the leftovers, and live runs on this machine. The guide is
-[Terminal](../docs/ui/Terminal.md). What is left (the hand checks on installed apps, a phone and a deployed edge node in
-[Mobile-Desktop-Exit-Checks](Mobile-Desktop-Exit-Checks.md#the-browser-terminal-the-apps-and-the-edge-node), Codex's
-hook line, the rest of §15) is in [Remaining-Work](Remaining-Work.md#browser-terminal). The decisions are in
+[Terminal](../../docs/ui/Terminal.md). What is left (the hand checks on installed apps, a phone and a deployed edge node
+in [Mobile-Desktop-Exit-Checks](../Mobile-Desktop-Exit-Checks.md#the-browser-terminal-the-apps-and-the-edge-node), Codex's
+hook line, the rest of §15) is in [Remaining-Work](../Remaining-Work.md#browser-terminal). The decisions are in
 [§4](#4-decisions); those that want the user's word were all answered the same day ([§16](#16-open-questions)); none is
 open. Remote access is off by default
 (D7); the order of the phases stands with the holder fifth (D14); the command line is behind `SSH_SHELL` and host
@@ -46,6 +50,8 @@ Contents: [1 today](#1-what-is-there-today) · [2 server sessions](#2-server-sid
 
 ## 1. What is there today
 
+What there was on Nov 11, 2026, before this plan was built; the code now is as §13 and the guide describe.
+
 | Part | State | Where |
 | --- | --- | --- |
 | The page | One xterm.js terminal that fills the page, one socket, no scrollback (`scrollback: 0`). It follows the app's light and dark mode (the TUI asks by OSC 11), opens OSC 8 links in a new tab, and copies by OSC 52 with a dialog when the browser refuses. Leaving the page ends the session; the close reason shows with Reconnect. Opened from the account menu's Terminal UI, for every signed-in user | `webroot/apps/Terminal.xml`, `Terminal.qvue` |
@@ -59,8 +65,8 @@ Contents: [1 today](#1-what-is-there-today) · [2 server sessions](#2-server-sid
 | The Assist drawer | `m-shell-assist`: one right `q-drawer`, mounted on its first opening and kept, with the whole conversation in its template; 420 px (320 to 720 by a handle), pushing the page from 1440 px. Nothing in it is moved, and Assist is kept out of it by the drawer's id | `webroot/js/WebrootAssist.js` |
 | The tray panel | `m-shell-tray`: one panel at the right of the canvas, 400 px, with a tab per screen the theme names (Today, Chat, Notifications, Dialer; mr-boss's Commons and Comms panels), each an `m-dynamic-container` loaded once and kept. The root keeps what is open, the tab and each tab's scroll, in `sessionStorage`. It is in Assist's reach while open | `WebrootVue.qvt.js`; mr-boss `plan/design-drawers-commons.md` §1.4 |
 | The desktop app | The node in process bridges `/termws` to the page with its binary frames. As a client of a remote server the host bridges `/notws` and `/callws` only, text frames only | `crates/moqui-desktop/src/client/sockets.rs`, `crates/moqui-client/src/bridge.rs` |
-| The edge node | Web access forwards WebSockets, `/termws` among them, as HTTP/2 extended CONNECT on the link; at most 768 tunnels and sockets per node. The local node sees the client's address | [Edge-Node](archive/Edge-Node.md) §5.3 |
-| The rule | No code comes in from outside and runs on the server, and there is no web eval endpoint. The Dev AIDE is the one exception, on dev instances (its D15). The browser terminal runs the apps only | [design-dev-aide](archive/design-dev-aide.md) §15, `docs/security/Attack-Surface.md` |
+| The edge node | Web access forwards WebSockets, `/termws` among them, as HTTP/2 extended CONNECT on the link; at most 768 tunnels and sockets per node. The local node sees the client's address | [Edge-Node](Edge-Node.md) §5.3 |
+| The rule | No code comes in from outside and runs on the server, and there is no web eval endpoint. The Dev AIDE is the one exception, on dev instances (its D15). The browser terminal runs the apps only | [design-dev-aide](design-dev-aide.md) §15, `docs/security/Attack-Surface.md` |
 
 ---
 
@@ -177,9 +183,9 @@ and a page cannot open a native window of its own (the pop-out of §10.4 is a br
 | D3 | One WebSocket per session, on `/termws`, attached by id. Not one multiplexed socket. | Each session gets its own back-pressure, and a busy one cannot hold up another. The path is already exempt from the request deadline and already forwarded by the edge link and the desktop bridge. |
 | D4 | Coming back to a session replays its bytes, kept in a ring per session with a running byte count; a client that says how far it got continues from there with nothing repeated. No emulator on the server (§2). An apps session is asked to draw itself again instead. | The same bytes through the same emulator give the same screen, with every feature xterm.js has. A second emulator would be a second set of bugs. |
 | D5 | Sessions are opened by a transition and attached by the socket. The transition carries the session token, checks the permission, the purpose and the sign-in, writes the audit row and answers the id. | A WebSocket handshake is a GET with no token. Opening is the privileged step, so it goes where every other write goes. |
-| D6 | The command line and host sessions are for a dev instance only (`instance_purpose` dev). The command line is behind `SSH_SHELL`, the permission the SSH prompt already has: sealed, and on `ADMIN_ADV`. Host sessions are behind a permission of their own, `TERMINAL_HOST`: new, sealed, and granted to `ADMIN_ADV` too. john.doe is in `ADMIN_ADV` and has both; a plain `ADMIN` member has neither. On any other purpose a request for one gets a single vague refusal and the page does not offer it. | Decided with the user, in two steps: `SSH_SHELL` is the prompt's permission and stays that, however the prompt is reached; the server's OS account is another thing to hand out, so it has its own. They are the second exception to "no code from outside runs on the server", after the Dev AIDE (its D15), and take its limits: dev only, a permission, an audit. |
-| D7 | Local first. From the server's own machine (a loopback peer, the server's own loopback origin, no forwarding header) these sessions need nothing more. From anywhere else they need `terminal` `remote="true"`, a secure request, and a sign-in within the last hour, checked when a session is opened and when one is attached. The lightest way to turn it on is `terminal_remote=true` in `runtime/.env`; a conf does it too (§5.8). | Confirmed with the user. A default dev instance has john.doe with a known password. Without this, a dev server listening on a LAN would hand an OS shell to anyone on it. The developer who sets up remote access turns it on once. |
-| D8 | A pty through `rustix` and a small helper mode of the `moqui` binary (`moqui term-exec`) that makes the new process a session leader with the pty as its terminal and then becomes the shell. No new crate, and no new `unsafe`. | The workspace has `rustix`; its `setsid` and `ioctl_tiocsctty` are safe functions when a process calls them on itself, which the helper does. The other way is a `pre_exec` closure, which is `unsafe` ([Practices-Rust](../docs/dev/Practices-Rust.md) §7: add none), or a pty crate that holds the same `unsafe` for us (`pty-process` 0.5.4, MIT, on `rustix` and `tokio` alone). Confirmed with the user. |
+| D6 | The command line and host sessions are for a dev instance only (`instance@purpose` dev). The command line is behind `SSH_SHELL`, the permission the SSH prompt already has: sealed, and on `ADMIN_ADV`. Host sessions are behind a permission of their own, `TERMINAL_HOST`: new, sealed, and granted to `ADMIN_ADV` too. john.doe is in `ADMIN_ADV` and has both; a plain `ADMIN` member has neither. On any other purpose a request for one gets a single vague refusal and the page does not offer it. | Decided with the user, in two steps: `SSH_SHELL` is the prompt's permission and stays that, however the prompt is reached; the server's OS account is another thing to hand out, so it has its own. They are the second exception to "no code from outside runs on the server", after the Dev AIDE (its D15), and take its limits: dev only, a permission, an audit. |
+| D7 | Local first. From the server's own machine (a loopback peer, the server's own loopback origin, no forwarding header) these sessions need nothing more. From anywhere else they need `terminal` `remote="true"`, a secure request, and a sign-in within the last hour, checked when a session is opened and when one is attached. The lightest way to turn it on is `moqui_conf__terminal__remote=true` (`terminal@remote`) in `runtime/.env`; a conf does it too (§5.8). | Confirmed with the user. A default dev instance has john.doe with a known password. Without this, a dev server listening on a LAN would hand an OS shell to anyone on it. The developer who sets up remote access turns it on once. |
+| D8 | A pty through `rustix` and a small helper mode of the `moqui` binary (`moqui term-exec`) that makes the new process a session leader with the pty as its terminal and then becomes the shell. No new crate, and no new `unsafe`. | The workspace has `rustix`; its `setsid` and `ioctl_tiocsctty` are safe functions when a process calls them on itself, which the helper does. The other way is a `pre_exec` closure, which is `unsafe` ([Practices-Rust](../../docs/dev/Practices-Rust.md) §7: add none), or a pty crate that holds the same `unsafe` for us (`pty-process` 0.5.4, MIT, on `rustix` and `tokio` alone). Confirmed with the user. |
 | D9 | The server's shell by default, as a login shell; profiles for the rest. A profile is a name, a command with arguments, a directory and variables. The conf gives the instance's profiles, a user adds their own. | bash, zsh and anything else with no code per shell. A login shell, because a server started by systemd, launchd or the Desktop app has no developer's `PATH`. |
 | D10 | Host sessions run as the server's OS user, with its environment less the server's own properties. Nothing hides the runtime from them. | That is what a developer's terminal is. Saying it plainly decides who gets `TERMINAL_HOST`. |
 | D11 | The terminal's client state is a store of the shell (`moqui.terminal`, as `moqui.call` and `moqui.chat` are). A session's xterm.js instance lives in the store and is shown by whichever view holds it: a pane of the Terminal screen or a floating window. Moving it between them moves its element; nothing reconnects. | It is what keeps a floating terminal alive across screens, and one terminal from being two. |
@@ -316,26 +322,27 @@ with an INFO log line each. What is typed and shown is never recorded. A daily j
 
 ### 5.8 Conf
 
+As built, in `MoquiDefaultConf.xml` (each setting an attribute with its default written there, since Conf-Paths):
+
 ```xml
 <terminal max-sessions="16" max-sessions-per-user="4" detach-seconds="120" replay-kb="2048"
-        command-line="${terminal_command_line}" host-sessions="${terminal_host_sessions}" remote="${terminal_remote}"
+        command-line="dev" host-sessions="dev" remote="false"
         remote-reauth-minutes="60" host-max-sessions="32" host-max-sessions-per-user="16" host-detach-hours="72"
         host-directory="">
-    <host-profile name="shell" title="Shell"/>
-    <host-profile name="bash" title="bash" command="bash"/>
-    <host-profile name="zsh" title="zsh" command="zsh"/>
+    <host-profile name="shell" title="Shell" integration="true"/>
+    <host-profile name="bash" title="bash" command="bash" login="true" integration="true"/>
+    <host-profile name="zsh" title="zsh" command="zsh" login="true" integration="true"/>
 </terminal>
 ```
 
-`terminal_command_line` and `terminal_host_sessions` default to `dev`: on for a dev instance. `false` turns one off.
-No value turns one on for another purpose. The attributes go in `mr-moqui-conf.xsd`, and `MoquiDevConf.xml` needs no
-change.
+`command-line` and `host-sessions` take `dev` (the default: on for a dev instance), `true` or `false`. The attributes
+are in `mr-moqui-conf.xsd` and the conf schema, and `MoquiDevConf.xml` needs no change.
 
-`terminal_remote` defaults to `false` (D7). To turn remote access on, from the lightest touch up
-([Settings and the environment](../docs/Run-Deploy.md#settings-and-the-environment)):
+`remote` defaults to `false` (D7). To turn remote access on, from the lightest touch up
+([Settings and the environment](../../docs/Run-Deploy.md#settings-and-the-environment)):
 
-- `terminal_remote=true` in `runtime/.env`: one line, this host only, and it stays through an upgrade;
-- the environment, or `-D terminal_remote=true` on the command line, for one run;
+- `moqui_conf__terminal__remote=true` in `runtime/.env`: one line, this host only, and it stays through an upgrade;
+- the same name in the environment, for one run;
 - `<terminal remote="true"/>` in `MoquiDevConf.xml` or another runtime conf, for
   every host that uses that conf.
 
@@ -346,7 +353,8 @@ change.
 `ssh/server.rs`, with `ssh/shell.rs`'s commands), `line.rs` (the line editor), `host.rs` and `exec.rs` (the pty and
 the helper, `cfg(unix)`), `access.rs` (§8), `services.rs`; `termws.rs` stays the socket. `command.rs` and `line.rs`
 are built with `ssh` or `devtools`, since SSH's prompt is the same loop; a command session in the registry, `host.rs`,
-`exec.rs` and `access.rs` are `devtools` alone (D15).
+`exec.rs` and `access.rs` are `devtools` alone (D15). As built, the prompt went to a module of its own,
+`host/command/` (`mod.rs`, `line.rs`, `shell.rs`, `host.rs` for `sh`, `attach.rs`), beside `term/`.
 
 ---
 
@@ -477,7 +485,7 @@ trait with two implementations, in process and the holder.
 - **Remote**: everything else, so a LAN, a VPN, the edge node, and also a tunnel tool or a proxy on the same machine,
   whose requests come from loopback with another origin. A command or host session then needs `remote="true"`, a
   secure request (the HTTPS listener, a believed proxy's https, the edge link), and a sign-in that counts as recent
-  ([Recent sign-in](../docs/security/Recent-Auth.md)) within `remote-reauth-minutes`. It is checked when a session is
+  ([Recent sign-in](../../docs/security/Recent-Auth.md)) within `remote-reauth-minutes`. It is checked when a session is
   opened and when one is attached: an attach to a running shell is worth as much to a thief as a new one. A socket
   that is attached is not asked again.
 - **The log.** A dev instance with `remote="true"` logs a WARN at start that names what can be reached.
@@ -817,14 +825,15 @@ Nov 11, 2026, the evening. The plan stays here, not archived: §15 waits for a f
   shell, the key bar's Esc, Tab, Ctrl+C and Ctrl+D by touch, the fit above the keyboard, a long press that selects and
   copies the line, pinch in and out. `adb shell input text` doubled characters where taps on the keyboard did not: an
   artifact of the injection, not of the terminal.
-- **Not done here**, as hand checks in [Mobile-Desktop-Exit-Checks](Mobile-Desktop-Exit-Checks.md#the-browser-terminal-the-apps-and-the-edge-node):
+- **Not done here**, as hand checks in [Mobile-Desktop-Exit-Checks](../Mobile-Desktop-Exit-Checks.md#the-browser-terminal-the-apps-and-the-edge-node):
   installed bundles, a real phone and the Android app against a remote dev server over HTTPS, and a deployed edge node.
 - **The Desktop app and the dev tools.** Its default build had no `devtools` (`maximal` alone, the server's `maximal,
   devtools`), so its node in process offered only the apps. Decided with the user: the app carries the dev tools and
   the bundle `components/dev`, and the tray's Developer tools (off by default) makes the node a dev instance, with the
   Dev AIDE, the command line and shells (`node-purpose`, `MOQUI_DESKTOP_PURPOSE`).
 - **Open.** Claude Code 2.1 asks `OSC 7501 ; ?` itself: answering as Rex does may let it send its status with no
-  hooks (§15). A long press on a phone also opens the terminal's context menu beside the copy.
+  hooks (§15, left in Remaining-Work). A long press on a phone also opens the terminal's context menu beside the copy
+  (→ [Terminal-Fancy2](../Terminal-Fancy2.md) TF1).
 
 ---
 
@@ -855,23 +864,28 @@ Nov 11, 2026, the evening. The plan stays here, not archived: §15 waits for a f
 
 ## 15. Later
 
+Items marked → TF*n* are planned in [Terminal-Fancy2](../Terminal-Fancy2.md); the rest stay in Remaining-Work.
+
 - Windows host sessions (ConPTY).
 - A server-side emulator: the screen as text for an Assist or MCP tool that drives a shell, and thumbnails (§2).
+  → TF2.
 - Sessions driven by a program, as Rex's command line and herdr's socket do it: services and a `moqui` command to
-  list, send keys, wait for a state and read events; capture with the emulator above.
+  list, send keys, wait for a state and read events; capture with the emulator above. → TF3.
 - The kitty keyboard protocol, with the xterm.js release that has it.
-- Mirrored viewers of one session, and a session shown to another user.
+- Mirrored viewers of one session, and a session shown to another user. → TF4.
 - ~~Attaching to a session from SSH (`attach <id>` at the prompt).~~ Built Nov 11, 2026 (§13.1).
 - Answering Claude Code's `OSC 7501 ; ?` as Rex does, so the agent sends its status with no hooks.
-- A per-person OS account for host sessions on a shared dev server.
+- A per-person OS account for host sessions on a shared dev server. → TF6, with Agent Code's run-as account.
 - Named workspaces: an arrangement saved with the profiles it starts.
 - ~~A git worktree per agent session, with the Dev AIDE's repositories.~~ Built Nov 14, 2026 in the Dev AIDE
-  ([design-dev-aide](archive/design-dev-aide.md) §21.8, P13): a session's tools work in its own worktree, a root of its own.
+  ([design-dev-aide](design-dev-aide.md) §21.8, P13): a session's tools work in its own worktree, a root of its own.
 - Images, ligatures, WebGL; a bundled font with the symbols agents' TUIs use.
 - A native window per terminal in the Desktop app.
-- Recording a session.
+- Recording a session. → TF5.
 - More kinds of float: the live call window, the record panels (Chatter, Files), and any screen from its page
-  menu ("Open in a float", the `screen` kind of §10.1).
+  menu ("Open in a float", the `screen` kind of §10.1). → TF8.
+- (Added Nov 27, 2026) Agent Code's `thread` kind, from [agent-code 06](../agent-code/06-Terminal-Preview-Devices.md)
+  §1.2. → TF7.
 - ~~Docking a float by dragging it to the edge it came from.~~ Built Nov 11, 2026 (§13.1): to its kind's home.
 - ~~`m-dialog`'s drag on the layer's pointer helper, so a dialog moves by touch too.~~ Built Nov 11, 2026 (§13.1).
 
@@ -881,8 +895,8 @@ Nov 11, 2026, the evening. The plan stays here, not archived: §15 waits for a f
 
 **Answered Nov 11, 2026.**
 
-- *Remote by default* (D7): off, until `terminal_remote` is set, in `runtime/.env` for the lightest touch or in
-  `MoquiDevConf.xml` or another conf (§5.8).
+- *Remote by default* (D7): off, until `terminal@remote` is set (`moqui_conf__terminal__remote`), in `runtime/.env`
+  for the lightest touch or in `MoquiDevConf.xml` or another conf (§5.8).
 - *The holder* (D14): fifth, after the floating windows. The order of §13 stands.
 - *Permissions* (D6): `SSH_SHELL` is reused for the command line and stays on `ADMIN_ADV`, not `ADMIN`. Host
   sessions have a permission of their own, `TERMINAL_HOST`, sealed and on `ADMIN_ADV` too. The plan first had two

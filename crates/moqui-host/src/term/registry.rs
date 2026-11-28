@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The kept terminal sessions of this process (plans/Terminal-Fancy.md §5.2), by id. A session is found only by its
-//! own user: another user's id answers as one that does not exist. An apps session is kept `terminal`
+//! The kept terminal sessions of this process (plans/archive/Terminal-Fancy.md §5.2), by id. A session is found only by
+//! its own user: another user's id answers as one that does not exist. An apps session is kept `terminal`
 //! `detach-seconds` (120) with no window, a command or host session `host-detach-hours` (72); a logout leaves them
 //! (D2), and the server's stop ends them all. Sessions are this process's own: on a cluster an id reaches only the
 //! member that holds it.
@@ -223,8 +223,8 @@ pub(crate) struct CommandSpec {
 
 #[cfg(feature = "devtools")]
 impl Registry {
-    /// Open a `moqui>` command line of `username` (plans/Terminal-Fancy.md §6): its place in the `terminal` limits,
-    /// then the prompt's loop on a pipe. The caller checked who may and from where (`super::access`).
+    /// Open a `moqui>` command line of `username` (plans/archive/Terminal-Fancy.md §6): its place in the `terminal`
+    /// limits, then the prompt's loop on a pipe. The caller checked who may and from where (`super::access`).
     pub fn open_command(
         self: &Arc<Self>,
         factory: &Arc<ExecutionContextFactory>,

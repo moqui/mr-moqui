@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
-// The tray's tabs undocked into floats (plans/Terminal-Fancy.md §10.6): m-shell-tray and the float layer mounted with Vue and
-// Quasar, a stand-in for a tab's screen.
+// The tray's tabs undocked into floats (plans/archive/Terminal-Fancy.md §10.6): m-shell-tray and the float layer
+// mounted with Vue and Quasar, a stand-in for a tab's screen.
 spec({ server: false, timeout: 60 })
 
 browser.runInPage({

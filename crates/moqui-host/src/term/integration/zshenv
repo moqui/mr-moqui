@@ -1,5 +1,5 @@
-# MR Moqui terminal shell integration for zsh (plans/Terminal-Fancy.md §11.2), the .zshenv of the ZDOTDIR a zsh is
-# started with: it puts the user's own ZDOTDIR back (so their .zprofile and .zshrc are read as always), reads their
+# MR Moqui terminal shell integration for zsh (plans/archive/Terminal-Fancy.md §11.2), the .zshenv of the ZDOTDIR a zsh
+# is started with: it puts the user's own ZDOTDIR back (so their .zprofile and .zshrc are read as always), reads their
 # .zshenv, and adds hooks that write OSC 133 around each prompt and command and OSC 7 with the directory.
 if [[ -n "${MOQUI_ZDOTDIR+x}" ]]; then
     ZDOTDIR=$MOQUI_ZDOTDIR

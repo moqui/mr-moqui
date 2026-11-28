@@ -144,7 +144,7 @@ Traps to keep in the driver guide (`docs/dev/Agent-Code-Drivers.md`): apply sett
 |---|---|
 | Unit | One process per (instance, cwd, user) by default; drivers with one server per instance (OpenCode 2.x) share it per (instance, user). See open decision O5. |
 | Where | On the cluster member that holds the work root (`AgentWorkRoot.hostInstanceId`). The run lease is taken on that member. |
-| OS user | The server's OS user. A server can set `agent-code@run-as` (empty by default) to a separate OS account, started through a setuid helper (`moqui-code-runas`), on Linux only. See [14 §5](14-Security.md#5-process-isolation). |
+| OS user | The server's OS user. A server can set `agent-code@run-as` (empty by default) to a separate OS account, started through [Terminal-Fancy2](../Terminal-Fancy2.md) TF6's sudo-gated `moqui term-exec` supervisor, on Linux only. See [14 §5](14-Security.md#5-process-isolation). |
 | Environment | A clean environment: `PATH`, `HOME` (the account home), `LANG`, the instance's env rows, the driver's own variables. Ambient credentials are removed (for example `GEMINI_API_KEY` for Antigravity, `OPENCODE_SERVER_PASSWORD` for an external OpenCode). |
 | Stdio | Piped. Stderr goes to `<agent-code@home>/logs/<instance>/<session>.log`, 64 KiB diagnostics budget per session in the UI. |
 | Limits | `agent-code@max-sessions` (default 16 per member), idle reaper after `agent-code@session-idle-minutes` (default 30) when no work is pending ([10 §9.5](10-Web-UI.md#95-conf-settings)). |

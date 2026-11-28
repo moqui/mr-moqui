@@ -11,8 +11,8 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The browser terminal's workspace (plans/Terminal-Fancy.md §9.3), served by Terminal.xml in the qvue render mode, in the
-    page's whole height below the header. A tab strip, each tab a tree of splits whose panes show a session
+<!-- The browser terminal's workspace (plans/archive/Terminal-Fancy.md §9.3), served by Terminal.xml in the qvue render
+    mode, in the page's whole height below the header. A tab strip, each tab a tree of splits whose panes show a session
     (m-terminal-node, m-terminal-view); the New menu opens a session in a new tab; the side list holds all of the user's
     sessions, here, shown nowhere, or opened on another device; Settings are the user's preferences (TERMINAL_CONFIG).
     The sessions are the server's and the store's (moqui.terminal, js/WebrootTerminal.js): leaving the page leaves them

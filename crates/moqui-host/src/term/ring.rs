@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A session's output ring (plans/Terminal-Fancy.md §5.4): its last `replay-kb` of output, placed by the count of all
-//! the bytes the program wrote, and the points in it where the stream was at rest with the modes in force there
+//! A session's output ring (plans/archive/Terminal-Fancy.md §5.4): its last `replay-kb` of output, placed by the count
+//! of all the bytes the program wrote, and the points in it where the stream was at rest with the modes in force there
 //! ([`super::track`]). A client that drew up to a count still in the ring goes on from it; one that did not is given
 //! the ring from its oldest point at rest, so a replay never starts inside a sequence. Nothing in it reads the
 //! factory, so the holder (§7.5) keeps it too.

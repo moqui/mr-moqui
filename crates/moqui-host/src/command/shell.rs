@@ -13,8 +13,8 @@
  */
 
 //! The commands of the `moqui>` command line, for `ssh host command`, SSH's interactive admin shell and the browser
-//! terminal's command line on a dev instance (plans/Terminal-Fancy.md §6). It replaces the Groovy shell; it is not a web
-//! endpoint. Every command runs on a request worker in a context logged in as the
+//! terminal's command line on a dev instance (plans/archive/Terminal-Fancy.md §6). It replaces the Groovy shell; it is
+//! not a web endpoint. Every command runs on a request worker in a context logged in as the
 //! SSH user, so artifact authorization applies to each service and entity call the command makes. `service`, `entity`
 //! and `js` run inside the Tools app root screen, as the Groovy shell did, so they need the user's authorization for
 //! that app.

@@ -12,9 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `attach <id>` at the SSH prompt (plans/Terminal-Fancy.md §15): the prompt's stream becomes the client of one of the
-//! user's kept sessions, as a page's socket on `/termws?session=` is, until Ctrl+\ detaches it, the session ends or
-//! another window takes it. The session goes on after a detach. A command line or a host session asks what attaching
+//! `attach <id>` at the SSH prompt (plans/archive/Terminal-Fancy.md §15): the prompt's stream becomes the client of one
+//! of the user's kept sessions, as a page's socket on `/termws?session=` is, until Ctrl+\ detaches it, the session ends
+//! or another window takes it. The session goes on after a detach. A command line or a host session asks what attaching
 //! to it from the browser asks (§8.2), by the SSH peer's address. Over SSH only: in the browser the Terminal's session
 //! list does this, and a command line attached inside its own stream would feed itself.
 

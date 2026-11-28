@@ -472,7 +472,7 @@ on and off attribute of its own: the one switch is the webroot's `/agentws` endp
 | Selector | Default | What it does |
 |---|---|---|
 | `agent-code@home` | empty | The Agent Code home: `runtime/agent-code/` on a server and the app data directory's `agent-code/` on desktop when empty ([02 §2](02-Orchestration.md#2-thread-creation-and-launch)) |
-| `agent-code@run-as` | empty | A separate OS account for harnesses, terminals and scripts, through `moqui-code-runas`, Linux only; empty runs them as the server's user ([14 §5](14-Security.md#5-process-isolation)) |
+| `agent-code@run-as` | empty | A separate OS account for harnesses, terminals and scripts, through [Terminal-Fancy2](../Terminal-Fancy2.md) TF6's sudo-gated `moqui term-exec` supervisor, Linux only; empty runs them as the server's user ([14 §5](14-Security.md#5-process-isolation)) |
 | `agent-code@max-sessions` | `16` | Harness processes per cluster member ([03 §4](03-Providers.md#4-the-process-host)) |
 | `agent-code@session-idle-minutes` | `30` | Idle harness processes with no pending work are stopped after this |
 | `agent-code@terminal-shell` | empty | A thread terminal's shell; empty is the user's login shell, then `/bin/bash`, then `/bin/sh` ([06 §1](06-Terminal-Preview-Devices.md#1-terminal)) |

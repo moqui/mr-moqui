@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
-// Floats (js/WebrootFloats.js, plans/Terminal-Fancy.md §10), in the page with Vue and Quasar: the store, the layer and a window
-// with a kind of test content teleported into it. No terminal: that kind is the Terminal's own.
+// Floats (js/WebrootFloats.js, plans/archive/Terminal-Fancy.md §10), in the page with Vue and Quasar: the store, the
+// layer and a window with a kind of test content teleported into it. No terminal: that kind is the Terminal's own.
 spec({ server: false, timeout: 60 })
 
 browser.runInPage({

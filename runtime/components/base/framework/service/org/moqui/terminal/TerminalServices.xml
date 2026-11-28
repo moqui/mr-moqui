@@ -13,12 +13,12 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
-    <!-- The browser terminal's kept sessions (plans/Terminal-Fancy.md §5.7), in crates/moqui-host/src/term under the
-        host's tui feature. No entity holds a session: a running one is in the memory of the process that runs it, and
-        the socket (/termws?session=) attaches to it by id. Each service works on the signed-in user's own sessions,
-        whatever calls it; another user's id answers as one that does not exist. A refusal adds an error and answers
-        reasonCode: notSignedIn, notAvailable (a kind this server does not offer to this user from here, with nothing
-        that tells why), reauthRequired (sign in again first), limit (the terminal limits) or notFound. -->
+    <!-- The browser terminal's kept sessions (plans/archive/Terminal-Fancy.md §5.7), in crates/moqui-host/src/term
+        under the host's tui feature. No entity holds a session: a running one is in the memory of the process that runs
+        it, and the socket (/termws?session=) attaches to it by id. Each service works on the signed-in user's own
+        sessions, whatever calls it; another user's id answers as one that does not exist. A refusal adds an error and
+        answers reasonCode: notSignedIn, notAvailable (a kind this server does not offer to this user from here, with
+        nothing that tells why), reauthRequired (sign in again first), limit (the terminal limits) or notFound. -->
     <service verb="get" noun="TerminalOptions" type="rust" location="moqui_host::term::services::get_terminal_options"
             allow-remote="false" transaction="ignore">
         <description>What this user may open from here: kinds (apps; command and host on a dev instance for a user who
@@ -86,8 +86,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The signed-in user's password, and the code of their second factor, checked in this request as
             reauthenticate#User checks them; then a ticket (five minutes) that open#TerminalSession and the terminal's
             socket (/termws?ticket=) take for a recent sign-in. For the Desktop and Mobile apps, whose requests sign in by
-            the device's key and keep no session to hold a sign-in in (plans/Terminal-Fancy.md §12). codeNeeded, with
-            codeText, while the code is still to come. A wrong password or code counts as a failed login.</description>
+            the device's key and keep no session to hold a sign-in in (plans/archive/Terminal-Fancy.md §12). codeNeeded,
+            with codeText, while the code is still to come. A wrong password or code counts as a failed login.</description>
         <in-parameters>
             <parameter name="password" required="true"/>
             <parameter name="code"/>

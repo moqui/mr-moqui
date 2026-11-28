@@ -231,8 +231,8 @@ and gains a link, so one worktree shows in both apps.
 
 | T3 | MR Moqui | How |
 |---|---|---|
-| terminal session key {threadId, terminalId} | `TerminalSession` plus new `conversationId`, `clientTerminalId`, `label`, `stopOnSettle`, `workRootId`, `providerInstanceId` | **Ext** |
-| terminal retained output (5,000 lines, 8 MiB) | **Res** history file per session | **Res** |
+| terminal session key {threadId, terminalId} | `TerminalSession` of kind `thread` plus new `conversationId`, `clientTerminalId`, `label`, `stopOnSettle`, `workRootId`, `providerInstanceId` ([Terminal-Fancy2](../Terminal-Fancy2.md) TF7); the worktree path and `env` are open parameters, not fields | **Ext** |
+| terminal retained output (5,000 lines, 8 MiB) | **Res** history file per session: a bounded recording (Terminal-Fancy2 TF5), its location in `historyLocation` | **Res** |
 | preview tab (owner agent/human/unclaimed, url, profile) | `AgentPreviewTab` | **New** |
 | browser profile (persistent, incognito) | `AgentBrowserProfile` | **New** |
 | preview recording | `AgentPreviewRecording` (**Res** video) | **New** |

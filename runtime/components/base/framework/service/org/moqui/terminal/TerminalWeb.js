@@ -12,10 +12,10 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-// The Terminal screen's JSON transitions (webroot apps/Terminal.xml, plans/Terminal-Fancy.md §5.7): each calls one of
-// org.moqui.terminal.TerminalServices with the request's named parameters and answers its out-parameters as JSON, or
-// {errors, reasonCode}. The services check the caller themselves (the signed-in user's own sessions), so authorization
-// is not asked; without a user it is 401.
+// The Terminal screen's JSON transitions (webroot apps/Terminal.xml, plans/archive/Terminal-Fancy.md §5.7): each calls
+// one of org.moqui.terminal.TerminalServices with the request's named parameters and answers its out-parameters as
+// JSON, or {errors, reasonCode}. The services check the caller themselves (the signed-in user's own sessions), so
+// authorization is not asked; without a user it is 401.
 
 function web(p) {
   if (!ec.user.userId) {

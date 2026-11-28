@@ -12,13 +12,13 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Host sessions (plans/Terminal-Fancy.md §7): a program on the server's operating system, on a pty ([`super::exec`]),
-//! run as the server's OS user (D10). A profile names the program: `shell`, the server user's own shell as a login
-//! shell (D9); the conf's `terminal` `host-profile` elements, offered only when their command is on the `PATH`; and
-//! the user's own (the `TERMINAL_PROFILES` preference), which grant nothing a user who may open a shell could not type.
-//! The program gets the server's environment less every variable that names a property of the Moqui conf, with the
-//! terminal's own set (§7.3), and starts in the profile's directory, else `host-directory`, else the checkout above
-//! the runtime.
+//! Host sessions (plans/archive/Terminal-Fancy.md §7): a program on the server's operating system, on a pty
+//! ([`super::exec`]), run as the server's OS user (D10). A profile names the program: `shell`, the server user's own
+//! shell as a login shell (D9); the conf's `terminal` `host-profile` elements, offered only when their command is on
+//! the `PATH`; and the user's own (the `TERMINAL_PROFILES` preference), which grant nothing a user who may open a shell
+//! could not type. The program gets the server's environment less every variable that names a property of the Moqui
+//! conf, with the terminal's own set (§7.3), and starts in the profile's directory, else `host-directory`, else the
+//! checkout above the runtime.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};

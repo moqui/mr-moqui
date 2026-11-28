@@ -124,7 +124,7 @@ pub(crate) struct Peer {
     pub https: bool,
     /// The TLS session's exporter (RFC 9266), when the xmpp feature takes it at the handshake.
     pub exporter: Option<Arc<Vec<u8>>>,
-    /// How the request reached this server (plans/Terminal-Fancy.md §8.2).
+    /// How the request reached this server (plans/archive/Terminal-Fancy.md §8.2).
     pub via: moqui_core::web::RequestVia,
     /// The listener the connection came over, with its closing signal; none in process or down the edge link.
     pub listener: Option<OnListener>,

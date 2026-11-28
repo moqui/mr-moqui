@@ -12,10 +12,10 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! One kept terminal session (plans/Terminal-Fancy.md §5.1–§5.4): a [`Program`] on a byte stream, run by a task of the
-//! edge runtime that outlives the sockets attached to it. The task (the pump) reads the program's output into the
-//! session's ring and to the one client attached, gathered into frames; a second task writes the client's input to the
-//! program, so a program that does not read never holds up its output.
+//! One kept terminal session (plans/archive/Terminal-Fancy.md §5.1–§5.4): a [`Program`] on a byte stream, run by a task
+//! of the edge runtime that outlives the sockets attached to it. The task (the pump) reads the program's output into
+//! the session's ring and to the one client attached, gathered into frames; a second task writes the client's input to
+//! the program, so a program that does not read never holds up its output.
 //!
 //! A client attaches with how far it got. Inside the ring it continues from there with nothing repeated; otherwise it
 //! is told to reset and gets the modes in force and the ring from its oldest point at rest. An apps session keeps no

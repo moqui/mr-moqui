@@ -1228,15 +1228,15 @@
             public-port="" sftp-root="runtime://sftp" sftp-max-file="268435456" max-sessions="8"
             max-sessions-per-user="4" max-sessions-per-source="4" max-dialog-sessions="4"
             max-dialog-sessions-per-source="2" git-password-auth="false" git-any-account="false" login-dialog="true"/>
-    <!-- The terminal's sessions, over SSH and in the browser together (plans/Terminal-Fancy.md §5.8): max-sessions apps and
-        command sessions at once, and max-sessions-per-user of them for one user; a session in its login dialog counts toward
-        the first only. A kept apps session with no window ends after detach-seconds, a command or host session after
-        host-detach-hours; a command or host session keeps replay-kb of its output for a window that comes back.
-        On a dev instance (command-line and host-sessions: dev by default, false off, true on for any purpose; any other
-        value off, logged) the browser terminal offers the moqui> command line to a user with SSH_SHELL and programs on the server's
-        operating system (the host-profile elements, and the shell profile: the server user's own shell) to a user with
-        TERMINAL_HOST. From anywhere but this machine those need remote="true", HTTPS and a sign-in within
-        remote-reauth-minutes (docs/ui/Terminal.md). -->
+    <!-- The terminal's sessions, over SSH and in the browser together (plans/archive/Terminal-Fancy.md §5.8):
+        max-sessions apps and command sessions at once, and max-sessions-per-user of them for one user; a session in its
+        login dialog counts toward the first only. A kept apps session with no window ends after detach-seconds, a
+        command or host session after host-detach-hours; a command or host session keeps replay-kb of its output for a
+        window that comes back. On a dev instance (command-line and host-sessions: dev by default, false off, true on
+        for any purpose; any other value off, logged) the browser terminal offers the moqui> command line to a user with
+        SSH_SHELL and programs on the server's operating system (the host-profile elements, and the shell profile: the
+        server user's own shell) to a user with TERMINAL_HOST. From anywhere but this machine those need remote="true",
+        HTTPS and a sign-in within remote-reauth-minutes (docs/ui/Terminal.md). -->
     <terminal max-sessions="16" max-sessions-per-user="4" detach-seconds="120" replay-kb="2048"
             command-line="dev" host-sessions="dev" remote="false"
             remote-reauth-minutes="60" host-max-sessions="32" host-max-sessions-per-user="16" host-detach-hours="72"

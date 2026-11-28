@@ -236,7 +236,7 @@ body:not(.body--dark) .q-field--outlined .q-field__control { background:var(--m-
 .m-tray .q-tab { padding:0 10px; min-height:40px; }
 .m-tray-body { overflow-y:auto; min-height:0; }
 @media print { .m-tray-sticky { display:none!important; } }
-/* floats (WebrootFloats.js, plans/Terminal-Fancy.md §10): a fixed layer over the page, the header (2000) and the docked drawers,
+/* floats (WebrootFloats.js, plans/archive/Terminal-Fancy.md §10): a fixed layer over the page, the header (2000) and the docked drawers,
    below the call's ring bar (2100), an overlay drawer (3000), dialogs and menus (6000) and notices; it takes no pointer itself */
 .m-float-layer { position:fixed; inset:0; z-index:2050; pointer-events:none; }
 .m-float { position:absolute; pointer-events:auto; background:var(--m-panel-bg); color:var(--m-text); border:1px solid var(--m-border);
@@ -275,7 +275,7 @@ body.m-float-over-modal .q-menu, body.m-float-over-modal .q-dialog.m-assist-popu
 /* the outline of where a drop snaps */
 .m-float-snap { position:absolute; border:2px solid var(--q-primary); border-radius:8px; background:color-mix(in srgb, var(--q-primary) 12%, transparent);
     pointer-events:none; z-index:100000; }
-/* a drag at the window's home docks it at the drop (plans/Terminal-Fancy.md §15): a dashed outline of where it goes, labelled */
+/* a drag at the window's home docks it at the drop (plans/archive/Terminal-Fancy.md §15): a dashed outline of where it goes, labelled */
 .m-float-snap--home { border-style:dashed; display:flex; align-items:center; justify-content:center; }
 .m-float-snap-label { padding:2px 10px; border-radius:12px; background:var(--q-primary); color:#fff; font-size:13px; font-weight:500; }
 /* the strip at the bottom: Arrange and the minimized windows */
@@ -1339,7 +1339,7 @@ button.m-report-native.m-report-cell-filter { min-height:0; margin:0; padding:0;
 .m-report-editor-group { margin: .6rem 0; padding: .5rem; border: 1px solid var(--q-secondary); border-radius: 4px; min-width: 0; }
 .m-report-editor-layout-item { border-left: 2px solid var(--q-primary); padding: .5rem; margin: .4rem 0; }
 .m-report-cell-filter { border: 0; padding: 0; color: inherit; background: transparent; cursor: pointer; text-align: inherit; text-decoration: underline dotted; }
-/* The browser terminal's workspace (apps/Terminal.qvue, js/WebrootTerminal.js; plans/Terminal-Fancy.md §9.3) */
+/* The browser terminal's workspace (apps/Terminal.qvue, js/WebrootTerminal.js; plans/archive/Terminal-Fancy.md §9.3) */
 .m-terminal-strip { min-height:36px; border-bottom:1px solid var(--m-border, rgba(0,0,0,.12)); }
 .m-terminal-pane { flex:1 1 0; min-width:0; min-height:0; border:1px solid transparent; border-radius:4px; }
 .m-terminal-pane-focused { border-color:color-mix(in srgb, var(--q-primary) 55%, transparent); }

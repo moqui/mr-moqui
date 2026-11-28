@@ -99,7 +99,7 @@ component's `service/org/moqui/code/` tree. The names keep T3's groups so a read
 | mcpApps | `mcpApps.callTool`, `toolInfo`, `readResource`, `updateModelContext` | `McpAppServices.xml` |
 | provider | `provider.uploadFeedback`, `mcpSignIn.start`, `mcpSignIn.complete`, `auth.start`, `auth.complete`, `auth.respond`, `auth.cancel`, `auth.removeMethod`, `auth.logout`, `auth.subscribe`, `consumeResetCredit`, `chatgpt.handoff.subscribe`, `chatgpt.reconnect-profile`, `chatgpt.import-profile`, `install.start`, `install.cancel`, `install.subscribe`, `install.remove` | `ProviderServices.xml` |
 | vcs, git, review | `vcs.*`, `git.runStackedAction`, `resolvePullRequest`, `preparePullRequestThread`, `review.*` ([04](04-Git.md)) | `VcsServices.xml` |
-| terminal | `terminal.open`, `attach`, `observe`, `write`, `resize`, `clear`, `close` (byte traffic stays on `/termws`; these manage sessions) | existing `TerminalServices.xml` |
+| terminal | `terminal.open`, `attach`, `observe`, `write`, `resize`, `clear`, `close` (byte traffic stays on `/termws`; these manage sessions). They map onto [Terminal-Fancy2](../Terminal-Fancy2.md): `open#TerminalSession` with the `thread` kind's parameters (TF7), `/termws` with `observe=1` for a viewer (TF4), `send#TerminalInput` for `write` (TF3), `clear#TerminalSession` (TF7), `close#TerminalSession` | existing `TerminalServices.xml` |
 | preview | `preview.*` ([06](06-Terminal-Preview-Devices.md)) | `PreviewServices.xml` |
 | device | `device.*` | `DeviceServices.xml` |
 | server config and updates | `server.probe`, `getConfig`, `getRelease` (T3 `getNpmRelease`), `refreshProviders`, `updateProvider`, `updateServer`, `updateServerWithProgress`, `commitDesktopUpdate`, `upsertKeybinding`, `removeKeybinding`, `getSettings`, `updateSettings` | `ServerServices.xml` |
@@ -125,7 +125,7 @@ component's `service/org/moqui/code/` tree. The names keep T3's groups so a read
 | `subscribeProjectClones` | Clone progress | effect worker |
 | `subscribeVcsStatus`, `subscribeVcsBranch` | Working tree and branch state per checkout | file watcher on the work root host |
 | `subscribeWorktreeSetup` | Setup script progress | `AgentCodeLaunch` |
-| `subscribeTerminalMetadata` | Terminal list, titles, running state | `TerminalSession` |
+| `subscribeTerminalMetadata` (06's `terminal.metadata`) | Terminal list, titles, running state | `TerminalSession` |
 | `subscribePreviewEvents`, `subscribeDiscoveredLocalServers` | Preview tabs; local servers | preview broker |
 | `subscribeDeviceState` | Simulator and emulator state | device host |
 | `subscribeServerConfig` | Server config and provider status | settings, provider instances |

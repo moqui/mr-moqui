@@ -107,8 +107,8 @@ fn frames_pass_both_ways_and_a_revoked_key_ends_the_socket() {
     assert!(heard.recv_timeout(Duration::from_millis(300)).is_err());
 }
 
-/// The terminal's socket (plans/Terminal-Fancy.md §12): binary frames both ways, every frame the page sent kept, and a
-/// close heard with its reason and not connected again, since the page attaches again itself.
+/// The terminal's socket (plans/archive/Terminal-Fancy.md §12): binary frames both ways, every frame the page sent
+/// kept, and a close heard with its reason and not connected again, since the page attaches again itself.
 #[test]
 fn the_terminals_socket_carries_bytes_and_ends_with_its_reason() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

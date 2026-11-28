@@ -4,7 +4,8 @@ The browser terminal at `/qapps/Terminal` (the account menu's **Terminal UI**) i
 environment: many sessions at once in tabs and splits, sessions that outlive the page, the `moqui>` command line, shells
 and other programs on the server's operating system, floating terminals that stay across screens, and a status for each
 session that tells you when an agent in it needs you. The plan and its decisions are in
-[Terminal-Fancy](../../plans/Terminal-Fancy.md); the terminal client itself (the apps in a terminal) is [TUI](TUI.md).
+[Terminal-Fancy](../../plans/archive/Terminal-Fancy.md), and the next batch in
+[Terminal-Fancy2](../../plans/Terminal-Fancy2.md); the terminal client itself (the apps in a terminal) is [TUI](TUI.md).
 
 Contents: [kinds](#kinds-of-session) · [the screen](#the-terminal-screen) · [keys](#keys) ·
 [floating](#floating-terminals) · [sessions](#sessions-that-outlive-the-page) · [host sessions](#host-sessions) ·

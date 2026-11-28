@@ -22,10 +22,10 @@
 //! frame whose reason the page shows: a refusal (the session limits), a timeout, the user logged out, the server
 //! stopping. The HTTP session is checked again each minute, so a logout closes the terminal too.
 //!
-//! `?session=<id>` attaches to a kept session the Terminal screen opened (plans/Terminal-Fancy.md §5.3), one of the
-//! cookie's user's own: the first message is `{"type":"attach","cols","rows","have"}`, with how many of the session's
-//! bytes the page already drew, and the server answers `{"type":"attached",...}`, then the bytes, `state` changes and
-//! `ended`. The page acknowledges what it drew (`{"type":"ack","count"}`). The socket closing leaves the session; a
+//! `?session=<id>` attaches to a kept session the Terminal screen opened (plans/archive/Terminal-Fancy.md §5.3), one of
+//! the cookie's user's own: the first message is `{"type":"attach","cols","rows","have"}`, with how many of the
+//! session's bytes the page already drew, and the server answers `{"type":"attached",...}`, then the bytes, `state`
+//! changes and `ended`. The page acknowledges what it drew (`{"type":"ack","count"}`). The socket closing leaves the session; a
 //! logout closes the socket and leaves it too (D2). Input on the socket counts as use of the HTTP session.
 
 use std::collections::BTreeMap;
@@ -65,8 +65,8 @@ const FIRST_SIZE_WAIT: Duration = Duration::from_secs(30);
 /// The pipe between the socket and the session, each way. A paste larger than this waits for the session to read it.
 const PIPE: usize = 1 << 20;
 
-/// What the upgrade request says about where it came from, for a command or host session (plans/Terminal-Fancy.md
-/// §8.2).
+/// What the upgrade request says about where it came from, for a command or host session
+/// (plans/archive/Terminal-Fancy.md §8.2).
 pub(crate) struct UpgradeFacts(Facts);
 
 impl FromRequestParts<Arc<HttpState>> for UpgradeFacts {

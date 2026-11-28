@@ -1,7 +1,7 @@
-# MR Moqui terminal shell integration for bash (plans/Terminal-Fancy.md §11.2), read through ENV by a bash started in
-# POSIX mode: it leaves POSIX mode, reads the user's own startup files as the shell would have, then writes OSC 133
-# around each prompt and command and OSC 7 with the directory, so the terminal knows where prompts are, when a command
-# runs and how it ended. A DEBUG trap of the user's own is replaced.
+# MR Moqui terminal shell integration for bash (plans/archive/Terminal-Fancy.md §11.2), read through ENV by a bash
+# started in POSIX mode: it leaves POSIX mode, reads the user's own startup files as the shell would have, then writes
+# OSC 133 around each prompt and command and OSC 7 with the directory, so the terminal knows where prompts are, when a
+# command runs and how it ended. A DEBUG trap of the user's own is replaced.
 builtin set +o posix
 builtin unset ENV
 if [ -n "${MOQUI_SHELL_LOGIN-}" ]; then
