@@ -41,6 +41,13 @@ use serde_json::{json, Value as Json};
 use crate::fill::{self, SheetRows};
 use crate::log::{self, LogRow};
 
+#[path = "room_formats.rs"]
+mod formats;
+#[path = "room_rules.rs"]
+mod rules;
+pub use formats::{hex_color, MAX_SHEET_MERGES, MAX_VIEW_MERGES};
+pub use rules::{range_cells, MAX_SHEET_RULES, MAX_WORKBOOK_RULES};
+
 /// A room not used for this long is dropped.
 pub const IDLE: Duration = Duration::from_secs(20 * 60);
 /// The most rooms one user holds; opening another drops the one used longest ago.
@@ -62,13 +69,14 @@ pub const SCOPE_RECHECK: Duration = Duration::from_secs(60);
 const SHEET_ROWS: i64 = 1_048_576;
 const SHEET_COLUMNS: i64 = 16_384;
 /// The edits over an area (`row`, `column`, `width`, `height`) that the engine walks cell by cell.
-const AREA_EDITS: [&str; 4] = ["clear", "clearFormatting", "style", "fill"];
+const AREA_EDITS: [&str; 6] = ["clear", "clearFormatting", "style", "fill", "border", "merge"];
 /// The newest edits a scratch room keeps for undo.
 const MAX_OWN_LOG: usize = 500;
 /// The most changed areas an evaluation tells the views of; past it they read everything again.
 const MAX_CHANGED_AREAS: usize = 200;
-/// The edits that change values only: after them the views read again the cells that changed.
-const VALUE_EDITS: [&str; 4] = ["input", "paste", "clear", "fill"];
+/// The edits that change values only: after them the views read again the cells that changed. Not `fill`: the engine's
+/// changes leave out the cells its autofill writes (and it copies styles and merges too), so the views read everything.
+const VALUE_EDITS: [&str; 3] = ["input", "paste", "clear"];
 /// The evaluation time past which an evaluation is slow, in milliseconds, when the conf does not say.
 const DEFAULT_SLOW_MS: f64 = 250.0;
 
@@ -150,6 +158,23 @@ pub struct Room {
     changed: Option<Vec<Area>>,
     /// Whether every edit since the last evaluation changed values only ([`VALUE_EDITS`]).
     values_only: bool,
+    /// An id for each rule of each sheet's conditional formats, beside the engine's list (`room_rules.rs`): what an
+    /// undo of a rule finds it by.
+    rule_ids: Vec<Vec<u64>>,
+    next_rule_id: u64,
+    /// How many steps of the last undo passed a rule by (another changed or deleted it since).
+    rules_passed: usize,
+    /// The rules a deletion's undo found as the deletion left them, with what they were before it, between its
+    /// `ruleCheck` and `ruleRanges` steps.
+    rule_restore: Vec<(u64, Json)>,
+    /// How many times each rule was changed since the room opened, by its id: what the removal of an added rule
+    /// compares (its formulas are rewritten by any row or column moved on its sheet, so its content does not say).
+    rule_edits: HashMap<u64, u64>,
+    /// The steps of the undo under way passed by, of any kind: a part of it whose steps all were is left out of its redo.
+    steps_skipped: usize,
+    /// For each undo applied here, by its row, the places of its edit's ops whose steps were all passed by: its redo
+    /// leaves them out (an added rule another changed is not added again beside theirs).
+    skipped: BTreeMap<i64, Vec<usize>>,
 }
 
 /// What a room is opened with.
@@ -187,6 +212,11 @@ impl Room {
             .map(|sheet| sheet.name.clone())
             .collect();
         let mut model = fill::fill(opening.base, &opening.rows)?;
+        // a file can hold any number of merges and rules, of any size: what an edit is held to is kept
+        formats::clean_colors(&mut model, &id);
+        formats::trim_merges(&mut model, &id);
+        let data_names: Vec<String> = data_rows.iter().map(|(name, _)| name.clone()).collect();
+        rules::trim_rules(&mut model, &id, &data_names);
         let started = Instant::now();
         model.evaluate();
         let took = elapsed_ms(started);
@@ -211,7 +241,15 @@ impl Room {
             filled_at: Instant::now(),
             changed: None,
             values_only: true,
+            rule_ids: Vec::new(),
+            next_rule_id: 0,
+            rules_passed: 0,
+            rule_restore: Vec::new(),
+            rule_edits: HashMap::new(),
+            steps_skipped: 0,
+            skipped: BTreeMap::new(),
         };
+        room.assign_rule_ids();
         room.timed(took);
         Ok(room)
     }
@@ -327,6 +365,8 @@ impl Room {
         model.evaluate();
         self.timed(elapsed_ms(started));
         self.model = user_model(model);
+        // the same sheets and rules, in the same order: the ids stay
+        self.sync_rule_ids();
         self.changed = None;
         self.values_only = true;
         self.data_rows = data_rows;
@@ -377,14 +417,19 @@ impl Room {
     ///   `count`).
     /// - `addSheet`, `renameSheet` (`sheet`, `name`), `moveSheet` (`sheet`, `to`), `deleteSheet` (`sheet`).
     /// - `charts` (`charts`: the document's charts, replaced).
+    /// - `border` (an area, `kind`, `style`, `color`), `merge` and `unmerge` (an area), and the conditional formats'
+    ///   `addRule`, `changeRule`, `deleteRule`, `moveRule` and `rules` ([`formats`], plans/IronCalc-DB2.md CG2.4 to
+    ///   CG2.6).
     /// - `undo`, `redo`, each alone: the person's own last edit taken back, or their last undo.
     ///
-    /// A data sheet's cells, rows, columns, place and name are not edited: its widths, heights and frozen panes are.
+    /// A data sheet's cells, rows, columns, place and name are not edited, nor its borders, merges and conditional
+    /// formats: its widths, heights and frozen panes are.
     ///
     /// # Errors
     ///
     /// Returns the first edit's refusal; the edits before it are applied (and are undone together).
     pub fn edit(&mut self, user_id: &str, ops: &[Json]) -> Result<(), Error> {
+        self.rules_passed = 0;
         self.model.pause_evaluation();
         let result = self.edit_own(user_id, ops);
         self.evaluate();
@@ -397,8 +442,9 @@ impl Room {
                 let target = log::undo_target(&self.own_log, user_id, 0)
                     .map(|row| row.seq)
                     .ok_or_else(|| Error::new(NOTHING_TO_UNDO))?;
-                self.undo_row(target)?;
+                let skipped = self.undo_row(target)?;
                 let seq = self.push_own(user_id, log::UNDO, Vec::new(), Some(target));
+                self.record_skipped(seq, skipped);
                 self.mark_own(target, seq);
                 Ok(())
             }
@@ -412,6 +458,7 @@ impl Room {
                     .find(|row| Some(row.seq) == undo.target)
                     .map(|row| row.ops.clone())
                     .unwrap_or_default();
+                let original = self.redone_ops(undo.seq, original);
                 let (applied, inverse, refused) = self.apply_ops(&original);
                 let seq = self.push_own(user_id, log::REDO, applied, Some(undo.seq));
                 self.inverses.insert(seq, inverse);
@@ -442,6 +489,7 @@ impl Room {
         if self.own_log.len() > MAX_OWN_LOG {
             let dropped = self.own_log.remove(0);
             self.inverses.remove(&dropped.seq);
+            self.skipped.remove(&dropped.seq);
         }
         self.seq
     }
@@ -484,8 +532,25 @@ impl Room {
                 )));
                 break;
             }
-            match self.inverse(op).and_then(|inverse| self.apply(op).map(|()| inverse)) {
-                Ok(inverse) => {
+            let taken = self.inverse(op).and_then(|mut inverse| {
+                self.apply(op)?;
+                // what an undo of a rule's edit finds is the rule as the edit left it, and an added sheet's undo the
+                // sheet by the engine's id (another may delete or add sheets before it)
+                self.settle_rule(op, &mut inverse);
+                if op["op"] == "addSheet" {
+                    if let (Some(step), Some(worksheet)) =
+                        (inverse.first_mut(), self.model().workbook.worksheets.last())
+                    {
+                        step["sheetId"] = json!(worksheet.sheet_id);
+                    }
+                }
+                Ok(inverse)
+            });
+            match taken {
+                Ok(mut inverse) => {
+                    for step in &mut inverse {
+                        step["part"] = json!(applied.len());
+                    }
                     applied.push(op.clone());
                     parts.push(inverse);
                 }
@@ -524,7 +589,12 @@ impl Room {
         };
         match op["op"].as_str().unwrap_or_default() {
             "input" => 1,
-            "clear" | "clearFormatting" | "style" => width.saturating_mul(height),
+            "clear" | "clearFormatting" | "style" | "merge" => width.saturating_mul(height),
+            // the engine only takes the merges off its list; their boxes are set again by its undo
+            "unmerge" => self.unmerge_cells(op, sheet),
+            // and the ring around it, whose facing sides it changes
+            "border" => width.saturating_add(2).saturating_mul(height.saturating_add(2)),
+            "addRule" | "changeRule" => range_cells(op["range"].as_str().unwrap_or_default()).unwrap_or(0),
             "fill" => match (op["toRow"].as_i64(), op["toColumn"].as_i64()) {
                 (Some(to_row), _) => width.saturating_mul(span(row, height, to_row)),
                 (None, Some(to_column)) => height.saturating_mul(span(column, width, to_column)),
@@ -544,18 +614,131 @@ impl Room {
         self.inverses.insert(seq, inverse);
     }
 
+    /// How many steps of the last undo passed a conditional format by, another having changed or deleted it since,
+    /// and none counted from then: what the edit's answer tells its person.
+    pub fn take_rules_passed(&mut self) -> usize {
+        std::mem::take(&mut self.rules_passed)
+    }
+
     /// Take back the edit of row `target` with what this room took of it.
     ///
     /// # Errors
     ///
-    /// An error when this room did not apply that edit, or the engine refused a step of taking it back.
-    pub fn undo_row(&mut self, target: i64) -> Result<(), Error> {
+    /// An error when this room did not apply that edit, or the engine refused a step of taking it back. A step whose
+    /// sheet is gone, or is now a data sheet, is passed by, as is a rule another changed: the places of the edit's ops
+    /// whose steps were all passed by are answered, for its redo ([`Room::record_skipped`]).
+    pub fn undo_row(&mut self, target: i64) -> Result<Vec<usize>, Error> {
         let inverse = self
             .inverses
             .get(&target)
             .cloned()
             .ok_or_else(|| Error::new("That edit is no longer undone here"))?;
-        inverse.iter().try_for_each(|op| self.apply(op))
+        self.rules_passed = 0;
+        self.rule_restore.clear();
+        // for each op of the edit, its steps and how many of them were passed by
+        let mut parts: BTreeMap<usize, (usize, usize)> = BTreeMap::new();
+        // the sheet a step of this undo added (a deleted sheet put back), which its next steps name
+        let mut added: Option<u32> = None;
+        for step in &inverse {
+            let before = self.steps_skipped;
+            match self.step_now(step, added) {
+                None => {
+                    self.rules_passed += 1;
+                    self.steps_skipped += 1;
+                    tracing::debug!(room = %self.id, step = %step["op"], "An undo passed by a step whose sheet is gone or a data sheet now");
+                }
+                Some(now) => match self.apply(&now) {
+                    Ok(()) if now["op"] == "addSheet" => {
+                        added = u32::try_from(self.model().workbook.worksheets.len().saturating_sub(1)).ok();
+                    }
+                    Ok(()) => {}
+                    // refused as the sheet is now (a name another took, a place no longer there): passed by, the
+                    // rest applied
+                    Err(err) => {
+                        tracing::warn!(room = %self.id, step = %now["op"], error = %err, "A step of an undo was refused; it is passed by");
+                        self.rules_passed += 1;
+                        self.steps_skipped += 1;
+                    }
+                },
+            }
+            if let Some(part) = step["part"].as_u64().and_then(|part| usize::try_from(part).ok()) {
+                let counts = parts.entry(part).or_insert((0, 0));
+                counts.0 += 1;
+                counts.1 += usize::from(self.steps_skipped > before);
+            }
+        }
+        // what the steps set back may pass the rules' bounds (rows coming back inside a rule another added since): held
+        // to them as a room opened after the next save holds them
+        self.enforce_rule_bounds();
+        Ok(parts
+            .into_iter()
+            .filter(|(_, (steps, passed))| steps == passed)
+            .map(|(part, _)| part)
+            .collect())
+    }
+
+    /// A step of an undo as it applies now, or None to pass it by: a step that names the sheet this undo added
+    /// (`added`) is given its place; one that names a sheet by the engine's id (`sheetId`) is given that sheet's place,
+    /// passed by when it is gone; and one whose sheet is gone, or is a data sheet now, is passed by.
+    fn step_now(&self, step: &Json, added: Option<u32>) -> Option<Json> {
+        let mut now = step.clone();
+        // with no sheet added (its step passed by), nothing of it to name
+        if step["added"] == true {
+            now["sheet"] = json!(added?);
+        }
+        if let Some(id) = step["sheetId"].as_u64() {
+            let at = self
+                .model()
+                .workbook
+                .worksheets
+                .iter()
+                .position(|worksheet| u64::from(worksheet.sheet_id) == id)?;
+            now["sheet"] = json!(at);
+        }
+        (!self.step_sheet_gone(&now)).then_some(now)
+    }
+
+    /// Whether a step of an undo names a sheet that is no longer there, or is now a data sheet where the step would
+    /// change its cells (a rule's steps find their rule by id on whichever sheet it is).
+    fn step_sheet_gone(&self, step: &Json) -> bool {
+        let kind = step["op"].as_str().unwrap_or_default();
+        if matches!(
+            kind,
+            "removeRule" | "setRule" | "shiftRule" | "ruleCheck" | "ruleRanges" | "addSheet"
+        ) {
+            return false;
+        }
+        let Some(sheet) = step["sheet"].as_u64().and_then(|sheet| u32::try_from(sheet).ok()) else {
+            return false;
+        };
+        let count = self.model().workbook.worksheets.len();
+        if sheet as usize >= count {
+            return true;
+        }
+        !matches!(kind, "width" | "height" | "freeze") && self.data_sheet_name(sheet).is_some()
+    }
+
+    /// Keep, for the undo of row `seq`, the places of its edit's ops it passed by whole ([`Room::undo_row`]).
+    pub fn record_skipped(&mut self, seq: i64, parts: Vec<usize>) {
+        if parts.is_empty() {
+            self.skipped.remove(&seq);
+        } else {
+            self.skipped.insert(seq, parts);
+        }
+    }
+
+    /// The ops of an edit a redo of the undo of row `undo` applies again: those the undo did not pass by whole.
+    #[must_use]
+    pub fn redone_ops(&self, undo: i64, ops: Vec<Json>) -> Vec<Json> {
+        match self.skipped.get(&undo) {
+            Some(parts) => ops
+                .into_iter()
+                .enumerate()
+                .filter(|(at, _)| !parts.contains(at))
+                .map(|(_, op)| op)
+                .collect(),
+            None => ops,
+        }
     }
 
     /// Apply a row of the document's log that another room wrote, and move to it. An edit or a redo another room
@@ -574,7 +757,12 @@ impl Room {
                 }
                 self.inverses.insert(row.seq, inverse);
             }
-            log::UNDO => self.undo_row(row.target.unwrap_or(0))?,
+            log::UNDO => {
+                let skipped = self.undo_row(row.target.unwrap_or(0))?;
+                self.record_skipped(row.seq, skipped);
+                // another's undo: its rules passed by are told to its person by their own room
+                self.rules_passed = 0;
+            }
             _ => return Err(Error::new(REOPEN)),
         }
         self.seq = row.seq;
@@ -584,6 +772,7 @@ impl Room {
     /// Forget what the edits at or before `seq` took: they are in the saved version and no longer undone.
     pub fn saved_through(&mut self, seq: i64) {
         self.inverses.retain(|at, _| *at > seq);
+        self.skipped.retain(|at, _| *at > seq);
     }
 
     /// The used rows and columns of a sheet.
@@ -639,7 +828,11 @@ impl Room {
                 contents.push(Json::String(
                     self.model.get_cell_content(sheet, at_row, at_column).map_err(engine)?,
                 ));
-                let style = self.model.get_cell_style(sheet, at_row, at_column).map_err(engine)?;
+                // the cell's own style: not the one drawn, which takes its neighbours' facing borders too
+                let style = self
+                    .model()
+                    .get_style_for_cell(sheet, at_row, at_column)
+                    .map_err(engine)?;
                 row_styles.push(serde_json::to_value(style).map_err(|err| Error::new(err.to_string()))?);
             }
             cells.push(Json::Array(contents));
@@ -751,18 +944,9 @@ impl Room {
                     true,
                 )?
             }
-            "clear" | "clearFormatting" | "restore" => {
-                let (width, height) = if op["op"] == "restore" {
-                    let cells = op["cells"].as_array().map(Vec::as_slice).unwrap_or_default();
-                    (
-                        i32::try_from(cells.first().and_then(Json::as_array).map_or(1, Vec::len)).unwrap_or(1),
-                        i32::try_from(cells.len()).unwrap_or(1),
-                    )
-                } else {
-                    (width, height)
-                };
-                self.snapshot(sheet, row, column, width, height, op["op"] == "restore")?
-            }
+            // what sets cells back as they were is an undo's alone: from a call it would write any style as it is
+            "restore" => return Err(Error::new("restore is an undo's edit alone")),
+            "clear" | "clearFormatting" => self.snapshot(sheet, row, column, width, height, false)?,
             "style" => {
                 // what is styled beyond the used area had no style of its own
                 let mut edits = vec![
@@ -771,18 +955,32 @@ impl Room {
                 edits.extend(self.snapshot(sheet, row, column, width, height, false)?);
                 edits
             }
-            "fill" => match op["toRow"].as_i64() {
-                Some(to_row) => {
-                    let to_row = i32::try_from(to_row).unwrap_or(i32::MAX);
-                    let (top, bottom) = (row.min(to_row), (row + height - 1).max(to_row));
-                    self.snapshot(sheet, top, column, width, bottom - top + 1, true)?
-                }
-                None => {
-                    let to_column = small("toColumn", 1);
-                    let (left, right) = (column.min(to_column), (column + width - 1).max(to_column));
-                    self.snapshot(sheet, row, left, right - left + 1, height, true)?
-                }
-            },
+            "fill" => {
+                let (top, left, bottom, right) = match op["toRow"].as_i64() {
+                    Some(to_row) => {
+                        let to_row = i32::try_from(to_row).unwrap_or(i32::MAX);
+                        (
+                            row.min(to_row),
+                            column,
+                            (row + height - 1).max(to_row),
+                            column + width - 1,
+                        )
+                    }
+                    None => {
+                        let to_column = small("toColumn", 1);
+                        (
+                            row,
+                            column.min(to_column),
+                            row + height - 1,
+                            (column + width - 1).max(to_column),
+                        )
+                    }
+                };
+                let mut edits = self.snapshot(sheet, top, left, right - left + 1, bottom - top + 1, true)?;
+                // the source's merged cells are tiled into the target, over the merges there
+                edits.extend(self.merges_back(sheet, top, left, bottom, right)?);
+                edits
+            }
             "width" => self.sizes(sheet, column, small("columnEnd", i64::from(column)), true)?,
             "height" => self.sizes(sheet, row, small("rowEnd", i64::from(row)), false)?,
             "freeze" => vec![json!({
@@ -790,40 +988,68 @@ impl Room {
                 "rows": self.model.get_frozen_rows_count(sheet).map_err(engine)?,
                 "columns": self.model.get_frozen_columns_count(sheet).map_err(engine)?,
             })],
-            "insertRows" => vec![json!({"op": "deleteRows", "sheet": sheet, "row": row, "count": small("count", 1)})],
+            // rows or columns inserted inside a rule's range grow it: held to the rules' bounds, as an edit of a rule is
+            "insertRows" => {
+                self.check_insert_rules(sheet, true, row, small("count", 1))?;
+                vec![json!({"op": "deleteRows", "sheet": sheet, "row": row, "count": small("count", 1)})]
+            }
             "insertColumns" => {
+                self.check_insert_rules(sheet, false, column, small("count", 1))?;
                 vec![json!({"op": "deleteColumns", "sheet": sheet, "column": column, "count": small("count", 1)})]
             }
             "deleteRows" => {
                 let count = small("count", 1).max(1);
                 let (_, max_column) = self.used(sheet);
-                let mut edits = vec![json!({"op": "insertRows", "sheet": sheet, "row": row, "count": count})];
+                // the rules' ranges and formulas the deletion moves: checked before the rows come back, set after
+                let rules = self.rule_ranges_back(sheet)?;
+                let mut edits: Vec<Json> = rules.iter().map(|(check, _)| check.clone()).collect();
+                edits.push(json!({"op": "insertRows", "sheet": sheet, "row": row, "count": count}));
                 edits.extend(self.sizes(sheet, row, row + count - 1, false)?);
                 edits.extend(self.snapshot(sheet, row, 1, max_column, count, false)?);
                 edits.extend(self.formulas()?);
+                // the merges the rows cut or held, and the conditional formats whose ranges they moved
+                let last_column = i32::try_from(SHEET_COLUMNS).unwrap_or(i32::MAX);
+                edits.extend(self.merges_back(sheet, row, 1, row.saturating_add(count - 1), last_column)?);
+                edits.extend(rules.map(|(_, ranges)| ranges));
                 edits
             }
             "deleteColumns" => {
                 let count = small("count", 1).max(1);
                 let (max_row, _) = self.used(sheet);
-                let mut edits = vec![json!({"op": "insertColumns", "sheet": sheet, "column": column, "count": count})];
+                let rules = self.rule_ranges_back(sheet)?;
+                let mut edits: Vec<Json> = rules.iter().map(|(check, _)| check.clone()).collect();
+                edits.push(json!({"op": "insertColumns", "sheet": sheet, "column": column, "count": count}));
                 edits.extend(self.sizes(sheet, column, column + count - 1, true)?);
                 edits.extend(self.snapshot(sheet, 1, column, count, max_row, false)?);
                 edits.extend(self.formulas()?);
+                let last_row = i32::try_from(SHEET_ROWS).unwrap_or(i32::MAX);
+                edits.extend(self.merges_back(sheet, 1, column, last_row, column.saturating_add(count - 1))?);
+                edits.extend(rules.map(|(_, ranges)| ranges));
                 edits
             }
             "addSheet" => vec![json!({"op": "deleteSheet", "sheet": sheet_count})],
+            // a sheet's rename and move are taken back on that sheet, found by the engine's id wherever others' sheets
+            // put it since
             "renameSheet" => {
-                let name = self
+                let worksheet = self
                     .model()
                     .workbook
                     .worksheets
                     .get(sheet as usize)
-                    .map(|worksheet| worksheet.get_name())
                     .ok_or_else(|| Error::new("No such sheet"))?;
-                vec![json!({"op": "renameSheet", "sheet": sheet, "name": name})]
+                vec![
+                    json!({"op": "renameSheet", "sheet": sheet, "name": worksheet.get_name(), "sheetId": worksheet.sheet_id}),
+                ]
             }
-            "moveSheet" => vec![json!({"op": "moveSheet", "sheet": small("to", 0), "to": sheet})],
+            "moveSheet" => {
+                let id = self
+                    .model()
+                    .workbook
+                    .worksheets
+                    .get(sheet as usize)
+                    .map(|worksheet| worksheet.sheet_id);
+                vec![json!({"op": "moveSheet", "sheet": small("to", 0), "to": sheet, "sheetId": id})]
+            }
             "deleteSheet" => {
                 let worksheet = self
                     .model()
@@ -837,8 +1063,9 @@ impl Room {
                 let last = sheet_count.saturating_sub(1);
                 let mut edits = vec![
                     json!({"op": "addSheet"}),
-                    json!({"op": "renameSheet", "sheet": last, "name": name}),
-                    json!({"op": "moveSheet", "sheet": last, "to": sheet}),
+                    // the sheet the undo adds, wherever it lands (another may have added one since)
+                    json!({"op": "renameSheet", "sheet": last, "name": name, "added": true}),
+                    json!({"op": "moveSheet", "sheet": last, "to": sheet, "added": true}),
                 ];
                 edits.extend(self.sizes(sheet, 1, max_column.max(1), true)?);
                 edits.extend(self.sizes(sheet, 1, max_row.max(1), false)?);
@@ -849,9 +1076,23 @@ impl Room {
                     "rows": self.model.get_frozen_rows_count(sheet).map_err(engine)?,
                     "columns": self.model.get_frozen_columns_count(sheet).map_err(engine)?,
                 }));
+                if self.has_merges(sheet) {
+                    let (last_row, last_column) = (
+                        i32::try_from(SHEET_ROWS).unwrap_or(i32::MAX),
+                        i32::try_from(SHEET_COLUMNS).unwrap_or(i32::MAX),
+                    );
+                    edits.extend(self.merges_back(sheet, 1, 1, last_row, last_column)?);
+                }
+                edits.extend(self.rules_put_back(sheet)?);
                 edits
             }
             "charts" => vec![json!({"op": "charts", "charts": self.charts})],
+            "border" => self.border_inverse(op, sheet)?,
+            "merge" => self.merge_inverse(op, sheet)?,
+            "unmerge" => self.unmerge_inverse(op, sheet)?,
+            kind if rules::RULE_EDITS.contains(&kind) || rules::RULE_UNDO_EDITS.contains(&kind) => {
+                self.rule_inverse(op, kind, sheet)?
+            }
             // refused when it is applied
             _ => Vec::new(),
         })
@@ -888,6 +1129,9 @@ impl Room {
                 | "restore"
                 | "style"
                 | "fill"
+                | "border"
+                | "merge"
+                | "unmerge"
                 | "insertRows"
                 | "deleteRows"
                 | "insertColumns"
@@ -903,7 +1147,16 @@ impl Room {
                 )));
             }
         }
-        match kind {
+        // a rule's range is cells, which other scopes' rooms (other row counts) and a refresh would not follow
+        // (an undo's steps but putRule find their rule by id, on whichever sheet it now is)
+        if rules::RULE_EDITS.contains(&kind) || kind == "putRule" {
+            if let Some(name) = self.data_sheet_name(sheet) {
+                return Err(Error::new(format!(
+                    "{name} is a data sheet: conditional formats go on a sheet beside it"
+                )));
+            }
+        }
+        let applied = match kind {
             "input" => self
                 .model
                 .set_user_input(sheet, small("row", 1), small("column", 1), &text("value")),
@@ -938,11 +1191,13 @@ impl Room {
             "clear" => self.model.range_clear_contents(&area()),
             "clearFormatting" => self.model.range_clear_formatting(&area()),
             "style" => self.model.update_range_style(&area(), &text("path"), &text("value")),
-            "fill" => match op["toRow"].as_i64() {
-                Some(to_row) => self
+            // the source's merges are tiled into the target: held to a sheet's bound first
+            "fill" => match self.check_fill_merges(op, sheet).map(|()| op["toRow"].as_i64()) {
+                Err(refused) => Err(refused),
+                Ok(Some(to_row)) => self
                     .model
                     .auto_fill_rows(&area(), i32::try_from(to_row).unwrap_or(i32::MAX)),
-                None => self.model.auto_fill_columns(&area(), small("toColumn", 1)),
+                Ok(None) => self.model.auto_fill_columns(&area(), small("toColumn", 1)),
             },
             "width" => {
                 let column = small("column", 1);
@@ -980,10 +1235,21 @@ impl Room {
                 self.charts = op["charts"].as_array().cloned().unwrap_or_default();
                 Ok(())
             }
+            "border" => self.apply_border(op, sheet),
+            "merge" => self.apply_merge(op, sheet, true),
+            "unmerge" => self.apply_merge(op, sheet, false),
+            kind if rules::RULE_EDITS.contains(&kind) || rules::RULE_UNDO_EDITS.contains(&kind) => {
+                self.apply_rule(op, kind, sheet)
+            }
             "undo" | "redo" => Err(format!("{kind} is an edit of its own")),
             other => Err(format!("{other:?} is not an edit")),
         }
-        .map_err(engine)
+        .map_err(engine);
+        if applied.is_ok() {
+            self.track_sheets(kind, op);
+        }
+        self.sync_rule_ids();
+        applied
     }
 
     /// A `restore` edit: each cell set as typed (an empty one cleared), then each cell's style.
@@ -1072,14 +1338,28 @@ impl Room {
         Ok(json!({ "fields": fields }))
     }
 
-    /// The sheets as a view lays them out ([`fill::layout`]).
+    /// The sheets as a view lays them out ([`fill::layout`]), each with its merged cells (`merges`, at most
+    /// [`MAX_VIEW_MERGES`]) and the rules of its conditional formats (`rules`, [`Room::rules_view`]).
     #[must_use]
     pub fn layout(&self) -> Json {
-        fill::layout(self.model(), &self.data_rows)
+        let mut layout = fill::layout(self.model(), &self.data_rows);
+        if let Some(sheets) = layout.as_array_mut() {
+            for (index, sheet) in sheets.iter_mut().enumerate() {
+                let Ok(index) = u32::try_from(index) else { continue };
+                let (last_row, last_column) = (
+                    i32::try_from(SHEET_ROWS).unwrap_or(i32::MAX),
+                    i32::try_from(SHEET_COLUMNS).unwrap_or(i32::MAX),
+                );
+                sheet["merges"] = Json::Array(self.merges_of(index, 1, 1, last_row, last_column));
+                sheet["rules"] = Json::Array(self.rules_view(index));
+            }
+        }
+        layout
     }
 
     /// A rectangle of cells as JSON, the engine's block: the distinct styles, a style index for each cell, the texts
-    /// of the cells that have one, and the fills as runs.
+    /// of the cells that have one, and the fills as runs; and the merged cells that meet it (`merges`, each its anchor's
+    /// `row` and `column`, `width` and `height`), which a view draws as one box over the rows it has.
     ///
     /// # Errors
     ///
@@ -1092,6 +1372,14 @@ impl Room {
             .model
             .get_cells_block(sheet, row, column, width, height)
             .map_err(|message| Error::new(format!("Spreadsheet engine: {message}")))?;
+        let mut block = serde_json::to_value(&block).map_err(|err| Error::new(err.to_string()))?;
+        block["merges"] = Json::Array(self.merges_of(
+            sheet,
+            row,
+            column,
+            row.saturating_add(height - 1),
+            column.saturating_add(width - 1),
+        ));
         serde_json::to_string(&block).map_err(|err| Error::new(err.to_string()))
     }
 
@@ -1453,6 +1741,7 @@ impl Rooms {
             held.seq = seq;
             held.own_log.clear();
             held.inverses.clear();
+            held.skipped.clear();
             held.definition_id.clone()
         };
         let mut rooms = lock(&self.rooms);

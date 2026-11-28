@@ -127,3 +127,218 @@ test("the others' places are the cells of the sheet shown, in each one's colour,
     assert.equal(cells.get("10:1"), calc.peerColor(2));
     assert.notEqual(calc.peerColor(0), calc.peerColor(1));
 });
+
+/** A table as the sheet builds one: the row numbers, then columns A to C, ten rows of no data. */
+async function sheetTable(options) {
+    const element = document.createElement("div");
+    document.body.appendChild(element);
+    const columns = [{ title: "", field: "id", width: 56, frozen: true, headerSort: false }]
+        .concat([1, 2, 3].map((c) => ({ title: calc.columnName(c), field: "c" + c, calcColumn: c, headerSort: false })));
+    const data = Array.from({ length: 10 }, (unused, at) => ({ id: at + 1 }));
+    // calcColumn is the sheet's own column option, which Tabulator does not know
+    const table = new Tabulator(element, Object.assign({ data, columns, index: "id", height: "320px", layout: "fitData", debugInvalidOptions: false,
+        selectableRange: 1, selectableRangeColumns: true, selectableRangeRows: true }, options));
+    await new Promise((resolve) => table.on("tableBuilt", resolve));
+    return { table, done: () => { table.destroy(); element.remove(); } };
+}
+
+test("a drag of the fill handle is the engine's fill, down, up or across", () => {
+    const rowAt = (at) => at + 1, columnAt = (at) => at;
+    assert.deepEqual(calc.fillOp(1, { top: 0, bottom: 1, left: 1, right: 2 }, { top: 0, bottom: 4, left: 1, right: 2 }, rowAt, columnAt),
+        { op: "fill", sheet: 1, row: 1, column: 1, width: 2, height: 2, toRow: 5 });
+    assert.equal(calc.fillOp(1, { top: 3, bottom: 3, left: 2, right: 2 }, { top: 1, bottom: 3, left: 2, right: 2 }, rowAt, columnAt).toRow, 2);
+    assert.equal(calc.fillOp(1, { top: 3, bottom: 3, left: 2, right: 2 }, { top: 3, bottom: 3, left: 2, right: 5 }, rowAt, columnAt).toColumn, 5);
+    assert.equal(calc.fillOp(1, { top: 3, bottom: 3, left: 2, right: 2 }, { top: 3, bottom: 3, left: 1, right: 2 }, rowAt, columnAt).toColumn, 1);
+    assert.equal(calc.fillOp(1, { top: 3, bottom: 3, left: 2, right: 2 }, { top: 3, bottom: 3, left: 2, right: 2 }, rowAt, columnAt), null);
+});
+
+// Tabulator 6.7's internals the sheet uses: the fill handle of selectRange (its mousedown, the cell moves, the document's
+// mouseup it listens for, extendAlongAxis), and a row's setHeight
+test("the fill handle's drop is taken from Tabulator and the range reached is selected", async () => {
+    const { table, done } = await sheetTable({ selectableRangeFill: true });
+    try {
+        let dropped = null;
+        assert.equal(calc.takeFillHandle(table, (source, target) => { dropped = { source, target }; }), true);
+        table.addRange(table.getRow(2).getCell("c1"), table.getRow(3).getCell("c1"));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const handle = table.modules.selectRange.fillHandle;
+        handle.handleMouseDown({ button: 0, preventDefault() {}, stopPropagation() {} });
+        handle.handleCellMouseMove(null, table.getRow(6).getCell("c1")._cell);
+        document.dispatchEvent(new MouseEvent("mouseup"));
+        assert.ok(dropped, "the drop was taken");
+        assert.deepEqual([dropped.source.top, dropped.source.bottom, dropped.target.top, dropped.target.bottom], [1, 2, 1, 5]);
+        const ranges = table.modules.selectRange, rows = ranges.getTableRows(), columns = ranges.getTableColumns();
+        assert.deepEqual(calc.fillOp(0, dropped.source, dropped.target, (at) => rows[at].getData().id, (at) => columns[at].getDefinition().calcColumn),
+            { op: "fill", sheet: 0, row: 2, column: 1, width: 1, height: 2, toRow: 6 });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const bounds = table.getRanges()[0].getBounds();
+        assert.deepEqual([bounds.start.row.data.id, bounds.end.row.data.id], [2, 6]);
+        assert.equal(handle.preview, null, "the preview is gone");
+        assert.equal(calc.takeFillHandle({ modules: {} }, () => null), false, "a table with no fill handle");
+    } finally { done(); }
+});
+
+test("a row is given its own height, and the height it was given is read back", async () => {
+    const heights = new Map([[3, 44]]);
+    const { table, done } = await sheetTable({ rowFormatter: (row) => calc.setRowHeight(row, heights.get(row.getData().id)), resizableRows: true });
+    try {
+        assert.equal(calc.rowHeight(table.getRow(3)), 44);
+        assert.ok(Math.abs(table.getRow(3).getElement().offsetHeight - 44) <= 2, String(table.getRow(3).getElement().offsetHeight));
+        // drawn again (new cells), it keeps it
+        table.getRow(3).reformat();
+        assert.ok(Math.abs(table.getRow(3).getElement().offsetHeight - 44) <= 2);
+        assert.ok(table.getRow(2).getElement().offsetHeight < 40, "another row keeps Tabulator's height");
+        assert.ok(table.getRow(3).getElement().querySelector(".tabulator-row-resize-handle"), "a row can be resized");
+    } finally { done(); }
+});
+
+test("the sheet's template compiles, and its border menu names the engine's borders", () => {
+    const errors = [];
+    const render = Vue.compile(calc.sheet.template, { onError: (err) => errors.push(err.message), onWarn: (err) => errors.push(err.message) });
+    assert.deepEqual(errors, []);
+    assert.equal(typeof render, "function");
+    assert.deepEqual(calc.BORDER_KINDS.map((one) => one.kind), ["all", "outer", "inner", "top", "bottom", "left", "right", "none"]);
+    assert.ok(calc.BORDER_STYLES.every((one) => /^[a-z]+$/.test(one.value)));
+});
+
+test("a click points at a reference only where a formula takes one, and a data sheet's is its table's columns", () => {
+    assert.equal(calc.canPoint("=SUM(", 5), true);
+    assert.equal(calc.canPoint("=", 1), true);
+    assert.equal(calc.canPoint("=A1+ ", 5), true);
+    assert.equal(calc.canPoint("=A1", 3), false);
+    assert.equal(calc.canPoint("=SUM(A1", 7), false);
+    assert.equal(calc.canPoint("12+", 3), false, "not a formula");
+    assert.equal(calc.canPoint("=IF(A1>", 7), true);
+    const orders = { index: 0, name: "Orders", data: true, headers: ["region", "amount", "placed"] };
+    const summary = { index: 1, name: "Summary" }, other = { index: 2, name: "Joe's sheet" };
+    // whatever rows are chosen: another scope's room has other rows
+    assert.equal(calc.referenceText({ row: 2, column: 2, lastRow: 9, lastColumn: 2 }, orders, 1), "Orders[amount]");
+    assert.equal(calc.referenceText({ row: 1, column: 1, lastRow: 1, lastColumn: 3 }, orders, 1), "Orders[[region]:[placed]]");
+    assert.equal(calc.referenceText({ row: 2, column: 5, lastRow: 2, lastColumn: 5 }, orders, 1), null, "a column the data has not");
+    assert.equal(calc.referenceText({ row: 2, column: 2, lastRow: 4, lastColumn: 3 }, summary, 1), "B2:C4");
+    assert.equal(calc.referenceText({ row: 1, column: 1, lastRow: 1, lastColumn: 1 }, other, 1), "'Joe''s sheet'!A1");
+    assert.deepEqual(calc.putReference("=SUM()", 5, 5, "B2:B5"), { text: "=SUM(B2:B5)", caret: 10 });
+    assert.deepEqual(calc.putReference("=SUM(B2)", 5, 7, "B2:B5"), { text: "=SUM(B2:B5)", caret: 10 });
+});
+
+test("a click on a cell selects it and leaves the focus where it is while holding", async () => {
+    const { table, done } = await sheetTable({});
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    try {
+        let holding = true;
+        assert.equal(calc.holdFocus(table, () => holding), true);
+        input.focus();
+        const cell = table.getRow(4).getCell("c2").getElement();
+        // the sheet's capture-phase press keeps the focus (its default prevented); Tabulator still selects
+        cell.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+        cell.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0 }));
+        cell.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.equal(document.activeElement, input, "the bar keeps the focus");
+        const bounds = table.getRanges()[0].getBounds();
+        assert.deepEqual([bounds.start.row.data.id, bounds.start.column.definition.calcColumn], [4, 2]);
+        holding = false;
+        cell.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+        assert.notEqual(document.activeElement, input, "not holding, the table takes it");
+        assert.equal(calc.holdFocus({ modules: {} }, () => true), false);
+    } finally { input.remove(); done(); }
+});
+
+test("a cell's conditional format draws a data bar, icons and a rating, and its text is never HTML", () => {
+    assert.equal(calc.decoration({ style: {} }), null);
+    const bar = calc.decoration({ style: {}, data_bar: { value: 0.75, axis_position: 0.25, positive_color: "#638EC6", negative_color: "#FF0000", is_gradient: true, show_value: true } });
+    assert.deepEqual(bar, { bar: { from: 0.25, to: 0.75, gradient: true, color: "#638EC6" } });
+    assert.equal(calc.decoration({ data_bar: { value: 0.1, axis_position: 0.25, positive_color: "#638EC6", negative_color: "#C00000" } }).bar.color, "#C00000", "below the axis");
+    const icons = calc.decoration({ icon: { icon: "ArrowUp", color: "#84cb1f", show_value: false }, rating: { icon: "Star", count: 2, max: 5, color: [4, 0.2], show_value: true } });
+    assert.deepEqual(icons.icon, { glyph: calc.ICONS.ArrowUp, color: "#84cb1f" });
+    assert.deepEqual(icons.rating, { glyph: calc.ICONS.Star, count: 2, max: 5, color: "" }, "a theme colour is not written into a style");
+    assert.equal(icons.hide, true);
+    // a block keeps a cell's decoration, and a cell with none is as before
+    const rows = calc.blockRows({ row: 1, column: 1, width: 2, height: 1, styles: [{ style: {}, data_bar: { value: 0.5, axis_position: 0 } }, { style: {} }],
+        style_indices: [0, 1], texts: [{ row: 1, column: 1, text: "10", cell_type: 1 }], fills: [] });
+    assert.deepEqual(rows.get(1)[0].decor.bar, { from: 0, to: 0.5, gradient: false, color: "#638EC6" });
+    assert.equal(rows.get(1)[1], undefined);
+    const drawn = calc.cellNode(rows.get(1)[0]);
+    assert.equal(drawn.querySelector(".m-calc-databar").style.width, "50%");
+    assert.equal(drawn.querySelector(".m-calc-value").textContent, "10");
+    const rated = calc.cellNode({ text: "3", decor: icons });
+    assert.equal(rated.querySelector(".m-calc-value"), null, "its value hidden");
+    assert.equal(rated.textContent, calc.ICONS.ArrowUp + calc.ICONS.Star.repeat(2) + calc.ICONS.Star.repeat(3));
+    const typed = calc.cellNode({ text: "<img src=x onerror=alert(1)>" });
+    assert.equal(typed.nodeType, Node.TEXT_NODE);
+    assert.equal(typed.textContent, "<img src=x onerror=alert(1)>");
+});
+
+test("a conditional format's form is the engine's rule, and a rule of the sheet reads back into it", () => {
+    const form = calc.ruleForm("B2:B9");
+    assert.equal(calc.ruleOf(form), null, "no number yet");
+    form.value = "=5";
+    assert.deepEqual(calc.ruleOf(form), { type: "CellIs", operator: "GreaterThan", formula: "5", formula2: null, format: { fill: { color: "#FFCDD2" } }, stop_if_true: false });
+    Object.assign(form, { operator: "Between", value2: "10", font: "#C62828", bold: true, fill: "" });
+    const between = calc.ruleOf(form);
+    assert.deepEqual([between.formula2, between.format], ["10", { font: { color: "#C62828", b: true } }]);
+    assert.equal(calc.ruleLabel(between), "Value between 5 and 10");
+    assert.deepEqual(calc.formOf("B2:B9", between), Object.assign(calc.ruleForm("B2:B9"), { operator: "Between", value: "5", value2: "10", fill: "", font: "#C62828", bold: true }));
+    const top = calc.ruleOf(Object.assign(calc.ruleForm("A1:A5"), { kind: "top", rank: 3, percent: true }));
+    assert.deepEqual([top.type, top.rank, top.percent, calc.ruleLabel(top)], ["Top10", 3, true, "Top 3%"]);
+    const text = calc.ruleOf(Object.assign(calc.ruleForm("A1:A5"), { kind: "text", value: "West" }));
+    assert.deepEqual([text.type, text.operator, calc.ruleLabel(text)], ["Text", "Contains", "Text contains \u201CWest\u201D"]);
+    const scale = calc.ruleOf(Object.assign(calc.ruleForm("A1:A5"), { kind: "scale", low: "#FFFFFF", high: "#2E7D32" }));
+    assert.deepEqual(scale.thresholds, [{ cfvo: "Min", color: "#FFFFFF" }, { cfvo: "Max", color: "#2E7D32" }]);
+    assert.equal(calc.formOf("A1:A5", scale).high, "#2E7D32");
+    assert.equal(calc.ruleOf(Object.assign(calc.ruleForm("A1:A5"), { kind: "bar" })).type, "DataBar");
+    // a workbook's own rule the dialog does not make is listed, moved and deleted, not changed
+    assert.equal(calc.formOf("A1:A5", { type: "IconSet", thresholds: [] }), null);
+    assert.equal(calc.ruleLabel({ type: "IconSet" }), "Icons");
+    assert.equal(calc.ruleLabel({ type: "DuplicateValues" }), "Duplicate Values");
+});
+
+test("a merged cell is selected whole and each of its cells draws its slice of the box", () => {
+    const boxes = [{ row: 2, column: 2, width: 2, height: 3 }, { row: 1, column: 4, width: 3, height: 1 }];
+    assert.deepEqual(calc.boxAt(boxes, 4, 3), boxes[0]);
+    assert.equal(calc.boxAt(boxes, 5, 3), null);
+    assert.equal(calc.boxAt([], 1, 1), null);
+    // a selection meeting a box takes it whole, and a box it then meets
+    assert.deepEqual(calc.expandToMerges({ row: 3, column: 3, lastRow: 3, lastColumn: 3 }, boxes), { row: 2, column: 2, lastRow: 4, lastColumn: 3 });
+    assert.deepEqual(calc.expandToMerges({ row: 1, column: 3, lastRow: 2, lastColumn: 4 }, boxes), { row: 1, column: 2, lastRow: 4, lastColumn: 6 });
+    assert.deepEqual(calc.expandToMerges({ row: 9, column: 9, lastRow: 9, lastColumn: 9 }, boxes), { row: 9, column: 9, lastRow: 9, lastColumn: 9 });
+    // the anchor's content over the box, shifted to the cell's place in it, a pixel over the lines inside it
+    const anchor = { text: "Total", css: { "font-weight": "600", "background-color": "#FFF9C4", "text-align": "center" } };
+    const slice = calc.sliceNode(anchor, { x: 90, y: 28, width: 179, height: 83, right: false, below: true });
+    assert.equal(slice.className, "m-calc-slice");
+    assert.deepEqual([slice.style.right, slice.style.bottom, slice.style.backgroundColor], ["0px", "-1px", "rgb(255, 249, 196)"]);
+    const box = slice.firstChild;
+    assert.deepEqual([box.style.left, box.style.top, box.style.width, box.style.height, box.style.textAlign, box.style.fontWeight],
+        ["-90px", "-28px", "179px", "83px", "center", "600"]);
+    assert.equal(box.textContent, "Total");
+    assert.equal(calc.sliceNode(null, { x: 0, y: 0, width: 10, height: 10, right: true, below: false }).firstChild.textContent, "", "an anchor not loaded yet");
+});
+
+test("a data sheet's column is escaped in its reference, a rating's icons are held to ten, and a rule is named by what it is", () => {
+    assert.equal(calc.columnReference("total[usd]#1 @x 'y'"), "total'[usd']'#1 '@x ''y''");
+    const odd = { index: 0, name: "Orders", data: true, headers: ["a[b", "c#d"] };
+    assert.equal(calc.referenceText({ row: 2, column: 1, lastRow: 2, lastColumn: 1 }, odd, 1), "Orders[a'[b]");
+    assert.equal(calc.referenceText({ row: 2, column: 1, lastRow: 2, lastColumn: 2 }, odd, 1), "Orders[[a'[b]:[c'#d]]");
+    const rating = calc.decoration({ rating: { icon: "Star", count: 1e6, max: 1e6, color: "#FFC000" } }).rating;
+    assert.deepEqual([rating.count, rating.max], [calc.MAX_RATING, calc.MAX_RATING]);
+    assert.equal(calc.cellNode({ text: "", decor: { rating } }).textContent.length, calc.MAX_RATING);
+    const one = { index: 2, range: "B1:B5", priority: 3, rule: { type: "Top10", rank: 1 } };
+    assert.deepEqual(calc.ruleExpect(one), { range: "B1:B5", rule: { type: "Top10", rank: 1 } });
+    assert.equal(calc.passedText(1), "1 change was changed by others since and not undone");
+    assert.equal(calc.passedText(2), "2 changes were changed by others since and not undone");
+});
+
+test("a fill handle not taken over is taken away", async () => {
+    const { table, done } = await sheetTable({ selectableRangeFill: true });
+    try {
+        const ranges = table.modules.selectRange, element = ranges.fillHandle.element;
+        calc.dropFillHandle(table);
+        assert.equal(ranges.fillHandle, null);
+        assert.equal(element.parentNode, null);
+        table.addRange(table.getRow(2).getCell("c1"), table.getRow(2).getCell("c1"));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.equal(document.querySelector(".tabulator-range-fill-handle"), null);
+    } finally { done(); }
+});
+

@@ -907,8 +907,8 @@ fn open_document_with(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
     Ok(opened_out(facade, &held, &user_id))
 }
 
-/// `get#CalcCells`: a rectangle of a sheet's cells, as the engine's block in JSON text (`blockJson`), with the room's
-/// last edit (`seq`). With `since` at that edit the block is left out (`unchanged`): a view that polls asks so. With a
+/// `get#CalcCells`: a rectangle of a sheet's cells, as the engine's block in JSON text (`blockJson`) with the merged
+/// cells that meet it (`merges`, [`Room::block`]), with the room's last edit (`seq`). With `since` at that edit the block is left out (`unchanged`): a view that polls asks so. With a
 /// `client`, the view's place (`selection`: `row`, `column`, `width`, `height`) is kept for the others, and the others
 /// are answered (`peers`).
 fn get_calc_cells(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
@@ -1350,7 +1350,17 @@ fn edit_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
     } else if let Err(err) = held.edit(&user, &ops) {
         add_error(err.message());
     }
+    // an undo passes by what another changed or deleted since (a conditional format, a sheet), and says so
+    let passed = held.take_rules_passed();
+    if passed > 0 {
+        let message = format!(
+            "{passed} {} changed by others since and not undone",
+            if passed == 1 { "change was" } else { "changes were" }
+        );
+        ExecutionContext::with_current(|ec| ec.message().add_message(message));
+    }
     let mut out = room_out(facade, &held, &user);
+    out.insert("rulesPassed".to_string(), Value::I64(i64::try_from(passed).unwrap_or(0)));
     if let Some(changed) = held.changed() {
         out.insert("changed".to_string(), from_json(&together::areas_json(changed)));
     }
