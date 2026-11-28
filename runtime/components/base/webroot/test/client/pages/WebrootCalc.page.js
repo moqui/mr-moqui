@@ -244,3 +244,53 @@ test("a click on a cell selects it and leaves the focus where it is while holdin
         assert.equal(calc.holdFocus({ modules: {} }, () => true), false);
     } finally { input.remove(); done(); }
 });
+
+test("a cell's conditional format draws a data bar, icons and a rating, and its text is never HTML", () => {
+    assert.equal(calc.decoration({ style: {} }), null);
+    const bar = calc.decoration({ style: {}, data_bar: { value: 0.75, axis_position: 0.25, positive_color: "#638EC6", negative_color: "#FF0000", is_gradient: true, show_value: true } });
+    assert.deepEqual(bar, { bar: { from: 0.25, to: 0.75, gradient: true, color: "#638EC6" } });
+    assert.equal(calc.decoration({ data_bar: { value: 0.1, axis_position: 0.25, positive_color: "#638EC6", negative_color: "#C00000" } }).bar.color, "#C00000", "below the axis");
+    const icons = calc.decoration({ icon: { icon: "ArrowUp", color: "#84cb1f", show_value: false }, rating: { icon: "Star", count: 2, max: 5, color: [4, 0.2], show_value: true } });
+    assert.deepEqual(icons.icon, { glyph: calc.ICONS.ArrowUp, color: "#84cb1f" });
+    assert.deepEqual(icons.rating, { glyph: calc.ICONS.Star, count: 2, max: 5, color: "" }, "a theme colour is not written into a style");
+    assert.equal(icons.hide, true);
+    // a block keeps a cell's decoration, and a cell with none is as before
+    const rows = calc.blockRows({ row: 1, column: 1, width: 2, height: 1, styles: [{ style: {}, data_bar: { value: 0.5, axis_position: 0 } }, { style: {} }],
+        style_indices: [0, 1], texts: [{ row: 1, column: 1, text: "10", cell_type: 1 }], fills: [] });
+    assert.deepEqual(rows.get(1)[0].decor.bar, { from: 0, to: 0.5, gradient: false, color: "#638EC6" });
+    assert.equal(rows.get(1)[1], undefined);
+    const drawn = calc.cellNode(rows.get(1)[0]);
+    assert.equal(drawn.querySelector(".m-calc-databar").style.width, "50%");
+    assert.equal(drawn.querySelector(".m-calc-value").textContent, "10");
+    const rated = calc.cellNode({ text: "3", decor: icons });
+    assert.equal(rated.querySelector(".m-calc-value"), null, "its value hidden");
+    assert.equal(rated.textContent, calc.ICONS.ArrowUp + calc.ICONS.Star.repeat(2) + calc.ICONS.Star.repeat(3));
+    const typed = calc.cellNode({ text: "<img src=x onerror=alert(1)>" });
+    assert.equal(typed.nodeType, Node.TEXT_NODE);
+    assert.equal(typed.textContent, "<img src=x onerror=alert(1)>");
+});
+
+test("a conditional format's form is the engine's rule, and a rule of the sheet reads back into it", () => {
+    const form = calc.ruleForm("B2:B9");
+    assert.equal(calc.ruleOf(form), null, "no number yet");
+    form.value = "=5";
+    assert.deepEqual(calc.ruleOf(form), { type: "CellIs", operator: "GreaterThan", formula: "5", formula2: null, format: { fill: { color: "#FFCDD2" } }, stop_if_true: false });
+    Object.assign(form, { operator: "Between", value2: "10", font: "#C62828", bold: true, fill: "" });
+    const between = calc.ruleOf(form);
+    assert.deepEqual([between.formula2, between.format], ["10", { font: { color: "#C62828", b: true } }]);
+    assert.equal(calc.ruleLabel(between), "Value between 5 and 10");
+    assert.deepEqual(calc.formOf("B2:B9", between), Object.assign(calc.ruleForm("B2:B9"), { operator: "Between", value: "5", value2: "10", fill: "", font: "#C62828", bold: true }));
+    const top = calc.ruleOf(Object.assign(calc.ruleForm("A1:A5"), { kind: "top", rank: 3, percent: true }));
+    assert.deepEqual([top.type, top.rank, top.percent, calc.ruleLabel(top)], ["Top10", 3, true, "Top 3%"]);
+    const text = calc.ruleOf(Object.assign(calc.ruleForm("A1:A5"), { kind: "text", value: "West" }));
+    assert.deepEqual([text.type, text.operator, calc.ruleLabel(text)], ["Text", "Contains", "Text contains \u201CWest\u201D"]);
+    const scale = calc.ruleOf(Object.assign(calc.ruleForm("A1:A5"), { kind: "scale", low: "#FFFFFF", high: "#2E7D32" }));
+    assert.deepEqual(scale.thresholds, [{ cfvo: "Min", color: "#FFFFFF" }, { cfvo: "Max", color: "#2E7D32" }]);
+    assert.equal(calc.formOf("A1:A5", scale).high, "#2E7D32");
+    assert.equal(calc.ruleOf(Object.assign(calc.ruleForm("A1:A5"), { kind: "bar" })).type, "DataBar");
+    // a workbook's own rule the dialog does not make is listed, moved and deleted, not changed
+    assert.equal(calc.formOf("A1:A5", { type: "IconSet", thresholds: [] }), null);
+    assert.equal(calc.ruleLabel({ type: "IconSet" }), "Icons");
+    assert.equal(calc.ruleLabel({ type: "DuplicateValues" }), "Duplicate Values");
+});
+

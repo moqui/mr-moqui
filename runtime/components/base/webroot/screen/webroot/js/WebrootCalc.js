@@ -13,9 +13,11 @@
  *     draws each cell from the blocks the server sent, and a scroll asks for the rows in view and a margin, so a jump
  *     to a far row loads nothing between. Sheet tabs are below it and the document's charts (m-chart) below those.
  *     With editUrl (the transition that applies edits: roomId, opsJson) and contentUrl (a cell's content as typed) the
- *     sheet is edited: a toolbar (undo, redo, font, colours, borders, alignment, number format, rows and columns, a chart), a
- *     formula bar that completes function and table names and takes a reference clicked or dragged on the grid (on any
- *     sheet; a data sheet's as its table's columns), a cell's editor on a double click, Delete, a paste of rows of
+ *     sheet is edited: a toolbar (undo, redo, font, colours, borders, alignment, number format, rows and columns, a
+ *     chart), a conditional formats dialog (cell values, texts, top and bottom, colour scales and data bars; a workbook's
+ *     icons are drawn too), a formula bar that completes function and table names and takes a reference clicked or
+ *     dragged on the grid (on any sheet; a data sheet's as its table's columns), a cell's editor on a double click,
+ *     Delete, a paste of rows of
  *     cells, a column's width and a row's height, the fill handle dragged down, up or across (the engine's autofill),
  *     and sheets added, renamed and deleted. Each edit is sent to the server, which answers the
  *     room's new state (emitted as changed, for the holder of room to take); the cells are then asked again. A data
@@ -95,9 +97,131 @@
         element.calcProperties = css ? Object.keys(css) : null;
     };
 
+    /** What a cell's conditional format draws beside its text (from its extended style, plans/IronCalc-DB2.md CG2.5): a
+     * data bar, an icon, a rating; and whether its value is hidden. Null when none. */
+    calc.decoration = (extended) => {
+        if (!extended) return null;
+        const out = {}, share = (value) => Math.min(1, Math.max(0, Number(value) || 0));
+        const bar = extended.data_bar;
+        if (bar && typeof bar.value === "number") {
+            const axis = share(bar.axis_position), value = share(bar.value), positive = value >= axis;
+            out.bar = { from: Math.min(axis, value), to: Math.max(axis, value), gradient: !!bar.is_gradient,
+                color: color(positive ? bar.positive_color : bar.negative_color) || (positive ? "#638EC6" : "#FF0000") };
+            if (bar.show_value === false) out.hide = true;
+        }
+        if (extended.icon) {
+            out.icon = { glyph: calc.ICONS[extended.icon.icon] || calc.ICONS.Circle, color: color(extended.icon.color) };
+            if (extended.icon.show_value === false) out.hide = true;
+        }
+        const rating = extended.rating;
+        if (rating && Number(rating.max) > 0) {
+            out.rating = { glyph: calc.ICONS[rating.icon] || calc.ICONS.Star, count: Math.min(Number(rating.count) || 0, Number(rating.max)), max: Number(rating.max),
+                color: color(rating.color) };
+            if (rating.show_value === false) out.hide = true;
+        }
+        return Object.keys(out).length ? out : null;
+    };
+    /** The characters a conditional format's icons are drawn with, by the engine's names. */
+    calc.ICONS = { ArrowUp: "\u2B06", ArrowRight: "\u27A1", ArrowDown: "\u2B07", ArrowAngleUp: "\u2B08", ArrowAngleDown: "\u2B0A", Circle: "\u25CF",
+        TriangleUp: "\u25B2", TriangleDown: "\u25BC", TriangleUpFilled: "\u25B2", TriangleDownFilled: "\u25BC", FlatRectangle: "\u25AC", Rhombus: "\u25C6",
+        Flag: "\u2691", Check: "\u2714", Cross: "\u2716", Exclamation: "!", Star: "\u2605", Heart: "\u2665", ThumbsUp: "\uD83D\uDC4D", ThumbsDown: "\uD83D\uDC4E" };
     /**
-     * A block as rows: a Map of row number to an array by column (from the block's first column) of {text, css}, a
-     * cell with neither left out.
+     * A cell's content as the table draws it: its text as a text node (never as HTML: a cell holds what anyone typed or
+     * any row of the data), with its decorations (calc.decoration) when it has some.
+     */
+    calc.cellNode = (found) => {
+        const doc = root.document;
+        if (!found) return doc.createTextNode("");
+        const decor = found.decor;
+        if (!decor) return doc.createTextNode(found.text);
+        const box = doc.createElement("span");
+        box.className = "m-calc-decor";
+        const part = (className, text, shade) => {
+            const element = doc.createElement("span");
+            element.className = className;
+            if (text) element.textContent = text;
+            if (shade) element.style.color = shade;
+            box.appendChild(element);
+            return element;
+        };
+        if (decor.bar) {
+            const bar = part("m-calc-databar");
+            bar.style.left = (decor.bar.from * 100).toFixed(2) + "%";
+            bar.style.width = ((decor.bar.to - decor.bar.from) * 100).toFixed(2) + "%";
+            bar.style.background = decor.bar.gradient ? "linear-gradient(to right, " + decor.bar.color + ", transparent)" : decor.bar.color;
+        }
+        if (decor.icon) part("m-calc-icon", decor.icon.glyph, decor.icon.color);
+        if (decor.rating) {
+            part("m-calc-icon", decor.rating.glyph.repeat(decor.rating.count), decor.rating.color);
+            if (decor.rating.max > decor.rating.count) part("m-calc-icon m-calc-icon-off", decor.rating.glyph.repeat(decor.rating.max - decor.rating.count));
+        }
+        if (!decor.hide) part("m-calc-value", found.text);
+        return box;
+    };
+
+    /** The kinds of rule the conditional formats dialog makes (calc.ruleOf), and a cell value rule's comparisons. */
+    calc.RULE_KINDS = [{ label: "The value is", value: "cellIs" }, { label: "The text contains", value: "text" }, { label: "In the top", value: "top" },
+        { label: "In the bottom", value: "bottom" }, { label: "A colour scale", value: "scale" }, { label: "A data bar", value: "bar" }];
+    calc.RULE_OPERATORS = [{ label: "greater than", value: "GreaterThan", sign: ">" }, { label: "at least", value: "GreaterThanOrEqual", sign: ">=" },
+        { label: "less than", value: "LessThan", sign: "<" }, { label: "at most", value: "LessThanOrEqual", sign: "<=" }, { label: "equal to", value: "Equal", sign: "=" },
+        { label: "not equal to", value: "NotEqual", sign: "<>" }, { label: "between", value: "Between", sign: "between" }, { label: "not between", value: "NotBetween", sign: "not between" }];
+    /** A new rule's form: the cells it covers, what it tests, and the format it gives. */
+    calc.ruleForm = (range) => ({ range: range || "", kind: "cellIs", operator: "GreaterThan", value: "", value2: "", rank: 10, percent: false,
+        fill: "#FFCDD2", font: "", bold: false, low: "#F8696B", high: "#63BE7B", bar: "#638EC6" });
+    /** The engine's rule (the `rule` of an addRule or changeRule edit) of a dialog's form, or null when it is not one yet. */
+    calc.ruleOf = (form) => {
+        const format = () => {
+            const made = {}, font = {};
+            if (color(form.fill)) made.fill = { color: form.fill };
+            if (color(form.font)) font.color = form.font;
+            if (form.bold) font.b = true;
+            if (Object.keys(font).length) made.font = font;
+            return made;
+        };
+        const number = (value) => String(value == null ? "" : value).trim().replace(/^=/, "");
+        switch (form.kind) {
+            case "cellIs": {
+                const between = form.operator === "Between" || form.operator === "NotBetween";
+                if (!number(form.value) || (between && !number(form.value2))) return null;
+                return { type: "CellIs", operator: form.operator, formula: number(form.value), formula2: between ? number(form.value2) : null, format: format(), stop_if_true: false };
+            }
+            case "text": return String(form.value || "") ? { type: "Text", operator: "Contains", value: String(form.value), format: format(), stop_if_true: false } : null;
+            case "top": case "bottom":
+                return { type: form.kind === "top" ? "Top10" : "Bottom10", rank: Math.max(1, Math.round(Number(form.rank) || 10)), percent: !!form.percent, format: format(), stop_if_true: false };
+            case "scale": return { type: "ColorScale", thresholds: [{ cfvo: "Min", color: color(form.low) || "#F8696B" }, { cfvo: "Max", color: color(form.high) || "#63BE7B" }] };
+            case "bar": return { type: "DataBar", min: null, max: null, positive_color: color(form.bar) || "#638EC6", negative_color: "#FF0000", is_gradient: false, show_value: true };
+            default: return null;
+        }
+    };
+    /** The form of a rule of the layout (range and engine rule), to change it; null for a kind the dialog does not make. */
+    calc.formOf = (range, rule) => {
+        const form = calc.ruleForm(range), format = rule.format || {};
+        Object.assign(form, { fill: color(format.fill && format.fill.color), font: color(format.font && format.font.color), bold: !!(format.font && format.font.b) });
+        if (rule.type === "CellIs") return Object.assign(form, { kind: "cellIs", operator: rule.operator, value: rule.formula || "", value2: rule.formula2 || "" });
+        if (rule.type === "Text" && rule.operator === "Contains") return Object.assign(form, { kind: "text", value: rule.value || "" });
+        if (rule.type === "Top10" || rule.type === "Bottom10") return Object.assign(form, { kind: rule.type === "Top10" ? "top" : "bottom", rank: rule.rank, percent: !!rule.percent });
+        const thresholds = rule.thresholds || [];
+        if (rule.type === "ColorScale" && thresholds.length === 2) return Object.assign(form, { kind: "scale", low: color(thresholds[0].color) || form.low, high: color(thresholds[1].color) || form.high });
+        if (rule.type === "DataBar") return Object.assign(form, { kind: "bar", bar: color(rule.positive_color) || form.bar });
+        return null;
+    };
+    /** A rule as the dialog lists it. */
+    calc.ruleLabel = (rule) => {
+        const operator = calc.RULE_OPERATORS.find((one) => one.value === rule.operator);
+        switch (rule.type) {
+            case "CellIs": return "Value " + (operator ? operator.sign : rule.operator) + " " + rule.formula + (rule.formula2 ? " and " + rule.formula2 : "");
+            case "Text": return "Text " + String(rule.operator || "").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase() + " \u201C" + rule.value + "\u201D";
+            case "Top10": case "Bottom10": return (rule.type === "Top10" ? "Top " : "Bottom ") + rule.rank + (rule.percent ? "%" : "");
+            case "ColorScale": return "Colour scale";
+            case "DataBar": return "Data bar";
+            case "IconSet": case "IconRating": return "Icons";
+            default: return String(rule.type || "Rule").replace(/([a-z])([A-Z])/g, "$1 $2");
+        }
+    };
+
+    /**
+     * A block as rows: a Map of row number to an array by column (from the block's first column) of {text, css} (and
+     * decor, calc.decoration, when it has one), a cell with none left out.
      */
     calc.blockRows = (block) => {
         const rows = new Map();
@@ -111,8 +235,9 @@
             for (let c = 0; c < width; c++) {
                 const key = (top + r) + ":" + (first + c);
                 const text = texts.get(key);
-                const css = calc.cellCss((block.styles || [])[(block.style_indices || [])[r * width + c]], fills.get(key), text ? text.cell_type : 0);
-                if (text || css) cells[c] = { text: text ? text.text : "", css };
+                const extended = (block.styles || [])[(block.style_indices || [])[r * width + c]];
+                const css = calc.cellCss(extended, fills.get(key), text ? text.cell_type : 0), decor = calc.decoration(extended);
+                if (text || css || decor) cells[c] = decor ? { text: text ? text.text : "", css, decor } : { text: text ? text.text : "", css };
             }
             rows.set(top + r, cells);
         }
@@ -390,6 +515,7 @@
             + '<q-item clickable v-close-popup @click="freeze(false)"><q-item-section>Unfreeze</q-item-section></q-item>'
             + '<q-item clickable v-close-popup @click="fillDown"><q-item-section>Fill the first row selected down</q-item-section></q-item>'
             + '</q-list></q-btn-dropdown>'
+            + '<q-btn flat dense round size="sm" icon="rule" aria-label="Conditional formats" @click="openRules"><q-tooltip>Conditional formats</q-tooltip></q-btn>'
             + '<q-btn flat dense no-caps size="sm" icon="insert_chart" label="Chart" @click="openChart"><q-tooltip>A chart of the cells selected</q-tooltip></q-btn>'
             + '</div>'
             + '<div v-if="editable || contentUrl" class="row items-center no-wrap q-mb-xs m-calc-bar">'
@@ -423,6 +549,40 @@
             + '<div v-if="chart.error" class="text-caption text-negative">{{chart.error}}</div>'
             + '<m-chart v-else height="260px" :config="chartConfig(chart)"></m-chart>'
             + '</div></div>'
+            + '<q-dialog v-model="rulesOpen"><q-card class="m-calc-rules" style="min-width:420px;max-width:92vw">'
+            + '<q-card-section><div class="text-h6">Conditional formats</div><div class="text-caption" :class="mutedClass">{{(activeSheet || {}).name}}: the rule listed first wins where rules meet</div></q-card-section>'
+            + '<q-card-section v-if="activeIsData" class="q-pt-none">A data sheet\'s rows are each reader\'s own: conditional formats go on a sheet beside it, over formulas that read it.</q-card-section>'
+            + '<template v-else>'
+            + '<q-list dense separator class="q-mx-md">'
+            + '<q-item v-for="(one, at) in sheetRules" :key="one.index"><q-item-section><q-item-label>{{ruleLabel(one.rule)}}</q-item-label><q-item-label caption>{{one.range}}</q-item-label></q-item-section>'
+            + '<q-item-section side><div class="row no-wrap">'
+            + '<q-btn flat dense round size="sm" icon="arrow_upward" :disable="at === 0" :aria-label="\'Move up rule \' + (at + 1)" @click="ruleEdit({op: \'moveRule\', index: one.index, up: true})"></q-btn>'
+            + '<q-btn flat dense round size="sm" icon="arrow_downward" :disable="at === sheetRules.length - 1" :aria-label="\'Move down rule \' + (at + 1)" @click="ruleEdit({op: \'moveRule\', index: one.index, up: false})"></q-btn>'
+            + '<q-btn flat dense round size="sm" icon="edit" :disable="!formOf(one)" :aria-label="\'Change rule \' + (at + 1)" @click="changeRule(one)"></q-btn>'
+            + '<q-btn flat dense round size="sm" icon="delete" :aria-label="\'Delete rule \' + (at + 1)" @click="ruleEdit({op: \'deleteRule\', index: one.index})"></q-btn>'
+            + '</div></q-item-section></q-item>'
+            + '<q-item v-if="!sheetRules.length"><q-item-section :class="mutedClass">No conditional formats on this sheet</q-item-section></q-item>'
+            + '</q-list>'
+            + '<q-card-section class="q-gutter-sm">'
+            + '<div class="text-subtitle2">{{ruleIndex == null ? "A rule for the cells" : "Change the rule"}}</div>'
+            + '<q-input dense outlined v-model="rule.range" label="Cells" hint="B2:B20, or several with spaces between"></q-input>'
+            + '<q-select dense outlined options-dense emit-value map-options v-model="rule.kind" :options="ruleKinds" label="When"></q-select>'
+            + '<div v-if="rule.kind === \'cellIs\'" class="row q-col-gutter-sm"><q-select class="col-5" dense outlined options-dense emit-value map-options v-model="rule.operator" :options="ruleOperators" label="It is"></q-select>'
+            + '<q-input class="col" dense outlined v-model="rule.value" label="Number"></q-input>'
+            + '<q-input v-if="rule.operator === \'Between\' || rule.operator === \'NotBetween\'" class="col" dense outlined v-model="rule.value2" label="and"></q-input></div>'
+            + '<q-input v-if="rule.kind === \'text\'" dense outlined v-model="rule.value" label="Text"></q-input>'
+            + '<div v-if="rule.kind === \'top\' || rule.kind === \'bottom\'" class="row items-center q-col-gutter-sm"><q-input class="col-4" dense outlined type="number" min="1" v-model.number="rule.rank" label="How many"></q-input>'
+            + '<q-toggle v-model="rule.percent" label="percent"></q-toggle></div>'
+            + '<template v-if="rule.kind === \'scale\'"><div class="text-caption">Lowest</div><div class="row"><div v-for="shade in colors" :key="\'l\' + shade" class="m-calc-swatch" :class="{\'m-calc-swatch-on\': shade === rule.low}" :style="{backgroundColor: shade}" @click="rule.low = shade"></div></div>'
+            + '<div class="text-caption">Highest</div><div class="row"><div v-for="shade in colors" :key="\'h\' + shade" class="m-calc-swatch" :class="{\'m-calc-swatch-on\': shade === rule.high}" :style="{backgroundColor: shade}" @click="rule.high = shade"></div></div></template>'
+            + '<template v-if="rule.kind === \'bar\'"><div class="text-caption">Bar</div><div class="row"><div v-for="shade in colors" :key="\'b\' + shade" class="m-calc-swatch" :class="{\'m-calc-swatch-on\': shade === rule.bar}" :style="{backgroundColor: shade}" @click="rule.bar = shade"></div></div></template>'
+            + '<template v-if="ruleFormats"><div class="text-caption">Fill</div><div class="row"><div v-for="shade in colors" :key="\'f\' + shade" class="m-calc-swatch" :class="{\'m-calc-swatch-on\': shade === rule.fill}" :style="{backgroundColor: shade}" @click="rule.fill = rule.fill === shade ? \'\' : shade"></div></div>'
+            + '<div class="text-caption">Text</div><div class="row items-center"><div v-for="shade in colors" :key="\'t\' + shade" class="m-calc-swatch" :class="{\'m-calc-swatch-on\': shade === rule.font}" :style="{backgroundColor: shade}" @click="rule.font = rule.font === shade ? \'\' : shade"></div>'
+            + '<q-toggle v-model="rule.bold" label="Bold"></q-toggle></div></template>'
+            + '</q-card-section></template>'
+            + '<q-card-actions align="right"><q-btn v-if="ruleIndex != null" flat no-caps label="New rule" @click="newRule"></q-btn><q-btn flat no-caps label="Close" v-close-popup></q-btn>'
+            + '<q-btn v-if="!activeIsData" unelevated no-caps color="primary" :label="ruleIndex == null ? \'Add\' : \'Save\'" :disable="!ruleReady" @click="saveRule"></q-btn></q-card-actions>'
+            + '</q-card></q-dialog>'
             + '<q-dialog v-model="chartOpen"><q-card style="min-width:400px;max-width:90vw">'
             + '<q-card-section><div class="text-h6">Chart</div></q-card-section>'
             + '<q-card-section class="q-pt-none q-gutter-sm">'
@@ -438,7 +598,7 @@
         data() {
             return { sheetIndex: 0, status: "", notice: "", active: { row: 1, column: 1, lastRow: 1, lastColumn: 1 }, barText: "", barOriginal: "", suggestions: null, suggestionIndex: 0,
                 chartOpen: false, chart: { title: "", type: "column", categories: "", values: "" }, peers: [], borderStyle: "thin", borderColor: "#000000",
-                pointingOn: false };
+                pointingOn: false, rulesOpen: false, rule: calc.ruleForm(""), ruleIndex: null };
         },
         computed: {
             sheets() { return (this.room && this.room.sheets) || []; },
@@ -452,6 +612,12 @@
             colors() { return calc.COLORS; },
             numberFormats() { return calc.NUMBER_FORMATS; },
             borderKinds() { return calc.BORDER_KINDS; },
+            ruleKinds() { return calc.RULE_KINDS; },
+            ruleOperators() { return calc.RULE_OPERATORS; },
+            // the rules of the sheet shown, the one applied last (which wins) first, as the layout gives them
+            sheetRules() { return (this.activeSheet && this.activeSheet.rules) || []; },
+            ruleFormats() { return ["cellIs", "text", "top", "bottom"].includes(this.rule.kind); },
+            ruleReady() { return !!(String(this.rule.range || "").trim() && calc.ruleOf(this.rule)); },
             borderStyles() { return calc.BORDER_STYLES; },
             tableNames() { return this.sheets.filter((sheet) => sheet.data).map((sheet) => calc.tableName(sheet.name)); }
         },
@@ -602,7 +768,7 @@
                     // another's place: an outline in their colour
                     const peer = vm.peerMap.get(row + ":" + column);
                     element.style.boxShadow = peer ? "inset 0 0 0 2px " + peer : "";
-                    return found ? found.text : "";
+                    return calc.cellNode(found);
                 };
                 // a copy takes the texts on screen: the table holds no data of its own
                 const accessorClipboard = (value, data, type, params, column) => {
@@ -953,6 +1119,20 @@
             deleteSheet(sheet) {
                 this.$q.dialog({ title: "Delete the sheet", message: "Delete " + sheet.name + " and everything on it?", cancel: true, persistent: true })
                     .onOk(() => this.edit([{ op: "deleteSheet", sheet: sheet.index }]).then(() => { if (!this.sheet()) { this.sheetIndex = this.firstSheet(); this.build(); } }));
+            },
+            // ---- conditional formats (plans/IronCalc-DB2.md CG2.5) ----
+            ruleLabel(rule) { return calc.ruleLabel(rule || {}); },
+            formOf(one) { return calc.formOf(one.range, one.rule || {}); },
+            // the sheet's rules, and a new one for the selection
+            openRules() { this.newRule(); this.rulesOpen = true; },
+            newRule() { this.rule = calc.ruleForm(calc.rangeName(this.active)); this.ruleIndex = null; },
+            changeRule(one) { const form = this.formOf(one); if (form) { this.rule = form; this.ruleIndex = one.index; } },
+            ruleEdit(op) { return this.edit([Object.assign({ sheet: this.sheetIndex }, op)]).then((state) => { if (op.op === "deleteRule" && op.index === this.ruleIndex) this.newRule(); return state; }); },
+            saveRule() {
+                const rule = calc.ruleOf(this.rule), range = String(this.rule.range || "").trim();
+                if (!rule || !range) return null;
+                const op = this.ruleIndex == null ? { op: "addRule", range, rule } : { op: "changeRule", index: this.ruleIndex, range, rule };
+                return this.ruleEdit(op).then((state) => { if (state && !state.errors) this.newRule(); return state; });
             },
             // a chart of the selection: its first column the labels and each other column a series, when it has more than one
             openChart() {
