@@ -2,7 +2,7 @@
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
-    <!-- CalcGrid, database-driven spreadsheets (plans/IronCalc-DB.md): a workbook on the IronCalc engine whose data
+    <!-- CalcGrid, database-driven spreadsheets (plans/archive/IronCalc-DB.md): a workbook on the IronCalc engine whose data
         sheets are filled from the data grid's sources, with a saved overlay of formulas and charts. The bodies are Rust
         (crates/moqui-calc/src/service.rs). A saved document is open in a room shared by the readers of one scope (the
         same access and the same rows: get#CalcScope) on this server, read a viewport at a time; its edits are the next

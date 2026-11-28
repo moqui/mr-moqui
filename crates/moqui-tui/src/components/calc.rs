@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `calcgrid`: a CalcGrid document's sheet (mr-moqui plans/IronCalc-DB.md), the terminal twin of the browser's
+//! `calcgrid`: a CalcGrid document's sheet (mr-moqui plans/archive/IronCalc-DB.md), the terminal twin of the browser's
 //! `moqui.calc.sheet`. The workbook is in the server; this draws the cells that fit on screen and sends edits, over the
 //! same transitions of the screen the browser calls.
 //!

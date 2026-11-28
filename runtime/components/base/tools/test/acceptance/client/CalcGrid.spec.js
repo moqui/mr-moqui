@@ -1,8 +1,8 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
-// The Calc mode walks of plans/IronCalc-DB.md, in the browser on the qvt shell (./moq accept tools --spec CalcGrid):
-// an entity's rows in the grid, then as the data sheet of a workbook drawn from the server's cells; the document saved,
-// listed, exported as XLSX and deleted; and Records again as it was. And a share taken away while the other person has
-// the document open and a range of it on a dashboard (CalcShareFixtures).
+// The Calc mode walks of plans/archive/IronCalc-DB.md, in the browser on the qvt shell (./moq accept tools --spec
+// CalcGrid): an entity's rows in the grid, then as the data sheet of a workbook drawn from the server's cells; the
+// document saved, listed, exported as XLSX and deleted; and Records again as it was. And a share taken away while the
+// other person has the document open and a range of it on a dashboard (CalcShareFixtures).
 spec({ timeout: 120 })
 
 function gridPage() {

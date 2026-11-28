@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `CalcGrid`, database-driven spreadsheets (plans/IronCalc-DB.md): a workbook on the `IronCalc` engine
+//! `CalcGrid`, database-driven spreadsheets (plans/archive/IronCalc-DB.md): a workbook on the `IronCalc` engine
 //! ([`moqui_core::workbook`]) whose data sheets are filled from the data grid's sources, with a saved overlay of
 //! formulas and charts on top. The engine and the workbook are in the server; a view gets the cells on its screen.
 //!

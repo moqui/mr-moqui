@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<!-- CalcGrid (docs/tools/Database.md, CalcGrid and access profiles; plans/IronCalc-DB.md Phase 2b): spreadsheets over the
+<!-- CalcGrid (docs/tools/Database.md, CalcGrid and access profiles; plans/archive/IronCalc-DB.md Phase 2b): spreadsheets over the
     relational database for people who are not administrators, beside the report tools here that read the search indexes.
     A document is a workbook on the server's spreadsheet engine: data sheets filled from entities and views, and the sheets
     of formulas and the charts its author put beside them. The screen lists the documents the viewer reads, opens one (its

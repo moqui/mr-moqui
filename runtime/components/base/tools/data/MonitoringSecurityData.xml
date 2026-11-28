@@ -8,7 +8,7 @@
         <artifacts artifactName="org.moqui.report.ReportServices.*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y"/>
         <authz artifactAuthzId="DASHBOARDS_APP_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
-    <!-- CalcGrid, database-driven spreadsheets (plans/IronCalc-DB.md; docs/tools/Database.md, CalcGrid and access profiles).
+    <!-- CalcGrid, database-driven spreadsheets (plans/archive/IronCalc-DB.md; docs/tools/Database.md, CalcGrid and access profiles).
         CALC_GRID is the Dashboards screen and its services: who holds it opens the documents shared with them, refreshes and
         exports them. CALC_GRID_AUTHOR is org.moqui.calc.document, on which update is authoring: making a document over a
         source and saving it. ADMIN's here; an app grants CALC_GRID (for all actions: a service call is checked for all) and

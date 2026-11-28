@@ -94,7 +94,7 @@ cluster-tls = ["dep:rcgen"]
 # org.moqui.impl.ImageServices (convert#Image) and elFinder thumbnails.
 image = ["dep:image"]
 # The xlsx render mode, org.moqui.resource.SpreadsheetServices and moqui_core::workbook: calamine reads, the IronCalc
-# engine writes and calculates (plans/IronCalc-DB.md).
+# engine writes and calculates (plans/archive/IronCalc-DB.md).
 xlsx = ["dep:ironcalc", "dep:calamine"]
 # moqui_core::testing, the in-memory entity facade, and the test helpers of the crates on this one (moqui-llm,
 # moqui-git, moqui-mail).

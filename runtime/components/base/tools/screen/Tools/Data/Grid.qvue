@@ -23,7 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
     row), read only, and Load into… maps its columns to a target's fields (match#EtlFields), shows the first 200 rows
     converted (check#EtlSample), and saves the mapping, checks the whole file or loads it, over the JSON transitions of
     Tools/Etl (Etl.xml).
-    Calc (plans/IronCalc-DB.md, Phase 2) is the grid's second mode: the source, with the columns shown and the sort and
+    Calc (plans/archive/IronCalc-DB.md, Phase 2) is the grid's second mode: the source, with the columns shown and the sort and
     filters set, as the read-only data sheet of a workbook on the server's spreadsheet engine, drawn by moqui.calc.sheet
     (js/WebrootCalc.js) from the cells the calc transitions answer; a spreadsheet file opens as a workbook, with its
     formulas; the workbook is edited beside the data sheet (formulas, formats, sheets, charts: the sheet's own toolbar and

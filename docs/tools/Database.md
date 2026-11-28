@@ -116,7 +116,7 @@ CSV or XLSX.
 ### Calc mode
 
 The grid has two modes over the same source. Records is the grid above. Calc shows the source as the data sheet of a
-workbook on the server's spreadsheet engine (IronCalc; plan [IronCalc-DB](../../plans/IronCalc-DB.md)), over
+workbook on the server's spreadsheet engine (IronCalc; plan [IronCalc-DB](../../plans/archive/IronCalc-DB.md)), over
 `org.moqui.calc.CalcServices` (`crates/moqui-calc`). The data sheet is read only; the workbook beside it is edited.
 
 - **The data sheet** is the source with the columns shown and the sort and filters set when Calc is opened: a header

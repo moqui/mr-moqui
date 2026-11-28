@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- Spreadsheet import, with the moqui-poi port (the Java component only wrote xlsx). The bodies are Rust
         (crates/moqui-core/src/service/spreadsheet.rs), on calamine: xlsx, xlsm, xlsb, xls and ods, found from the content.
-        calculate#Spreadsheet is on the IronCalc engine (plans/IronCalc-DB.md), xlsx only. -->
+        calculate#Spreadsheet is on the IronCalc engine (plans/archive/IronCalc-DB.md), xlsx only. -->
 
     <service verb="read" noun="Spreadsheet" type="rust" location="moqui_core::service::spreadsheet::read_spreadsheet">
         <description>Read one sheet of a spreadsheet. With headerRow the first row names the columns and each row is a

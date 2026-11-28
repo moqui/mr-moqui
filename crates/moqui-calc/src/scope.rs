@@ -12,9 +12,10 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The scope of a reader of a document (plans/IronCalc-DB.md, What a scope changes): a fingerprint of everything that
-//! decides which rows their data sheets hold. Two people with the same fingerprint read the same rows, so they share a
-//! room, and a scheduled export's owner may send their file to a recipient with the owner's fingerprint.
+//! The scope of a reader of a document (plans/archive/IronCalc-DB.md, What a scope changes): a fingerprint of
+//! everything that decides which rows their data sheets hold. Two people with the same fingerprint read the same rows,
+//! so they share a room, and a scheduled export's owner may send their file to a recipient with the owner's
+//! fingerprint.
 //!
 //! It is made of the access (a profile or the Tools app's own), the reader's time zone (a time stamp is a cell in it),
 //! and for each data sheet whether the reader may read it, its source, the columns shown and the condition the entity

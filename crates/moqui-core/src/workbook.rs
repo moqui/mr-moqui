@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A workbook built cell by cell on the IronCalc engine (plans/IronCalc-DB.md, Phase 1), for the xlsx writers: the
-//! `xlsx` render mode and the data grid's export ([`crate::screen::XlsxBook`]) and a scheduled report's xlsx
+//! A workbook built cell by cell on the IronCalc engine (plans/archive/IronCalc-DB.md, Phase 1), for the xlsx writers:
+//! the `xlsx` render mode and the data grid's export ([`crate::screen::XlsxBook`]) and a scheduled report's xlsx
 //! (moqui-report). [`WorkbookWriter`] writes typed cells with styles below the engine's formula parser, so a text that
 //! starts with `=` stays a text, and gives the engine's [`Model`] ([`WorkbookWriter::into_model`]) or the `.xlsx` file
 //! ([`WorkbookWriter::to_xlsx`]). [`open_xlsx`] and [`model_xlsx`] are the engine's reader and writer with this crate's

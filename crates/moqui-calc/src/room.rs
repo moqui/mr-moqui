@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The rooms of open CalcGrid documents (plans/IronCalc-DB.md, Thin client): a workbook held in memory while someone
-//! has it open, read a viewport at a time, and dropped when nobody has used it for a while.
+//! The rooms of open CalcGrid documents (plans/archive/IronCalc-DB.md, Thin client): a workbook held in memory while
+//! someone has it open, read a viewport at a time, and dropped when nobody has used it for a while.
 //!
 //! A saved document is open in a room shared by the people of one scope ([`crate::scope`]): its id is made from the
 //! document, the access and the scope ([`document_room_id`]), so everyone who reads the same rows edits one workbook,
@@ -317,8 +317,8 @@ impl Room {
         self.model.get_cell_content(sheet, row, column).map_err(engine)
     }
 
-    /// Apply edits of `user_id` in order to this scratch room, then evaluate once (plans/IronCalc-DB.md, Phase 3). An
-    /// edit is a map with `op`:
+    /// Apply edits of `user_id` in order to this scratch room, then evaluate once (plans/archive/IronCalc-DB.md, Phase
+    /// 3). An edit is a map with `op`:
     ///
     /// - `input` (`sheet`, `row`, `column`, `value`): a cell set as a person typing would; an empty value clears it.
     /// - `paste` (`sheet`, `row`, `column`, `rows`: a list of rows of texts): cells set from a top-left cell.

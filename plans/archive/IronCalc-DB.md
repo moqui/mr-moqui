@@ -1,6 +1,10 @@
 # IronCalc DB: database-driven spreadsheets
 
-Active plan since 2026-11-13 (a proposal from 2026-11-09); Phases 1 to 3 built, with editing together, the scheduled export of a whole document and the terminal sheet view ([Phase 3b](#phase-3b-editing-together-the-scheduled-export-and-the-terminal)). It is shown in two places ([Where it is shown](#where-it-is-shown)): as a Calc mode of the existing Tools › Data › Grid screen, and as CalcGrid in the Dashboards app, limited by access profiles whose authorization records carry entity filters ([Access and row scope](#access-and-row-scope)). Facts about other projects come from reading their source and docs on 2026-11-09; nothing here was built or run, and the items marked "to verify" need the spike of Phase 0 before any later phase is committed to. The engine runs in the server and the browser is a thin client ([Thin client](#thin-client)). Phases 0 to 3 are for v0.1.0. What was settled is in [Decisions](#decisions); Phases 1 to 3 are built (the engine is the xlsx writer, `calculate#Spreadsheet`, Calc mode in Tools › Data › Grid and CalcGrid in Dashboards under access profiles, edited together by the people who have a document open, a range of a document as a report dataset for dashboard panels and scheduled reports, a whole document as a scheduled Excel export, and a sheet in the terminal). Phase 0, the spike, was run 2026-11-13 ([Phase 0 results](#phase-0-results)): it works, full recalculation sets the limit (a hundred aggregate formulas over 100,000 rows take seconds on every edit), and several points of the design changed with what the engine does.
+**Archived Nov 27, 2026.** Built. What is left for the first release (batches CG1 to CG6) is
+[IronCalc-DB2](../IronCalc-DB2.md); what is after it is in [Future-Plans](../Future-Plans.md#ironcalc-and-calcgrid).
+Design text that a later phase replaced is kept and marked superseded where it stands, with what replaced it.
+
+A proposal from 2026-11-09, active from 2026-11-13. Phases 0 to 4 were built Nov 13, 2026, Phase 4 (charts and images) in the fork [moqui/IronCalc](https://github.com/moqui/IronCalc) with the engine's speed work and incremental evaluation ([Engine speed in the fork](#engine-speed-in-the-fork)). The fork was merged with upstream on 2026-11-27 (`a0e66946`, 92 upstream commits to `4b72c356`), the revision mr-moqui's `Cargo.toml` pins ([Working with upstream](#working-with-upstream)). What was built: the engine as the xlsx writer, `calculate#Spreadsheet`, Calc mode in Tools › Data › Grid and CalcGrid in Dashboards under access profiles, edited together by the people who have a document open ([Phase 3b](#phase-3b-editing-together-the-scheduled-export-and-the-terminal)), a range of a document as a report dataset for dashboard panels and scheduled reports, a whole document as a scheduled Excel export, a sheet in the terminal, and charts and images in XLSX. It is shown in two places ([Where it is shown](#where-it-is-shown)): as a Calc mode of the existing Tools › Data › Grid screen, and as CalcGrid in the Dashboards app, limited by access profiles whose authorization records carry entity filters ([Access and row scope](#access-and-row-scope)). The engine runs in the server and the browser is a thin client ([Thin client](#thin-client)). Facts about other projects come from reading their source and docs on 2026-11-09; the items marked "to verify" were for the spike of Phase 0, run 2026-11-13 ([Phase 0 results](#phase-0-results)): it works, full recalculation set the limit (a hundred aggregate formulas over 100,000 rows took seconds on every edit, until the fork's speed work and incremental evaluation), and several points of the design changed with what the engine does. What was settled is in [Decisions](#decisions).
 
 ## The idea
 
@@ -18,7 +22,7 @@ One engine, one document type and one client sheet component, in two screens.
 
 ### Tools › Data › Grid: Calc mode
 
-The viewer and editor are built into [`Grid.xml`](../runtime/components/base/tools/screen/Tools/Data/Grid.xml) and `Grid.qvue`, not a screen of their own. The grid gets two modes over the same source:
+The viewer and editor are built into [`Grid.xml`](../../runtime/components/base/tools/screen/Tools/Data/Grid.xml) and `Grid.qvue`, not a screen of their own. The grid gets two modes over the same source:
 
 - **Records** (as now): the rows of the source edited in place and saved as records. Nothing changes here, and it stays stateless on the server.
 - **Calc**: the source as the read-only data sheet of a workbook, with the overlay sheets beside it. Switching to Calc keeps the source, its conditions, filter, sort and columns; they become the document's query definition, which is the grid's own source JSON, so the engine fills the sheet with the reader the grid uses (`moqui-tools` `grid.rs`) and its refusals (restricted entities, password fields) hold.
@@ -35,7 +39,7 @@ The viewer and editor are built into [`Grid.xml`](../runtime/components/base/too
 - **View or author.** A profile granted for view opens the documents shared with the user, refreshes and exports them; granted for update it also authors documents. Data sheets are read only for everyone.
 - **A document** opens in the sheet view. Its sources are entities and views only, chosen from what the viewer's access profile offers; no SQL source, and a file only as an upload into the overlay.
 - **Embedding.** A `calcgrid` panel shows a sheet, a named range or a chart of a document on a dashboard, so it is in playlists, the wall display, report previews and scheduled reports with the other panels. A panel is read only and links to the document.
-- **Mounting.** An app shows CalcGrid under its own root as it shows the other Dashboards screens ([Mounting the report screens](../docs/tools/Monitoring.md#mounting-the-report-screens)); the mount's policy can fix the access profile. BOSS shows it under Insights, with the `sales` profile for its sales groups.
+- **Mounting.** An app shows CalcGrid under its own root as it shows the other Dashboards screens ([Mounting the report screens](../../docs/tools/Monitoring.md#mounting-the-report-screens)); the mount's policy can fix the access profile. BOSS shows it under Insights, with the `sales` profile for its sales groups.
 - **Not here:** record editing (that is the Tools grid's Records mode and the applications' own screens).
 
 ## Access and row scope
@@ -49,20 +53,20 @@ An access profile is an artifact group, its authorization records and their filt
 | Part | What it is |
 |---|---|
 | Profile artifact | `org.moqui.calc.profile.<profileId>`, a member of the profile's `ArtifactGroup` with `inheritAuthz` Y. The engine enters it before it reads a source, so every find below is authorized by the profile's `ArtifactAuthz` record and gets that record's filters, whatever other grants the user holds. |
-| Offered entities | The group's `AT_ENTITY` members (names or patterns). The engine refuses an entity or view that is not one of them, and a view with a member entity that is not. The source picker lists only these. |
-| Row scope | `ArtifactAuthzFilter` rows on the profile's `ArtifactAuthz` records, naming `EntityFilterSet`s. The filters are applied by the Entity Facade on each find ([`filter.rs`](../crates/moqui-core/src/user/filter.rs)), also through a view's aliases; a filter that cannot be applied fails closed. |
+| Offered entities | The group's `AT_ENTITY` members (names or patterns). The engine refuses an entity or view that is not one of them, and a view with a member entity that is not. The source picker lists only these. **Superseded in Phase 2b:** offered entities are named artifacts, `org.moqui.calc.entity.<entityName>`, not entity members ([Phase 2b](#phase-2b-calcgrid-in-dashboards)). |
+| Row scope | `ArtifactAuthzFilter` rows on the profile's `ArtifactAuthz` records, naming `EntityFilterSet`s. The filters are applied by the Entity Facade on each find ([`filter.rs`](../../crates/moqui-core/src/user/filter.rs)), also through a view's aliases; a filter that cannot be applied fails closed. |
 | Who holds it | The user groups of the `ArtifactAuthz` records. The same group of entities can be granted to one user group with a filter set and to another without. |
 
 - **CalcGrid's own artifacts** (the screen, its services, the room) are a group of their own, `CALC_GRID`, granted with each profile: holding a profile is what opens CalcGrid. The Dashboards app's grant (`DASHBOARDS_APP`) covers the screen for `ADMIN`.
 - **A user with several profiles** chooses one in the screen (the widest first); a mount can fix it. The profile is part of what a room is keyed by.
 - **Checked on every call**, in the engine and not only in the screen: a room join, a viewport, an edit, a refresh and an export each run as the calling user under their profile. The Tools grid services stay closed to these users (they check `TOOLS_APP`); the engine calls the grid's reader below that check, with its own.
-- **A scoped profile needs a filter for each scoped entity.** `check#CalcProfile` lists the entities a profile offers that no filter of its sets matches, for review in System › Access (Row rules); such an entity is read whole, which is right for a product's name and wrong for an order.
+- **A scoped profile needs a filter for each scoped entity.** `check#CalcProfile` lists the entities a profile offers that no filter of its sets matches, for review in System › Access (Row rules); such an entity is read whole, which is right for a product's name and wrong for an order. **Superseded in Phase 2b:** there is no `check#CalcProfile`; an offered entity that no filter of the grant applies to is refused, and the refusal is logged with the profile and the entity (`moqui-calc` `profile.rs`).
 
 ### The first two profiles
 
 | Profile | Where | Offers | Filters | Granted to |
 |---|---|---|---|---|
-| `admin` | `tools/data/MonitoringSecurityData.xml` | Every entity the grid offers (`*`; the grid's refusals still hold) | None | `ADMIN`, as the Tools app |
+| `admin` | `tools/data/MonitoringSecurityData.xml` | Every entity the grid offers (`*`; the grid's refusals still hold) | None | `ADMIN`, as the Tools app. **Superseded in Phase 2b:** there is no `admin` profile; it is the Tools app's own access (`TOOLS_ACCESS` in `moqui-calc` `service.rs`) |
 | `sales` | mr-mantle (the group and its entities), mr-boss (the grants) | Orders, order parts and items, returns, invoices and their items, payments applied to them, customers (party, organization, person, their roles and contact data), products and categories, stores, and the views over these; view only | `MANTLE_USER_ORG`: rows of the organizations the user is associated with (`filterOrgIds`), and `MANTLE_ACTIVE_ORG` where the user has chosen one | The BOSS sales groups (`BOSS_SALES_ADMIN` and the sales roles that read orders) |
 
 - The `sales` list is exact names where a package holds entities that are not sales data, patterns only where the whole package is.
@@ -71,9 +75,9 @@ An access profile is an artifact group, its authorization records and their filt
 
 ### What a scope changes in the design
 
-- **A room is one scope.** A workbook in memory holds rows already read, so viewers who may see different rows cannot share it. A room is keyed by the document, the profile and the scope values the profile's filters read (for `sales`, the organizations), so people with the same scope share a room and co-edit, and others get their own with the same overlay. Overlay edits reach the other rooms of a document through the diff queue, which Phase 0 showed to work between models with different data.
+- **A room is one scope.** A workbook in memory holds rows already read, so viewers who may see different rows cannot share it. A room is keyed by the document, the profile and the scope values the profile's filters read (for `sales`, the organizations), so people with the same scope share a room and co-edit, and others get their own with the same overlay. Overlay edits reach the other rooms of a document through the diff queue, which Phase 0 showed to work between models with different data. **Superseded in Phase 3b:** they go through the edit log (`moqui.calc.CalcDocumentHead` and `CalcDocumentEdit`, `moqui-calc` `log.rs`), not the diff queue ([Phase 3b](#phase-3b-editing-together-the-scheduled-export-and-the-terminal)).
 - **Nothing computed is stored.** The stored document is the overlay without the data sheets, without cached values of formulas that read them and without the data's texts in the workbook's shared strings ([Phase 0 results](#rooms-the-stored-form-and-scopes)). Opening fills the data as the viewer and evaluates before a cell is sent, so one viewer's totals are never shown to another.
-- **A scheduled export** runs as the schedule's owner under the owner's profile, and is delivered to others only as report delivery allows ([Report delivery](../docs/tools/Monitoring.md#report-delivery)).
+- **A scheduled export** runs as the schedule's owner under the owner's profile, and is delivered to others only as report delivery allows ([Report delivery](../../docs/tools/Monitoring.md#report-delivery)).
 - **A dashboard panel** fills as the dashboard's viewer, as its other panels do.
 - **An exported XLSX** holds the rows its exporter could read; it is a file from then on, as an export of the grid is.
 - **Sharing a document** (with a group, as a dashboard is shared) shares the overlay and the query, never rows: a reader without a profile that offers the document's entities gets "Not available" in place of the data sheet.
@@ -108,17 +112,17 @@ What it gives us:
 
 What it does not have:
 
-- **Charts** (planned after 1.0), **pivot tables** (planned), **images**.
+- **Charts** (planned after 1.0), **pivot tables** (planned), **images**. (True of upstream v0.9.1; the fork has charts and images, [Batch 2](#batch-2-incremental-evaluation-in-place-reload-images-and-charts).)
 - **Collaboration** (their first priority after 1.0; a CRDT layer over the present model is in progress on a branch, [issue 349](https://github.com/ironcalc/IronCalc/issues/349)). They have said a plain Yjs log does not suit them, so expect their own CRDT.
 - **Autofilter, sort, data validation, sheet protection, custom functions** or any hook for outside data. None was found in the source.
-- **Incremental recalculation.** Every change evaluates every formula in the workbook; `pause_evaluation` batches changes. Fine for data with a modest number of formulas, a cost for a hundred thousand rows of them.
+- **Incremental recalculation.** Every change evaluates every formula in the workbook; `pause_evaluation` batches changes. Fine for data with a modest number of formulas, a cost for a hundred thousand rows of them. (True of upstream v0.9.1; the fork evaluates only what an edit changed, [Batch 2](#batch-2-incremental-evaluation-in-place-reload-images-and-charts).)
 - **A stable API.** It is before 1.0, errors are strings, and `Model` carries a lifetime parameter.
 
 ### Tabulator: the grid
 
-The grid stays Tabulator, which is already vendored (6.7.0) and already drives [`Grid.qvue`](../runtime/components/base/tools/screen/Tools/Data/Grid.qvue) with range selection, range copy and paste, undo, frozen columns and remote loading. IronCalc's own web widget is React with a canvas grid and is not used.
+The grid stays Tabulator, which is already vendored (6.7.0) and already drives [`Grid.qvue`](../../runtime/components/base/tools/screen/Tools/Data/Grid.qvue) with range selection, range copy and paste, undo, frozen columns and remote loading. IronCalc's own web widget is React with a canvas grid and is not used.
 
-Tabulator is the view and IronCalc the model: an edit goes to the engine in the server, and a formatter draws each visible cell from the block of cells the server sent. IronCalc reports no list of changed cells, so the visible rows are sent again and redrawn after an edit.
+Tabulator is the view and IronCalc the model: an edit goes to the engine in the server, and a formatter draws each visible cell from the block of cells the server sent. IronCalc reports no list of changed cells, so the visible rows are sent again and redrawn after an edit. **Superseded in Batch 2:** the fork reports them (`last_changes`), and a view reads again only the areas that changed ([Batch 2](#batch-2-incremental-evaluation-in-place-reload-images-and-charts)).
 
 Tabulator's extension points cover nearly all of it without a change to Tabulator:
 
@@ -136,7 +140,7 @@ Tabulator's extension points cover nearly all of it without a change to Tabulato
 
 Two things to know:
 
-- **The build.** The vendored UMD file exposes only the `Tabulator` class. Writing a module or a renderer needs the `Module` and `Renderer` base classes, which are in the ESM build; that is a change to `libs/refresh.mjs`, not to Tabulator.
+- **The build.** The vendored UMD file exposes only the `Tabulator` class. Writing a module or a renderer needs the `Module` and `Renderer` base classes, which are in the ESM build; that is a change to [`refresh.mjs`](../../runtime/components/base/webroot/build/libs/refresh.mjs), not to Tabulator. **Wrong, found on Nov 27:** the vendored `tabulator.min.js` (6.7.0) is the full UMD build with all modules registered, `Tabulator.moduleBindings` reaches them, and 6.7.0 has a fill handle (`selectableRangeFill`); no ESM build is needed ([IronCalc-DB2 CG2](../IronCalc-DB2.md#22-cg2-editing-in-the-browser)).
 - **Size.** Tabulator holds an object for each row it has loaded, and loads rows as the user scrolls (`progressiveLoad: 'scroll'`, as `Grid.qvue` does). It draws DOM, slower than a canvas and enough at these sizes. To verify: jumping to a far row without loading the rows between.
 
 Tabulator's own `spreadsheet` module (lettered columns, row numbers, array data, sheet tabs) is in the build and was not exercised. To verify: whether it helps or gets in the way once the engine owns the data.
@@ -152,7 +156,7 @@ Tabulator's own `spreadsheet` module (lettered columns, row numbers, array data,
 | Direction | Read | Write | Read, edit, write |
 | Formats | xlsx, xlsm, xlsb, xls, ods | xlsx | xlsx |
 | Formulas | Stored values | Writes the text | Parses and calculates |
-| Charts, images | No | Yes | No |
+| Charts, images | No | Yes | No (the fork: yes, Phase 4) |
 | Used for | ETL, the grid's file source, `SpreadsheetServices`' reads | Test workbooks only, since Phase 1 | The xlsx render mode, the grid's export, scheduled reports, `calculate#Spreadsheet` |
 
 - **calamine stays.** IronCalc reads only xlsx, and the import formats must not be lost. calamine can also be the way in for the older formats: load values and formula text into an IronCalc model, without styles.
@@ -191,7 +195,7 @@ The engine and the workbook are in the server only. The browser gets the cells o
 - **`get_cells_block`** (above) was added in October 2026 for IronCalc's own canvas, to replace a call for each cell. It is the read a remote view needs. With it go the row and column sizes, merged cells, frozen counts and links, each one call. A screen of 60 rows by 30 columns is 1,800 style indices, a short style list and the non-empty texts: an estimate of a few tens of kilobytes of JSON before compression.
 - **The room is already built.** `moqui-collab` keeps a document for each co-edited record in memory, on the notification WebSocket: `join` (the access check and the load), `apply` (an edit), `tick` (store a while after an edit, drop when the last editor leaves), `save`, and `awareness` frames for presence. A sheet room is the same shape with a workbook in place of a Yjs document, in a crate of its own (`moqui-calc`, on moqui-core through the extension entry as `moqui-collab` is), and one room for each scope of a document ([What a scope changes](#what-a-scope-changes-in-the-design)).
 - **Tabulator already loads this way.** `Grid.qvue` asks for rows as the user scrolls. Here a request is a viewport and the answer is a block.
-- **A full recalculation costs the same either way.** The engine reports no changed cells, so after an edit the server sends each viewer its viewport again. Sending only what differs from the last block sent is our code in the room, not a change to the engine.
+- **A full recalculation costs the same either way.** The engine reports no changed cells, so after an edit the server sends each viewer its viewport again. Sending only what differs from the last block sent is our code in the room, not a change to the engine. **Superseded in Batch 2:** the fork reports the changed areas (`last_changes`), and views read only those.
 
 **What it buys**
 
@@ -199,16 +203,16 @@ The engine and the workbook are in the server only. The browser gets the cells o
 - **Rows stay in the server.** A browser holds only the cells it has shown. Export and scheduled runs use the same model.
 - **No WASM package** (about 2.3 MB unpacked), no second copy of the workbook to keep in step, and no risk of the browser's engine and the server's differing by a version.
 - **One protocol for the web and the terminal.** `moqui-tui` already draws documents a server sends; a sheet view there reads the same blocks.
-- **No fork**, of either project.
+- **No fork**, of either project. **Superseded:** IronCalc is forked, [moqui/IronCalc](https://github.com/moqui/IronCalc), the revision `Cargo.toml` pins ([Engine speed in the fork](#engine-speed-in-the-fork)); Tabulator is not forked.
 
 **What it costs, and what to check**
 
 - **Every committed edit is a round trip.** Typing in the cell is local; the result appears when the server answers. Moving the selection and scrolling over loaded rows are local. Fetch a margin around the viewport so short scrolls do not wait.
 - **Formula help.** The function list is static and can be sent once; `formula_completion` is a server call for each keystroke that needs it. To verify: whether that feels quick enough, or the names and signatures should be completed in the browser.
-- **One selection and one undo stack in `UserModel`.** Its selection, scroll and window size are for a single user, so the room keeps each user's selection itself and does not use the engine's navigation calls (Tabulator navigates). Undo is the workbook's, shared: one person's undo can take back another's edit. Acceptable at first; an undo stack for each user is engine work.
+- **One selection and one undo stack in `UserModel`.** Its selection, scroll and window size are for a single user, so the room keeps each user's selection itself and does not use the engine's navigation calls (Tabulator navigates). Undo is the workbook's, shared: one person's undo can take back another's edit. Acceptable at first; an undo stack for each user is engine work. **Superseded in Phase 3b:** undo is each person's own, kept by the rooms and not the engine; undo across a save is still missing ([Future-Plans](../Future-Plans.md#ironcalc-and-calcgrid)).
 - **Memory.** A workbook is whole in server memory while open: a row of numbers is eight bytes a cell, so 100,000 rows of 20 numeric columns is about 16 MB, more with text. Drop it when the last viewer leaves and after an idle time, as `tick` does, and rebuild from the overlay and the query.
 - **Threads.** `Model<'a>` borrows its locale and language, which are `'static` (held in `OnceLock`s), so a `Model<'static>` can be kept in a room. No `Rc` or `RefCell` was found outside the test clock, so it should be `Send`. To verify by compiling. Evaluation is synchronous and CPU-bound: run it on a blocking thread, one workbook at a time behind its lock.
-- **A cluster.** Yjs rooms on two servers merge each other's updates; two IronCalc models cannot. Either one server owns an open workbook and the others forward edits and viewport requests to it, or the owner applies edits and sends its diff queue (`flush_send_queue`, `apply_external_diffs`, made to keep a second model in step) to replicas that answer reads. To verify: which the cluster layer makes simpler. Start with the owner alone.
+- **A cluster.** Yjs rooms on two servers merge each other's updates; two IronCalc models cannot. Either one server owns an open workbook and the others forward edits and viewport requests to it, or the owner applies edits and sends its diff queue (`flush_send_queue`, `apply_external_diffs`, made to keep a second model in step) to replicas that answer reads. To verify: which the cluster layer makes simpler. Start with the owner alone. **Superseded in Phase 3b:** no server owns a workbook; a row lock on the document's edit log head orders the edits, and every server keeps its own rooms.
 - **No connection, no sheet.** Where the server is local (desktop, or the browser-local WASM host) that is no loss; a sheet edited offline against a remote server is what the browser engine and the CRDT are for, later.
 
 **The browser engine, later.** If the round trip proves too slow, the WASM engine can be added as a local copy fed by the diff queue, for editing or only for viewing. Nothing in the thin design prevents it: the room's edit messages and the diff queue are the same operations.
@@ -217,7 +221,7 @@ The engine and the workbook are in the server only. The browser gets the cells o
 
 ## Phases
 
-Each phase leaves something usable. Phases 0 to 3 are for v0.1.0 and need no fork of IronCalc and no change to Tabulator; Phases 4 and 5 are after it.
+Each phase leaves something usable. Phases 0 to 3 are for v0.1.0 and need no fork of IronCalc and no change to Tabulator; Phases 4 and 5 are after it. (As it turned out IronCalc was forked, for speed and then Phase 4, which was built with the rest; Tabulator was not changed.)
 
 ### Phase 0: spike
 
@@ -234,23 +238,23 @@ Done 2026-11-13: [Phase 0 results](#phase-0-results). The list as it was:
 - A `Model<'static>` held in a room behind a lock: does it compile as `Send`, and what do an edit, an evaluation and a `get_cells_block` of one screen cost at that size.
 - The Calc mode of `Grid.qvue` with Tabulator fed by blocks over the notification WebSocket: a formatter that draws from the block, an editor that sends the edit, the viewport redrawn from the answer. Measure the round trip, and try formula completion through it.
 - Loading by viewport in Tabulator, including a jump to a far row.
-- The ESM build of Tabulator in `webroot/libs` and a first custom module.
+- The ESM build of Tabulator in `webroot/libs` and a first custom module. (Not needed: the vendored UMD build has every module; see [The build](#tabulator-the-grid).)
 
 ### Phase 1: the engine in the server
 
 Built 2026-11-13.
 
-- **The dependency.** `ironcalc` at the pinned revision `87b684bb` of main (workspace `Cargo.toml`; `deny.toml` allows the repository as a git source), 12 new packages, licenses and sources checked. It is core's `xlsx` feature, not a feature beside it: the engine is now the xlsx writer, so a build with xlsx has it and a build without has neither.
+- **The dependency.** `ironcalc` at the pinned revision `87b684bb` of upstream's main at first, now the moqui fork at `a0e66946` ([Working with upstream](#working-with-upstream)) (workspace `Cargo.toml`; `deny.toml` allows the repository as a git source), 12 new packages, licenses and sources checked. It is core's `xlsx` feature, not a feature beside it: the engine is now the xlsx writer, so a build with xlsx has it and a build without has neither.
 - **`moqui_core::workbook`** (`crates/moqui-core/src/workbook.rs`): `WorkbookWriter` writes typed cells with styles below the engine's formula parser (a text that starts with `=` stays a text), freezes rows, fits columns by character count (the engine measures no font) and gives the engine's `Model` or the `.xlsx`; `open_xlsx` and `model_xlsx` are the engine's reader and writer; the engine is re-exported as `moqui_core::workbook::ironcalc` for the crates on core.
 - **The writers are on it:** the `xlsx` render mode and the data grid's export (`XlsxBook`, `screen/xlsx.rs`) and a scheduled report's xlsx (`moqui-report` `schedule.rs`). Their tests read the files back with calamine as before, and a rendered file opens in LibreOffice.
 - **`rust_xlsxwriter` is out of the build.** Nothing used sheet protection, and `SpreadsheetServices` only read, so nothing was left on it; it stays as a dev-dependency, for test workbooks from a writer other than the engine.
 - **`SpreadsheetServices.calculate#Spreadsheet`** (`service/spreadsheet_calc.rs`): open an xlsx with formulas, set cells (`cellValues`: `B2`, `Inputs!B2`; a text as typed, a number or boolean as it is, null clears), evaluate, and return `readCells` (cells and ranges) as values and as formatted texts, with the calculated workbook as bytes or at a location.
 - calamine unchanged.
-- Not done here: a spec that calls `calculate#Spreadsheet` through the service facade (its body is tested in the crate, and the registry test covers its location), and `./moq test-framework`.
+- Not done here: a spec that calls `calculate#Spreadsheet` through the service facade (its body is tested in the crate, and the registry test covers its location), and `./moq test-framework`. Since then `tools/test/CalcGrid.spec.js` calls it through the facade to read back the scheduled export (Phase 3b).
 
 ### Phase 2: the virtual sheet in the Tools grid, read and export
 
-Built 2026-11-13. Guide: [Calc mode](../docs/tools/Database.md#calc-mode).
+Built 2026-11-13. Guide: [Calc mode](../../docs/tools/Database.md#calc-mode).
 
 - **`moqui-calc`** (`crates/moqui-calc`, on moqui-core and moqui-tools, linked under the host's `xlsx` feature):
   - `fill.rs`, the engine work with no ExecutionContext: a data sheet filled with typed rows and declared as a table, rows inserted between the stored form's two empty data rows so ranges stretch, the stored form (rows deleted, the sheet emptied, the shared strings rebuilt, one evaluation), and the layout of the sheets.
@@ -258,6 +262,13 @@ Built 2026-11-13. Guide: [Calc mode](../docs/tools/Database.md#calc-mode).
   - `service.rs`, `org.moqui.calc.CalcServices`: `open#CalcDocument`, `get#CalcCells`, `refresh#CalcDocument`, `save#CalcDocument`, `export#CalcDocument`, `close#CalcDocument`. The data sheets are read through the grid's reader (`grid::columns`, `grid::rows` a page of 1,000 at a time) as the caller, up to 100,000 rows.
 - **The document** is a report definition of type `calcgrid`: `dataSheets` (each a name and the grid's spec), `charts`, and `overlay`, the stored form in base64 **in the body**, not in a row beside it as decided: the definition's versions, copy, export and git sync then carry the workbook with no code of their own. At most 8 MB.
 - **A workbook file** opens with the engine's reader, and through calamine as values when the engine refuses it.
+- **Limits added since**, each where it is set:
+  - an edit over an area changes at most 100,000 cells, within the sheet (`room.rs` `MAX_EDIT_CELLS`), and one call's edits at most 200,000 cells in all (`MAX_CALL_CELLS`);
+  - at most 2,000 edits in a call (`service.rs` `MAX_EDIT_OPS`), 5,000 rows in a paste (`room.rs` `MAX_PASTE_ROWS`) and 2,000 points in a chart series (`MAX_CHART_POINTS`);
+  - a workbook file opened as a document is at most 32 MB (`service.rs` `MAX_WORKBOOK_BYTES`), and a zipped workbook is refused when its parts inflate past 64 MiB (`moqui-core` `service/spreadsheet.rs` `check_expanded_size`, `MAX_EXPANDED_BYTES`);
+  - a room reads a member's scope again about once a minute (`room.rs` `SCOPE_RECHECK`), and a share taken away ends an open editor and a dashboard's range panel at once, at their next call and with no reopen (`service.rs` `may_still_read`, DASH-UI-008);
+  - the notification socket's presence caps, the `webroot` webapp's `socket-room-clients` (4), `socket-awareness-bytes` (4096), `socket-joins-per-minute` (60), `socket-user-joins-per-minute` (240), `socket-updates-per-minute` (1200) and `socket-awareness-per-minute` (600) in `MoquiDefaultConf.xml` (SEC-TLS-113);
+  - the terminal draws at most 200 frozen rows and 100 frozen columns (`moqui-tui` `components/calc.rs`).
 - **Calc mode** in `Grid.xml` (the `calc*` transitions) and `Grid.qvue`, drawn by `moqui.calc.sheet` (`webroot/js/WebrootCalc.js`): its own Tabulator with placeholder rows and a block cache, sheet tabs, the charts with `m-chart`, Refresh, XLSX, Save document and Documents.
 - **Tests:** `cargo test -p moqui-calc` (the fill, the stored form with none of the data's texts, the rooms, the fallback reader), `tools/test/CalcGrid.spec.js` (the transitions: open, cells, export, save, reopen, delete, a file as a workbook), `webroot/test/client/WebrootCalc.spec.js` (the view's helpers) in the regression suite; `tools/test/acceptance/client/CalcGrid.spec.js`, the browser walk, in the acceptance suite.
 
@@ -265,17 +276,17 @@ What differs from the plan, and what is left for later phases:
 
 - **The transport is HTTP transitions, not the notification WebSocket.** Reading needs no push, a request and its answer measured a few milliseconds in Phase 0, and the host is untouched. The WebSocket comes with editing (Phase 3), where other people's edits and presence are pushed.
 - **A room is one user's**, keyed by the user and a room id, not shared by the people of a scope: nothing is edited yet, so nothing is lost by it but memory when two people open the same document. Rooms by scope come with the profiles (2b) and editing (3).
-- **A room is on the server that opened it.** In a cluster a request that reaches another server gets `ROOM_GONE` and the view opens the document again there; the owner of a workbook is Phase 3's.
+- **A room is on the server that opened it.** In a cluster a request that reaches another server gets `ROOM_GONE` and the view opens the document again there; the owner of a workbook is Phase 3's. **Superseded in Phase 3b:** there is no owner; a row lock on the edit log's head orders the edits, and a saved document's room id names the same room on every server.
 - **Charts are shown, not authored:** a chart is in the document's body (`title`, `type`, `categories`, `series` of `name` and `values`, each a range) and is drawn from the values the server reads. The editor for them is Phase 3's.
 - **A data sheet is read a page at a time** through the grid's reader, not through a cursor: a large entity costs a query for each 1,000 rows. To measure on real data, and to read through the export's cursor if it is slow.
 - **Evaluation is not yet on a thread of its own:** it runs in the request that opens or refreshes, with the room locked.
 
 ### Phase 2b: CalcGrid in Dashboards
 
-Built 2026-11-13; what is left is listed at its end. Guide: [CalcGrid and access profiles](../docs/tools/Database.md#calcgrid-and-access-profiles).
+Built 2026-11-13; what is left is listed at its end. Guide: [CalcGrid and access profiles](../../docs/tools/Database.md#calcgrid-and-access-profiles).
 
 - **Access profiles in the engine** (`moqui-calc` `profile.rs`): each `CalcServices` call takes `profileId`. Without it the call is the Tools app's (Phase 2). With it the caller must hold the profile; the source is an entity or view the profile offers (a view with every member offered), read with the profile artifact entered, so the finds get the entity filters of the profile's grant; under a grant with a filter set an offered entity that no filter applies to is refused; authorization is required whatever the caller disabled; and a room is read only under the profile it was opened under. `get#CalcProfiles` and `find#CalcEntities` are new.
-- **The data:** `CALC_GRID` (the screen and the services) and `CALC_GRID_AUTHOR` (`org.moqui.calc.document`) in tools, `ADMIN`'s; `CALC_PROFILE_SALES` in mr-mantle (`data/CalcGridProfileData.xml`), with no grant; in mr-boss the grant of the profile to `BOSS_SALES_ADMIN` with `MANTLE_USER_ORG`, `MANTLE_ACTIVE_ORG` and `MANTLE_PRIVATE_CONTACT`, and of `CALC_GRID_AUTHOR`.
+- **The data:** `CALC_GRID` (the screen and the services) and `CALC_GRID_AUTHOR` (`org.moqui.calc.document`) in tools, `ADMIN`'s; `CALC_PROFILE_SALES` in mr-mantle (`data/10-seed/Sales.xml`), with no grant; in mr-boss the grant of the profile to `BOSS_SALES_ADMIN` with `MANTLE_USER_ORG`, `MANTLE_ACTIVE_ORG` and `MANTLE_PRIVATE_CONTACT`, and of `CALC_GRID_AUTHOR`.
 - **`Dashboards/CalcGrid.xml`**, `CalcGrid.qvue` and `template/CalcGrid.js`: the documents the viewer reads, one opened as a sheet, the profile chosen (or the mount's, `reportPolicy.calcProfile`), a new document over an entity the profile offers, save with a group of the author's own, delete, refresh, XLSX, and a terminal render of the list. BOSS shows it under Insights by location.
 - **Tests:** `mr-mantle/test/order/CalcGridSales.spec.js`, `tools/test/CalcGrid.spec.js` (a feature for the Dashboards screen), `mr-boss/test/Insights/InsightsCalcGrid.spec.js` in the regression suites; a second walk in `tools/test/acceptance/client/CalcGrid.spec.js`.
 
@@ -304,7 +315,7 @@ Left of 2b:
 
 ### Phase 3: editing
 
-Built 2026-11-13, for one person at a time; editing together followed the same day ([Phase 3b](#phase-3b-editing-together-the-scheduled-export-and-the-terminal)). Guide: [Calc mode](../docs/tools/Database.md#calc-mode).
+Built 2026-11-13, for one person at a time; editing together followed the same day ([Phase 3b](#phase-3b-editing-together-the-scheduled-export-and-the-terminal)). Guide: [Calc mode](../../docs/tools/Database.md#calc-mode).
 
 - **The engine:** `Room::edit` applies a list of edits in order with evaluation paused, then evaluates once: `input`, `paste`, `clear`, `style` (the engine's style paths), `fill` (its autofill), `width`, `height`, `freeze`, rows and columns inserted and deleted, sheets added, renamed and deleted, `charts` (the document's charts, replaced), `undo` and `redo` (the engine's own history). A data sheet's cells, rows, columns and name are refused; its widths, heights and frozen panes are not. `edit#CalcDocument` answers the room's state whether or not an edit was refused; `get#CalcCellContent` answers a cell as typed. Under a profile only an author edits.
 - **The view** (`WebrootCalc.js`, both screens): a toolbar (undo, redo, bold, italic, underline, text and fill colour, alignment, number formats, rows and columns, freeze, fill down, Chart), a formula bar that completes function names and the data sheets' table names, a cell's editor on a double click, Delete, Ctrl+Z and Ctrl+Y, a paste of rows of cells, a column's width by its resize, sheets added, renamed and deleted, and charts added from the selection and removed. After an edit every sheet's cells are asked again, and the table is made again only when its shape changed.
@@ -314,9 +325,9 @@ Built 2026-11-13, for one person at a time; editing together followed the same d
 Not built, of the plan's Phase 3:
 
 - ~~**Editing together**~~: built in Phase 3b.
-- **Picking references by clicking** while a formula is typed, and the **fill handle** by dragging (Fill down is in the menu): each needs a Tabulator module, so the ESM build.
-- **The function list** is a fixed list of about a hundred names in the view: the engine's `functions` module is private, so its 500 names and their arguments cannot be asked for. An upstream request.
-- **Conditional formatting, borders and row heights** have no control (they are drawn when a workbook has them); **merged cells** are not drawn as merged.
+- **Picking references by clicking** while a formula is typed, and the **fill handle** by dragging (Fill down is in the menu): each needs a Tabulator module, so the ESM build. (Corrected Nov 27: no ESM build is needed, the vendored build has the modules and a fill handle, `selectableRangeFill`; [IronCalc-DB2 CG2](../IronCalc-DB2.md#22-cg2-editing-in-the-browser).)
+- **The function list** is a fixed list of about a hundred names in the view: the engine's `functions` module is private, so its 500 names and their arguments cannot be asked for. An upstream request. (Since Phase 3b the list is the server's, `FUNCTIONS` in `moqui-calc` `service.rs`, 92 names sent with the opening answer; the view's own list is a fallback.)
+- **Conditional formatting, borders and row heights** have no control; **merged cells** are not drawn as merged. Conditional formatting's results and borders are drawn when a workbook has them (`get_cells_block` gives each cell's extended style); row heights are not (`fill::layout` sends widths only).
 - **Evaluation on a thread of its own**, and the budget's warning beyond the time shown.
 - ~~**A terminal view**~~: built in Phase 3b.
 
@@ -325,9 +336,9 @@ Not built, of the plan's Phase 3:
 Built 2026-11-13, the three sets the user asked for after Phase 3, from the plan written that day. The user's answers:
 unsaved edits are kept until a save (not saved as versions on their own); readers see the authors' edits as they are
 made (one room per scope, not a room of saved versions for readers); and the terminal reads the others' edits by
-polling, not by a push to its components. Guides: [Calc mode](../docs/tools/Database.md#calc-mode),
-[CalcGrid rooms](../docs/ui/Qvt-Client.md#calcgrid-rooms), [Report delivery](../docs/tools/Monitoring.md#report-delivery),
-[TUI components](../docs/ui/TUI.md#components).
+polling, not by a push to its components. Guides: [Calc mode](../../docs/tools/Database.md#calc-mode),
+[CalcGrid rooms](../../docs/ui/Qvt-Client.md#calcgrid-rooms), [Report delivery](../../docs/tools/Monitoring.md#report-delivery),
+[TUI components](../../docs/ui/TUI.md#components).
 
 **The scope** (`moqui-calc` `scope.rs`, `get#CalcScope`): a fingerprint of everything that decides a reader's rows, the
 access, the time zone, and for each data sheet whether it is readable, its source, the columns shown and the condition
@@ -457,7 +468,7 @@ One formula over a 100,000-row column costs, each evaluation: `SUM` 8 ms (83 ns 
 
 ### Rooms, the stored form and scopes
 
-- **Overlay edits relay between rooms with different data.** Two models of one document, 1,000 and 400 rows of different values: a formula, a text and a row height set in one, sent as its diff queue (51 bytes for the three) and applied to the other, give the same overlay there, evaluated over the other's data, with its data untouched. Applying does not queue the edits again, and an undo relays the same way. So the open question is answered: rooms of every scope of a document edit together.
+- **Overlay edits relay between rooms with different data.** Two models of one document, 1,000 and 400 rows of different values: a formula, a text and a row height set in one, sent as its diff queue (51 bytes for the three) and applied to the other, give the same overlay there, evaluated over the other's data, with its data untouched. Applying does not queue the edits again, and an undo relays the same way. So the open question is answered: rooms of every scope of a document edit together. (Phase 3b relays them by the edit log instead: the engine's diffs carry one scope's computed values, [Not the engine's diff queue](#phase-3b-editing-together-the-scheduled-export-and-the-terminal).)
 - **The stored form** is the room's workbook with the inserted rows deleted, the data sheet emptied and one evaluation: 14 KB for 300 formulas, in 2.5 ms, with every formula's cached value computed from no data.
 - **The shared strings must be rebuilt on save.** The workbook keeps one list of every text, the data sheet's included, and emptying the sheet leaves them (2,033 here): customers' names would be in the stored document. Save writes a list of the overlay's own strings only. This is a spec of its own.
 
@@ -480,7 +491,7 @@ Confirmed in `crates/moqui-core/src/user/filter_tests.rs` (`a_profile_frame_give
 - **Loading by viewport works, and not with `progressiveLoad`.** The table gets a placeholder row for each sheet row and no data; a formatter draws each cell from a cache of blocks, and a scroll asks for the rows in view and a margin, then reformats the rows in view. A far jump needs nothing between. Range selection, the clipboard options and a custom editor work on such a table as they do in `Grid.qvue`.
 - **So Calc is its own Tabulator instance and its own component.** It shares the library and the range and clipboard options with the record grid, and nothing of its loading (`ajaxURL`, `progressiveLoad`, remote sort and filter). `Grid.qvue` shows one or the other by mode.
 - **The round trip is the evaluation.** Transport and block are a few milliseconds; completion can be a call for each keystroke. The browser engine (Phase 5) would not help an edit: the evaluation would cost the same there.
-- **The ESM build is needed for a custom module.** The vendored UMD file exposes `registerModule` and `extendModule` but not the `Module` base class or the module bindings, so a module cannot be written against it. The formatter, the editor and the loader above needed no module; the fill handle and reference picking do.
+- **The ESM build is needed for a custom module.** The vendored UMD file exposes `registerModule` and `extendModule` but not the `Module` base class or the module bindings, so a module cannot be written against it. (Wrong, found on Nov 27: `Tabulator.moduleBindings` reaches every module of the vendored build, and it has a fill handle; [IronCalc-DB2 CG2](../IronCalc-DB2.md#22-cg2-editing-in-the-browser).) The formatter, the editor and the loader above needed no module; the fill handle and reference picking do.
 
 ## Engine speed in the fork
 
@@ -581,7 +592,7 @@ What `moqui-calc` works around, with what the engine could offer instead. In ord
 
 ### Batch 2: incremental evaluation, in-place reload, images and charts
 
-Built 2026-11-13 on the fork's `main` (`97efe7e2` to `dbecebb3`), on the user's direction to build these now rather than wait for upstream, following upstream's plan where it has one (issue 849); mr-moqui builds `dbecebb3`.
+Built 2026-11-13 on the fork's `main` (`97efe7e2` to `dbecebb3`), on the user's direction to build these now rather than wait for upstream, following upstream's plan where it has one (issue 849); mr-moqui built `dbecebb3`, and now builds `a0e66946`, the merge with upstream ([Working with upstream](#working-with-upstream)).
 
 | Commit | What it does |
 |---|---|
@@ -638,7 +649,7 @@ Settled 2026-11-13.
 | Where `sales` lives | The artifact group and its entity list in mr-mantle, beside the filter sets; the grants to the BOSS sales groups in mr-boss; CalcGrid shown in BOSS under Insights by its mount |
 | Editing in CalcGrid | A holder of a profile opens documents shared with the user, with refresh and export; a holder of `CALC_GRID_AUTHOR` also authors documents (overlay, sources from the profile, charts). Data sheets are read only for everyone. (By the profile's grant action as first decided; a group of its own since Phase 2b, as a service call is checked for all actions) |
 | The document's store | A report definition of type `calcgrid` (`moqui.report.Definition`), the overlay bytes in its body (in a row beside it as first decided; changed in Phase 2): sharing with groups, versions, stars, git sync and schedules as dashboards have. The Tools grid lists the same documents |
-| Release | Phases 0 to 3 (through editing, in both screens) are for v0.1.0, if the spike holds; charts and images in XLSX (Phase 4) and Phase 5 after |
+| Release | Phases 0 to 3 (through editing, in both screens) are for v0.1.0, if the spike holds; charts and images in XLSX (Phase 4) and Phase 5 after. (Phase 4 was built with them, in the fork; what is left is in IronCalc-DB2 and Future-Plans) |
 | Unsaved edits (Phase 3b) | Kept in the document's edit log until a save makes a version; Discard takes them all back. Not saved as versions on their own |
 | What readers see (Phase 3b) | The authors' edits as they are made: one room per scope for readers and authors alike |
 | The terminal's live edits (Phase 3b) | Read by polling every 1.5 s; no push to its components |
@@ -646,13 +657,13 @@ Settled 2026-11-13.
 
 ## Open questions
 
-None from the plan; the question of rooms of different scopes was answered by Phase 0 (they edit together through the diff queue). Phase 0 left three things not run: the notification WebSocket as the transport, the owner of a workbook in a cluster, and real-world workbooks with charts and pivot tables.
+None from the plan; the question of rooms of different scopes was answered by Phase 0 (they edit together through the diff queue; since Phase 3b through the edit log, `moqui.calc.CalcDocumentHead` and `CalcDocumentEdit`). Phase 0 left three things not run: the notification WebSocket as the transport, the owner of a workbook in a cluster, and real-world workbooks with charts and pivot tables. Since then the WebSocket is built (`moqui-host` `notws/calc.rs`) and the cluster settled with no owner (Phase 3b); real-world workbooks with charts and pivot tables remain, in [Testing-Needed](../Testing-Needed.md).
 
 ## Working with upstream
 
 There is a fork of IronCalc, [moqui/IronCalc](https://github.com/moqui/IronCalc), for the speed and memory work ([Engine speed in the fork](#engine-speed-in-the-fork)) and the expansions we need; the workspace builds it at a pinned revision of its `main`, and each change is offered back. No fork of Tabulator.
 
-- **IronCalc.** Small requests that make our use easier: sheet protection, a list of changed cells after an evaluation (it would let the room send changes in place of whole viewports), selection and undo kept outside the model for several users, a hook for custom functions, error types. Larger: the chart and image model. They plan charts after 1.0, so our work there is either a contribution or a divergence; talk before writing it.
+- **IronCalc.** Small requests that make our use easier: sheet protection, a list of changed cells after an evaluation (it would let the room send changes in place of whole viewports), selection and undo kept outside the model for several users, a hook for custom functions, error types. Larger: the chart and image model. They plan charts after 1.0, so our work there is either a contribution or a divergence; talk before writing it. (The list of changed cells and the chart and image model were built in the fork, Batch 2; selection and undo for each person are the rooms' own, Phase 3b.)
 - **Tabulator.** Extension points only. If merged cells or reference picking need a hook that is missing, propose the hook.
 - **Versions.** Build the fork at a pinned revision of its `main`, which takes upstream's main by merge, and move on purpose; the API will change before 1.0.
 - **Merged 2026-11-27** (`a0e66946`, 92 upstream commits to `4b72c356`; mr-moqui builds it). Upstream had no speed, memory or incremental work of its own. Where the two met: VAR, STDEV and DEVSQ take upstream's Welford `RunningStats` through our range walk (STDEV over 100,000 rows 0.37 ms to 0.66 ms, the rest of `data_sheet` unchanged); the stored form is version 3 for upstream's `date_system` and `named_functions`, version 2 read through its own types (a LAMBDA defined name moved to the named functions); names, named functions and the date system evaluate in full when they change, and an edit after is incremental again.
@@ -663,9 +674,9 @@ There is a fork of IronCalc, [moqui/IronCalc](https://github.com/moqui/IronCalc)
 - **Full recalculation.** Sets the row and formula limits; measured in Phase 0.
 - **Merged cells in a row-based grid.** May never be good in Tabulator; a data-driven sheet does not need them, an imported workbook may.
 - **Round-trip latency** on every edit, the price of the thin client. Measured in Phase 0; the browser engine is the way out.
-- **Server memory and CPU** for each open workbook, and one owner in a cluster.
-- **Shared undo** among several editors.
-- **An open profile.** A profile that offers an entity none of its filters matches shows every row of it. The list of offered entities is explicit, `check#CalcProfile` reports the unmatched ones, and the specs of each profile read as a user of another organization.
-- **Two modes in one screen.** `Grid.qvue` is 861 lines for the record grid alone; the sheet component is kept apart from it so the Records mode does not change.
+- **Server memory and CPU** for each open workbook, and one owner in a cluster. (No owner since Phase 3b: a row lock on the edit log's head orders the edits.)
+- **Shared undo** among several editors. (Each person's own undo since Phase 3b; undo across a save is missing, [Future-Plans](../Future-Plans.md#ironcalc-and-calcgrid).)
+- **An open profile.** A profile that offers an entity none of its filters matches shows every row of it. The list of offered entities is explicit, `check#CalcProfile` reports the unmatched ones, and the specs of each profile read as a user of another organization. (Since Phase 2b there is no `check#CalcProfile`: such an entity is refused, and the refusal logged.)
+- **Two modes in one screen.** `Grid.qvue` was 861 lines for the record grid alone (about 1,040 lines now, with Calc mode); the sheet component is kept apart from it so the Records mode does not change.
 - **Fork drift** if Phase 4 is not taken upstream.
 - **Expectations.** It will not be Excel. Say which features are in before users find which are not.

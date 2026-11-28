@@ -1,11 +1,11 @@
-// Calc mode of the data grid (screen/Tools/Data/Grid.xml, plans/IronCalc-DB.md Phase 2), over org.moqui.calc.CalcServices:
-// an entity's rows as the data sheet of a workbook in a room of the user's, read a rectangle at a time; the document saved
-// as a report definition with no row of the data in it, opened again and deleted; another user finds no such room.
-// And CalcGrid in the Dashboards app (screen/Dashboards/CalcGrid.xml, template/CalcGrid.js, Phase 2b): how the viewer may use it,
-// a new document over an entity, and a profile the viewer does not hold. The access profiles' own rules (the entities
-// offered, the rows of the viewer's organizations) are held where a profile is, by mr-mantle's CalcGridSales spec.
-// The engine's work (the fill, the stored form, the rooms) is tested in crates/moqui-calc.
-// Run: ./moq test tools --spec CalcGrid
+// Calc mode of the data grid (screen/Tools/Data/Grid.xml, plans/archive/IronCalc-DB.md Phase 2), over
+// org.moqui.calc.CalcServices: an entity's rows as the data sheet of a workbook in a room of the user's, read a
+// rectangle at a time; the document saved as a report definition with no row of the data in it, opened again and
+// deleted; another user finds no such room. And CalcGrid in the Dashboards app (screen/Dashboards/CalcGrid.xml,
+// template/CalcGrid.js, Phase 2b): how the viewer may use it, a new document over an entity, and a profile the viewer
+// does not hold. The access profiles' own rules (the entities offered, the rows of the viewer's organizations) are held
+// where a profile is, by mr-mantle's CalcGridSales spec. The engine's work (the fill, the stored form, the rooms) is
+// tested in crates/moqui-calc. Run: ./moq test tools --spec CalcGrid
 const tools = () => ec.screen.makeTest().rootScreen("component://tools/screen/Tools.xml")
 const call = (transition, parameters, method) => {
     const result = tools().render("Data/Grid/" + transition, parameters, method || null)
