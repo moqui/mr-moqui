@@ -1,7 +1,10 @@
 # Terminal 2: the screen as text, driven sessions, viewers, recording, OS accounts, threads and more floats
 
-Status 2026-11-27: plan, not built; checked against the code the same day, and the parts that assumed what is not
-there corrected (D13 to D17 and the notes in each phase). It follows [Terminal-Fancy](archive/Terminal-Fancy.md), built Nov 11, 2026 (P0 to
+Status 2026-11-28: built, TF1 to TF8 (TF2 and TF3 in one commit), with the notes marked "As built" in §4. Not done:
+the dev tools' `terminal` tool has no test of its approval asked once per session per run; TF6 ran live on no Linux
+server here (its opt-in test `a_host_session_runs_as_another_account` is the check); a moved call video playing on is a
+hand check. Checked against the code on Nov 27, 2026, and the parts that assumed what is not there corrected (D13 to
+D17 and the notes in each phase). It follows [Terminal-Fancy](archive/Terminal-Fancy.md), built Nov 11, 2026 (P0 to
 P9 and a second round) and archived the same day as this plan was written. The guide is
 [Terminal](../docs/ui/Terminal.md). This plan takes the items of Terminal-Fancy §13.1 and §15 that the user chose on
 Nov 27, 2026, and the framework part of [Agent Code](agent-code/06-Terminal-Preview-Devices.md)'s thread terminals, so
