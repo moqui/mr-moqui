@@ -71,6 +71,12 @@ object MediaPlayback {
     /** The service, while it runs. */
     internal var service: MediaPlaybackService? = null
 
+    /**
+     * A stop came after startForegroundService but before the service called startForeground. Android ends the app
+     * when such a service stops before startForeground, so the service goes to the foreground first, then stops.
+     */
+    internal var stopWhenStarted = false
+
     /** The page's word (Rust's `media_session`, on its thread): `start`, `update` or `stop` with the checked JSON. */
     @JvmStatic
     fun fromPage(context: Context, action: String, json: String) {
@@ -81,7 +87,10 @@ object MediaPlayback {
 
     private fun apply(app: Context, action: String, given: JSONObject) {
         if (action == "stop") {
-            if (active) app.stopService(Intent(app, MediaPlaybackService::class.java))
+            if (active) {
+                if (service?.foreground == true) app.stopService(Intent(app, MediaPlaybackService::class.java))
+                else stopWhenStarted = true
+            }
             active = false
             return
         }
@@ -104,6 +113,7 @@ object MediaPlayback {
             loadArtwork(url)
         }
         if (action == "start" && !active) {
+            stopWhenStarted = false
             try {
                 app.startForegroundService(Intent(app, MediaPlaybackService::class.java))
                 active = true
@@ -191,6 +201,8 @@ class MediaPlaybackService : Service() {
     }
 
     private lateinit var session: MediaSession
+    /** Whether startForeground ran (a stop before it must wait for it: MediaPlayback.stopWhenStarted). */
+    @Volatile internal var foreground = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -234,9 +246,16 @@ class MediaPlaybackService : Service() {
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
+            foreground = true
         } catch (err: Exception) {
             Log.w(MediaPlayback.TAG, "The media service is not in the foreground (${err.javaClass.simpleName})", err)
             MediaPlayback.active = false
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        if (MediaPlayback.stopWhenStarted) {
+            // the page stopped its media while the service was starting
+            MediaPlayback.stopWhenStarted = false
             stopSelf()
             return START_NOT_STICKY
         }
@@ -252,6 +271,7 @@ class MediaPlaybackService : Service() {
     }
 
     override fun onDestroy() {
+        foreground = false
         MediaPlayback.service = null
         MediaPlayback.active = false
         session.isActive = false
