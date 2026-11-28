@@ -69,6 +69,20 @@ const MAX_OWN_LOG: usize = 500;
 const MAX_CHANGED_AREAS: usize = 200;
 /// The edits that change values only: after them the views read again the cells that changed.
 const VALUE_EDITS: [&str; 4] = ["input", "paste", "clear", "fill"];
+/// The evaluation time past which an evaluation is slow, in milliseconds, when the conf does not say.
+const DEFAULT_SLOW_MS: f64 = 250.0;
+
+/// The evaluation time past which an evaluation is slow, in milliseconds: the conf setting `calc@slow-ms`, read each
+/// time, or 250 when it is not a positive number (plans/IronCalc-DB2.md CG1.4). An author is shown a warning past it,
+/// and the server logs the evaluation.
+#[must_use]
+pub fn slow_ms() -> f64 {
+    let set = moqui_core::context::conf_env::setting("calc@slow-ms");
+    let parsed: Option<f64> = set.parse().ok();
+    parsed
+        .filter(|ms| ms.is_finite() && *ms > 0.0)
+        .unwrap_or(DEFAULT_SLOW_MS)
+}
 
 /// The engine's model for a room. The room keeps its own history and log ([`Room::apply_ops`], [`crate::log`]), so the
 /// engine keeps neither: they would grow for as long as the room is open.
@@ -77,6 +91,11 @@ fn user_model(model: Model<'static>) -> UserModel<'static> {
     model.set_keeps_history(false);
     model.set_keeps_send_queue(false);
     model
+}
+
+/// The milliseconds since `started`.
+fn elapsed_ms(started: Instant) -> f64 {
+    started.elapsed().as_secs_f64() * 1000.0
 }
 
 fn engine(message: String) -> Error {
@@ -115,6 +134,8 @@ pub struct Room {
     pub truncated: Vec<String>,
     /// How long the last evaluation took, in milliseconds.
     pub evaluate_ms: f64,
+    /// How many times the workbook was evaluated since the room opened.
+    evaluations: u64,
     /// The last row of the log applied here: the document's ([`crate::log`]) for a shared room, its own for a scratch
     /// one.
     pub seq: i64,
@@ -168,7 +189,8 @@ impl Room {
         let mut model = fill::fill(opening.base, &opening.rows)?;
         let started = Instant::now();
         model.evaluate();
-        Ok(Self {
+        let took = elapsed_ms(started);
+        let mut room = Self {
             id,
             shared: opening.shared.is_some(),
             members: Arc::new(Mutex::new(HashMap::from([(opening.user_id, Member::now())]))),
@@ -180,7 +202,8 @@ impl Room {
             charts: opening.charts,
             data_rows,
             truncated,
-            evaluate_ms: started.elapsed().as_secs_f64() * 1000.0,
+            evaluate_ms: 0.0,
+            evaluations: 0,
             seq: opening.shared.map_or(0, |(_, seq)| seq),
             inverses: BTreeMap::new(),
             own_log: Vec::new(),
@@ -188,7 +211,27 @@ impl Room {
             filled_at: Instant::now(),
             changed: None,
             values_only: true,
-        })
+        };
+        room.timed(took);
+        Ok(room)
+    }
+
+    /// Keep how long an evaluation took (`ms`), and log one past [`slow_ms`] with the document it is of.
+    fn timed(&mut self, ms: f64) {
+        self.evaluate_ms = ms;
+        self.evaluations += 1;
+        let slow = slow_ms();
+        if ms > slow {
+            let document = self.definition_id.as_deref().unwrap_or(&self.id);
+            tracing::warn!(document, room = %self.id, ms = (ms * 10.0).round() / 10.0, slow_ms = slow,
+                "A CalcGrid evaluation was slow");
+        }
+    }
+
+    /// How many times the workbook was evaluated since the room opened.
+    #[must_use]
+    pub fn evaluations(&self) -> u64 {
+        self.evaluations
     }
 
     /// Whether `user_id` has the room open.
@@ -282,7 +325,7 @@ impl Room {
         let mut model = fill::fill(base, &rows)?;
         let started = Instant::now();
         model.evaluate();
-        self.evaluate_ms = started.elapsed().as_secs_f64() * 1000.0;
+        self.timed(elapsed_ms(started));
         self.model = user_model(model);
         self.changed = None;
         self.values_only = true;
@@ -419,7 +462,7 @@ impl Room {
         self.model.resume_evaluation();
         let started = Instant::now();
         self.model.evaluate();
-        self.evaluate_ms = started.elapsed().as_secs_f64() * 1000.0;
+        self.timed(elapsed_ms(started));
         let changes = self.model.last_changes();
         self.changed = (self.values_only && !changes.full && changes.areas.len() <= MAX_CHANGED_AREAS)
             .then(|| changes.areas.clone());

@@ -16,13 +16,16 @@
         </div>
         <q-space></q-space>
         <div class="col-auto row items-center q-gutter-xs">
-            <div v-if="room && room.evaluateMs > 250" class="text-caption" :class="mutedClass">calculated in {{Math.round(room.evaluateMs)}} ms</div>
+            <div v-if="slowCalculation" class="text-caption text-warning m-calc-slow"><q-icon name="warning" size="xs"></q-icon> calculated in {{Math.round(room.evaluateMs)}} ms
+                <q-tooltip>The last calculation took longer than {{room.slowMs}} ms. Formulas over whole columns, or many lookups, make every edit slower</q-tooltip></div>
             <div v-if="room && room.memoryBytes >= 1048576" class="text-caption" :class="mutedClass">{{(room.memoryBytes / 1048576).toFixed(1)}} MB in memory</div>
             <q-btn v-if="access.canAuthor" flat dense no-caps icon="add" label="New" @click="newOpen = true"></q-btn>
             <q-btn flat dense no-caps icon="refresh" label="Refresh" :disable="!room || busy" :loading="busy" @click="refresh"><q-tooltip>Read the data sheets again</q-tooltip></q-btn>
             <q-btn flat dense no-caps icon="download" label="XLSX" :disable="!room" @click="exportXlsx"></q-btn>
             <q-btn flat dense no-caps icon="dashboard_customize" label="Add to dashboard" :disable="!room || !room.definitionId" @click="openPanel">
                 <q-tooltip>{{room && !room.definitionId ? 'Save the document first' : 'The cells selected as a panel of one of your dashboards'}}</q-tooltip></q-btn>
+            <q-btn v-if="access.canSchedule && room && room.definitionId" flat dense no-caps icon="schedule_send" label="Schedule" @click="schedule">
+                <q-tooltip>Send the saved document on a schedule, as an Excel workbook with its data</q-tooltip></q-btn>
             <q-btn v-if="room && room.definitionId && ownsRoom" flat dense no-caps icon="delete" label="Delete" @click="deleteDocument"></q-btn>
             <q-btn v-if="access.canAuthor && room && (!room.definitionId || ownsRoom)" unelevated dense no-caps color="primary" icon="save" label="Save document"
                     :disable="busy" @click="openSave"></q-btn>
@@ -86,7 +89,7 @@ module.exports = {
     data() {
         return {
             loaded: false, busy: false, calcSheet: null,
-            access: { tools: false, profiles: [], canAuthor: false, canShare: false, fixedProfile: null, userId: '' },
+            access: { tools: false, profiles: [], canAuthor: false, canShare: false, canSchedule: false, schedulesPath: null, fixedProfile: null, userId: '' },
             // the access a call is made under: a profile's id, or '' for the Tools app's own
             profileId: '', documents: [], documentId: null, room: null, opened: null, selected: null, unavailable: '',
             newOpen: false, newEntity: null, newTitle: '', entityOptions: [],
@@ -108,6 +111,8 @@ module.exports = {
         // an author edits a document of their own, or one not saved yet
         // an author edits a document they read with the others who have it open; its owner saves it
         canEdit() { return this.access.canAuthor && !!this.room; },
+        // the last calculation was over the server's calc@slow-ms: an author is warned, with the time
+        slowCalculation() { return this.access.canAuthor && !!this.room && Number(this.room.slowMs) > 0 && Number(this.room.evaluateMs) > Number(this.room.slowMs); },
         ownsRoom() {
             const doc = this.room && this.documents.find((found) => found.definitionId === this.room.definitionId);
             return !!doc && doc.ownerId === this.access.userId;
@@ -220,6 +225,11 @@ module.exports = {
                 this.panelOpen = false;
                 moqui.notifyMessages('Added to the dashboard');
             });
+        },
+        // the saved document's schedule, on the schedules screen here (Tools' or the mount's), which preselects it
+        schedule() {
+            if (!this.access.schedulesPath || !this.room || !this.room.definitionId) return;
+            this.$root.setUrl(this.access.schedulesPath + '?definitionId=' + encodeURIComponent(this.room.definitionId));
         },
         deleteDocument() {
             const room = this.room;

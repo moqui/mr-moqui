@@ -23,6 +23,7 @@
 // editor's group field too. A key with no screen here is offered only under a mount that names one. alertRule is where a
 // rule opens for anyone who reads it; setting one there is the policy's features.alert. playlists is the list of
 // playlists, playlist where one plays in the app and wallDisplay the page it plays on full screen and unattended.
+// schedules is the list of scheduled reports, where ?definitionId= preselects one (CalcGrid's Schedule).
 const toolsLinks = {
     dashboards: "//apps/dashboards/Home",
     dashboard: "//apps/dashboards/Dashboard",
@@ -40,7 +41,8 @@ const toolsLinks = {
     logContext: "//apps/dashboards/LogContext",
     import: "//apps/dashboards/Home",
     share: null,
-    drill: "//apps/dashboards/Drill"
+    drill: "//apps/dashboards/Drill",
+    schedules: "//apps/dashboards/Schedules"
 }
 
 // The policy with no mount: what Tools' own screens do. Under a mount a field the app leaves out has the same default,

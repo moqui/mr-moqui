@@ -7,6 +7,8 @@
 // names one, else the request's profileId, else none, which is the Tools app's own access. Naming a profile gives no
 // right: the engine checks that the viewer holds it and reads only what it offers, with its entity filters.
 const mountLib = ec.resource.script("component://tools/template/ReportMount.js")
+// what the viewer's own grant of a report engine operation offers, as the delivery screens read it
+const {offered} = ec.resource.script("component://tools/template/ReportDelivery.js")
 const CALC = "org.moqui.calc.CalcServices"
 const REPORT = "org.moqui.report.ReportServices"
 const TYPE = "calcgrid"
@@ -39,8 +41,20 @@ function parse(name, fallback) {
     }
 }
 
+// The schedules screen a saved document is scheduled from (Tools' Schedules, or the mount's: the report link schedules,
+// to which ?definitionId= preselects the document), when the viewer may schedule for themselves there (list#Schedules
+// and store#Schedule, as the delivery screens offer it), else null. A link and not a dialog here, so that what the
+// mount's schedules area adds to its policy (Insights' recipient cap) holds (plans/IronCalc-DB2.md CG1.2).
+function schedulesPath(mount) {
+    if (!mount.links.schedules || !(offered("list#Schedules") && offered("store#Schedule"))) return null
+    // a screen the request's root does not reach is no link
+    const path = String(sri.buildUrl(mount.links.schedules).path || "")
+    return path && path !== "#" ? path : null
+}
+
 // How the viewer may use CalcGrid here: the profiles to choose from (none when the mount names one), the Tools app's own
-// access where there is no mount, whether they author, and the profile in use.
+// access where there is no mount, whether they author, whether and where they schedule a document, and the profile in
+// use.
 function access() {
     const mount = mountLib.state()
     const found = ask(CALC + ".get#CalcProfiles", {})
@@ -61,6 +75,7 @@ function access() {
               : profiles.length
                 ? profiles[0].profileId
                 : null
+    const schedules = schedulesPath(mount)
     return {
         errors: found.errors,
         userId: ec.user.userId,
@@ -69,7 +84,9 @@ function access() {
         current,
         profiles,
         canAuthor: found.canAuthor === true,
-        canShare: mount.policy.features.share === true
+        canShare: mount.policy.features.share === true,
+        canSchedule: !!schedules,
+        schedulesPath: schedules
     }
 }
 // Keep the access the viewer chose (a profile, or the Tools app's own) as their current one: what a dashboard panel and
