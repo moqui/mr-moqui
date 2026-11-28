@@ -251,6 +251,8 @@
         if (rule.type === "DataBar") return Object.assign(form, { kind: "bar", bar: color(rule.positive_color) || form.bar });
         return null;
     };
+    /** What the sheet says when an undo passed by rules another changed or deleted since. */
+    calc.passedText = (count) => count + " formatting rule " + (count === 1 ? "change was" : "changes were") + " changed by others since and not undone";
     /** What an edit of a rule of the layout names it by, beside its place: its range and rule as the layout gave them. */
     calc.ruleExpect = (one) => ({ range: one.range, rule: one.rule });
     /** A rule as the dialog lists it. */
@@ -479,12 +481,6 @@
         else return null;
         return op.toRow || op.toColumn ? op : null;
     };
-    /**
-     * Take the drop of a table's fill handle (Tabulator 6.7's `selectRange.fillHandle`, with `selectableRangeFill`):
-     * in place of setting the cells' data in the browser, `onFill(source, target)` is given the range dragged from and
-     * the range it reached (the rects of calc.fillOp), and the range reached is selected. The handle's own mousedown and
-     * moves draw the preview as before. False when the table has no fill handle of that shape (another Tabulator).
-     */
     /** Take a table's fill handle away (when calc.takeFillHandle could not take it over). */
     calc.dropFillHandle = (table) => {
         const ranges = table && table.modules && table.modules.selectRange, handle = ranges && ranges.fillHandle;
@@ -492,6 +488,12 @@
         try { handle.attach = () => null; if (handle.element) handle.element.remove(); } catch (_) { /* not of that shape */ }
         ranges.fillHandle = null;
     };
+    /**
+     * Take the drop of a table's fill handle (Tabulator 6.7's `selectRange.fillHandle`, with `selectableRangeFill`):
+     * in place of setting the cells' data in the browser, `onFill(source, target)` is given the range dragged from and
+     * the range it reached (the rects of calc.fillOp), and the range reached is selected. The handle's own mousedown and
+     * moves draw the preview as before. False when the table has no fill handle of that shape (another Tabulator).
+     */
     calc.takeFillHandle = (table, onFill) => {
         const ranges = table && table.modules && table.modules.selectRange, handle = ranges && ranges.fillHandle;
         const extend = handle && handle.constructor && handle.constructor.extendAlongAxis;
@@ -1083,6 +1085,8 @@
                     }
                     // what changed is this edit's alone when the room did not follow another's edit first
                     if (json.roomId) this.applied(json, !json.shared || Number(json.seq) === before + 1 ? json.changed : null);
+                    // an undo passed by conditional formats another changed or deleted since: said, not an error
+                    if (Number(json.rulesPassed) > 0) this.tell(calc.passedText(Number(json.rulesPassed)));
                     return json;
                 }, (err) => { moqui.handleAjaxError(err); return null; });
             },
