@@ -256,6 +256,26 @@ along with this software (see the LICENSE.md file). If not, see
             clean#TerminalSessions each day.</description>
         <out-parameters><parameter name="removed" type="Integer"/></out-parameters>
     </service>
+    <!-- OS accounts (plans/Terminal-Fancy2.md §4.6): where terminal@run-as is person, the account each user's host
+        sessions run as. Kept by an administrator (the System app) who holds TERMINAL_HOST. -->
+    <service verb="find" noun="TerminalOsAccounts" type="rust" location="moqui_host::term::accounts::find_terminal_os_accounts"
+            allow-remote="false" transaction="ignore">
+        <description>The users' OS accounts in force: username, osUsername, fromDate.</description>
+        <out-parameters><parameter name="accounts" type="List"/><parameter name="reasonCode"/></out-parameters>
+    </service>
+    <service verb="store" noun="TerminalOsAccount" type="rust" location="moqui_host::term::accounts::store_terminal_os_account"
+            allow-remote="false" transaction="ignore">
+        <description>username's host sessions run as osUsername from now on (never root). Whether the server may is the
+            root-owned /etc/moqui/run-as.conf's to say.</description>
+        <in-parameters><parameter name="username" required="true"/><parameter name="osUsername" required="true"/></in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+    </service>
+    <service verb="expire" noun="TerminalOsAccount" type="rust" location="moqui_host::term::accounts::expire_terminal_os_account"
+            allow-remote="false" transaction="ignore">
+        <description>username has no OS account from now on.</description>
+        <in-parameters><parameter name="username" required="true"/></in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+    </service>
     <service verb="share" noun="TerminalSession" type="rust" location="moqui_host::term::share::share_terminal_session"
             allow-remote="false" transaction="ignore">
         <description>Share one of the caller's own command lines or shells with username: to watch it, or with write Y

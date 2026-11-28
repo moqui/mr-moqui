@@ -512,6 +512,9 @@ The settings most deployments set or should know. Their defaults are in `MoquiDe
 | `service-facade@scheduled-job-check-time` | `60` | Seconds between job checks; `0` runs no scheduled jobs |
 | `terminal@command-line`, `terminal@host-sessions` | `dev` | The browser terminal's `moqui>` command line, and programs on the server's operating system: `dev` on a dev instance, `true` on for any purpose, `false` off; any other value, empty included, is off with an error in the log ([Terminal](ui/Terminal.md#conf)) |
 | `terminal@remote` | `false` | `true` lets those be reached from other machines, over HTTPS with a recent sign-in; `moqui_conf__terminal__remote=true` in `runtime/.env` is the lightest way ([Terminal](ui/Terminal.md#who-may-open-what-and-from-where)) |
+| `terminal@recording`, `recording-days`, `recording-max-mb` | `offer`, `30`, `256` | Recording what a session shows: offered to its owner, `always` on every host session, or `off`; kept 30 days, each stopping at 256 MB ([Terminal](ui/Terminal.md#recording)) |
+| `terminal@run-as`, `terminal@run-as-sudo` | `server`, `sudo` | Host sessions as the server's OS user, or with `person` as each user's own OS account through sudo, on Linux, once the server is set up for it (below; [Terminal](ui/Terminal.md#os-accounts)) |
+| `terminal@token-key` | generated | The key of a host session's `MOQUI_TERMINAL_TOKEN`, generated into `runtime/.env` ([Terminal](ui/Terminal.md#driving-a-session)) |
 | `screen-facade/pdf@chromium-path` | empty | The Chromium for PDF and the browser tests; empty looks in `runtime/chromium`, then for an installed Chromium, Google Chrome or Microsoft Edge (the PATH and the OS's install locations) |
 | `load-runner@targets`, `load-runner@max-runs`, `load-runner@max-users` | empty, `1`, `1000` | Load runs from Tools: the URL prefixes a run may reach besides this server and loopback (any URL on a dev instance; plain http to another machine only when listed), the loads at once, and the users a run |
 | `maps@external-requests`, `maps@import-max-bytes`, `maps@max-features` | `true`, `536870912` (512 MiB), `5000` | Maps ([plan](../plans/archive/Maps.md#42-metadata-and-effective-settings)): `false` stops the server's outside map requests (a geocoder, a Geo data download) and its handing a browser a profile with outside URLs; the largest Geo data download or file and what it may unzip to; the most features one overlay or viewport query returns (`0`: record layers off) |
@@ -592,6 +595,22 @@ The settings most deployments set or should know. Their defaults are in `MoquiDe
 
 The database settings are in [Database and search](#database-and-search), and the cluster settings in
 [Cluster](#cluster).
+
+### Host sessions as people's own accounts
+
+On a shared Linux dev server, `terminal@run-as="person"` runs each user's host sessions as their own OS account
+([Terminal](ui/Terminal.md#os-accounts)). It needs root once:
+
+1. `moqui term-exec --print-setup`, run as the server's OS user, prints a sudoers line and a `run-as.conf`.
+2. Install the sudoers line with `visudo -f /etc/sudoers.d/moqui-term`: the server's user may run only
+   `<moqui> term-exec *` as root, with no password and `!use_pty`.
+3. Write `/etc/moqui/run-as.conf`, owned by root and writable by no one else: the `group` whose members may be used,
+   any `account` named one by one, and the `server` account, which never is.
+4. Set `<terminal run-as="person"/>`, and on System › Terminal Sessions map each user to their OS account.
+
+The server then starts `sudo -n -- <moqui> term-exec --run-as <account>`; `term-exec` checks the account against the
+file as root, gives it the pty, drops to it for the program and ends it when the session ends. A user with no account
+is refused host sessions.
 
 ### Resource watch
 

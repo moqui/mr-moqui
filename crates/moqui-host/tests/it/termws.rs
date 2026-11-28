@@ -1031,6 +1031,141 @@ fn a_forced_recording_cannot_be_stopped_and_plays_for_its_owner_alone() {
     socket.send(Message::Binary(b"exit\r".to_vec().into())).unwrap();
 }
 
+/// A service of the terminal as `username`, in the server's process: its answer as JSON, and its errors.
+fn terminal_service(
+    gate: &crate::common::Gate,
+    username: &str,
+    service: &str,
+    parameters: &[(&str, &str)],
+) -> (serde_json::Value, String) {
+    let context = gate.server.factory().new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user(username).unwrap();
+    let parameters: std::collections::BTreeMap<String, moqui_lib::object::Value> = parameters
+        .iter()
+        .map(|(name, value)| (name.to_string(), moqui_lib::object::Value::string(*value)))
+        .collect();
+    let out = moqui_core::service::sync(&format!("org.moqui.terminal.TerminalServices.{service}"), &parameters);
+    let mut errors =
+        moqui_core::context::ExecutionContext::with_current(|ec| ec.message().errors().join("; ")).unwrap_or_default();
+    let out = match out {
+        Ok(out) => out,
+        Err(err) => {
+            errors.push_str(err.message());
+            Default::default()
+        }
+    };
+    (
+        moqui_lib::json::to_json(&moqui_lib::object::Value::Map(out.into_iter().collect())),
+        errors,
+    )
+}
+
+/// OS accounts (plans/Terminal-Fancy2.md §4.6): with run-as="person", a user with no account is refused host sessions;
+/// only an administrator with TERMINAL_HOST names one, and naming one again replaces it.
+#[test]
+fn run_as_person_refuses_a_user_with_no_os_account_and_an_administrator_names_one() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let helper = helper_property();
+    let gate = crate::common::start_with_conf_files(
+        "termws-runas",
+        Some(PLAIN_USER),
+        r#"<terminal run-as="person"><host-profile name="plain" title="Plain sh" command="sh"/></terminal>"#,
+        &[("moqui_conf__instance__purpose", "dev"), (helper.0, &helper.1)],
+        &[],
+    );
+    let page = Page::signed_in(gate.server.address(), "john.doe");
+    gate.server.factory().flush_sessions().unwrap();
+    let refused = page.call(
+        "open",
+        Some(serde_json::json!({"kind": "host", "profileName": "plain"})),
+    );
+    assert_eq!(refused["reasonCode"], "noOsAccount", "{refused}");
+    let (_, errors) = terminal_service(
+        &gate,
+        "plain.user",
+        "store#TerminalOsAccount",
+        &[("username", "plain.user"), ("osUsername", "plain")],
+    );
+    assert!(!errors.is_empty(), "not an administrator");
+    let (_, errors) = terminal_service(
+        &gate,
+        "john.doe",
+        "store#TerminalOsAccount",
+        &[("username", "john.doe"), ("osUsername", "root")],
+    );
+    assert!(errors.contains("never root"), "{errors}");
+    for account in ["jdoe", "johnd"] {
+        let (_, errors) = terminal_service(
+            &gate,
+            "john.doe",
+            "store#TerminalOsAccount",
+            &[("username", "john.doe"), ("osUsername", account)],
+        );
+        assert!(errors.is_empty(), "{errors}");
+    }
+    let (listed, _) = terminal_service(&gate, "john.doe", "find#TerminalOsAccounts", &[]);
+    let accounts = listed["accounts"].as_array().unwrap();
+    assert_eq!(accounts.len(), 1, "{listed}");
+    assert_eq!(accounts[0]["osUsername"], "johnd");
+    terminal_service(
+        &gate,
+        "john.doe",
+        "expire#TerminalOsAccount",
+        &[("username", "john.doe")],
+    );
+    let (listed, _) = terminal_service(&gate, "john.doe", "find#TerminalOsAccounts", &[]);
+    assert!(listed["accounts"].as_array().unwrap().is_empty(), "{listed}");
+}
+
+/// A host session as another OS account, live (plans/Terminal-Fancy2.md §4.6): on a Linux server set up for it
+/// (`moqui term-exec --print-setup`: the sudoers line for this test binary, and /etc/moqui/run-as.conf allowing the
+/// account MOQUI_RUNAS_TEST_ACCOUNT names), the program runs as that account, in its home, and ends when the session is
+/// ended. Opt-in: `cargo test -p moqui-host --test it -- --ignored termws::a_host_session_runs_as_another_account`.
+#[test]
+#[ignore = "needs a Linux server set up for run-as and MOQUI_RUNAS_TEST_ACCOUNT"]
+fn a_host_session_runs_as_another_account() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let Ok(account) = std::env::var("MOQUI_RUNAS_TEST_ACCOUNT") else {
+        panic!("MOQUI_RUNAS_TEST_ACCOUNT names the account /etc/moqui/run-as.conf allows");
+    };
+    let gate = crate::common::start_with_conf_files(
+        "termws-runas-live",
+        None,
+        r#"<terminal run-as="person"><host-profile name="plain" title="Plain sh" command="sh"/></terminal>"#,
+        &[("moqui_conf__instance__purpose", "dev")],
+        &[],
+    );
+    let page = Page::signed_in(gate.server.address(), "john.doe");
+    gate.server.factory().flush_sessions().unwrap();
+    let (_, errors) = terminal_service(
+        &gate,
+        "john.doe",
+        "store#TerminalOsAccount",
+        &[("username", "john.doe"), ("osUsername", &account)],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    let opened = page.call(
+        "open",
+        Some(serde_json::json!({"kind": "host", "profileName": "plain"})),
+    );
+    let id = opened["sessionId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{opened}"))
+        .to_string();
+    let mut socket = page.attach(&id, None);
+    socket
+        .send(Message::Binary(b"echo \"as=$(id -un) home=$HOME\"\r".to_vec().into()))
+        .unwrap();
+    read_messages_until(&mut socket, &format!("as={account} home=")).unwrap();
+    page.call("close", Some(serde_json::json!({"sessionId": id})));
+    assert!(read_messages_until(&mut socket, "never").is_err(), "it ends when ended");
+}
+
 /// The holder (plans/archive/Terminal-Fancy.md §7.5): a host session's program runs on through a restart of the server,
 /// and the next window gets its output again and goes on with it.
 #[test]

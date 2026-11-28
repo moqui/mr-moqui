@@ -158,7 +158,7 @@ impl Holder {
         record: Option<&super::record::Keep>,
     ) -> io::Result<Program> {
         self.ensure().await?;
-        let helper = super::exec::helper("term-exec")?;
+        let helper = launch.helper()?;
         let mut helper_line = vec![helper.0];
         helper_line.extend(helper.1);
         let request = serde_json::json!({

@@ -311,8 +311,10 @@ are listed apart. SSH gets `attach --view <id>` (`command/attach.rs`).
 - **No new `unsafe`** (Practices-Rust §7). The child is one thread, so rustix's thread-level credential calls drop it
   whole; the supervisor's signals are tokio's. TF6 proves this first. Linux only: rustix has these calls on Linux
   alone.
-- **The holder** starts the helper with the spec as an argument for such a session, since sudo clears the
-  environment that carries it now: with the account in `open`, `PROTOCOL` becomes 3.
+- **The holder** needs no change: the server builds the whole helper line (`sudo -n -- <moqui> term-exec --run-as
+  <account> --spec <b64>`, the spec in the arguments since sudo clears the environment) and the holder runs it as it
+  runs any helper. `exec::signal` signals the pid itself when the program has no group of its own (sudo's), and a
+  SIGKILL there is a SIGTERM, so a held session's kill needs no new request either. `PROTOCOL` stays 2.
 - **The environment** is not the server's: `HOME`, `USER`, `LOGNAME`, `SHELL` and a `PATH` from the account's passwd
   entry, `TERM` and the others of Terminal-Fancy §7.3, and the profile's env; a login shell, so the account's profile
   does the rest.

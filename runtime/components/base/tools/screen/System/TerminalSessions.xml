@@ -28,6 +28,16 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
 
+    <transition name="storeOsAccount">
+        <service-call name="org.moqui.terminal.TerminalServices.store#TerminalOsAccount" in-map="{username:username, osUsername:osUsername}"/>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="expireOsAccount">
+        <service-call name="org.moqui.terminal.TerminalServices.expire#TerminalOsAccount" in-map="{username:username}"/>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
     <transition name="deleteRecording">
         <service-call name="org.moqui.terminal.TerminalServices.delete#TerminalRecording" in-map="{recordingId:recordingId}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">The recording was deleted</message></if></actions>
@@ -36,6 +46,18 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
 
     <actions><script><![CDATA[
+        // the OS accounts of run-as="person" (plans/Terminal-Fancy2.md §4.6), for an administrator with TERMINAL_HOST
+        osAccountList = []
+        runAsPerson = ec.factory.getConfValue('terminal@run-as') === 'person'
+        if (runAsPerson && ec.user.hasPermission('TERMINAL_HOST')) {
+            try {
+                osAccountList = (ec.service.sync().name('org.moqui.terminal.TerminalServices.find#TerminalOsAccounts').call() || {}).accounts || []
+            } catch (e) {
+                osAccountList = []
+            }
+            ec.message.clearErrors()
+        }
+        mayKeepAccounts = runAsPerson && ec.user.hasPermission('TERMINAL_HOST')
         // the recordings, in a build that records (one without host sessions has none)
         recordingList = []
         try {
@@ -84,6 +106,26 @@ along with this software (see the LICENSE.md file). If not, see
                                 <field name="submitButton"><default-field title="End the session"><submit confirmation="End this session? Its program stops."/></default-field></field>
                             </form-single>
                         </container-dialog>
+                    </default-field></field>
+                </form-list>
+            </widgets>
+        </section>
+        <section name="TerminalOsAccountSection" condition="mayKeepAccounts">
+            <widgets>
+                <label text="Accounts" type="h6"/>
+                <label text="The operating system account each user's host sessions run as. The server may start programs only as the accounts /etc/moqui/run-as.conf allows (moqui term-exec --print-setup)." type="p" style="m-muted"/>
+                <form-single name="StoreOsAccount" transition="storeOsAccount">
+                    <field name="username"><default-field title="User"><text-line size="20"/></default-field></field>
+                    <field name="osUsername"><default-field title="OS account"><text-line size="20"/></default-field></field>
+                    <field name="submitButton"><default-field title="Set"><submit/></default-field></field>
+                    <field-layout><field-row-big><field-ref name="username"/><field-ref name="osUsername"/><field-ref name="submitButton"/></field-row-big></field-layout>
+                </form-single>
+                <form-list name="TerminalOsAccountList" list="osAccountList" skip-form="true" paginate="false">
+                    <field name="username"><default-field title="User"><display/></default-field></field>
+                    <field name="osUsername"><default-field title="OS account"><display/></default-field></field>
+                    <field name="fromDate"><default-field title="From"><display/></default-field></field>
+                    <field name="expire"><default-field title="">
+                        <link url="expireOsAccount" text="Remove" parameter-map="{username: username}" confirmation="This user's host sessions are refused from now on. Remove?"/>
                     </default-field></field>
                 </form-list>
             </widgets>

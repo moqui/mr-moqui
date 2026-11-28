@@ -36,6 +36,7 @@ pub(crate) struct Ring {
 }
 
 impl Ring {
+    #[cfg_attr(not(feature = "devtools"), allow(dead_code))]
     pub fn new(capacity: usize) -> Self {
         Self::starting_at(capacity, 0)
     }

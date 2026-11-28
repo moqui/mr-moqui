@@ -183,6 +183,20 @@ far behind is let go and comes back by what it drew. Only your own watching wind
   recent sign-in), and the driving services read a shared session too, typing only where the share lets them.
 - `/termws?session=<id>&observe=1` watches; over SSH, `attach --view <id>`.
 
+## OS accounts
+
+A host session runs as the server's OS user (`terminal@run-as="server"`, the default). On a shared Linux dev server,
+`run-as="person"` runs each user's as their own OS account (plans/Terminal-Fancy2.md §4.6): an administrator with
+`TERMINAL_HOST` maps users to accounts on System › Terminal Sessions › Accounts, and a user with none is refused host
+sessions (`noOsAccount`). The program has that account's `HOME`, `USER`, `LOGNAME`, `SHELL` and a plain `PATH`, its login
+shell (for the shell profile, the account's own), and starts in the profile's directory or the account's home;
+nothing of the server's own environment. The server starts it through `sudo -n -- <moqui> term-exec --run-as
+<account>` (`terminal@run-as-sudo`); as root, `term-exec` allows only the accounts `/etc/moqui/run-as.conf` names
+(a group's members, accounts one by one, never root or the server's own), gives the account the pty, drops to it for
+the program, and ends the program when the session ends. Setting it up is root's, once
+([Run-Deploy](../Run-Deploy.md#host-sessions-as-peoples-own-accounts)). Agent Code's `run-as` account takes the same
+path.
+
 ## Recording
 
 A session's output can be kept as an asciicast file (plans/Terminal-Fancy2.md §4.5): what it showed, with its timing
@@ -250,7 +264,7 @@ apps session cannot be driven.
 
 ```xml
 <terminal max-sessions="16" max-sessions-per-user="4" detach-seconds="120" replay-kb="2048" screen-scrollback="1000"
-        recording="offer" recording-days="30" recording-max-mb="256"
+        recording="offer" recording-days="30" recording-max-mb="256" run-as="server" run-as-sudo="sudo"
         command-line="dev" host-sessions="dev" remote="false"
         remote-reauth-minutes="60" host-max-sessions="32" host-max-sessions-per-user="16" host-detach-hours="72"
         host-directory="">

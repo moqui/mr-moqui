@@ -58,6 +58,8 @@ fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<
     super::share::register(map)?;
     #[cfg(all(feature = "devtools", unix))]
     super::recording::register(map)?;
+    #[cfg(all(feature = "devtools", unix))]
+    super::accounts::register(map)?;
     Ok(())
 }
 
@@ -278,6 +280,12 @@ fn open_terminal_session(parameters: &BTreeMap<String, Value>, _facade: &EntityF
             match open_host(&factory, &registry, &username, &opening, &facts) {
                 Ok(session) => Ok(session),
                 Err(HostRefusal::NoProfile) => return refuse(NOT_AVAILABLE, "No such terminal profile"),
+                Err(HostRefusal::NoOsAccount) => {
+                    return refuse(
+                        "noOsAccount",
+                        "No operating system account is set up for you on this server",
+                    )
+                }
                 Err(HostRefusal::Refused(reason)) => Err(reason),
             }
         }
@@ -376,6 +384,8 @@ struct HostOpening<'a> {
 #[cfg(all(feature = "devtools", unix))]
 enum HostRefusal {
     NoProfile,
+    /// `terminal@run-as` is `person` and the user has no OS account mapped.
+    NoOsAccount,
     Refused(String),
 }
 
@@ -402,6 +412,8 @@ fn open_host(
     else {
         return Err(HostRefusal::NoProfile);
     };
+    // as the user's own OS account, when the conf says so and they have one (plans/Terminal-Fancy2.md §4.6)
+    let run_as = super::host::run_as_for(factory, username).map_err(|_| HostRefusal::NoOsAccount)?;
     let id = super::registry::new_id().map_err(HostRefusal::Refused)?;
     let directory = Some(opening.directory).filter(|directory| !directory.is_empty());
     let launch = super::host::Launch::of(
@@ -412,6 +424,7 @@ fn open_host(
         directory,
         opening.resume,
         opening.size,
+        run_as,
     );
     let command_line = launch.command_line();
     let directory = launch.directory.to_string_lossy().into_owned();

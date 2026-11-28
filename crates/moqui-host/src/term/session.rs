@@ -148,6 +148,7 @@ enum Command {
         reply: oneshot::Sender<Attached>,
     },
     /// Let go of every client of `username`: their share was revoked.
+    #[cfg_attr(not(feature = "devtools"), allow(dead_code))]
     Revoke {
         username: String,
     },
@@ -379,11 +380,13 @@ impl Session {
     }
 
     /// Share the session with `username`, who may type in it when `write` (§4.4, D3).
+    #[cfg_attr(not(feature = "devtools"), allow(dead_code))]
     pub fn share(&self, username: &str, write: bool) {
         lock(&self.shares).insert(username.to_string(), write);
     }
 
     /// Take `username`'s share back: their windows on it are let go. Whether they had one.
+    #[cfg_attr(not(feature = "devtools"), allow(dead_code))]
     pub fn unshare(&self, username: &str) -> bool {
         let had = lock(&self.shares).remove(username).is_some();
         if had {

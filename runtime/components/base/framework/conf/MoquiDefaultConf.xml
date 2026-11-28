@@ -1250,7 +1250,9 @@
         generated into runtime/.env as moqui_conf__terminal__token_key. A session's recording (§4.5: what it shows,
         never what is typed) is offered to its owner (recording="offer", and a host-profile's record="true" starts its
         sessions recorded), forced on every host session (always) or off; recordings are kept recording-days and stop
-        at recording-max-mb. On a dev instance (command-line and host-sessions: dev by default, false off, true on
+        at recording-max-mb. Host sessions run as the server's OS user (run-as="server"), or as each user's own OS
+        account (person: a TerminalOsAccount, through run-as-sudo and the root-owned /etc/moqui/run-as.conf, Linux only;
+        moqui term-exec --print-setup prints the setup). On a dev instance (command-line and host-sessions: dev by default, false off, true on
         for any purpose; any other value off, logged) the browser terminal offers the moqui> command line to a user with
         SSH_SHELL and programs on the server's operating system (the host-profile elements, and the shell profile: the
         server user's own shell) to a user with TERMINAL_HOST. From anywhere but this machine those need remote="true",
@@ -1258,7 +1260,7 @@
     <terminal max-sessions="16" max-sessions-per-user="4" detach-seconds="120" replay-kb="2048" screen-scrollback="1000"
             command-line="dev" host-sessions="dev" remote="false"
             remote-reauth-minutes="60" host-max-sessions="32" host-max-sessions-per-user="16" host-detach-hours="72"
-            host-directory="" token-key="CHANGEME" recording="offer" recording-days="30" recording-max-mb="256">
+            host-directory="" token-key="CHANGEME" recording="offer" recording-days="30" recording-max-mb="256" run-as="server" run-as-sudo="sudo">
         <host-profile name="shell" title="Shell" integration="true"/>
         <host-profile name="bash" title="bash" command="bash" login="true" integration="true"/>
         <host-profile name="zsh" title="zsh" command="zsh" login="true" integration="true"/>
