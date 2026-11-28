@@ -44,7 +44,9 @@ fn https() -> &'static moqui_core::listeners::ListenerSwitch {
 /// The listeners with a switch besides HTTP that bind a fixed port by default or by the conf (the dev conf's SSH on
 /// 2222, HTTPS on 8443, gRPC on 4317), by their rows' names in [`moqui_core::listeners::SWITCHES`].
 const OTHER_SWITCHES: [&str; 3] = ["gRPC", "SSH", "HTTPS"];
-/// The cluster's port, 8444 when empty: it has no switch and is always on.
+/// The cluster's port, 8444 when empty. Its switch, `cluster-member@listen`, is not a boolean: under `auto`, the
+/// default, it opens once another member is live on the same database (plans/Runtime-Config.md §3.5), so the test
+/// server always binds a free one.
 const CLUSTER_PORT: &str = "cluster-member@https-port";
 
 /// Each port besides HTTP's that the server of a test run binds a free port for instead, so it starts beside a running
@@ -233,7 +235,7 @@ fn serve_on(
             continue;
         }
         let set = setting(name);
-        // a listener with a switch moves only while it is on; the cluster port is always on (an empty one is 8444)
+        // a listener with a switch moves only while it is on; the cluster port always moves (an empty one is 8444)
         let on = switch.is_none_or(|switch| moqui_core::context::conf_env::switch_on(&setting(switch)));
         if on {
             if !set.is_empty() && set != "0" {

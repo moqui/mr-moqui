@@ -39,12 +39,17 @@
 //!
 //! Each factory keeps its own state (sender, member id, queue, peers): a write or notification fans out only to the
 //! peers of the factory whose entity facade made it, so two factories in one process do not post for each other.
+//!
+//! Whether this member is in a cluster ([`cluster_detected`]), the hook the host's cluster port follows it by and the
+//! short checks between heartbeats are `membership` (plans/Runtime-Config.md §3.5).
 
 mod direct;
+mod membership;
 #[cfg(all(test, feature = "cluster-tls"))]
 mod tests;
 
 pub use direct::{for_this_member, send_to, DIRECT_LIMIT};
+pub use membership::{cluster_detected, on_membership, MembershipHook};
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -125,6 +130,22 @@ pub(crate) struct ClusterState {
     /// Batches the sender thread has taken and not finished, so a test can wait for the posts.
     in_flight: AtomicUsize,
     loopback_warned: AtomicBool,
+    /// Told when [`PeerCache::cluster`] changes ([`on_membership`]).
+    membership: Mutex<Option<MembershipHook>>,
+    /// `cluster-member@lone-check-seconds` was not a number of seconds at the last read, and that was logged.
+    lone_setting_warned: AtomicBool,
+    /// The reads of the member table begun, numbered so one applied after a later one is dropped
+    /// (`membership::newest`).
+    reads: AtomicU64,
+    /// The last read of the member table failed, and that was logged: a database that is down is named once, not at
+    /// every short check.
+    read_failed_logged: AtomicBool,
+    /// The member ids the last read left out and logged (`membership::read_peers`), so a row that stays is named once.
+    left_out_warned: Mutex<Vec<String>>,
+    /// How long a peer whose posts failed is skipped, in place of [`PEER_BACKOFF`], for tests ([`set_peer_backoff`]).
+    peer_backoff: Mutex<Option<Duration>>,
+    /// Held while [`refresh_member`] makes and writes this member's row, so two rewrites at once leave the newer.
+    rewrite: Mutex<()>,
     /// The row [`start`] wrote, which the heartbeat writes again when peers deleted it.
     member: Mutex<Option<Member>>,
     /// The heartbeat's interval instead of the scheduler's, for tests.
@@ -307,6 +328,13 @@ struct PeerCache {
     /// write is needed. The value is the gap's number, so a gap found while a clear was on its way is not forgotten.
     dirty: HashMap<String, u64>,
     gaps: u64,
+    /// A cluster is detected (plans/Runtime-Config.md §3.5): from a read that finds a live peer until one that finds no
+    /// other member's row left, which the heartbeats delete ten liveness windows after its last heartbeat
+    /// (`membership::cluster_after`). A peer whose heartbeat falls behind for a while does not close the cluster port
+    /// under it.
+    cluster: bool,
+    /// The number of the last read of the member table applied here (`membership::newest`).
+    applied_read: u64,
 }
 
 impl PeerCache {
@@ -333,6 +361,13 @@ impl ClusterState {
             dropped: AtomicU64::new(0),
             in_flight: AtomicUsize::new(0),
             loopback_warned: AtomicBool::new(false),
+            membership: Mutex::new(None),
+            lone_setting_warned: AtomicBool::new(false),
+            reads: AtomicU64::new(0),
+            read_failed_logged: AtomicBool::new(false),
+            left_out_warned: Mutex::new(Vec::new()),
+            peer_backoff: Mutex::new(None),
+            rewrite: Mutex::new(()),
             member: Mutex::new(None),
             #[cfg(test)]
             heartbeat_every: Mutex::new(None),
@@ -432,7 +467,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
         .ok_or_else(|| Error::new("the entity facade is not installed"))?;
     let instance_id = ensure_instance_id(factory)?;
     let fingerprints = configured_fingerprints()?;
-    let base_url = cluster_base_url()?;
+    let base_url = cluster_base_url(factory)?;
     reject_peer_mismatch(&facade, factory, &instance_id, &fingerprints)?;
     warn_ssh_key_mismatch(&facade, factory, &instance_id);
     let member = Member {
@@ -458,14 +493,20 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
     {
         let mut peers = lock(&state.peers);
         let dirty = std::mem::take(&mut peers.dirty);
-        let gaps = peers.gaps;
+        let (gaps, cluster, applied_read) = (peers.gaps, peers.cluster, peers.applied_read);
         *peers = PeerCache {
             dirty,
             gaps,
+            cluster,
+            applied_read,
             ..PeerCache::default()
         };
     }
     facade.with_slot(ClusterLink::default, |link| link.0 = Arc::downgrade(&state));
+    // whether this member starts in a cluster, read once now that its row is written, so the cluster port opens in the
+    // boot's pass before the server reports ready (plans/Runtime-Config.md §3.5); the fan-out's list waits for the
+    // first send as before
+    membership::detect_cluster(&state, factory, &facade);
     install_heartbeat(factory);
     // what needs this member's id: the vault's lease registry (moqui-vault-server)
     crate::extension::cluster_started(factory);
@@ -885,15 +926,17 @@ pub fn set_edge_member_key(factory: &ExecutionContextFactory, fingerprint: &str)
 /// Write this member's row again with its base URL and SSH host key as they are now: the host calls it after its SSH
 /// server starts or binds again while the server runs (plans/Runtime-Config.md §3.4), since with `transport="ssh"` the
 /// base URL defaults to that server's address ([`SSH_ADDRESS_PROPERTY`]) and peers pin its host key
-/// ([`SSH_FINGERPRINT_PROPERTY`]). Nothing before [`start`] has written the row, which reads them itself; nothing when
-/// neither changed. A base URL that cannot be made, or a row that cannot be written, is logged and the row keeps what
-/// it had.
+/// ([`SSH_FINGERPRINT_PROPERTY`]), and after its cluster port starts (§3.5), whose port the default base URL names.
+/// Nothing before [`start`] has written the row, which reads them itself; nothing when neither changed. A base URL that
+/// cannot be made, or a row that cannot be written, is logged and the row keeps what it had.
 pub fn refresh_member(factory: &ExecutionContextFactory) {
     let state = ClusterState::of(factory);
     let Some(facade) = factory.entity() else {
         return;
     };
-    let base_url = cluster_base_url();
+    // one rewrite at a time, each making the row from what is current as it runs, so the last one leaves the newest
+    let _one = lock(&state.rewrite);
+    let base_url = cluster_base_url(factory);
     let ssh_fp = env::get_prop_or_env(SSH_FINGERPRINT_PROPERTY);
     let mut member = {
         let mut kept = lock(&state.member);
@@ -1003,7 +1046,10 @@ pub const SSH_FINGERPRINT_PROPERTY: &str = "cluster_ssh_host_key_fingerprint";
 /// The property the host sets to the address its SSH server bound, for the default `ssh://` base URL.
 pub const SSH_ADDRESS_PROPERTY: &str = "cluster_ssh_address";
 
-fn cluster_base_url() -> Result<String, Error> {
+/// How peers reach this member: `cluster-member@base-url`, else by its transport: `pg-notify:`, its SSH server's
+/// address, or its cluster port on 127.0.0.1 (one host only) by `factory`'s running conf, so a port changed while the
+/// server runs is the one a rewrite of the row names ([`refresh_member`]).
+fn cluster_base_url(factory: &ExecutionContextFactory) -> Result<String, Error> {
     let configured = crate::context::conf_env::setting("cluster-member@base-url");
     let url = if !configured.is_empty() {
         configured
@@ -1018,13 +1064,16 @@ fn cluster_base_url() -> Result<String, Error> {
         }
         format!("ssh://{address}")
     } else {
-        format!("https://127.0.0.1:{}", cluster_port()?)
+        format!("https://127.0.0.1:{}", cluster_port(factory)?)
     };
     Ok(trim_base(&url))
 }
 
-fn cluster_port() -> Result<u16, Error> {
-    let raw = crate::context::conf_env::setting("cluster-member@https-port");
+fn cluster_port(factory: &ExecutionContextFactory) -> Result<u16, Error> {
+    let raw = factory
+        .conf_value("cluster-member@https-port")
+        .map(|found| found.value.trim().to_string())
+        .unwrap_or_default();
     if raw.is_empty() {
         return Ok(DEFAULT_PORT);
     }
@@ -1110,26 +1159,45 @@ fn ssh_key_differs(members: &[LoadedMember], instance_id: &str, ours: &str, now:
         .collect()
 }
 
-/// Start the heartbeat thread: [`heartbeat`] every scheduler interval. It runs on a thread of its own, not as a
-/// scheduler hook, so a long job pass or maintenance hook does not hold it past the liveness window and drop this member
-/// out of its peers' fan-out (`plans/archive/High-Level-Review.md` HL-020). Pools with no threads (inline, idle) run no
-/// scheduler, so they get no heartbeat, as before.
+/// Start the heartbeat thread: [`heartbeat`] every scheduler interval, and between, a short check every
+/// `cluster-member@lone-check-seconds` (`membership::short_check`, plans/Runtime-Config.md §3.5), which reads the member
+/// table while this member is alone under `cluster-member@listen="auto"` and sends a peer marked as having missed
+/// messages its clear, and else does nothing. It runs on a thread of its own, not as a scheduler hook, so a long job pass or maintenance hook does not hold it past the liveness
+/// window and drop this member out of its peers' fan-out (`plans/archive/High-Level-Review.md` HL-020). Pools with no
+/// threads (inline, idle) run no scheduler, so they get no heartbeat, as before.
 fn install_heartbeat(factory: &Arc<ExecutionContextFactory>) {
     if !factory.service_pools().is_threaded() || factory.cluster_heartbeat.swap(true, Ordering::AcqRel) {
         return;
     }
     let weak = Arc::downgrade(factory);
-    let spawned = factory.spawn_background("moqui-cluster-heartbeat", move || loop {
-        let every = match weak.upgrade() {
-            Some(factory) => heartbeat_interval(&factory),
-            None => return,
-        };
-        let Some(factory) = ExecutionContextFactory::sleep_while_running(&weak, every) else {
-            return;
-        };
-        let context = factory.new_context();
-        let _entered = context.enter();
-        heartbeat(&factory);
+    let spawned = factory.spawn_background("moqui-cluster-heartbeat", move || {
+        // when the next heartbeat is due; the intervals are read again on each pass, so a change applies from the next
+        let mut beat_at: Option<Instant> = None;
+        loop {
+            let (every, short) = match weak.upgrade() {
+                Some(factory) => (heartbeat_interval(&factory), membership::wake_every(&factory)),
+                None => return,
+            };
+            let now = Instant::now();
+            // an interval too long to add to now is taken as a day
+            let due = *beat_at.get_or_insert_with(|| {
+                now.checked_add(every)
+                    .or_else(|| now.checked_add(Duration::from_secs(24 * 60 * 60)))
+                    .unwrap_or(now)
+            });
+            let wait = membership::next_wake(due.saturating_duration_since(now), short);
+            let Some(factory) = ExecutionContextFactory::sleep_while_running(&weak, wait) else {
+                return;
+            };
+            let context = factory.new_context();
+            let _entered = context.enter();
+            if Instant::now() >= due {
+                beat_at = None;
+                heartbeat(&factory);
+            } else {
+                membership::short_check(&factory);
+            }
+        }
     });
     if let Err(err) = spawned {
         factory.cluster_heartbeat.store(false, Ordering::Release);
@@ -1170,7 +1238,7 @@ pub fn heartbeat(factory: &ExecutionContextFactory) {
         tracing::warn!("cluster member cleanup failed: {err}");
     }
     refresh_peers(&state, factory);
-    warn_loopback_peers(&state);
+    warn_loopback_peers(&state, factory);
     request_resync(&state);
 }
 
@@ -1395,27 +1463,48 @@ fn current_peers(state: &ClusterState, factory: &ExecutionContextFactory) -> Vec
     lock(&state.peers).urls.clone()
 }
 
+/// Read the live peers again for the fan-out, and whether this member is in a cluster ([`cluster_detected`]), which
+/// tells the membership hook when it changes: the heartbeat, a short check and a send whose list is too old call it. A
+/// read that began before the last one applied is dropped; one that fails is logged once until a read succeeds.
 fn refresh_peers(state: &ClusterState, factory: &ExecutionContextFactory) {
     let Some(facade) = factory.entity() else {
         return;
     };
-    match live_peer_urls(state, factory, &facade) {
-        Ok(urls) => {
-            let mut peers = lock(&state.peers);
-            // A peer not in the last list was out of this member's fan-out (its heartbeat fell behind, or its row was
-            // deleted and written again) and may have missed invalidations; a new member's clear costs nothing.
-            if peers.read_at != 0 {
-                let returned: Vec<String> = urls.iter().filter(|url| !peers.urls.contains(url)).cloned().collect();
-                for url in returned {
-                    peers.mark_dirty(&url);
-                }
+    let read = membership::next_read(state);
+    match membership::read_peers(state, factory, &facade) {
+        Ok(membership::PeerRead { urls, rows_left }) => {
+            if state.read_failed_logged.swap(false, Ordering::Relaxed) {
+                tracing::info!("cluster fan-out reads the member table again");
             }
-            // A peer that left is marked again if it returns, so its marker need not be kept meanwhile.
-            peers.dirty.retain(|url, _| urls.contains(url));
-            peers.urls = urls;
-            peers.read_at = now_millis();
+            let changed = {
+                let mut peers = lock(&state.peers);
+                if !membership::newest(&mut peers, read) {
+                    return;
+                }
+                // A peer not in the last list was out of this member's fan-out (its heartbeat fell behind, or its row
+                // was deleted and written again) and may have missed invalidations; a new member's clear costs nothing.
+                if peers.read_at != 0 {
+                    let returned: Vec<String> = urls.iter().filter(|url| !peers.urls.contains(url)).cloned().collect();
+                    for url in returned {
+                        peers.mark_dirty(&url);
+                    }
+                }
+                // A peer that left is marked again if it returns, so its marker need not be kept meanwhile.
+                peers.dirty.retain(|url, _| urls.contains(url));
+                let live = !urls.is_empty();
+                peers.urls = urls;
+                peers.read_at = now_millis();
+                membership::set_cluster(&mut peers, live, rows_left)
+            };
+            if let Some(cluster) = changed {
+                membership::tell_membership(state, cluster);
+            }
         }
-        Err(err) => tracing::warn!("cluster fan-out could not load members: {err}"),
+        Err(err) => {
+            if !state.read_failed_logged.swap(true, Ordering::Relaxed) {
+                tracing::warn!("cluster fan-out could not load members (logged once until a read succeeds): {err}");
+            }
+        }
     }
 }
 
@@ -1432,9 +1521,17 @@ fn peer_down(state: &ClusterState, base_url: &str) -> bool {
 }
 
 fn mark_peer_down(state: &ClusterState, base_url: &str) {
+    let backoff = (*lock(&state.peer_backoff)).unwrap_or(PEER_BACKOFF);
     lock(&state.peers)
         .down_until
-        .insert(base_url.to_string(), Instant::now() + PEER_BACKOFF);
+        .insert(base_url.to_string(), Instant::now() + backoff);
+}
+
+/// Skip a peer of `factory` whose posts failed for `backoff` in place of [`PEER_BACKOFF`]: for a test that waits out
+/// the backoff, as the core tests' `set_heartbeat_interval` changes the heartbeat's interval.
+#[doc(hidden)]
+pub fn set_peer_backoff(factory: &ExecutionContextFactory, backoff: Duration) {
+    *lock(&ClusterState::of(factory).peer_backoff) = Some(backoff);
 }
 
 /// Whether a member row names this member's session key and cluster certificate, so cluster messages may go to its
@@ -1442,41 +1539,6 @@ fn mark_peer_down(state: &ClusterState, base_url: &str) {
 /// other material, gets none. Before this member has started, every row does.
 fn same_material(member: &LoadedMember, own: Option<&Member>) -> bool {
     own.is_none_or(|own| member.session_fp == own.session_fp && member.cert_fp == own.cert_fp)
-}
-
-fn live_peer_urls(
-    state: &ClusterState,
-    factory: &ExecutionContextFactory,
-    facade: &EntityFacade,
-) -> Result<Vec<String>, Error> {
-    let instance_id = state.instance_id();
-    let now = db_now(facade);
-    let window = window_millis(factory);
-    let own = lock(&state.member).clone();
-    let mut bases = Vec::new();
-    for member in load_members(facade)? {
-        if member.instance_id == instance_id || !is_live(member.heartbeat, now, window) {
-            continue;
-        }
-        if !same_material(&member, own.as_ref()) {
-            tracing::warn!(
-                "cluster member {} is left out: its row names another session key or cluster certificate",
-                member.instance_id
-            );
-            continue;
-        }
-        let base = trim_base(&member.base_url);
-        // Every notify member is reached by the one NOTIFY, so they are one peer here.
-        let base = if base.starts_with(NOTIFY_BASE_URL) {
-            NOTIFY_BASE_URL.to_string()
-        } else {
-            base
-        };
-        if !base.is_empty() && !bases.contains(&base) {
-            bases.push(base);
-        }
-    }
-    Ok(bases)
 }
 
 /// Assign a message identity and validate its complete envelope before applying a collaborative edit.
@@ -1728,12 +1790,12 @@ fn delete_dead_members(facade: &EntityFacade, before: i64, after: i64) -> Result
 
 /// A live member whose base URL is a loopback address cannot be reached from another host: say so once, since the
 /// fan-out to it fails without a sign otherwise.
-fn warn_loopback_peers(state: &ClusterState) {
+fn warn_loopback_peers(state: &ClusterState, factory: &ExecutionContextFactory) {
     let peers = lock(&state.peers).urls.clone();
     if peers.is_empty() || state.loopback_warned.load(Ordering::Relaxed) {
         return;
     }
-    let own = cluster_base_url().unwrap_or_default();
+    let own = cluster_base_url(factory).unwrap_or_default();
     let loopback = |url: &str| url.contains("://127.") || url.contains("://localhost") || url.contains("://[::1]");
     if loopback(&own) || peers.iter().any(|url| loopback(url)) {
         state.loopback_warned.store(true, Ordering::Relaxed);

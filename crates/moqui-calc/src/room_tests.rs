@@ -415,6 +415,11 @@ fn an_edit_of_values_says_what_it_changed_and_any_other_edit_says_everything() {
     room.edit("alice", &[json!({"op": "style", "sheet": 1, "row": 3, "column": 1, "width": 1, "height": 1, "path": "font.b", "value": "true"})])
         .unwrap();
     assert!(room.changed().is_none());
+    // a fill writes cells the engine's changes leave out, and styles: the views read everything again
+    room.edit("alice", &[json!({"op": "fill", "sheet": 1, "row": 3, "column": 1, "width": 1, "height": 1, "toRow": 6})])
+        .unwrap();
+    assert!(room.changed().is_none(), "{:?}", room.changed());
+    assert_eq!(room.cell_content(1, 6, 1).unwrap(), "5");
 }
 
 fn other_rows(count: usize) -> SheetRows {

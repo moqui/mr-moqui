@@ -2,11 +2,12 @@
 //! so a port another process holds is found before the database opens. Each busy port is named with the process
 //! holding it when this user can see it (`/proc` on Linux, `lsof` elsewhere).
 //!
-//! The same list names the listeners of the startup report (`crate::startup_report`): the cluster port is required,
-//! and a busy one stops the start; the others are optional and a busy one is warned about. HTTP, HTTPS and SSH, live
-//! (plans/Runtime-Config.md §3.3, §3.4, §6), try their bind anyway and record it Failed, naming the holder, and try it
-//! again while it fails; the rest (gRPC, SMTP, call media, TURN, SIP, XMPP, the edge tunnels) ask [`busy`] at the start
-//! and record it skipped instead of trying the port again.
+//! The same list names the listeners of the startup report (`crate::startup_report`). Every port is optional since the
+//! cluster port became so (plans/Runtime-Config.md §3.5, §6): a busy one is warned about and the start goes on. HTTP,
+//! HTTPS, SSH and the cluster port, live (§3.3, §3.4, §3.5), try their bind anyway when they open and record it Failed,
+//! naming the holder, and try it again while it fails; the rest (gRPC, SMTP, call media, TURN, SIP, XMPP, the edge
+//! tunnels) ask [`busy`] at the start and record it skipped instead of trying the port again. A target marked required
+//! would stop the start on a busy port; no listener's is now.
 
 // Without a server boot only the busy list is read (by the optional listeners that are built).
 #![cfg_attr(
@@ -86,8 +87,8 @@ struct Holder {
 }
 
 /// The live listeners that try a port busy at the check anyway, recording it Failed and trying it again later
-/// (plans/Runtime-Config.md §3.3, §3.4): not left out as skipped.
-const TRIED_ANYWAY: [&str; 3] = ["HTTP", "HTTPS", "SSH"];
+/// (plans/Runtime-Config.md §3.3, §3.4, §3.5): not left out as skipped.
+const TRIED_ANYWAY: [&str; 4] = ["HTTP", "HTTPS", "SSH", "Cluster"];
 
 /// The optional listeners whose port was busy at the last check, with the port.
 static BUSY: Mutex<Vec<(&'static str, u16)>> = Mutex::new(Vec::new());
@@ -126,22 +127,14 @@ fn conf_setting(conf: &MNode, path: &str, name: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Every listener's ports, resolved as each listener resolves its own: the cluster port, required; then the optional
-/// ones that are configured, HTTP, HTTPS and SSH (from the merged `conf`, so not while `ssh-server` `enabled` is not
-/// true) among them. A web or SSH setting that does not parse is left to its listener's row. The on-demand ranges (TURN
-/// relays, SIP RTP legs) are not here.
+/// Every listener's ports, resolved as each listener resolves its own, each optional: those that are configured, HTTP,
+/// HTTPS, the cluster port and SSH (from the merged `conf`, so not while `ssh-server` `enabled` is not true, nor while
+/// `cluster-member@listen` is not `on`) among them. A web, cluster or SSH setting that does not parse is left to its
+/// listener's row. The on-demand ranges (TURN relays, SIP RTP legs) are not here.
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
 #[cfg_attr(not(feature = "ssh"), allow(unused_variables))]
 fn targets(bind: &ListenBind, runtime_dir: &Path, conf: &MNode) -> Result<Vec<Target>, Error> {
     let mut targets = Vec::new();
-    let required = |listener: &'static str, property: &'static str, host: String, port: u16| Target {
-        listener,
-        property,
-        host,
-        port,
-        proto: Proto::Tcp,
-        required: true,
-    };
     // a node reached in process only has no HTTP, HTTPS, cluster or gRPC port
     let webroot = |name: &str| {
         moqui_core::context::conf_env::conf_attribute(
@@ -176,12 +169,26 @@ fn targets(bind: &ListenBind, runtime_dir: &Path, conf: &MNode) -> Result<Vec<Ta
             Ok(None) => {}
             Err(err) => tracing::warn!("The HTTPS port is not checked: {err}"),
         }
-        targets.push(required(
-            "Cluster",
-            "cluster-member@https-port",
-            crate::cluster_edge::bind_address()?.to_string(),
-            crate::cluster_edge::listen_port(&moqui_core::context::conf_env::setting("cluster-member@https-port"))?,
-        ));
+    }
+    // the cluster port, live (plans/Runtime-Config.md §3.5): checked only under cluster-member@listen="on", the one
+    // mode that opens it at every start; under auto it opens once another member is live (a lone server would be
+    // warned of a busy 8444 at every boot for a port it does not open), and a bind that fails then says so on its row
+    if !matches!(bind, ListenBind::None) {
+        let cluster =
+            |name: &str| moqui_core::context::conf_env::conf_attribute(conf, &format!("cluster-member@{name}"));
+        if cluster("listen") == "on" {
+            let ip = crate::cluster_edge::bind_address(&cluster("bind-address"));
+            let port = crate::cluster_edge::listen_port(&cluster("https-port"));
+            if let (Ok(ip), Ok(port)) = (ip, port) {
+                targets.push(Target::optional(
+                    "Cluster",
+                    "cluster-member@https-port",
+                    ip,
+                    port,
+                    Proto::Tcp,
+                ));
+            }
+        }
     }
     // SSH, live, is tried anyway as HTTP and HTTPS are (plans/Runtime-Config.md §3.4); a port that is not one is
     // left to its row
@@ -244,7 +251,7 @@ fn check(targets: &[Target]) -> Result<Vec<(&'static str, u16)>, Error> {
             busy_required.push(text);
         } else if TRIED_ANYWAY.contains(&target.listener) {
             tracing::warn!(
-                "Port {text}; {} tries it as it starts, and says on its row that it failed while the port is held",
+                "Port {text}; {} tries it when it opens, and says on its row that it failed while the port is held",
                 target.listener
             );
         } else {

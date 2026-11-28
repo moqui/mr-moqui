@@ -102,6 +102,20 @@ fn the_web_listener_settings_apply_through_the_listeners_hook() {
     assert_eq!(webapp.attr_class("http-host"), super::Class::Live);
 }
 
+/// The cluster port's switch, port and address apply while the server runs (plans/Runtime-Config.md §3.5, RC6), and
+/// the lone check's interval is read on each pass; the rest of `cluster-member` still waits for a restart.
+#[test]
+fn the_cluster_port_settings_apply_through_the_listeners_hook() {
+    let cluster = unit(&["cluster-member"]).expect("the cluster-member unit");
+    for setting in ["listen", "https-port", "bind-address"] {
+        assert_eq!(cluster.attr_class(setting), super::LISTENERS, "{setting}");
+    }
+    assert_eq!(cluster.attr_class("lone-check-seconds"), super::Class::Live);
+    for setting in ["base-url", "transport", "protocol"] {
+        assert_eq!(cluster.attr_class(setting), super::BOOT, "{setting}");
+    }
+}
+
 /// `attribute_class` walks the catalog as the reload's diff does: a keyed unit's own class, an attribute's class in
 /// its unit, the nearest unit's class for an element no unit names, and a component's class at the top.
 #[test]

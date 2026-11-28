@@ -1595,7 +1595,8 @@ fn a_registry_dropped_unclosed_drops_what_runs_last_added_first() {
 
 /// A boot entry changes in a pass exactly when the conf reload applies its settings there (plans/Runtime-Config.md §8.1,
 /// §8.2): every selector of a live entry is `Apply(Group::Listeners)` in the conf schema, and none of one that waits for a
-/// restart is. A phase that makes one live changes both together (the web listeners in RC2, SSH in RC3).
+/// restart is. A phase that makes one live changes both together (the web listeners in RC2, SSH in RC3, the cluster
+/// port in RC6).
 #[test]
 fn live_matches_the_conf_schema() {
     use moqui_core::context::conf_schema::{attribute_class, Class, Group};
@@ -1614,6 +1615,15 @@ fn live_matches_the_conf_schema() {
             assert_eq!(applies, entry.live(), "{} {selector}", entry.name());
         }
     }
+    let cluster = entries
+        .iter()
+        .find(|entry| entry.name() == "Cluster")
+        .expect("the cluster port's entry");
+    assert!(cluster.live(), "the cluster port is live since RC6");
+    assert!(
+        !cluster.fatal_at_boot(),
+        "a cluster port that does not bind no longer stops the boot"
+    );
 }
 
 /// The boot's real entries, in their fixed order and stages, stop in ServeProcess's order of before the registry:
