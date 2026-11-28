@@ -88,7 +88,8 @@ fn a_sheet_the_engine_refuses_keeps_its_cells_where_they_are_when_it_starts_past
         workbook::open_xlsx(&bytes, "offset").is_err(),
         "the fallback is what reads it"
     );
-    let model = workbook_model(&bytes, "offset").unwrap();
+    let (model, left_out) = workbook_model(&bytes, "offset").unwrap();
+    assert!(left_out.is_empty());
     assert_eq!(model.workbook.get_worksheet_names(), ["Costs", "Notes"]);
     let value = |sheet, row, column| model.get_formatted_cell_value(sheet, row, column).unwrap();
     assert_eq!(value(0, 3, 3), "item");
@@ -102,6 +103,24 @@ fn a_sheet_the_engine_refuses_keeps_its_cells_where_they_are_when_it_starts_past
     assert_eq!(value(1, 2, 1), "");
 }
 
+/// One sheet that cannot be read (here one whose used area is past the cell cap: a cell at A1 and one at Z500000) is
+/// left out and named, and the other sheets open; a workbook whose every sheet is refused is refused, with the reason.
+#[test]
+fn a_sheet_that_cannot_be_read_is_left_out_and_named_and_the_rest_open() {
+    let item = r#"<row r="1"><c r="A1" t="inlineStr"><is><t>item</t></is></c></row>"#;
+    let too_large = r#"<row r="1"><c r="A1"><v>1</v></c></row><row r="500000"><c r="Z500000"><v>2</v></c></row>"#;
+    let bytes = xlsx_without_styles(&[("Costs", item), ("Huge", too_large), ("Notes", item)]);
+    let (model, left_out) = workbook_model(&bytes, "partly").unwrap();
+    assert_eq!(left_out, ["Huge"]);
+    assert_eq!(model.workbook.get_worksheet_names(), ["Costs", "Notes"]);
+    assert_eq!(model.get_formatted_cell_value(1, 1, 1).unwrap(), "item");
+
+    let Err(refused) = workbook_model(&xlsx_without_styles(&[("Huge", too_large)]), "none") else {
+        panic!("a workbook with no readable sheet opens");
+    };
+    assert!(refused.message().contains("Huge"), "{}", refused.message());
+}
+
 #[test]
 fn a_workbook_the_engine_refuses_opens_as_values_and_one_it_takes_keeps_its_formulas() {
     let bytes = minimal_xlsx();
@@ -109,7 +128,7 @@ fn a_workbook_the_engine_refuses_opens_as_values_and_one_it_takes_keeps_its_form
         workbook::open_xlsx(&bytes, "minimal").is_err(),
         "the engine's reader needs a styles part"
     );
-    let model = workbook_model(&bytes, "minimal").unwrap();
+    let (model, _) = workbook_model(&bytes, "minimal").unwrap();
     assert_eq!(model.workbook.get_worksheet_names(), ["Costs"]);
     assert_eq!(model.get_formatted_cell_value(0, 1, 1).unwrap(), "item");
     assert_eq!(model.get_formatted_cell_value(0, 2, 1).unwrap(), "Truck");
@@ -120,7 +139,7 @@ fn a_workbook_the_engine_refuses_opens_as_values_and_one_it_takes_keeps_its_form
     made.set_user_input(0, 1, 1, "2".to_string()).unwrap();
     made.set_user_input(0, 2, 1, "=A1*21".to_string()).unwrap();
     made.evaluate();
-    let model = workbook_model(&workbook::model_xlsx(&made).unwrap(), "made").unwrap();
+    let (model, _) = workbook_model(&workbook::model_xlsx(&made).unwrap(), "made").unwrap();
     assert_eq!(model.get_cell_formula(0, 2, 1).unwrap().as_deref(), Some("=A1*21"));
     assert!(workbook_model(b"not a workbook", "bad").is_err());
 }

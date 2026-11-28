@@ -125,7 +125,8 @@ workbook on the server's spreadsheet engine (IronCalc; plan [IronCalc-DB](../../
   source has more. Encrypted and binary columns are left out.
 - **A spreadsheet file** opens as a workbook from the File dialog (Open as a workbook): every sheet, and for an xlsx
   its formulas, styles and names, calculated by the engine. An xls, xlsb or ods, and an xlsx the engine does not
-  take, open as values.
+  take, open as values; a sheet of one that cannot be read (or is over the cell cap) is left out, logged and named to
+  the opener, and the file is refused only when no sheet can be read.
 - **The view** (`js/WebrootCalc.js`) holds no data: the server answers the cells in view and a margin
   (`get#CalcCells`, at most 20,000 cells a request), so a jump to a far row loads nothing between. Sheet tabs are
   below the sheet, a data sheet marked; the document's charts are below those.
@@ -173,7 +174,8 @@ workbook on the server's spreadsheet engine (IronCalc; plan [IronCalc-DB](../../
   server's memory the open workbook takes, and an author a warning with the time when the last calculation took
   longer than `calc@slow-ms` (250 ms; [Conf settings](#conf-settings)); the server then logs one line naming the
   document (or the room of one not saved) and the time. An edit's rows of the log, and those of the others it follows,
-  are applied under the log's lock and calculated once after it, so no editor waits on another's calculation.
+  are applied under the log's lock and calculated once after it, so no editor waits on another's edit's calculation;
+  a save still calculates the stored form under the lock.
 - **In the terminal** (`moqui tui`, over SSH, the browser's terminal): the grid's list of records has a link to Calc,
   and `?mode=calc` (or a document's `definitionId`) shows the workbook as a sheet, the `calcgrid` component
   ([TUI](../ui/TUI.md#components)): the cells that fit, the formula bar, the sheet tabs and who else has it open,
@@ -184,7 +186,10 @@ workbook on the server's spreadsheet engine (IronCalc; plan [IronCalc-DB](../../
   A recipient other than the owner is sent the owner's file only when their scope is the owner's
   ([Report delivery](Monitoring.md#report-delivery)). In CalcGrid a saved document's Schedule (to one who may schedule
   for themselves) opens the schedules screen with the document chosen: Tools' Scheduled reports, or the mount's
-  (`reportLinks.schedules`; BOSS: Insights › Scheduled reports, with Insights' recipient cap).
+  (`reportLinks.schedules`; BOSS: Insights › Scheduled reports, with Insights' recipient cap). A run, Send now, a
+  recipient's own report and the recipients' scope check render or read the document in a context of their own, signed
+  in as the owner or the recipient, so the schedulers hold `render#CalcDocument` and `get#CalcScope` as their own grant
+  (members of `CALC_GRID`; BOSS grants both to its Insights groups).
 
 ### CalcGrid and access profiles
 

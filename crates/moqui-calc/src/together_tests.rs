@@ -208,6 +208,8 @@ fn an_edit_and_a_save_follow_the_log_under_its_lock_and_evaluate_once_after_it()
         before + 1,
         "one evaluation for the row followed and the edit"
     );
+    // the row followed added a sheet: what the evaluation changed may be anything, and the views read everything again
+    assert!(lock(&east).changed().is_none());
     assert_eq!(
         (value(&east, 1), value(&east, 2), value(&east, 3)),
         ("300".into(), "600".into(), "601".into())
@@ -241,6 +243,21 @@ fn an_edit_and_a_save_follow_the_log_under_its_lock_and_evaluate_once_after_it()
     save(&facade, &mut lock(&west), "ann", |_, version| Ok(version)).unwrap();
     assert_eq!(lock(&west).evaluations(), before);
     assert_eq!(unsaved(&facade, &lock(&west)), 0);
+
+    // values only, the row followed and the edit: the one evaluation's changed areas hold both
+    let input = |row: i32, value: &str| [json!({"op": "input", "sheet": 1, "row": row, "column": 1, "value": value})];
+    edit(&facade, &mut lock(&west), "ann", &input(4, "5")).unwrap();
+    edit(&facade, &mut lock(&east), "otto", &input(5, "6")).unwrap();
+    let changed: Vec<Area> = lock(&east)
+        .changed()
+        .expect("value edits say what they changed")
+        .to_vec();
+    let covers = |row: i32| {
+        changed
+            .iter()
+            .any(|area| area.sheet == 1 && area.column == 1 && area.row <= row && row < area.row + area.height)
+    };
+    assert!(covers(4) && covers(5), "{changed:?}");
 }
 
 #[test]

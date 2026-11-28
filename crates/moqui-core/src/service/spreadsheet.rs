@@ -124,19 +124,43 @@ pub fn read_sheet_bytes(bytes: &[u8], sheet_name: &str, sheet_index: usize) -> R
     book_sheet(&mut book, names, chosen)
 }
 
-/// Every sheet of a spreadsheet's bytes, in order, from one read of the file: what [`read_sheet_bytes`] answers for
-/// each, a sheet that cannot be read or is too large as its error.
+/// Every sheet of a spreadsheet's bytes, in order, from one read of the file ([`BookSheets`]).
 ///
 /// # Errors
 ///
 /// Returns an error when the bytes are not a spreadsheet.
-pub fn read_book_bytes(bytes: &[u8]) -> Result<Vec<Result<SheetData, LibError>>, LibError> {
-    let mut book = open_book(bytes)?;
+pub fn read_book_bytes(bytes: &[u8]) -> Result<BookSheets, LibError> {
+    let book = open_book(bytes)?;
     let names = book.sheet_names();
-    Ok(names
-        .iter()
-        .map(|name| book_sheet(&mut book, names.clone(), name.clone()))
-        .collect())
+    Ok(BookSheets { book, names, next: 0 })
+}
+
+/// The sheets of an open spreadsheet, each read when it is asked for, so one is used and dropped before the next is
+/// read: each sheet's name and what [`read_sheet_bytes`] answers for it, a sheet that cannot be read or is too large as
+/// its error. A sheet's `sheet_names` is left empty: [`BookSheets::names`] has them once.
+pub struct BookSheets {
+    book: Sheets<Cursor<Vec<u8>>>,
+    names: Vec<String>,
+    next: usize,
+}
+
+impl BookSheets {
+    /// The book's sheets, in order.
+    #[must_use]
+    pub fn names(&self) -> &[String] {
+        &self.names
+    }
+}
+
+impl Iterator for BookSheets {
+    type Item = (String, Result<SheetData, LibError>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let name = self.names.get(self.next)?.clone();
+        self.next += 1;
+        let read = book_sheet(&mut self.book, Vec::new(), name.clone());
+        Some((name, read))
+    }
 }
 
 /// Sheet `chosen` of an open book whose sheets are `names`.

@@ -701,20 +701,38 @@ fn room_out(facade: &EntityFacade, room: &Room, user_id: &str) -> BTreeMap<Strin
 
 /// A workbook file as a model: the engine's reader for an xlsx it takes, else the cells of each sheet as values
 /// (`read#Spreadsheet`'s reader: xls, xlsb, ods, and an xlsx without the parts the engine needs), read from the file
-/// once, each value in its own cell: a sheet's rows start at its used area's first column, which is not always A.
-fn workbook_model(bytes: &[u8], name: &str) -> Result<moqui_core::workbook::ironcalc::base::Model<'static>, Error> {
+/// once and a sheet at a time, each value in its own cell: a sheet's rows start at its used area's first column, which
+/// is not always A. A sheet that cannot be read, or is over the cell cap, is logged and left out, and its name is in
+/// the answer's second part; the workbook is refused only when no sheet could be read.
+fn workbook_model(
+    bytes: &[u8],
+    name: &str,
+) -> Result<(moqui_core::workbook::ironcalc::base::Model<'static>, Vec<String>), Error> {
     // refused before either reader parses it (SEC-TLS-114)
     moqui_core::service::spreadsheet::check_expanded_size(bytes, moqui_core::service::spreadsheet::MAX_EXPANDED_BYTES)
         .map_err(|err| Error::new(err.to_string()))?;
     match workbook::open_xlsx(bytes, name) {
-        Ok(model) => Ok(model),
+        Ok(model) => Ok((model, Vec::new())),
         Err(engine_error) => {
             let sheets = moqui_core::service::spreadsheet::read_book_bytes(bytes).map_err(|_| engine_error)?;
             let mut writer = workbook::WorkbookWriter::new()?;
             let plain = writer.style(&workbook::CellStyle::default());
             let zone = moqui_core::l10n::time_zone();
-            for read in sheets {
-                let data = read.map_err(|err| Error::new(err.to_string()))?;
+            let mut left_out = Vec::new();
+            let mut first_refusal = None;
+            let mut written = 0_usize;
+            for (sheet_name, read) in sheets {
+                let data = match read {
+                    Ok(data) => data,
+                    Err(err) => {
+                        // one sheet is not the workbook: the others open (AGENTS.md failure tolerance)
+                        tracing::error!(workbook = name, sheet = %sheet_name, error = %err, "A sheet of a workbook could not be read; it is left out");
+                        first_refusal.get_or_insert_with(|| err.to_string());
+                        left_out.push(sheet_name);
+                        continue;
+                    }
+                };
+                written += 1;
                 let sheet = writer.add_sheet(&data.sheet_name)?;
                 let first_column =
                     usize::try_from(data.first_column.max(1)).map_err(|_| Error::new("Too many columns"))?;
@@ -738,7 +756,12 @@ fn workbook_model(bytes: &[u8], name: &str) -> Result<moqui_core::workbook::iron
                 }
                 writer.fit_columns(sheet)?;
             }
-            writer.into_model()
+            if written == 0 {
+                if let Some(refusal) = first_refusal {
+                    return Err(Error::new(refusal));
+                }
+            }
+            Ok((writer.into_model()?, left_out))
         }
     }
 }
@@ -794,7 +817,15 @@ fn open_document_with(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
             ));
         }
         let name = workbook_location.rsplit('/').next().unwrap_or("Workbook").to_string();
-        (workbook_model(&bytes, &name), Vec::new(), Vec::new(), name, None)
+        let model = workbook_model(&bytes, &name).map(|(model, left_out)| {
+            // the opener is told which sheets are not there (the response's messages)
+            if !left_out.is_empty() {
+                let message = format!("Not opened, as they could not be read: {}", left_out.join(", "));
+                ExecutionContext::with_current(|ec| ec.message().add_message_typed(message, "warning"));
+            }
+            model
+        });
+        (model, Vec::new(), Vec::new(), name, None)
     } else if parameters.get("source").is_some_and(|source| !is_empty(source)) {
         let mut spec = json!({});
         for key in ["source", "columns", "sort", "filter"] {
