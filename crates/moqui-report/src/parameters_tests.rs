@@ -42,7 +42,7 @@ fn the_shipped_calcgrid_dataset_declares_the_document_the_range_the_chart_and_th
     let body = &calcgrid()["body"];
     assert_eq!(refusal(body), None);
     let ec = context();
-    let listed = declared(&ec, "calcgrid", body, false);
+    let listed = declared(&ec, "calcgrid", body, None);
     let names: Vec<&str> = listed.iter().filter_map(|one| one["name"].as_str()).collect();
     assert_eq!(names, ["definitionId", "range", "chart", "profileId"]);
     assert!(listed.iter().all(|one| one.get("choices").is_none()));
@@ -104,12 +104,12 @@ fn a_declaration_is_named_once_of_a_known_kind_with_whole_choices() {
 #[test]
 fn the_editors_are_given_a_label_and_kind_for_each_and_nothing_for_a_dataset_without() {
     let ec = context();
-    assert!(declared(&ec, "d", &json!({"serviceName": "x.y#Z"}), false).is_empty());
+    assert!(declared(&ec, "d", &json!({"serviceName": "x.y#Z"}), None).is_empty());
     let listed = declared(
         &ec,
         "d",
         &json!({"parameters": [{"name": "region"}, {"name": "bad name"}, {"name": "top", "label": "Top", "kind": "number"}]}),
-        false,
+        None,
     );
     assert_eq!(
         listed,

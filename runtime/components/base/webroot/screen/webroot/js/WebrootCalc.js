@@ -721,7 +721,7 @@
             addSheet() { return this.edit([{ op: "addSheet" }]).then((state) => { if (state && state.sheets && state.sheets.length) this.showSheet(state.sheets[state.sheets.length - 1].index); }); },
             renameSheet(sheet) {
                 this.$q.dialog({ title: L("Rename the sheet"), prompt: { model: sheet.name, type: "text" }, cancel: true })
-                    .onOk((name) => { if (name && name !== sheet.name) this.edit([{ op: "renameSheet", sheet: sheet.index, name }]); });
+                    .onOk((typed) => { const name = String(typed || "").trim(); if (name && name !== sheet.name) this.edit([{ op: "renameSheet", sheet: sheet.index, name }]); });
             },
             deleteSheet(sheet) {
                 this.$q.dialog({ title: "Delete the sheet", message: "Delete " + sheet.name + " and everything on it?", cancel: true, persistent: true })

@@ -2180,8 +2180,8 @@ fn add_subtotal_metrics(value: &mut Json) -> Result<serde_json::Map<String, Json
 /// The datasets the viewer may read, each with its id, title and time field, and `service` for one whose service answers
 /// a report query with frames: it has no records to search, so Explore offers only the others. A saved or shipped
 /// dataset that declares `parameters` has them (parameters.rs), with each one's choices when `parameterChoices` is
-/// true: what the panel editors show for a query over it. The choices are read for at most
-/// [`parameters::MAX_CHOICE_DATASETS`] datasets of one listing, in its order; a later one is listed without them.
+/// true: what the panel editors show for a query over it. Each choices service is called once a
+/// listing for its parameters ([`parameters::ChoiceAnswers`]).
 pub fn list_datasets(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -2190,7 +2190,7 @@ pub fn list_datasets(
     let with_choices = params
         .get("parameterChoices")
         .is_some_and(|value| moqui_lib::object::to_plain_string(value) == "true");
-    let mut choice_reads = parameters::MAX_CHOICE_DATASETS;
+    let mut answers = parameters::ChoiceAnswers::default();
     let mut items = Vec::new();
     for id in search::telemetry::TELEMETRY_INDEXES {
         if let Ok(dataset) = resolve_dataset(ec, id, false) {
@@ -2201,16 +2201,8 @@ pub fn list_datasets(
         let id = text(&definition, "id", "");
         if let Ok(dataset) = resolve_dataset(ec, id, false) {
             let mut item = json!({"id":id,"title":definition["title"],"timeField":dataset.time_field,"service":dataset.service.is_some()});
-            let read = with_choices && parameters::has_choices(&definition["body"]) && choice_reads > 0;
-            if read {
-                choice_reads -= 1;
-            } else if with_choices && parameters::has_choices(&definition["body"]) {
-                tracing::info!(
-                    dataset = id,
-                    "A dataset's parameter choices are past the listing's limit; listed without them"
-                );
-            }
-            parameters::add_to(&mut item, parameters::listed(ec, id, &definition["body"], read));
+            let answers = with_choices.then_some(&mut answers);
+            parameters::add_to(&mut item, parameters::listed(ec, id, &definition["body"], answers));
             items.push(item);
         }
     }
@@ -2269,7 +2261,11 @@ pub fn get_dataset(
     let mut out = json!({"id":id,"timeField":dataset.time_field,"service":dataset.service.is_some(),"fields":fields.into_values().collect::<Vec<_>>(),"capabilities":facade.capabilities().iter().map(|c|c.name()).collect::<Vec<_>>()});
     // the parameters it declares, each with its choices as the viewer reads them (parameters.rs)
     if let Some(definition) = definitions::read_optional(ec, id)? {
-        parameters::add_to(&mut out, parameters::listed(ec, id, &definition["body"], true));
+        let mut answers = parameters::ChoiceAnswers::default();
+        parameters::add_to(
+            &mut out,
+            parameters::listed(ec, id, &definition["body"], Some(&mut answers)),
+        );
     }
     Ok(output(json!({ "dataset": out })))
 }

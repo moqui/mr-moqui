@@ -237,10 +237,15 @@ What a person reads there is set in the authorization data, not in a document. A
   (`OrderPart[partTotal]`) or its sheet (`OrderPart!B:B`), though the workbook was made without it. Under a profile it is
   an author's, and always over an entity; with the Tools app's own access a workbook alone opens as a file does. A
   workbook with a sheet named as the data sheet, or a table or name of the data sheet's table name, is refused (rename it
-  first), and so is a tab that only looks like it (a trailing space, a zero-width mark): the data sheet holds only the
-  rows its reader may read. Over an entity, without its data it is at most 8 MB, as a saved document is. A saved
-  document's workbook is held the same way when it opens, whatever wrote its definition: what a data sheet holds below
-  its header is taken out, and a table or name of the data sheet's elsewhere refuses it.
+  first), and so is a tab that differs from it only by what a name may hold unseen (a trailing space, a zero-width,
+  bidirectional or other ignorable mark, an accent written apart); one of other letters that look alike is another
+  name. The data sheet holds only the rows its reader may read. Over an entity, without its data it is at most 8 MB,
+  as a saved document is. A saved document's workbook is held the same way when it opens, whatever wrote its
+  definition: what a data sheet holds below its header, and what is drawn over its rows or hides them (conditional
+  formats, merged cells, comments, drawings, links, hidden rows, columns or sheet), is taken off, its widths, heights
+  and frozen panes kept; a tab named like a data sheet is renamed (`Orders (renamed)`), with a warning, so the
+  document still opens; and a table or name of the data sheet's elsewhere refuses it. In a room no sheet is renamed
+  like a data sheet.
 - **Add to dashboard** puts the cells selected (or the sheet's used area) of a saved document on one of the viewer's
   own dashboards, as a table, bars, a pie or a number: a panel over the dataset `calcgrid` (below). For a document
   with charts it also offers a chart of this document: the panel names the chart by its id and is drawn as the chart

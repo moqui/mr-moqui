@@ -177,6 +177,9 @@ aws-lc-rs = "=1.18.2"
 sha2 = "0.11"
 # Substring search of multipart bodies (crates/moqui-core/src/web/multipart.rs). Already in the graph.
 memchr = "2.8"
+# NFC of a CalcGrid sheet name before it is compared with a data sheet's (crates/moqui-calc/src/upload.rs). Already in
+# the graph, through gix.
+unicode-normalization = "0.1.26"
 sha1 = { version = "0.11", features = ["oid"] }
 base64 = "0.23"
 # Inherited descriptors marked close-on-exec before the embedded Postgres starts (moqui-drivers), safely.

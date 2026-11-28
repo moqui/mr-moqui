@@ -367,8 +367,8 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   `{name, label, kind, optional, choices}`: `kind` is `text` (the default) or `number`, `optional` true lets it be left
   out, and `choices` names a service the viewer calls for them, `{service, parameters, list, value, label}` (the
   service's parameters, the out-parameter that holds the list, and each item's value and label fields). `list#Datasets`
-  answers each dataset's declaration (with `parameterChoices` true, each one's choices too, for at most eight datasets
-  of the listing) and `get#Dataset` answers it with the choices; the definition editor asks for them, and both panel
+  answers each dataset's declaration (with `parameterChoices` true, each one's choices too, each choices service
+  called once a listing for its parameters) and `get#Dataset` answers it with the choices; the definition editor asks for them, and both panel
   editors, the browser's and the terminal's, show a field for each parameter of the query's dataset, a select where it
   has choices, and take an emptied one out of the query (the terminal's adds the required ones to fill in when it adds
   `parameters`). Choices are read as the viewer, at most 500, by the viewer's own grant of the choices service (a

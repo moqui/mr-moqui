@@ -122,8 +122,8 @@ fn a_sheet_table_or_name_of_the_data_sheets_is_refused() {
     assert!(overlay_refusal(&model, &sheets).is_some_and(|refused| refused.contains("Open_orders")));
 }
 
-/// A tab that only looks like the data sheet's (a space after it, a zero-width or bidirectional mark in it, another
-/// case of a letter beyond ASCII) is the data sheet's name too.
+/// A tab that only looks like the data sheet's (a space after it, a zero-width, bidirectional or other ignorable mark
+/// in it, a letter written decomposed, another case of a letter beyond ASCII) is the data sheet's name too.
 #[test]
 fn a_sheet_that_only_looks_like_the_data_sheets_is_refused() {
     for lookalike in [
@@ -132,6 +132,12 @@ fn a_sheet_that_only_looks_like_the_data_sheets_is_refused() {
         "Ord\u{200b}ers",
         "\u{202e}Orders",
         "Orders\u{feff}",
+        "Or\u{34f}ders",
+        "Orders\u{3164}",
+        "Ord\u{fe0f}ers",
+        "Orders\u{e0041}",
+        "Orders\u{1d173}",
+        "Ord\u{180b}ers",
     ] {
         let mut model = uploaded();
         model.add_sheet(lookalike).unwrap();
@@ -141,6 +147,13 @@ fn a_sheet_that_only_looks_like_the_data_sheets_is_refused() {
             "{lookalike:?}: {refused}"
         );
     }
+    // a letter with its accent apart (NFD) is the same letter composed
+    let mut model = uploaded();
+    model.add_sheet("Cafe\u{301}").unwrap();
+    assert!(
+        overlay_refusal(&model, &["Caf\u{e9}".to_string()]).is_some(),
+        "compared composed"
+    );
     let mut model = uploaded();
     model.add_sheet("ÉTÉ").unwrap();
     assert!(
@@ -208,8 +221,56 @@ fn a_saved_overlay_brings_no_row_into_a_data_sheet() {
         .unwrap();
     let refused = saved_overlay(named, &data).map(|_| ()).unwrap_err();
     assert!(refused.message().contains("name orders"), "{}", refused.message());
-    // a tab that only looks like the data sheet's
+    // a tab that only looks like the data sheet's is renamed, so the document still opens, and a formula over it follows
     let mut lookalike = stored();
     lookalike.add_sheet("Orders\u{200b}").unwrap();
-    assert!(saved_overlay(lookalike, &data).is_err());
+    lookalike.set_user_input(2, 1, 1, "7".to_string()).unwrap();
+    lookalike
+        .set_user_input(0, 3, 1, "='Orders\u{200b}'!A1*2".to_string())
+        .unwrap();
+    lookalike.evaluate();
+    let mut opened = saved_overlay(lookalike, &data).unwrap();
+    assert_eq!(
+        opened.workbook.get_worksheet_names(),
+        ["Summary", "Orders", "Orders (renamed)"]
+    );
+    opened.evaluate();
+    assert_eq!(opened.get_formatted_cell_value(0, 3, 1).unwrap(), "14");
+}
+
+/// What a forged overlay may draw over a data sheet's rows or hide of them is taken off when it opens; its widths and
+/// frozen panes, an author's to set, stay.
+#[test]
+fn a_saved_overlay_draws_nothing_over_a_data_sheet() {
+    use moqui_core::workbook::ironcalc::base::types::{Comment, MergedCell, SheetState};
+    let data = ["Orders".to_string()];
+    let mut model = stored();
+    model.set_column_width(1, 2, 140.0).unwrap();
+    let mut workbook = model.workbook;
+    let sheet = &mut workbook.worksheets[1];
+    sheet.merged_cells.push(MergedCell {
+        row: 2,
+        column: 1,
+        width: 2,
+        height: 2,
+    });
+    sheet.comments.push(Comment {
+        text: "not from the source".into(),
+        author_name: "forger".into(),
+        author_id: None,
+        cell_ref: "A2".into(),
+    });
+    sheet.state = SheetState::Hidden;
+    for row in &mut sheet.rows {
+        row.hidden = true;
+    }
+    let forged = Model::from_workbook(workbook, "en").unwrap();
+    let opened = saved_overlay(forged, &data).unwrap();
+    let sheet = &opened.workbook.worksheets[1];
+    assert!(sheet.merged_cells.is_empty());
+    assert!(sheet.comments.is_empty());
+    assert!(matches!(sheet.state, SheetState::Visible));
+    assert!(sheet.rows.iter().all(|row| !row.hidden));
+    assert_eq!(opened.get_column_width(1, 2).unwrap(), 140.0, "a width stays");
+    assert_eq!(sheet.frozen_rows, 1, "the frozen header stays");
 }

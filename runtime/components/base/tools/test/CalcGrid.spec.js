@@ -549,7 +549,7 @@ feature("the calcgrid dataset's parameters are listed with their choices for the
             const malformed = save("spec-calcgrid-ds-other", [{name: "x y"}])
             // the shipped service with other parameters is another source of choices
             const otherParameters = save("spec-calcgrid-ds-other", [{name: "x", choices: Object.assign({}, documents, {parameters: {definitionType: "dashboard"}})}])
-            // a listing reads the choices of at most eight datasets
+            // a listing gives every dataset its choices, each choices service called once for its parameters
             for (let at = 0; at < 9; at++) save("spec-calcgrid-ds-" + at, [{name: "definitionId", choices: documents}])
             const withChoices = listed({parameterChoices: true}).filter(dataset => /^spec-calcgrid-ds-\d$|^calcgrid$|^spec-calcgrid-ds$/.test(dataset.id))
                 .filter(dataset => Array.from(dataset.parameters || []).some(parameter => Array.isArray(parameter.choices))).length
@@ -591,7 +591,7 @@ feature("the calcgrid dataset's parameters are listed with their choices for the
         otherService.includes("choices service is one a shipped dataset's parameter names")
         malformed.includes("starting with a letter")
         otherParameters.includes("with its parameters")
-        withChoices == 8
+        withChoices == 11
         !added.json.errors
         query.parameters.profileId == PROFILE
         query.parameters.definitionId == "spec-calcgrid-params"
@@ -784,6 +784,8 @@ feature("a saved overlay written without CalcGrid brings no row into a data shee
         ask("close#CalcDocument", {roomId: all.roomId})
         const plain = ask("open#CalcDocument", {workbookBytes: bytes, workbookName: "all.xlsx"}).out
         const plantedRows = Array.from(plain.sheets || []).find(sheet => sheet.name == "Enumeration").rows
+        // and a tab that only looks like it (a zero-width space), which no room of a document over the data would take
+        ask("edit#CalcDocument", {roomId: plain.roomId, ops: [{op: "addSheet"}, {op: "renameSheet", sheet: 2, name: "Enumeration\u200b"}]})
         const definitionId = "spec-calcgrid-planted"
         ask("save#CalcDocument", {roomId: plain.roomId, definitionId, title: "Planted"})
         ask("close#CalcDocument", {roomId: plain.roomId})
@@ -796,6 +798,9 @@ feature("a saved overlay written without CalcGrid brings no row into a data shee
         ec.message.clearErrors()
         const opened = ask("open#CalcDocument", {definitionId})
         const sheets = Array.from(opened.out.sheets || [])
+        const sheetNames = sheets.map(sheet => sheet.name)
+        // in the room of that document, no sheet is renamed like the data sheet
+        const lookalikeRename = ask("edit#CalcDocument", {roomId: opened.out.roomId, ops: [{op: "renameSheet", sheet: sheetNames.indexOf("Summary"), name: "enumeration "}]})
         const summary = sheets.find(sheet => sheet.name == "Summary") || {index: -1}, data = sheets.find(sheet => sheet.data) || {}
         const block = ask("get#CalcCells", {roomId: opened.out.roomId, sheet: summary.index, row: 1, column: 1, width: 1, height: 1})
         const counted = (Array.from(block.errors ? [] : JSON.parse(String(block.out.blockJson)).texts || [])[0] || {}).text
@@ -815,14 +820,18 @@ feature("a saved overlay written without CalcGrid brings no row into a data shee
         if (alone.out.roomId) ask("close#CalcDocument", {roomId: alone.out.roomId})
         const over = ask("open#CalcDocument", {workbookBytes: bigBytes, workbookName: "big.xlsx", source: {type: "entity", entityName: "moqui.basic.Enumeration"}})
         if (over.out.roomId) ask("close#CalcDocument", {roomId: over.out.roomId})
-        return {plantedRows, resaved, opened: opened.errors, dataRows: data.dataRows, dataName: data.name, counted, filled: filled.errors, alone, over}
+        return {plantedRows, resaved, opened: opened.errors, sheetNames, lookalikeRename: lookalikeRename.errors, dataRows: data.dataRows, dataName: data.name,
+            counted, filled: filled.errors, alone, over}
     },
-    then({plantedRows, resaved, opened, dataRows, dataName, counted, filled, alone, over}) {
+    then({plantedRows, resaved, opened, sheetNames, lookalikeRename, dataRows, dataName, counted, filled, alone, over}) {
         resaved == ""
         opened == ""
         dataName == "Enumeration"
         plantedRows > dataRows + 1
         counted == String(dataRows)
+        sheetNames.includes("Enumeration (renamed)")
+        !sheetNames.some(name => name == "Enumeration\u200b")
+        lookalikeRename.includes("is a data sheet's name")
         filled == ""
         alone.errors == ""
         !!alone.out.roomId

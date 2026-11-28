@@ -903,6 +903,20 @@ impl Room {
                 )));
             }
         }
+        // nor is another sheet named like one, which a reader would take for it and the next open renames (upload.rs)
+        if kind == "renameSheet" {
+            let wanted = op["name"].as_str().unwrap_or_default();
+            if let Some(data) = self
+                .data_sheets
+                .iter()
+                .find(|data| crate::upload::same(&data.name, wanted))
+            {
+                return Err(Error::new(format!(
+                    "{} is a data sheet's name; choose another",
+                    data.name
+                )));
+            }
+        }
         match kind {
             "input" => self
                 .model

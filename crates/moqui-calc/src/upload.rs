@@ -23,46 +23,60 @@
 //! and rows of it below the data would stay in it and be read by the formulas over the data as if they were the
 //! source's; a table, a defined name or a named function of the data sheet's table name would stand where
 //! `Orders[amount]` names the data. An uploaded workbook with any of those is refused ([`overlay_refusal`]); a saved
-//! one has its data sheets cut back to their stored stub, and is refused for a table or name of a data sheet's table
-//! name that is not the data sheet's own, or a sheet that only looks like a data sheet ([`saved_overlay`]). So the data
-//! a formula reads is only the rows the reader's access gives. Names are compared as the engine compares sheet names
-//! (in capitals), after trimming and without format characters (zero-width and bidirectional marks), so a tab that
-//! only looks like the data sheet's is one too. Everything else of the overlay is its author's own, as if typed: its
+//! one has its data sheets set back to their stored form (no cell below the header, nothing drawn over the rows or
+//! hiding them), a sheet that only looks like a data sheet renamed, and is refused for a table or name of a data
+//! sheet's table name that is not the data sheet's own ([`saved_overlay`]). So the data a formula reads, and what a
+//! reader sees of it, is only the rows the reader's access gives. A sheet is not renamed like a data sheet in a room
+//! either (room.rs `apply`). Names are compared in Unicode's composed form, without the characters a name may hold
+//! unseen (zero-width, bidirectional, variation selectors, fillers, tags), trimmed and in capitals as the engine
+//! compares sheet names ([`name_key`]), so a tab that only differs by those is the data sheet's name; one of other
+//! letters that look alike is not caught, and holds only what its author typed. Everything else of the overlay is its author's own, as if typed: its
 //! cell values (which the author could read), formulas over its own sheets and over the data sheets, defined names
 //! over them. The engine reads no external workbook and fetches nothing, so a reference into another file is an error
 //! value, and a hyperlink is text the view does not open. An upload's size is held by the file limit, the
 //! inflated-size check and the stored overlay's 8 MB ([`prepare_for_room`]).
 
 use moqui_core::context::Error;
-use moqui_core::workbook::ironcalc::base::types::Cell;
+use moqui_core::workbook::ironcalc::base::types::{Cell, SheetState, Worksheet};
 use moqui_core::workbook::ironcalc::base::Model;
 
 use crate::fill::{self, table_name, SheetRows};
 use crate::service::{MAX_OVERLAY_BYTES, MAX_WORKBOOK_BYTES};
 
-/// Whether `ch` is a format character a name may hide: a soft hyphen, the zero-width ones, the bidirectional marks,
-/// embeddings and isolates, the word joiner and invisible operators, and the byte order mark.
-fn is_format(ch: char) -> bool {
-    matches!(ch, '\u{ad}' | '\u{61c}' | '\u{180e}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}'
-        | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206f}' | '\u{feff}')
+/// Whether `ch` is one a name may hold without showing it: Unicode's Default_Ignorable_Code_Point set (the soft hyphen,
+/// the combining grapheme joiner, the Hangul fillers, the Khmer inherent vowels, the Mongolian variation selectors and
+/// vowel separator, the zero-width ones, the bidirectional marks, embeddings and isolates, the word joiner and
+/// invisible operators, the variation selectors, the byte order mark, the shorthand format controls, the musical
+/// formatting symbols, the tags) and the interlinear annotation marks.
+fn is_ignorable(ch: char) -> bool {
+    matches!(ch,
+        '\u{ad}' | '\u{34f}' | '\u{61c}' | '\u{115f}'..='\u{1160}' | '\u{17b4}'..='\u{17b5}' | '\u{180b}'..='\u{180f}'
+        | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{3164}'
+        | '\u{fe00}'..='\u{fe0f}' | '\u{feff}' | '\u{ffa0}' | '\u{fff0}'..='\u{fffb}' | '\u{1bca0}'..='\u{1bca3}'
+        | '\u{1d173}'..='\u{1d17a}' | '\u{e0000}'..='\u{e0fff}')
 }
 
-/// A name as names are compared here: trimmed, without format characters, in capitals as the engine compares sheet
-/// names.
-fn name_key(name: &str) -> String {
-    name.chars()
-        .filter(|ch| !is_format(*ch))
+/// A name as names are compared here: in Unicode's composed form (NFC), without the characters it may hold unseen
+/// ([`is_ignorable`]), trimmed, in capitals as the engine compares sheet names. A name of other letters that only look
+/// alike (a Cyrillic `О` for a Latin `O`) is another name: it is not caught, and needs not be, since such a sheet is
+/// never taken as a data sheet and holds only what its author typed.
+pub(crate) fn name_key(name: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    name.nfc()
+        .filter(|ch| !is_ignorable(*ch))
         .collect::<String>()
         .trim()
         .to_uppercase()
 }
 
-fn same(left: &str, right: &str) -> bool {
+/// Whether two names are one ([`name_key`]).
+pub(crate) fn same(left: &str, right: &str) -> bool {
     name_key(left) == name_key(right)
 }
 
 /// Why `model` may not be the overlay of a document whose data sheets are `data_sheets`, or None. `saved`: the
-/// overlay of a saved document, which holds each data sheet's stub and its table; else an upload, which holds none.
+/// overlay of a saved document, which holds each data sheet's stub and its table, and whose sheets that only look like
+/// a data sheet are renamed, not refused ([`saved_overlay`]); else an upload, which holds none.
 fn refusal(model: &Model<'_>, data_sheets: &[String], saved: bool) -> Option<String> {
     let workbook = &model.workbook;
     for sheet in data_sheets {
@@ -72,7 +86,7 @@ fn refusal(model: &Model<'_>, data_sheets: &[String], saved: bool) -> Option<Str
         if let Some(found) = workbook
             .get_worksheet_names()
             .into_iter()
-            .find(|name| same(name, sheet) && !own(name))
+            .find(|name| !saved && same(name, sheet))
         {
             return Some(format!(
                 "The workbook has a sheet named {found}, which is the data sheet's name; rename the sheet first"
@@ -110,37 +124,94 @@ pub fn overlay_refusal(model: &Model<'_>, data_sheets: &[String]) -> Option<Stri
     refusal(model, data_sheets, false)
 }
 
-/// A saved document's overlay as a room opens it, whatever wrote it: refused for a sheet that only looks like a data
-/// sheet, or a table, defined name or named function of a data sheet's table name that is not on the data sheet; and
-/// each data sheet that holds anything below its header emptied there, as its stored form is (the header and the
-/// stub's empty rows; [`fill::stored_form`]), so a fill keeps no row the overlay brought. The cells are taken out and
-/// no row is deleted, so no formula's range moves. A stored form CalcGrid wrote holds none, and is answered as it is.
+/// Whether a data sheet of a saved overlay holds what its stored form does not: a cell below its header, or what a
+/// view draws over its rows or hides of them (conditional formats, merged cells, comments, drawings, links, a row's or
+/// column's style or hiding, the sheet hidden). Its widths, heights and frozen panes are an author's to set.
+fn holds_more(worksheet: &Worksheet) -> bool {
+    worksheet.sheet_data.rows().into_iter().any(|row| row > 1)
+        || !worksheet.conditional_formatting.is_empty()
+        || !worksheet.merged_cells.is_empty()
+        || !worksheet.comments.is_empty()
+        || !worksheet.drawings.is_empty()
+        || !worksheet.links.is_empty()
+        || !matches!(worksheet.state, SheetState::Visible)
+        || worksheet
+            .rows
+            .iter()
+            .any(|row| row.hidden || row.s != 0 || row.custom_format)
+        || worksheet.cols.iter().any(|col| col.hidden || col.style.is_some())
+}
+
+/// A data sheet of a saved overlay back to its stored form: no cell below its header, nothing drawn over its rows or
+/// hiding them; its widths, heights and frozen panes kept.
+fn to_stored_form(worksheet: &mut Worksheet) {
+    for row in worksheet.sheet_data.rows().into_iter().filter(|row| *row > 1) {
+        worksheet.sheet_data.remove_row(row);
+    }
+    worksheet.conditional_formatting.clear();
+    worksheet.merged_cells.clear();
+    worksheet.comments.clear();
+    worksheet.drawings.clear();
+    worksheet.links.clear();
+    worksheet.state = SheetState::Visible;
+    for row in &mut worksheet.rows {
+        row.hidden = false;
+        row.s = 0;
+        row.custom_format = false;
+    }
+    for col in &mut worksheet.cols {
+        col.hidden = false;
+        col.style = None;
+    }
+}
+
+/// A saved document's overlay as a room opens it, whatever wrote it (plans/IronCalc-DB2.md CG4 review): refused for a
+/// table, defined name or named function of a data sheet's table name that is not on the data sheet; a sheet that only
+/// looks like a data sheet ([`same`]) renamed, with a warning to the opener, so no document is past opening for a tab
+/// name; and each data sheet that holds more than its stored form ([`holds_more`]) set back to it, so a fill keeps no
+/// row and draws nothing the overlay brought. The cells are taken out and no row is deleted, so no formula's range
+/// moves. A stored form CalcGrid wrote holds none, and is answered as it is.
 ///
 /// # Errors
 ///
 /// The refusal, or the engine's error.
-pub fn saved_overlay(model: Model<'static>, data_sheets: &[String]) -> Result<Model<'static>, Error> {
+pub fn saved_overlay(mut model: Model<'static>, data_sheets: &[String]) -> Result<Model<'static>, Error> {
+    let engine = |message: String| Error::new(format!("Spreadsheet engine: {message}"));
     if let Some(refused) = refusal(&model, data_sheets, true) {
         return Err(Error::new(refused));
     }
     let is_data = |name: &str| data_sheets.iter().any(|sheet| sheet.eq_ignore_ascii_case(name));
-    let holds = |worksheet: &moqui_core::workbook::ironcalc::base::types::Worksheet| {
-        is_data(&worksheet.get_name()) && worksheet.sheet_data.rows().into_iter().any(|row| row > 1)
-    };
-    if !model.workbook.worksheets.iter().any(holds) {
+    let names = model.workbook.get_worksheet_names();
+    for (index, name) in names.iter().enumerate() {
+        let Some(data) = data_sheets.iter().find(|sheet| !is_data(name) && same(sheet, name)) else {
+            continue;
+        };
+        let taken = model.workbook.get_worksheet_names();
+        let mut renamed = format!("{data} (renamed)");
+        for again in 2.. {
+            if !taken.iter().any(|one| same(one, &renamed)) && !data_sheets.iter().any(|sheet| same(sheet, &renamed)) {
+                break;
+            }
+            renamed = format!("{data} (renamed {again})");
+        }
+        let index = u32::try_from(index).map_err(|_| Error::new("Too many sheets"))?;
+        model.rename_sheet_by_index(index, &renamed).map_err(engine)?;
+        tracing::warn!(sheet = %name, renamed = %renamed, "A saved CalcGrid overlay held a sheet named like a data sheet; it is renamed");
+        let message = format!("The sheet {name:?} looked like the data sheet {data} and is renamed {renamed}; save the document to keep it so");
+        moqui_core::context::ExecutionContext::with_current(|ec| ec.message().add_message_typed(message, "warning"));
+    }
+    let more = |worksheet: &Worksheet| is_data(&worksheet.get_name()) && holds_more(worksheet);
+    if !model.workbook.worksheets.iter().any(more) {
         return Ok(model);
     }
     let mut workbook = model.workbook;
     for worksheet in &mut workbook.worksheets {
-        if !holds(worksheet) {
-            continue;
-        }
-        tracing::warn!(sheet = %worksheet.get_name(), "A saved CalcGrid overlay held rows in a data sheet; they are taken out");
-        for row in worksheet.sheet_data.rows().into_iter().filter(|row| *row > 1) {
-            worksheet.sheet_data.remove_row(row);
+        if more(worksheet) {
+            tracing::warn!(sheet = %worksheet.get_name(), "A saved CalcGrid overlay held more than a data sheet's stored form; it is set back to it");
+            to_stored_form(worksheet);
         }
     }
-    Model::from_workbook(workbook, "en").map_err(|message| Error::new(format!("Spreadsheet engine: {message}")))
+    Model::from_workbook(workbook, "en").map_err(engine)
 }
 
 /// An uploaded workbook's file name as a title may take it: its last part, no control character, at most 200.

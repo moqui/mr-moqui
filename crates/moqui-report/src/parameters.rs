@@ -32,9 +32,6 @@ use super::{input, text};
 
 /// The most parameters one dataset declares.
 pub(crate) const MAX_PARAMETERS: usize = 16;
-/// The most datasets of one listing whose choices are read (`list#Datasets` with `parameterChoices`): each read calls
-/// its choices services, and the definition editor lists every dataset the author reads.
-pub(crate) const MAX_CHOICE_DATASETS: usize = 8;
 /// The most choices one parameter offers; a service that answers more is cut.
 pub(crate) const MAX_CHOICES: usize = 500;
 /// The kinds of a parameter's value.
@@ -97,13 +94,6 @@ pub(crate) fn refusal(body: &Json) -> Option<String> {
     None
 }
 
-/// Whether a parameter of `body` names choices.
-pub(crate) fn has_choices(body: &Json) -> bool {
-    body["parameters"]
-        .as_array()
-        .is_some_and(|declared| declared.iter().any(|parameter| parameter["choices"].is_object()))
-}
-
 /// What `body`'s parameters' choices call: each service with the parameters it is given (none as `{}`).
 pub(crate) fn choice_sources(body: &Json) -> Vec<(&str, Json)> {
     body["parameters"]
@@ -119,10 +109,21 @@ pub(crate) fn choice_sources(body: &Json) -> Vec<(&str, Json)> {
         .collect()
 }
 
+/// The answers of the choices services one listing called, by service and parameters: every saved dataset's choices
+/// are a shipped dataset's (definitions.rs `service_refusal`), so a listing calls each of those once, whatever number
+/// of datasets name it. None when the service gave none (refused, failed, not the viewer's).
+#[derive(Default)]
+pub(crate) struct ChoiceAnswers(std::collections::BTreeMap<(String, String), Option<Json>>);
+
 /// The parameters `body` declares as the editors take them: `name`, `label` (the name when it has none), `kind` and
-/// `optional`, in their order; an entry that is not a declaration is left out. With `choices`, each that names a
+/// `optional`, in their order; an entry that is not a declaration is left out. With `answers`, each that names a
 /// choices service also has them, `{value, label}` each ([`choices`]); without, none has.
-pub(crate) fn declared(ec: &ExecutionContext, dataset_id: &str, body: &Json, with_choices: bool) -> Vec<Json> {
+pub(crate) fn declared(
+    ec: &ExecutionContext,
+    dataset_id: &str,
+    body: &Json,
+    mut answers: Option<&mut ChoiceAnswers>,
+) -> Vec<Json> {
     body["parameters"]
         .as_array()
         .into_iter()
@@ -137,50 +138,26 @@ pub(crate) fn declared(ec: &ExecutionContext, dataset_id: &str, body: &Json, wit
                 "kind": Some(text(parameter, "kind", "text")).filter(|kind| KINDS.contains(kind)).unwrap_or("text"),
                 "optional": parameter["optional"] == true,
             });
-            if with_choices && parameter["choices"].is_object() {
-                out["choices"] = Json::Array(choices(ec, dataset_id, name, &parameter["choices"]));
+            if let (Some(answers), true) = (answers.as_deref_mut(), parameter["choices"].is_object()) {
+                out["choices"] = Json::Array(choices(ec, dataset_id, name, &parameter["choices"], answers));
             }
             out
         })
         .collect()
 }
 
-/// A parameter's choices, from its service called as the viewer: each item of the out-parameter `list` as its `value`
-/// and `label` fields, at most [`MAX_CHOICES`]. A service that fails or is not the viewer's to call gives none, logged,
-/// and its errors are not the caller's: the field is then a text field (AGENTS.md failure tolerance).
-fn choices(ec: &ExecutionContext, dataset_id: &str, name: &str, spec: &Json) -> Vec<Json> {
+/// A parameter's choices, from its service called as the viewer, once a listing for each service and parameters
+/// (`answers`): each item of the out-parameter `list` as its `value` and `label` fields, at most [`MAX_CHOICES`].
+fn choices(ec: &ExecutionContext, dataset_id: &str, name: &str, spec: &Json, answers: &mut ChoiceAnswers) -> Vec<Json> {
     let service = text(spec, "service", "");
-    // the viewer's own grant of the service, as a dataset's serviceName needs (lib.rs resolve_dataset): a screen's
-    // inherited grant does not call it for them
-    if let Err(error) = moqui_core::user::authorize_own("AT_SERVICE", service, "view") {
-        tracing::info!(dataset = dataset_id, parameter = name, service, %error, "A dataset parameter's choices are not the viewer's to read");
+    let key = (service.to_string(), spec["parameters"].to_string());
+    let answered = answers
+        .0
+        .entry(key)
+        .or_insert_with(|| answer(ec, dataset_id, name, spec))
+        .clone();
+    let Some(answered) = answered else {
         return Vec::new();
-    }
-    let parameters = match moqui_lib::json::from_json(&spec["parameters"]) {
-        moqui_lib::object::Value::Map(map) => map.into_iter().collect(),
-        _ => moqui_core::native::Parameters::new(),
-    };
-    // the service's refusal is this field's, not the listing's, as a panel's is its own (lib.rs execute_query)
-    ec.message().push_errors();
-    let called = sync_checked(
-        service,
-        &parameters,
-        &CallOptions {
-            require_new_transaction: Some(true),
-            ..Default::default()
-        },
-    );
-    {
-        let mut message = ec.message();
-        message.clear_errors();
-        message.pop_errors();
-    }
-    let answered = match called {
-        Ok(out) => input(&out),
-        Err(error) => {
-            tracing::warn!(dataset = dataset_id, parameter = name, service, %error, "A dataset parameter's choices were not read");
-            return Vec::new();
-        }
     };
     let (value_field, label_field) = (text(spec, "value", ""), text(spec, "label", ""));
     let shown = |value: &Json| match value {
@@ -203,9 +180,53 @@ fn choices(ec: &ExecutionContext, dataset_id: &str, name: &str, spec: &Json) -> 
         .collect()
 }
 
+/// What a choices service answers the viewer, or None. A service that fails or is not the viewer's to call gives
+/// none, logged, and its errors are not the caller's: the field is then a text field (AGENTS.md failure tolerance).
+fn answer(ec: &ExecutionContext, dataset_id: &str, name: &str, spec: &Json) -> Option<Json> {
+    let service = text(spec, "service", "");
+    // the viewer's own grant of the service, as a dataset's serviceName needs (lib.rs resolve_dataset): a screen's
+    // inherited grant does not call it for them. Asked, not used: a refusal records no ArtifactAuthzFailure, so a panel
+    // editor's listing by a viewer without it writes no row
+    if let Err(error) = moqui_core::user::authorize_own_unrecorded("AT_SERVICE", service, "view") {
+        tracing::info!(dataset = dataset_id, parameter = name, service, %error, "A dataset parameter's choices are not the viewer's to read");
+        return None;
+    }
+    let parameters = match moqui_lib::json::from_json(&spec["parameters"]) {
+        moqui_lib::object::Value::Map(map) => map.into_iter().collect(),
+        _ => moqui_core::native::Parameters::new(),
+    };
+    // the service's refusal is this field's, not the listing's, as a panel's is its own (lib.rs execute_query)
+    ec.message().push_errors();
+    let called = sync_checked(
+        service,
+        &parameters,
+        &CallOptions {
+            require_new_transaction: Some(true),
+            ..Default::default()
+        },
+    );
+    {
+        let mut message = ec.message();
+        message.clear_errors();
+        message.pop_errors();
+    }
+    match called {
+        Ok(out) => Some(input(&out)),
+        Err(error) => {
+            tracing::warn!(dataset = dataset_id, parameter = name, service, %error, "A dataset parameter's choices were not read");
+            None
+        }
+    }
+}
+
 /// `parameters` of a dataset's listing: [`declared`] for `body`, or None when it declares none.
-pub(crate) fn listed(ec: &ExecutionContext, dataset_id: &str, body: &Json, with_choices: bool) -> Option<Json> {
-    let declared = declared(ec, dataset_id, body, with_choices);
+pub(crate) fn listed(
+    ec: &ExecutionContext,
+    dataset_id: &str,
+    body: &Json,
+    answers: Option<&mut ChoiceAnswers>,
+) -> Option<Json> {
+    let declared = declared(ec, dataset_id, body, answers);
     (!declared.is_empty()).then_some(Json::Array(declared))
 }
 
