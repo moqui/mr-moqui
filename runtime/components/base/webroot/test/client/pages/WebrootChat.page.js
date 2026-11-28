@@ -205,6 +205,18 @@ test("the status dialog's presets: the user's CHAT_STATUS_PRESETS, else the defa
     assert.equal(dialog.methods.clearLabel.call(self, 0), "");
 });
 
+test("a typing signal with forSeconds lasts that long, at most 180 seconds; typing false or a message ends it", () => {
+    const state = freshState();
+    chat.reduce(state, push("chatRoom:R1", { kind: "typing", chatRoomId: "R1", userId: "bob", typing: true, forSeconds: 60 }), "ann", 1000);
+    assert.deepEqual(chat.typingUsers(state, "R1", 40000), ["bob"], "shown for its forSeconds");
+    assert.deepEqual(chat.typingUsers(state, "R1", 62000), [], "gone after its forSeconds");
+    chat.reduce(state, push("chatRoom:R1", { kind: "typing", chatRoomId: "R1", userId: "bob", typing: true, forSeconds: 9999 }), "ann", 1000);
+    assert.deepEqual(chat.typingUsers(state, "R1", 182000), [], "never more than 180 seconds");
+    chat.reduce(state, push("chatRoom:R1", { kind: "typing", chatRoomId: "R1", userId: "bob", typing: true, forSeconds: 60 }), "ann", 1000);
+    chat.reduce(state, push("chatRoom:R1", { kind: "typing", chatRoomId: "R1", userId: "bob", typing: false }), "ann", 2000);
+    assert.deepEqual(chat.typingUsers(state, "R1", 3000), [], "typing false ends it");
+});
+
 test("the tray's Chat tab reloads for an event no screen listens to, never for typing or a read marker", () => {
     assert.equal(chat.trayReloads(push("chatRoom:R1", { kind: "typing" })), false);
     assert.equal(chat.trayReloads(push("chatRoom:R1", { kind: "read" })), false);

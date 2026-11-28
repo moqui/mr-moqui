@@ -3543,12 +3543,15 @@ along with this software (see the LICENSE.md file). If not, see
             {kind: 'typing', chatRoomId, userId, typing, statusText} on chatRoom:id. Nothing is stored; a client shows it
             for a few seconds unless it is sent again. statusText (up to 80 characters) says what the user does, as an
             agent member's "Looking up open orders…"; userId types as another member (an agent), only with authorization
-            disabled.</description>
+            disabled. forSeconds (1 to 180) is how long a client shows it when the sender cannot send it again soon, as an
+            agent member that waits on one long call; the sender sends typing false when done, and its message ends it
+            too.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="typing" type="Boolean" default="true"/>
             <parameter name="statusText"/>
             <parameter name="userId"/>
+            <parameter name="forSeconds" type="Integer"/>
         </in-parameters>
         <actions><script><![CDATA[
             let me = ec.user.userId
@@ -3566,7 +3569,8 @@ along with this software (see the LICENSE.md file). If not, see
             const hush = new Set(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockersOf', {senderUserId: me, userIdList: others}).userIdList || [])
             if (others.some((id) => !hush.has(id))) ec.service.sync().name('org.moqui.chat.ChatServices.push#Signal').parameters({topic: 'chatRoom:' + chatRoomId,
                 userIdList: others.filter((id) => !hush.has(id)), message: {kind: 'typing', chatRoomId: chatRoomId, userId: me, typing: !!typing,
-                    statusText: typing && statusText ? String(statusText).replace(/\s+/g, ' ').trim().slice(0, 80) : null}}).call()
+                    statusText: typing && statusText ? String(statusText).replace(/\s+/g, ' ').trim().slice(0, 80) : null,
+                    forSeconds: typing && forSeconds > 0 ? Math.min(Number(forSeconds), 180) : null}}).call()
             // a network with a typing indicator (business RCS) shows the other side too, never holding this signal up
             if (typing && !userId) {
                 const bridgeIds = Array.from(ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatRoomId', chatRoomId).condition('thruDate', null)

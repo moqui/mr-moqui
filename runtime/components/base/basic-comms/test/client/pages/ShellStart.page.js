@@ -217,4 +217,60 @@ test("a start screen with a query is the start only with that query, or what too
         shellState.startPath = "/qapps/BasicComms/Chat";
     }
 });
+
+test("a start screen of Chat's single-room mode: the room alone, as a phone's messages app, and every Chat link keeps the mode", async () => {
+    await mount();
+    // two runs today, an hour and more apart: the day's line with its time, then a line of the time alone; two of mine in a run
+    const day = new Date(); day.setHours(0, 0, 0, 0);
+    const at = (minutes) => day.getTime() + minutes * 60000;
+    const message = (seq, sender, minutes, text) => ({ eventSeq: seq, type: "message", senderUserId: sender, senderName: sender === "ann" ? "Ann" : "Bob",
+        sentDate: at(minutes), body: "<p>" + text + "</p>", bodyText: text, reactions: [], attachments: [] });
+    const before = timeline.eventList;
+    timeline.eventList = [message(1, "bob", 10, "are you there"), message(2, "ann", 12, "yes"), message(3, "ann", 13, "what is it"), message(4, "bob", 95, "later then")];
+    shellState.startPath = "/qapps/BasicComms/Chat?single=true";
+    try {
+        root.view = null;
+        await Vue.nextTick();
+        root.goHome();
+        // no chatRoomId: the first of the user's rooms, in the start screen's place
+        await until(() => root.currentParameters.chatRoomId === "R1", "the first room");
+        assert.equal(root.currentParameters.single, "true", "the room's link keeps the mode");
+        assert.ok(root.atStart, "the room is the start: Back leaves the app");
+        await until(() => document.querySelector(".m-chat-single-room .m-chat-phone .m-chat-msg"), "the room in bubbles");
+        // no chrome: the shell's header and drawer are hidden, and the rail of rooms is not shown
+        assert.ok(document.body.classList.contains("m-chat-single"));
+        assert.equal(getComputedStyle(document.querySelector(".q-header")).display, "none", "no header");
+        const search = document.getElementById("ChatRoomSearch");
+        assert.ok(!search || !search.offsetParent, "no rail of rooms");
+        assert.ok(!document.querySelector(".m-chat-phone button[aria-label='Back to chats']"), "no Back to the rooms");
+        // the time lines and the runs
+        const lines = Array.from(document.querySelectorAll(".m-chat-phone .m-chat-day")).map((el) => el.textContent.trim());
+        assert.equal(lines.length, 2, JSON.stringify(lines));
+        assert.ok(lines[0].startsWith("Today • "), lines[0]);
+        assert.ok(document.querySelectorAll(".m-chat-phone .m-chat-day-time").length === 1 && !lines[1].includes("•"), lines[1]);
+        const mine = Array.from(document.querySelectorAll(".m-chat-phone .m-chat-msg.m-chat-mine"));
+        assert.equal(mine.length, 2);
+        assert.ok(mine[0].classList.contains("m-chat-join-next") && !mine[1].classList.contains("m-chat-join-next"), "a run's corners");
+        assert.ok(mine[1].classList.contains("m-chat-grouped"));
+        // Sign out is in the room's menu, and is the shell's (its confirm)
+        document.querySelector(".m-chat-phone button[aria-label='Room']").click();
+        const signOut = await until(() => document.querySelector(".m-chat-sign-out"), "Sign out in the room's menu");
+        assert.ok(!document.body.textContent.includes("Leave the room"), "nothing that leaves the room");
+        signOut.click();
+        await until(() => root.signOutBox.open, "the shell's sign-out confirm");
+        root.signOutBox.open = false;
+        // a notification's link to a room keeps the mode
+        root.openPathFromHost("/qapps/BasicComms/Chat?chatRoomId=R1&eventSeq=4");
+        await until(() => String(root.currentParameters.eventSeq) === "4", "the notification's room");
+        assert.equal(root.currentParameters.single, "true");
+    } finally {
+        timeline.eventList = before;
+        shellState.startPath = "/qapps/BasicComms/Chat";
+        root.signOutBox.open = false;
+        root.goHome();
+    }
+    // the mode off: the chrome is back
+    await until(() => !document.body.classList.contains("m-chat-single"), "the chrome back");
+    assert.notEqual(getComputedStyle(document.querySelector(".q-header")).display, "none");
+});
 })();
