@@ -142,6 +142,14 @@ pub(crate) mod media {
             match *self {}
         }
 
+        pub(crate) fn clear(&mut self) -> Result<(), &'static str> {
+            match *self {}
+        }
+
+        pub(crate) fn played_frames(&self) -> u64 {
+            match *self {}
+        }
+
         pub(crate) fn leg(&self) -> &str {
             match *self {}
         }

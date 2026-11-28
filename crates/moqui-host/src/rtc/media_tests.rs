@@ -12,7 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use std::sync::mpsc::{sync_channel, Receiver};
+use std::sync::atomic::Ordering;
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use moqui_lib::sync::lock;
@@ -20,7 +22,7 @@ use moqui_rtc::audio::opus::OpusDecoder;
 use moqui_rtc::audio::{level_dbov, FRAME};
 use moqui_rtc::{Sfu, SfuConfig, Source};
 
-use super::{add_pcm_source, attach, Kinds, Media, Pacer, TapEvent, TICK};
+use super::{add_pcm_source, attach, Kinds, Media, MediaCommand, Pacer, SourceFrame, SourceState, TapEvent, TICK};
 use crate::rtc::Command;
 
 fn tone_frame(start: usize) -> Vec<i16> {
@@ -95,22 +97,10 @@ fn an_injected_leg_reaches_a_consumer_on_the_driver_side() {
         },
     );
     assert_eq!(answer.recv().expect("a reply"), Ok(()));
-    let (tx, rx) = sync_channel(16);
-    let (reply, answer) = sync_channel(1);
-    media.command(
-        &mut sfu,
-        start,
-        super::MediaCommand::AddSource {
-            room: "CS1".to_string(),
-            leg: "PH".to_string(),
-            frames: rx,
-            reply,
-        },
-    );
-    assert_eq!(answer.recv().expect("a reply"), Ok(()));
+    let (tx, state) = add_source(&mut sfu, &mut media, start, "CS1", "PH");
     assert_eq!(sfu.legs("CS1").len(), 1, "a room of a phone only");
     for n in 0..5u8 {
-        tx.send(vec![0xF8, n]).expect("queued");
+        tx.send(frame(0, vec![0xF8, n])).expect("queued");
     }
     for tick in 0..5u32 {
         media.turn(&mut sfu, start + TICK * tick);
@@ -126,6 +116,7 @@ fn an_injected_leg_reaches_a_consumer_on_the_driver_side() {
         .collect();
     assert_eq!(seen.len(), 5);
     assert_eq!(seen[4], (4 * 960, vec![0xF8, 4]));
+    assert_eq!(state.played.load(Ordering::Acquire), 5);
 
     // the owner went away: the leg goes, and the tap keeps the room
     drop(tx);
@@ -134,6 +125,150 @@ fn an_injected_leg_reaches_a_consumer_on_the_driver_side() {
     assert_eq!(sfu.room_count(), 1);
     media.command(&mut sfu, start, super::MediaCommand::Detach { id: 7 });
     assert_eq!(sfu.room_count(), 0, "the last tap gone, the room goes");
+}
+
+fn frame(epoch: u64, data: Vec<u8>) -> SourceFrame {
+    SourceFrame { epoch, data }
+}
+
+/// An injected leg added on the driver side, with a tap on the room so it stays.
+fn add_source(
+    sfu: &mut Sfu,
+    media: &mut Media,
+    now: Instant,
+    room: &str,
+    leg: &str,
+) -> (SyncSender<SourceFrame>, Arc<SourceState>) {
+    let (tx, rx) = sync_channel(16);
+    let state = Arc::new(SourceState::default());
+    let (reply, answer) = sync_channel(1);
+    media.command(
+        sfu,
+        now,
+        MediaCommand::AddSource {
+            room: room.to_string(),
+            leg: leg.to_string(),
+            frames: rx,
+            state: Arc::clone(&state),
+            reply,
+        },
+    );
+    assert_eq!(answer.recv().expect("a reply"), Ok(()));
+    (tx, state)
+}
+
+#[test]
+fn a_cleared_pacer_sends_gaps_and_keeps_its_clock() {
+    let start = Instant::now();
+    let mut pacer = Pacer::new();
+    let mut due = Vec::new();
+    for n in 0..6u8 {
+        pacer.push(vec![n]);
+    }
+    pacer.due(start, &mut due);
+    assert_eq!(due, [(0, vec![0])]);
+    pacer.clear();
+    due.clear();
+    pacer.due(start + TICK * 2, &mut due);
+    assert!(due.is_empty(), "nothing left to send: {due:?}");
+    assert_eq!(pacer.next_due(), Some(start + TICK * 3), "the timer goes on");
+    pacer.push(vec![9]);
+    pacer.due(start + TICK * 3, &mut due);
+    assert_eq!(due, [(3 * 960, vec![9])], "the RTP clock went on through the gap");
+}
+
+#[test]
+fn a_cleared_source_drops_its_queued_frames_and_counts_what_played() {
+    let mut sfu = Sfu::new(SfuConfig::default());
+    let mut media = Media::default();
+    let start = Instant::now();
+    let (tap, frames) = moqui_rtc::tap::QueueTap::channel(64, Kinds::Audio);
+    let (reply, answer) = sync_channel(1);
+    media.command(
+        &mut sfu,
+        start,
+        MediaCommand::Attach {
+            room: "CS2".to_string(),
+            id: 8,
+            tap: Box::new(tap),
+            reply,
+        },
+    );
+    assert_eq!(answer.recv().expect("a reply"), Ok(()));
+    let (tx, state) = add_source(&mut sfu, &mut media, start, "CS2", "VA");
+    let sent = || -> Vec<Vec<u8>> {
+        std::iter::from_fn(|| frames.try_recv().ok())
+            .map(|event| {
+                let TapEvent::Frame(f) = event else {
+                    panic!("a frame: {event:?}")
+                };
+                f.data
+            })
+            .collect()
+    };
+
+    // an utterance of 10 frames: 6 reach the pacer, 4 wait in the queue; 3 go out
+    for n in 0..10u8 {
+        tx.send(frame(0, vec![0xF8, n])).expect("queued");
+    }
+    for tick in 0..3u32 {
+        media.turn(&mut sfu, start + TICK * tick);
+    }
+    assert_eq!(sent().len(), 3);
+    assert_eq!(state.played.load(Ordering::Acquire), 3);
+
+    // the listener talks over it: what is queued anywhere is dropped at once
+    state.epoch.fetch_add(1, Ordering::AcqRel);
+    media.command(
+        &mut sfu,
+        start + TICK * 3,
+        MediaCommand::ClearSource {
+            room: "CS2".to_string(),
+            leg: "VA".to_string(),
+        },
+    );
+    for tick in 3..8u32 {
+        media.turn(&mut sfu, start + TICK * tick);
+    }
+    assert!(sent().is_empty(), "nothing of the old utterance plays");
+    assert_eq!(state.played.load(Ordering::Acquire), 3, "the listener heard 60 ms");
+
+    // the next utterance plays as usual, and a frame of before the clear that comes late is dropped
+    tx.send(frame(0, vec![0xF8, 0xAA])).expect("queued");
+    tx.send(frame(1, vec![0xF8, 0x10])).expect("queued");
+    tx.send(frame(1, vec![0xF8, 0x11])).expect("queued");
+    for tick in 8..11u32 {
+        media.turn(&mut sfu, start + TICK * tick);
+    }
+    assert_eq!(sent(), [vec![0xF8, 0x10], vec![0xF8, 0x11]]);
+    assert_eq!(state.played.load(Ordering::Acquire), 5);
+
+    // a clear the media thread was not told of: the next turn drops the frames all the same
+    for n in 0..4u8 {
+        tx.send(frame(1, vec![0xF8, 0x20 + n])).expect("queued");
+    }
+    media.turn(&mut sfu, start + TICK * 11);
+    assert_eq!(sent().len(), 1);
+    state.epoch.fetch_add(1, Ordering::AcqRel);
+    for tick in 12..16u32 {
+        media.turn(&mut sfu, start + TICK * tick);
+    }
+    assert!(sent().is_empty());
+
+    // frames pushed before a clear the media thread has not seen yet are still queued: they go, the new one plays
+    tx.send(frame(2, vec![0xF8, 0x30])).expect("queued");
+    state.epoch.fetch_add(1, Ordering::AcqRel);
+    tx.send(frame(3, vec![0xF8, 0x31])).expect("queued");
+    tx.send(frame(3, vec![0xF8, 0x32])).expect("queued");
+    media.turn(&mut sfu, start + TICK * 16);
+    assert_eq!(sent(), [vec![0xF8, 0x31]]);
+    assert_eq!(state.played.load(Ordering::Acquire), 7);
+
+    // a clear and a push between the media thread's epoch read and its take: the newer frame clears the pacer
+    tx.send(frame(4, vec![0xF8, 0x40])).expect("queued");
+    media.turn(&mut sfu, start + TICK * 17);
+    assert_eq!(sent(), [vec![0xF8, 0x40]], "0x32, of before the clear, did not play");
+    assert_eq!(state.played.load(Ordering::Acquire), 8);
 }
 
 /// A stand-in for the driver thread: the same `Media` on a bare SFU, turning every 2 ms.
@@ -181,6 +316,8 @@ fn a_consumer_hears_a_pcm_source_through_the_hooks() {
     );
     assert!(level_dbov(&pcm[FRAME * 5..]) > -25.0);
     assert_eq!(consumer.dropped(), 0);
+    assert_eq!(source.played_frames(), 10, "every frame pushed was sent");
+    assert_eq!(source.clear(), Ok(()));
     drop(source);
     drop(consumer);
 

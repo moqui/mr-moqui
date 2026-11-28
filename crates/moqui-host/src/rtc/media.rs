@@ -40,6 +40,12 @@
 //! consumers see it too, so two phone legs hear each other through the mixer. Dropping the source removes the leg; so
 //! does `send#MediaControl` closing the leg or the call.
 //!
+//! - [`PcmSource::clear`] drops what is queued and not yet sent, in the source's queue and on the media thread, for a
+//!   voice agent that stops speaking when a listener talks over it (barge-in). It does not wait: the frames pushed
+//!   before it are never sent, and the frames pushed after it play as usual. The leg's RTP clock goes on.
+//! - [`PcmSource::played_frames`] counts the frames the media thread sent into the room, 20 ms each: what the
+//!   listeners heard of the pushed audio is that count times 20 ms.
+//!
 //! Both work on this node's rooms only: call them on the call's media node (`CallSession.mediaNodeId`, §6.3), where a
 //! room is made for them when it has no leg yet. The errors are the driver's codes: `noMedia` (no media node here),
 //! `overloaded` (its command queue is full), `timeout`, and the SFU's (`tooManyRooms`, `roomFull`, `staleGeneration`
@@ -53,6 +59,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use moqui_rtc::audio::opus::{OpusEncoder, VOICE_BITRATE};
@@ -100,13 +107,34 @@ pub(crate) enum MediaCommand {
     AddSource {
         room: String,
         leg: String,
-        frames: Receiver<Vec<u8>>,
+        frames: Receiver<SourceFrame>,
+        state: Arc<SourceState>,
         reply: SyncSender<Result<(), &'static str>>,
     },
     RemoveSource {
         room: String,
         leg: String,
     },
+    /// Drop an injected leg's queued frames now ([`PcmSource::clear`]).
+    ClearSource {
+        room: String,
+        leg: String,
+    },
+}
+
+/// An encoded frame from a [`PcmSource`], with the source's epoch when it was pushed.
+pub(crate) struct SourceFrame {
+    pub(crate) epoch: u64,
+    pub(crate) data: Vec<u8>,
+}
+
+/// What a [`PcmSource`] and the media thread share.
+#[derive(Default)]
+pub(crate) struct SourceState {
+    /// Each [`PcmSource::clear`] adds one; a frame of an older epoch is not sent.
+    epoch: AtomicU64,
+    /// The frames sent into the room.
+    played: AtomicU64,
 }
 
 /// The frames a consumer takes out of a room.
@@ -171,7 +199,8 @@ pub(crate) struct PcmSource {
     room: String,
     leg: String,
     encoder: OpusEncoder,
-    frames: SyncSender<Vec<u8>>,
+    frames: SyncSender<SourceFrame>,
+    state: Arc<SourceState>,
     dropped: u64,
 }
 
@@ -179,11 +208,13 @@ pub(crate) struct PcmSource {
 pub(crate) fn add_pcm_source(room: &str, leg: &str) -> Result<PcmSource, &'static str> {
     let encoder = OpusEncoder::new(VOICE_BITRATE).map_err(|_| "codec")?;
     let (tx, rx) = sync_channel(SOURCE_QUEUE);
+    let state = Arc::new(SourceState::default());
     let (reply, answer) = sync_channel(1);
     command(Command::Media(MediaCommand::AddSource {
         room: room.to_string(),
         leg: leg.to_string(),
         frames: rx,
+        state: Arc::clone(&state),
         reply,
     }))?;
     wait(&answer)?;
@@ -192,6 +223,7 @@ pub(crate) fn add_pcm_source(room: &str, leg: &str) -> Result<PcmSource, &'stati
         leg: leg.to_string(),
         encoder,
         frames: tx,
+        state,
         dropped: 0,
     })
 }
@@ -203,8 +235,9 @@ impl PcmSource {
         if pcm.len() != FRAME {
             return Err("badFrame");
         }
-        let packet = self.encoder.encode(pcm).map_err(|_| "codec")?.to_vec();
-        match self.frames.try_send(packet) {
+        let data = self.encoder.encode(pcm).map_err(|_| "codec")?.to_vec();
+        let epoch = self.state.epoch.load(Ordering::Acquire);
+        match self.frames.try_send(SourceFrame { epoch, data }) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => {
                 self.dropped += 1;
@@ -217,6 +250,22 @@ impl PcmSource {
     /// The frames dropped because the media thread was behind.
     pub(crate) fn dropped(&self) -> u64 {
         self.dropped
+    }
+
+    /// Drops the frames pushed so far and not yet sent, in this source's queue and on the media thread; the frames
+    /// pushed after it play as usual. It does not wait. Err `overloaded` or `noMedia` when the media thread was not
+    /// told: the frames are dropped all the same, at its next turn (within 20 ms) instead of at once.
+    pub(crate) fn clear(&mut self) -> Result<(), &'static str> {
+        self.state.epoch.fetch_add(1, Ordering::AcqRel);
+        command(Command::Media(MediaCommand::ClearSource {
+            room: self.room.clone(),
+            leg: self.leg.clone(),
+        }))
+    }
+
+    /// The frames of this source the media thread sent into the room, 20 ms each.
+    pub(crate) fn played_frames(&self) -> u64 {
+        self.state.played.load(Ordering::Acquire)
     }
 
     pub(crate) fn leg(&self) -> &str {
@@ -296,13 +345,45 @@ impl Pacer {
     pub(super) fn next_due(&self) -> Option<Instant> {
         self.next
     }
+
+    /// Drops the frames not yet sent. The timer and the RTP clock go on: the ticks until the next push are gaps.
+    pub(super) fn clear(&mut self) {
+        self.pending.clear();
+    }
 }
 
 struct Injected {
     room: String,
     leg: String,
-    frames: Receiver<Vec<u8>>,
+    frames: Receiver<SourceFrame>,
+    state: Arc<SourceState>,
+    /// The epoch the pacer's frames are of.
+    epoch: u64,
     pacer: Pacer,
+}
+
+impl Injected {
+    /// Catches up with the source's epoch: after a clear, the pacer's frames are older and go.
+    fn sync_epoch(&mut self) {
+        let epoch = self.state.epoch.load(Ordering::Acquire);
+        if epoch != self.epoch {
+            self.epoch = epoch;
+            self.pacer.clear();
+        }
+    }
+
+    /// Takes in a pushed frame, unless a clear came after it.
+    fn take(&mut self, frame: SourceFrame) {
+        if frame.epoch < self.epoch {
+            return;
+        }
+        if frame.epoch > self.epoch {
+            // a clear between the epoch read and this push
+            self.epoch = frame.epoch;
+            self.pacer.clear();
+        }
+        self.pacer.push(frame.data);
+    }
 }
 
 /// The driver's half: the room taps by consumer id and the injected legs with their timers.
@@ -331,20 +412,29 @@ impl Media {
                 room,
                 leg,
                 frames,
+                state,
                 reply,
             } => {
                 let result = sfu.add_injected_source(now, &room, &leg).map(|()| {
                     self.sources.retain(|s| !(s.room == room && s.leg == leg));
+                    let epoch = state.epoch.load(Ordering::Acquire);
                     self.sources.push(Injected {
                         room,
                         leg,
                         frames,
+                        state,
+                        epoch,
                         pacer: Pacer::new(),
                     });
                 });
                 let _ = reply.try_send(result.map_err(|e| e.code()));
             }
             MediaCommand::RemoveSource { room, leg } => self.remove_source(sfu, now, &room, &leg),
+            MediaCommand::ClearSource { room, leg } => {
+                if let Some(source) = self.sources.iter_mut().find(|s| s.room == room && s.leg == leg) {
+                    source.sync_epoch();
+                }
+            }
         }
     }
 
@@ -372,9 +462,10 @@ impl Media {
     pub(super) fn turn(&mut self, sfu: &mut Sfu, now: Instant) {
         let mut gone = Vec::new();
         for source in &mut self.sources {
+            source.sync_epoch();
             loop {
                 match source.frames.try_recv() {
-                    Ok(frame) => source.pacer.push(frame),
+                    Ok(frame) => source.take(frame),
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => {
                         gone.push((source.room.clone(), source.leg.clone()));
@@ -385,8 +476,11 @@ impl Media {
             self.due.clear();
             source.pacer.due(now, &mut self.due);
             for (rtp_time, frame) in self.due.drain(..) {
-                if let Err(err) = sfu.inject(now, &source.room, &source.leg, rtp_time, &frame) {
-                    tracing::debug!("call {} injected leg {}: {err}", source.room, source.leg);
+                match sfu.inject(now, &source.room, &source.leg, rtp_time, &frame) {
+                    Ok(()) => {
+                        source.state.played.fetch_add(1, Ordering::AcqRel);
+                    }
+                    Err(err) => tracing::debug!("call {} injected leg {}: {err}", source.room, source.leg),
                 }
             }
         }
