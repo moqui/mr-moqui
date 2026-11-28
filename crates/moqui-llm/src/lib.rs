@@ -198,6 +198,18 @@ impl LlmFacade {
     /// call, the quota is used up, or the call ends without an answer (an error, a refusal, a filter, an overflow, an
     /// empty reply, a reply that does not fit the schema).
     pub fn complete(&self, facade: &EntityFacade, ask: &CompleteRequest) -> Result<Completion, Error> {
+        let prepared = self.prepare_complete(facade, ask)?;
+        self.run_complete(facade, ask, prepared, None)
+    }
+
+    /// The checks and the request of a [`Self::complete`], before the model is called: the user, the model, the quota
+    /// and the schema. [`Self::run_complete`] makes the call. Apart, so a caller that runs code while the text comes in
+    /// (`ec.llm.stream`) can make these reads, which may run nested scripts, in a step of their own.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::complete`], for the checks.
+    pub fn prepare_complete(&self, facade: &EntityFacade, ask: &CompleteRequest) -> Result<PreparedComplete, Error> {
         let user_id = moqui_core::user::current_user_id().ok().flatten();
         // an external user (EXTERNAL_USER: a client contact) gets nothing from a model, by any app's call either
         if user_id.as_deref().is_some_and(moqui_core::user::is_external_user) {
@@ -257,7 +269,56 @@ impl LlmFacade {
                 ));
             }
         }
+        Ok(PreparedComplete {
+            target,
+            request,
+            user_id,
+        })
+    }
+
+    /// The model call of a prepared [`Self::complete`]. With `on_text`, it is called on this thread with the whole text
+    /// so far each time the model sends more of it; an attempt that starts again (a retry, the nudge of an empty reply,
+    /// the re-ask of a reply that does not follow the schema) starts the text again. When `on_text` returns false the
+    /// call stops: the completion is the text so far, with finish `canceled` and no `json`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::complete`], for the call.
+    pub fn run_complete(
+        &self,
+        facade: &EntityFacade,
+        ask: &CompleteRequest,
+        prepared: PreparedComplete,
+        on_text: Option<&mut dyn FnMut(&str) -> bool>,
+    ) -> Result<Completion, Error> {
+        let PreparedComplete {
+            target,
+            mut request,
+            user_id,
+        } = prepared;
+        let stopped = std::cell::Cell::new(false);
+        let cancel = provider::CancelToken::new();
+        let mut so_far = String::new();
+        let mut on_text = on_text;
+        let streaming = on_text.is_some();
+        let mut sink = |signal: provider::Signal<'_>| match signal {
+            provider::Signal::Event(provider::ProviderEvent::Text { delta, .. }) if !stopped.get() => {
+                so_far.push_str(delta);
+                if let Some(on_text) = on_text.as_mut() {
+                    if !on_text(&so_far) {
+                        stopped.set(true);
+                        cancel.cancel();
+                    }
+                }
+            }
+            provider::Signal::Restart { .. } => so_far.clear(),
+            _ => {}
+        };
         let mut options = CallOptions::new(ask.source);
+        options.cancel = cancel.clone();
+        if streaming {
+            options.sink = Some(&mut sink);
+        }
         options.deadline = Some(std::time::Instant::now() + ask.timeout.unwrap_or(COMPLETE_TIMEOUT));
         options.user_id.clone_from(&user_id);
         options.nudge = Some(provider::EMPTY_NUDGE.to_string());
@@ -294,6 +355,18 @@ impl LlmFacade {
                 _ => {}
             }
         }
+        drop(options);
+        if stopped.get() {
+            return Ok(Completion {
+                text: so_far,
+                json: None,
+                model_id: target.model.id.clone(),
+                finish: Finish::Canceled.as_str().to_string(),
+                cost: usage::cost(&target.model.prices, &usage),
+                usage,
+                call_ids,
+            });
+        }
         match &reply.finish {
             Finish::Stop | Finish::ToolCalls => {}
             Finish::Length if ask.schema.is_none() => {}
@@ -318,6 +391,13 @@ impl LlmFacade {
             call_ids,
         })
     }
+}
+
+/// A [`LlmFacade::complete`] checked and ready for its model call ([`LlmFacade::prepare_complete`]).
+pub struct PreparedComplete {
+    target: Target,
+    request: ModelRequest,
+    user_id: Option<String>,
 }
 
 /// What `ec.llm.complete` asks for; its source is `api` by default.
