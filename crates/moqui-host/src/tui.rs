@@ -665,7 +665,7 @@ impl Transport for InProcess {
     /// CalcGrid rooms' frames through a sink beside the sockets' (`notws::calc::LinkFrames`), with a socket's checks.
     fn subscribe(&self, sink: PushSink) -> Option<Subscription> {
         let frames_sink = Arc::clone(&sink);
-        let frames = crate::notws::calc::LinkFrames::start(
+        let frames = LinkFrames::start(
             Weak::clone(&self.factory),
             Arc::clone(&self.user_id),
             Box::new(move |frame: &serde_json::Value| frames_sink(frame_push(frame))),
@@ -700,7 +700,7 @@ impl Transport for InProcess {
 /// The in-process link's subscription: the notifications, and the rooms' frames when the host has the rooms.
 struct InProcessPushes {
     _notifications: moqui_core::notify::Subscription,
-    frames: crate::notws::calc::LinkFrames,
+    frames: LinkFrames,
 }
 
 impl Pushes for InProcessPushes {
@@ -1532,6 +1532,33 @@ fn split_query(url: &str) -> (&str, Option<&str>) {
 
 fn split_segments(path: &str) -> Vec<&str> {
     path.split('/').filter(|segment| !segment.is_empty()).collect()
+}
+
+/// The CalcGrid rooms' frames for the in-process link: the host's rooms where it serves them (`axum`), else none, and
+/// the link's sheets poll.
+#[cfg(feature = "axum")]
+use crate::notws::calc::LinkFrames;
+
+#[cfg(not(feature = "axum"))]
+struct LinkFrames;
+
+#[cfg(not(feature = "axum"))]
+impl LinkFrames {
+    fn start(
+        _factory: Weak<ExecutionContextFactory>,
+        _user: Arc<Mutex<Option<String>>>,
+        _deliver: Box<dyn Fn(&serde_json::Value) + Send + Sync>,
+    ) -> Self {
+        Self
+    }
+
+    fn takes_frames(&self) -> bool {
+        false
+    }
+
+    fn send(&self, _frame: serde_json::Value) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]
