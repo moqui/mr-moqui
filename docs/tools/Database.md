@@ -237,8 +237,10 @@ What a person reads there is set in the authorization data, not in a document. A
   (`OrderPart[partTotal]`) or its sheet (`OrderPart!B:B`), though the workbook was made without it. Under a profile it is
   an author's, and always over an entity; with the Tools app's own access a workbook alone opens as a file does. A
   workbook with a sheet named as the data sheet, or a table or name of the data sheet's table name, is refused (rename it
-  first): the data sheet holds only the rows its reader may read. Without its data it is at most 8 MB, as a saved
-  document is.
+  first), and so is a tab that only looks like it (a trailing space, a zero-width mark): the data sheet holds only the
+  rows its reader may read. Over an entity, without its data it is at most 8 MB, as a saved document is. A saved
+  document's workbook is held the same way when it opens, whatever wrote its definition: what a data sheet holds below
+  its header is taken out, and a table or name of the data sheet's elsewhere refuses it.
 - **Add to dashboard** puts the cells selected (or the sheet's used area) of a saved document on one of the viewer's
   own dashboards, as a table, bars, a pie or a number: a panel over the dataset `calcgrid` (below). For a document
   with charts it also offers a chart of this document: the panel names the chart by its id and is drawn as the chart
@@ -261,7 +263,7 @@ What a person reads there is set in the authorization data, not in a document. A
   row names the columns), which the dataset declares, so the panel editors offer the documents and the profiles as
   choices ([A dataset's parameters](Monitoring.md#the-dashboards-app)), and the table, chart and stat panels draw it.
   With `chart` (a chart's id) in place of `range` it answers one of the document's charts as a table: a column
-  `Label` of its labels (each point's place where it has none) and a column of numbers for each series, a row for
+  `Label` of its labels (a point past the last label is labelled by its place, from 1) and a column of numbers for each series, a row for
   each point, with the chart's type and title (`chartType`, `chartTitle`); the bar, line, area and pie panels draw
   it. Each chart has an id the server gives it when a `charts` edit arrives, kept while the views send it back with the
   list (`crates/moqui-calc/src/charts.rs`); a document saved before charts had ids gives each `chart<n>` by its place

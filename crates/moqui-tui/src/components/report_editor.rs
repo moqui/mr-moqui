@@ -128,13 +128,44 @@ fn add_parameters(props: &Value, state: &ComponentState, row: &Row) -> Vec<Value
         _ => Vec::new(),
     }
 }
-/// A declared parameter's first value: a number for a number, else empty text.
-fn parameter_value(declared: &Value) -> Value {
-    if declared["kind"] == "number" {
-        json!(0)
+/// A declared parameter's place to fill in: empty text, whatever its kind ([`commit_parameter`] takes a number's).
+fn parameter_value(_declared: &Value) -> Value {
+    json!("")
+}
+/// A declared parameter's value typed in: a number for a number, text else; left empty, the parameter is taken out of
+/// the query, as the browser's editor takes it out.
+fn commit_parameter(props: &Value, state: &mut ComponentState, row: &Row, declared: &Value) -> Vec<Act> {
+    let text = state.local["input"].as_str().unwrap_or("").trim().to_string();
+    let next = if text.is_empty() {
+        None
+    } else if declared["kind"] == "number" {
+        match text.parse::<serde_json::Number>() {
+            Ok(number) => Some(Value::Number(number)),
+            Err(_) => {
+                state.error = "Enter a finite number".into();
+                return Vec::new();
+            }
+        }
     } else {
-        json!("")
+        Some(json!(text))
+    };
+    let mut doc = document(props, state);
+    let (Some(key), parent) = (row.path.last(), &row.path[..row.path.len().saturating_sub(1)]) else {
+        return Vec::new();
+    };
+    if let Some(fields) = doc.pointer_mut(&pointer(parent)).and_then(Value::as_object_mut) {
+        match next {
+            Some(value) => {
+                fields.insert(key.clone(), value);
+            }
+            None => {
+                fields.remove(key);
+            }
+        }
     }
+    state.closed.remove("__editor_input");
+    state.error.clear();
+    write_document(props, state, doc)
 }
 fn add_options(row: &Row, kind: &str, parameters: &[Value]) -> Vec<(String, Value)> {
     let key = row.path.last().map(String::as_str).unwrap_or("");
@@ -418,6 +449,9 @@ fn write_document(props: &Value, state: &mut ComponentState, value: Value) -> Ve
     }]
 }
 fn commit_scalar(props: &Value, state: &mut ComponentState, row: &Row) -> Vec<Act> {
+    if let Some(declared) = row_parameter(props, state, row) {
+        return commit_parameter(props, state, row, &declared);
+    }
     let text = state.local["input"].as_str().unwrap_or("");
     let next = match row.value {
         Value::Bool(_) => match text {

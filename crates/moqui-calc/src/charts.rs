@@ -218,6 +218,23 @@ pub fn find<'a>(charts: &'a [Json], wanted: &str) -> Option<&'a Json> {
         .or_else(|| wanted.parse::<usize>().ok().and_then(|index| charts.get(index)))
 }
 
+/// The chart `wanted` names ([`find`]) among a room's charts as it read them (`Room::charts`), as `get#CalcFrame`
+/// answers it: its table ([`frame_of`]), its type and its title.
+///
+/// # Errors
+///
+/// No such chart, or the chart's own error.
+pub fn chart_frame(charts: &Json, wanted: &str) -> Result<(Json, String, String), Error> {
+    let found = find(charts.as_array().map(Vec::as_slice).unwrap_or_default(), wanted)
+        .ok_or_else(|| Error::new(format!("The document has no chart {wanted}")))?;
+    let frame = frame_of(found)?;
+    Ok((
+        frame,
+        found["type"].as_str().unwrap_or("column").to_string(),
+        found["title"].as_str().unwrap_or_default().to_string(),
+    ))
+}
+
 /// A chart as a table for the report engine, from the values a room read for it (`Room::charts`: its `labels` and
 /// each series' `data`): a label column, then a column of numbers for each series, named by the series (made unique),
 /// one row for each point. A chart with no labels is labelled by the point's place, from 1.

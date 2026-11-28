@@ -329,14 +329,16 @@ pub(super) fn service_refusal(ec: &ExecutionContext, body: &Json) -> Result<Opti
     if let Some(refusal) = super::parameters::refusal(body) {
         return Ok(Some(refusal));
     }
-    for service in super::parameters::choice_services(body) {
+    for (service, parameters) in super::parameters::choice_sources(body) {
         let shipped = shipped(ec).iter().any(|definition| {
             definition["type"] == "dataset"
-                && super::parameters::choice_services(&definition["body"]).contains(&service)
+                && super::parameters::choice_sources(&definition["body"])
+                    .iter()
+                    .any(|(named, given)| *named == service && *given == parameters)
         });
         if !shipped {
             return Ok(Some(format!(
-                "a dataset parameter's choices service is one a shipped dataset's parameter names; {service} is not"
+                "a dataset parameter's choices service is one a shipped dataset's parameter names, with its parameters; {service} with {parameters} is not"
             )));
         }
     }

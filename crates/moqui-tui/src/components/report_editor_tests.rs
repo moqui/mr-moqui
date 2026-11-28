@@ -136,6 +136,17 @@ fn a_datasets_declared_parameters_are_fields_of_its_query_chosen_from_their_choi
         document(&props, &state)["panels"]["p"]["queries"][0]["parameters"]["definitionId"],
         "doc-a"
     );
+    // one left empty is taken out of the query, as the browser's editor takes it out
+    select(
+        &props,
+        &mut state,
+        &["panels", "p", "queries", "0", "parameters", "profileId"],
+    );
+    key(&props, &mut state, Key::Enter);
+    key(&props, &mut state, Key::Enter);
+    let parameters = document(&props, &state)["panels"]["p"]["queries"][0]["parameters"].clone();
+    assert!(parameters.get("profileId").is_none(), "{parameters}");
+    assert_eq!(parameters["definitionId"], "doc-a");
     // a query over a dataset that declares none is added as before
     let plain =
         json!({"value":{"panels":{"p":{"queries":[{"datasetId":"otel_logs"}]}}},"datasets":[{"id":"otel_logs"}]});

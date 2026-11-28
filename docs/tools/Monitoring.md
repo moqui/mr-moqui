@@ -367,12 +367,14 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   `{name, label, kind, optional, choices}`: `kind` is `text` (the default) or `number`, `optional` true lets it be left
   out, and `choices` names a service the viewer calls for them, `{service, parameters, list, value, label}` (the
   service's parameters, the out-parameter that holds the list, and each item's value and label fields). `list#Datasets`
-  answers each dataset's declaration (with `parameterChoices` true, each one's choices too) and `get#Dataset` answers
-  it with the choices; the definition editor asks for them, and both panel editors, the browser's and the terminal's,
-  show a field for each parameter of the query's dataset, a select where it has choices, and leave an empty one out of
-  the query. Choices are read as the viewer, at most 500, and a choices service that fails or that the viewer may not
-  call gives none (the field is a text field). A declaration is presentation only: the service checks every value it
-  is given. A saved dataset names only a choices service a shipped dataset names there, as its `serviceName`
+  answers each dataset's declaration (with `parameterChoices` true, each one's choices too, for at most eight datasets
+  of the listing) and `get#Dataset` answers it with the choices; the definition editor asks for them, and both panel
+  editors, the browser's and the terminal's, show a field for each parameter of the query's dataset, a select where it
+  has choices, and take an emptied one out of the query (the terminal's adds the required ones to fill in when it adds
+  `parameters`). Choices are read as the viewer, at most 500, by the viewer's own grant of the choices service (a
+  screen's inherited grant does not call it); one that fails or that the viewer may not call gives none (the field is
+  a text field). A declaration is presentation only: the service checks every value it is given. A saved dataset names
+  only a choices service a shipped dataset names there with the same parameters, as its `serviceName`
   (`crates/moqui-report/src/parameters.rs`). The shipped `calcgrid` declares the document (its choices the CalcGrid
   documents the viewer reads, `list#Definitions`), the range or a chart of the document, and the access profile (optional, from
   `get#CalcProfiles`) ([CalcGrid and access profiles](Database.md#calcgrid-and-access-profiles)). A dataset without

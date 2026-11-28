@@ -18,7 +18,7 @@
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 use serde_json::{json, Value as Json};
 
-use super::{choice_services, declared, refusal};
+use super::{choice_sources, declared, refusal};
 
 fn context() -> ExecutionContext {
     ExecutionContextFactory::test_context_in(
@@ -58,10 +58,13 @@ fn the_shipped_calcgrid_dataset_declares_the_document_the_range_the_chart_and_th
     assert_eq!(by("range")["kind"], "text");
     assert_eq!(by("chart")["optional"], true);
     assert_eq!(
-        choice_services(body),
+        choice_sources(body),
         [
-            "org.moqui.report.ReportServices.list#Definitions",
-            "org.moqui.calc.CalcServices.get#CalcProfiles"
+            (
+                "org.moqui.report.ReportServices.list#Definitions",
+                json!({"definitionType": "calcgrid"})
+            ),
+            ("org.moqui.calc.CalcServices.get#CalcProfiles", json!({}))
         ]
     );
 }

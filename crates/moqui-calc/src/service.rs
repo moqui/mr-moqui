@@ -162,7 +162,7 @@ const MAX_EDIT_OPS: usize = 2_000;
 /// The largest stored overlay, in bytes.
 pub const MAX_OVERLAY_BYTES: usize = 8 * 1024 * 1024;
 /// The largest workbook file opened as a document.
-const MAX_WORKBOOK_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_WORKBOOK_BYTES: usize = 32 * 1024 * 1024;
 const PAGE: usize = grid::MAX_PAGE_SIZE;
 const DEFINITION_TYPE: &str = "calcgrid";
 
@@ -705,7 +705,7 @@ fn room_out(facade: &EntityFacade, room: &Room, user_id: &str) -> BTreeMap<Strin
 /// book whole when it opens), each value in its own cell: a sheet's rows start at its used area's first column, which
 /// is not always A. A sheet that cannot be read, or is over the cell cap, is logged and left out, and its name is in
 /// the answer's second part; the workbook is refused only when no sheet could be read.
-fn workbook_model(
+pub(crate) fn workbook_model(
     bytes: &[u8],
     name: &str,
 ) -> Result<(moqui_core::workbook::ironcalc::base::Model<'static>, Vec<String>), Error> {
@@ -793,23 +793,20 @@ fn new_data_sheet(parameters: &BTreeMap<String, Value>) -> Option<DataSheet> {
     Some(DataSheet { name, spec })
 }
 
-/// An uploaded workbook's file name as a title may take it: its last part, no control character, at most 200.
-fn workbook_name(given: &str) -> String {
-    let name: String = given
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or_default()
-        .chars()
-        .filter(|ch| !ch.is_control())
-        .collect();
-    let name = name.trim();
-    let skip = name.chars().count().saturating_sub(200);
-    let name: String = name.chars().skip(skip).collect();
-    if name.is_empty() || name == "." || name == ".." {
-        "Workbook".to_string()
-    } else {
-        name
-    }
+/// A saved document's workbook without its data, as its body stores it (`overlay`), as a room or a render opens it:
+/// held to what a data sheet may be, whatever wrote the definition ([`crate::upload::saved_overlay`]).
+fn saved_base(body: &Json) -> Result<moqui_core::workbook::ironcalc::base::Model<'static>, Error> {
+    let base = match body["overlay"].as_str().filter(|overlay| !overlay.is_empty()) {
+        Some(overlay) => {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(overlay)
+                .map_err(|_| Error::new("The document's workbook is not readable"))?;
+            fill::open_stored(&bytes)?
+        }
+        None => return fill::new_model("Sheet1"),
+    };
+    let names: Vec<String> = data_sheets(body).into_iter().map(|sheet| sheet.name).collect();
+    crate::upload::saved_overlay(base, &names)
 }
 
 /// [`open_calc_document`] under an access already decided.
@@ -831,16 +828,7 @@ fn open_document_with(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
             Err(err) => return refused(err.message()),
         };
         let body = &definition["body"];
-        let base = match body["overlay"].as_str().filter(|overlay| !overlay.is_empty()) {
-            Some(overlay) => {
-                let bytes = match base64::engine::general_purpose::STANDARD.decode(overlay) {
-                    Ok(bytes) => bytes,
-                    Err(_) => return refused("The document's workbook is not readable"),
-                };
-                fill::open_stored(&bytes)
-            }
-            None => fill::new_model("Sheet1"),
-        };
+        let base = saved_base(body);
         // a chart saved before charts had ids is given one by its place, the same in every room of the document
         let charts = crate::charts::saved_ids(body["charts"].as_array().cloned().unwrap_or_default());
         let title = definition["title"].as_str().unwrap_or(&definition_id).to_string();
@@ -857,35 +845,18 @@ fn open_document_with(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
                 return refused("Under an access profile a workbook is opened over the data it is for: choose it");
             }
         }
-        if bytes.len() > MAX_WORKBOOK_BYTES {
-            return refused(format!(
-                "A workbook to open has at most {} MB",
-                MAX_WORKBOOK_BYTES / 1024 / 1024
-            ));
-        }
-        let name = workbook_name(&text(parameters, "workbookName"));
-        let model = match workbook_model(bytes, &name) {
-            Ok((model, left_out)) => {
-                if !left_out.is_empty() {
-                    let message = format!("Not opened, as they could not be read: {}", left_out.join(", "));
-                    ExecutionContext::with_current(|ec| ec.message().add_message_typed(message, "warning"));
-                }
-                model
-            }
+        let names: Vec<String> = sheet.iter().map(|sheet| sheet.name.clone()).collect();
+        let (model, title) = match crate::upload::open(
+            bytes,
+            &text(parameters, "workbookName"),
+            &text(parameters, "title"),
+            &names,
+        ) {
+            Ok(opened) => opened,
             Err(err) => return refused(err.message()),
         };
-        let names: Vec<String> = sheet.iter().map(|sheet| sheet.name.clone()).collect();
-        if let Some(refusal) = crate::upload::overlay_refusal(&model, &names) {
-            return refused(refusal);
-        }
-        let title = Some(text(parameters, "title"))
-            .filter(|title| !title.is_empty())
-            .unwrap_or_else(|| {
-                name.rsplit_once('.')
-                    .map_or(name.as_str(), |(stem, _)| stem)
-                    .to_string()
-            });
-        uploaded = true;
+        // over a source it is prepared over the data sheet once its columns are read; alone it opens as a file does
+        uploaded = sheet.is_some();
         (Ok(model), sheet.into_iter().collect(), Vec::new(), title, None)
     } else if matches!(access, Access::Profile(_)) && (!workbook_location.is_empty() || !profile::may_author()) {
         // under a profile a new document is over an entity the profile offers, and is its author's to make
@@ -958,19 +929,10 @@ fn open_document_with(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
     // an uploaded workbook over a source takes its data sheet's stub, its formulas over the data typed again, and is
     // held to what a document stores
     let base = if uploaded {
-        let prepared = match crate::upload::prepare(base, &rows) {
+        match crate::upload::prepare_for_room(base, &rows) {
             Ok(prepared) => prepared,
             Err(err) => return refused(err.message()),
-        };
-        let size = prepared.to_bytes().len();
-        if size > MAX_OVERLAY_BYTES {
-            return refused(format!(
-                "The workbook without its data is {} MB; a document stores at most {} MB",
-                size / 1024 / 1024,
-                MAX_OVERLAY_BYTES / 1024 / 1024
-            ));
         }
-        prepared
     } else {
         base
     };
@@ -1560,21 +1522,11 @@ fn get_calc_frame(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -
     let framed = if chart.is_empty() {
         room.frame(&range, MAX_FRAME_ROWS)
     } else {
-        let charts = room.charts();
-        match crate::charts::find(charts.as_array().map(Vec::as_slice).unwrap_or_default(), &chart) {
-            Some(found) => {
-                out.insert(
-                    "chartType".to_string(),
-                    Value::string(found["type"].as_str().unwrap_or("column")),
-                );
-                out.insert(
-                    "chartTitle".to_string(),
-                    Value::string(found["title"].as_str().unwrap_or("")),
-                );
-                crate::charts::frame_of(found)
-            }
-            None => Err(Error::new(format!("The document has no chart {chart}"))),
-        }
+        crate::charts::chart_frame(&room.charts(), &chart).map(|(frame, kind, title)| {
+            out.insert("chartType".to_string(), Value::String(kind));
+            out.insert("chartTitle".to_string(), Value::String(title));
+            frame
+        })
     };
     match framed {
         Ok(frame) => {
@@ -1654,14 +1606,7 @@ fn render_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFac
         Err(err) => return refused(err.message()),
     };
     let body = &definition["body"];
-    let base = match body["overlay"].as_str().filter(|overlay| !overlay.is_empty()) {
-        Some(overlay) => match base64::engine::general_purpose::STANDARD.decode(overlay) {
-            Ok(bytes) => fill::open_stored(&bytes),
-            Err(_) => return refused("The document's workbook is not readable"),
-        },
-        None => fill::new_model("Sheet1"),
-    };
-    let base = match base {
+    let base = match saved_base(body) {
         Ok(base) => base,
         Err(err) => return refused(err.message()),
     };

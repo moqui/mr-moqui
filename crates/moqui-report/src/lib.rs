@@ -2180,7 +2180,8 @@ fn add_subtotal_metrics(value: &mut Json) -> Result<serde_json::Map<String, Json
 /// The datasets the viewer may read, each with its id, title and time field, and `service` for one whose service answers
 /// a report query with frames: it has no records to search, so Explore offers only the others. A saved or shipped
 /// dataset that declares `parameters` has them (parameters.rs), with each one's choices when `parameterChoices` is
-/// true: what the panel editors show for a query over it.
+/// true: what the panel editors show for a query over it. The choices are read for at most
+/// [`parameters::MAX_CHOICE_DATASETS`] datasets of one listing, in its order; a later one is listed without them.
 pub fn list_datasets(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -2189,6 +2190,7 @@ pub fn list_datasets(
     let with_choices = params
         .get("parameterChoices")
         .is_some_and(|value| moqui_lib::object::to_plain_string(value) == "true");
+    let mut choice_reads = parameters::MAX_CHOICE_DATASETS;
     let mut items = Vec::new();
     for id in search::telemetry::TELEMETRY_INDEXES {
         if let Ok(dataset) = resolve_dataset(ec, id, false) {
@@ -2199,7 +2201,16 @@ pub fn list_datasets(
         let id = text(&definition, "id", "");
         if let Ok(dataset) = resolve_dataset(ec, id, false) {
             let mut item = json!({"id":id,"title":definition["title"],"timeField":dataset.time_field,"service":dataset.service.is_some()});
-            parameters::add_to(&mut item, parameters::listed(ec, id, &definition["body"], with_choices));
+            let read = with_choices && parameters::has_choices(&definition["body"]) && choice_reads > 0;
+            if read {
+                choice_reads -= 1;
+            } else if with_choices && parameters::has_choices(&definition["body"]) {
+                tracing::info!(
+                    dataset = id,
+                    "A dataset's parameter choices are past the listing's limit; listed without them"
+                );
+            }
+            parameters::add_to(&mut item, parameters::listed(ec, id, &definition["body"], read));
             items.push(item);
         }
     }

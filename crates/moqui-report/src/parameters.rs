@@ -20,8 +20,9 @@
 //!
 //! A declaration is `{name, label, kind, optional, choices}`: `kind` is `text` (the default) or `number`, and `choices`
 //! names a service the viewer calls for them, `{service, parameters, list, value, label}` (the out-parameter that holds
-//! the list, and each item's value and label fields). A saved dataset names only a choices service a shipped dataset
-//! names there (definitions.rs `service_refusal`, as its `serviceName`).
+//! the list, and each item's value and label fields), which the viewer's own grant must call. A saved dataset names
+//! only a choices service a shipped dataset names there with the same parameters (definitions.rs `service_refusal`,
+//! as its `serviceName`).
 
 use moqui_core::context::ExecutionContext;
 use moqui_core::service::call::{sync_checked, CallOptions};
@@ -31,6 +32,9 @@ use super::{input, text};
 
 /// The most parameters one dataset declares.
 pub(crate) const MAX_PARAMETERS: usize = 16;
+/// The most datasets of one listing whose choices are read (`list#Datasets` with `parameterChoices`): each read calls
+/// its choices services, and the definition editor lists every dataset the author reads.
+pub(crate) const MAX_CHOICE_DATASETS: usize = 8;
 /// The most choices one parameter offers; a service that answers more is cut.
 pub(crate) const MAX_CHOICES: usize = 500;
 /// The kinds of a parameter's value.
@@ -93,13 +97,25 @@ pub(crate) fn refusal(body: &Json) -> Option<String> {
     None
 }
 
-/// The choices services `body`'s parameters name.
-pub(crate) fn choice_services(body: &Json) -> Vec<&str> {
+/// Whether a parameter of `body` names choices.
+pub(crate) fn has_choices(body: &Json) -> bool {
+    body["parameters"]
+        .as_array()
+        .is_some_and(|declared| declared.iter().any(|parameter| parameter["choices"].is_object()))
+}
+
+/// What `body`'s parameters' choices call: each service with the parameters it is given (none as `{}`).
+pub(crate) fn choice_sources(body: &Json) -> Vec<(&str, Json)> {
     body["parameters"]
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(|parameter| parameter["choices"]["service"].as_str())
+        .filter_map(|parameter| {
+            let choices = &parameter["choices"];
+            let service = choices["service"].as_str()?;
+            let parameters = Some(&choices["parameters"]).filter(|given| !given.is_null()).cloned();
+            Some((service, parameters.unwrap_or_else(|| json!({}))))
+        })
         .collect()
 }
 
@@ -134,6 +150,12 @@ pub(crate) fn declared(ec: &ExecutionContext, dataset_id: &str, body: &Json, wit
 /// and its errors are not the caller's: the field is then a text field (AGENTS.md failure tolerance).
 fn choices(ec: &ExecutionContext, dataset_id: &str, name: &str, spec: &Json) -> Vec<Json> {
     let service = text(spec, "service", "");
+    // the viewer's own grant of the service, as a dataset's serviceName needs (lib.rs resolve_dataset): a screen's
+    // inherited grant does not call it for them
+    if let Err(error) = moqui_core::user::authorize_own("AT_SERVICE", service, "view") {
+        tracing::info!(dataset = dataset_id, parameter = name, service, %error, "A dataset parameter's choices are not the viewer's to read");
+        return Vec::new();
+    }
     let parameters = match moqui_lib::json::from_json(&spec["parameters"]) {
         moqui_lib::object::Value::Map(map) => map.into_iter().collect(),
         _ => moqui_core::native::Parameters::new(),

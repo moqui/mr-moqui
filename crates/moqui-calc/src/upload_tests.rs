@@ -121,3 +121,95 @@ fn a_sheet_table_or_name_of_the_data_sheets_is_refused() {
     let model = Model::from_bytes(&model.to_bytes(), "en").unwrap();
     assert!(overlay_refusal(&model, &sheets).is_some_and(|refused| refused.contains("Open_orders")));
 }
+
+/// A tab that only looks like the data sheet's (a space after it, a zero-width or bidirectional mark in it, another
+/// case of a letter beyond ASCII) is the data sheet's name too.
+#[test]
+fn a_sheet_that_only_looks_like_the_data_sheets_is_refused() {
+    for lookalike in [
+        "Orders ",
+        " Orders",
+        "Ord\u{200b}ers",
+        "\u{202e}Orders",
+        "Orders\u{feff}",
+    ] {
+        let mut model = uploaded();
+        model.add_sheet(lookalike).unwrap();
+        let refused = overlay_refusal(&model, &["Orders".to_string()]).unwrap_or_default();
+        assert!(
+            refused.contains("which is the data sheet's name"),
+            "{lookalike:?}: {refused}"
+        );
+    }
+    let mut model = uploaded();
+    model.add_sheet("ÉTÉ").unwrap();
+    assert!(
+        overlay_refusal(&model, &["été".to_string()]).is_some(),
+        "compared in capitals, as the engine does"
+    );
+    assert_eq!(overlay_refusal(&uploaded(), &["Orders".to_string()]), None);
+}
+
+/// A saved document's stored overlay as CalcGrid writes it: a Summary over the Orders data sheet's stub.
+fn stored() -> Model<'static> {
+    let mut model = fill::fill(fill::new_model("Summary").unwrap(), &[orders(3)]).unwrap();
+    model
+        .set_user_input(0, 1, 1, "=SUM(Orders[amount])".to_string())
+        .unwrap();
+    model
+        .set_user_input(0, 2, 1, "=COUNTA(Orders!A:A)-1".to_string())
+        .unwrap();
+    model.evaluate();
+    fill::open_stored(&fill::stored_form(&model.to_bytes(), &[("Orders".to_string(), 3)]).unwrap()).unwrap()
+}
+
+/// A saved overlay written without CalcGrid (the definition editor's JSON, an import, a git pull) is held to what a
+/// data sheet may be when it opens: rows it planted in a data sheet are cut, and a table or name of the data sheet's
+/// table name elsewhere refuses it; one CalcGrid wrote opens as it is.
+#[test]
+fn a_saved_overlay_brings_no_row_into_a_data_sheet() {
+    let data = ["Orders".to_string()];
+    let filled = |model: Model<'static>| {
+        let mut filled = fill::fill(model, &[orders(3)]).unwrap();
+        filled.evaluate();
+        let text = |row| filled.get_formatted_cell_value(0, row, 1).unwrap();
+        (text(1), text(2))
+    };
+    // as CalcGrid wrote it
+    let model = saved_overlay(stored(), &data).unwrap();
+    assert_eq!(filled(model), ("60".to_string(), "3".to_string()));
+    // rows planted below the stub, and in it: cut, so only the source's rows are read
+    let mut planted = stored();
+    for (row, amount) in [(2, "1000"), (3, "1000"), (40, "5000")] {
+        planted.set_user_input(1, row, 1, "Planted".to_string()).unwrap();
+        planted.set_user_input(1, row, 2, amount.to_string()).unwrap();
+    }
+    planted.evaluate();
+    let model = saved_overlay(planted, &data).unwrap();
+    assert_eq!(model.get_formatted_cell_value(1, 40, 2).unwrap(), "");
+    assert_eq!(filled(model), ("60".to_string(), "3".to_string()));
+    // the data sheet's own table is kept; one of its name on another sheet, or a defined name of it, is refused
+    let mut table = stored().workbook;
+    table
+        .tables
+        .get_mut("Orders")
+        .expect("the data sheet's table")
+        .sheet_name = "Summary".to_string();
+    let table = Model::from_workbook(table, "en").unwrap();
+    let refused = saved_overlay(table, &data).map(|_| ()).unwrap_err();
+    assert!(
+        refused.message().contains("table named Orders"),
+        "{}",
+        refused.message()
+    );
+    let mut named = stored();
+    named
+        .new_defined_name(DefinedNameEntry::new("orders", "Summary!$A$1"))
+        .unwrap();
+    let refused = saved_overlay(named, &data).map(|_| ()).unwrap_err();
+    assert!(refused.message().contains("name orders"), "{}", refused.message());
+    // a tab that only looks like the data sheet's
+    let mut lookalike = stored();
+    lookalike.add_sheet("Orders\u{200b}").unwrap();
+    assert!(saved_overlay(lookalike, &data).is_err());
+}
