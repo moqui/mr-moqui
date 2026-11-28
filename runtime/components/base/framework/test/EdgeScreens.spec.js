@@ -321,12 +321,15 @@ feature("Domains shows each pairing's host names and what its setup claims, and 
 
 feature("a tunnel port goes to one active pairing, never on this node's own ports; Ports lists them", {
     when() {
+        // this node's own HTTPS port: the one set, else the usual 443 (crates/moqui-core/src/edge/ports.rs OWN_PORTS);
+        // a usual port set elsewhere is free for a row, so the dev conf's 8443 is the one to try
+        const httpsPort = String(ec.factory.getConfValue("webapp-list/webapp[webroot]@https-port") || "").trim() || "443"
         context.out = edge(() => {
             const out = {
                 ssh: invoke("add#EdgePort", {port: SSH_PORT, pairedNodeId: A, tunnelKind: "ssh"}),
                 same: invoke("add#EdgePort", {port: SSH_PORT, pairedNodeId: A, tunnelKind: "ssh"}),
                 taken: invoke("add#EdgePort", {port: SSH_PORT, pairedNodeId: B, tunnelKind: "ssh"}),
-                own: invoke("add#EdgePort", {port: "443", pairedNodeId: B, tunnelKind: "xmpps"}),
+                own: invoke("add#EdgePort", {port: httpsPort, pairedNodeId: B, tunnelKind: "xmpps"}),
                 revoked: invoke("add#EdgePort", {port: XMPP_PORT, pairedNodeId: R, tunnelKind: "xmpp"}),
                 kind: invoke("add#EdgePort", {port: XMPP_PORT, pairedNodeId: B, tunnelKind: "telnet"}),
                 // an smtp port is a front node's (plans/Edge-Node2.md §4.7): this node is none

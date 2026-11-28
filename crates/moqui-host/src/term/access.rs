@@ -171,6 +171,17 @@ impl Facts {
         }
     }
 
+    /// A request straight from this machine: a loopback peer on one of this server's own listeners, through no proxy
+    /// and no edge node, whatever its origin. A program in a session's shell, with that session's token, is one
+    /// (plans/Terminal-Fancy2.md §4.3); it sends no `Origin`, and a page of another site cannot send the token's header.
+    #[cfg_attr(not(feature = "devtools"), allow(dead_code))]
+    pub fn loopback_direct(&self) -> bool {
+        self.via == RequestVia::InProcess
+            || (self.via == RequestVia::Direct
+                && !self.forwarded
+                && self.peer.is_some_and(|peer| crate::local_peer(peer, self.via)))
+    }
+
     pub fn place(&self) -> Place {
         if self.via == RequestVia::InProcess {
             return Place::Local;

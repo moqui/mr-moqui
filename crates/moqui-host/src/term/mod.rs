@@ -38,6 +38,9 @@ mod apps;
 mod attention;
 #[cfg(feature = "devtools")]
 pub(crate) mod audit;
+#[cfg(feature = "devtools")]
+pub(crate) mod drive;
+mod events;
 #[cfg(all(feature = "devtools", unix))]
 pub(crate) mod exec;
 #[cfg(all(feature = "devtools", unix))]
@@ -47,11 +50,17 @@ pub(crate) mod hold;
 #[cfg(all(feature = "devtools", unix))]
 pub(crate) mod host;
 #[cfg(feature = "devtools")]
+mod keys;
+#[cfg(feature = "devtools")]
 mod notice;
 pub(crate) mod registry;
 mod ring;
+#[cfg(feature = "devtools")]
+pub(crate) mod screen;
 mod services;
 pub(crate) mod session;
+#[cfg(feature = "devtools")]
+pub(crate) mod token;
 mod track;
 
 pub(crate) use apps::serve;

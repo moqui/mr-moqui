@@ -577,6 +577,7 @@ What `moqui-calc` works around, with what the engine could offer instead. In ord
 2. ~~The bulk load on `UserModel`~~ and ~~evaluating only what changed~~: built in batch 2.
 3. The dependency index smaller for sheets of many one-cell formulas (155 bytes a formula now).
 4. The remaining speed in the profiles: `COUNTA` on text still copies each text (100,000 allocations), `MEDIAN` sorts a copy, `VLOOKUP` and `MATCH` hold 4 to 5 MB while they run (an array of the lookup column).
+5. A formula that calls a named function or a `LAMBDA` is stored as a dynamic array (it may spill), so `evaluate_changes` evaluates everything on any edit it reads, as it does near arrays. A dynamic formula that spilled nothing could be taken the incremental way.
 
 ### Batch 2: incremental evaluation, in-place reload, images and charts
 
@@ -654,6 +655,7 @@ There is a fork of IronCalc, [moqui/IronCalc](https://github.com/moqui/IronCalc)
 - **IronCalc.** Small requests that make our use easier: sheet protection, a list of changed cells after an evaluation (it would let the room send changes in place of whole viewports), selection and undo kept outside the model for several users, a hook for custom functions, error types. Larger: the chart and image model. They plan charts after 1.0, so our work there is either a contribution or a divergence; talk before writing it.
 - **Tabulator.** Extension points only. If merged cells or reference picking need a hook that is missing, propose the hook.
 - **Versions.** Build the fork at a pinned revision of its `main`, which takes upstream's main by merge, and move on purpose; the API will change before 1.0.
+- **Merged 2026-11-27** (`a0e66946`, 92 upstream commits to `4b72c356`; mr-moqui builds it). Upstream had no speed, memory or incremental work of its own. Where the two met: VAR, STDEV and DEVSQ take upstream's Welford `RunningStats` through our range walk (STDEV over 100,000 rows 0.37 ms to 0.66 ms, the rest of `data_sheet` unchanged); the stored form is version 3 for upstream's `date_system` and `named_functions`, version 2 read through its own types (a LAMBDA defined name moved to the named functions); names, named functions and the date system evaluate in full when they change, and an edit after is incremental again.
 
 ## Risks
 

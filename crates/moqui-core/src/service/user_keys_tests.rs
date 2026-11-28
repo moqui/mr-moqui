@@ -498,7 +498,9 @@ fn credentials_need_a_recent_sign_in_and_an_access_token_is_for_git_alone() {
     // SEC-RTE-85: a token for git alone makes no key for another service, and ends no other key
     assert_eq!(scopes("/rest/s1/moqui/hosting/offer"), ["git"]);
     assert!(scopes("/rest/s1/moqui/hosting/gatewayKey").is_empty());
-    assert_eq!(scopes("/rest/s1/moqui/hosting/keyRevoke"), ["git", "tasks", "gateway"]);
+    assert_eq!(scopes("/rest/s1/moqui/hosting/keyRevoke"), ["git", "tasks", "gateway", "terminal"]);
+    // the terminal's driving paths take a key made for the terminal alone (plans/Terminal-Fancy2.md §4.3)
+    assert_eq!(scopes("/rest/s1/moqui/terminal/s1/screen"), ["terminal"]);
 
     // a token made before tokens had a scope is git's too
     {

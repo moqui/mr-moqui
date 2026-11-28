@@ -671,6 +671,32 @@ pub fn load_for_owner(facade: &EntityFacade, approval_id: &str, user_id: &str) -
     Ok(load(facade, approval_id)?.filter(|view| !user_id.is_empty() && view.user_id == user_id))
 }
 
+/// Whether the run being made has an executed approval of `target_name`: a grant that covers the rest of the run, as
+/// the dev tools' `terminal` tool's first read of a session covers its later ones (plans/Terminal-Fancy2.md D4). False
+/// with no run, and when the rows cannot be read.
+#[must_use]
+pub fn executed_in_run(ctx: &TurnContext<'_>, target_name: &str) -> bool {
+    let Some(run) = ctx.run else {
+        return false;
+    };
+    let Some((_, facade)) = factory_and_facade() else {
+        return false;
+    };
+    quietly(|| -> Result<bool, Error> {
+        Ok(facade
+            .find(APPROVAL)?
+            .eq("runId", Value::string(&run.run_id))
+            .eq("targetName", Value::string(target_name))
+            .eq("statusId", Value::string(ApprovalStatus::Executed.status_id()))
+            .limit(1)
+            .disable_authz()
+            .list()?
+            .values()
+            .is_empty())
+    })
+    .is_ok_and(|none| !none)
+}
+
 /// The newest approval of the call being made (its resume reads it).
 ///
 /// # Errors

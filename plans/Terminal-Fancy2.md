@@ -1,6 +1,7 @@
 # Terminal 2: the screen as text, driven sessions, viewers, recording, OS accounts, threads and more floats
 
-Status 2026-11-27: plan, not built. It follows [Terminal-Fancy](archive/Terminal-Fancy.md), built Nov 11, 2026 (P0 to
+Status 2026-11-27: plan, not built; checked against the code the same day, and the parts that assumed what is not
+there corrected (D13 to D17 and the notes in each phase). It follows [Terminal-Fancy](archive/Terminal-Fancy.md), built Nov 11, 2026 (P0 to
 P9 and a second round) and archived the same day as this plan was written. The guide is
 [Terminal](../docs/ui/Terminal.md). This plan takes the items of Terminal-Fancy §13.1 and §15 that the user chose on
 Nov 27, 2026, and the framework part of [Agent Code](agent-code/06-Terminal-Preview-Devices.md)'s thread terminals, so
@@ -46,14 +47,17 @@ From the code on Nov 27, 2026:
 | Tracker | Modes, title, directory, bell and notifications, OSC 133 marks, OSC 7501, progress; keeps no screen | `term/track.rs` |
 | Holder | `moqui term-hold`, protocol 1: a JSON line then raw bytes, one subscriber per session; `hold-v<n>.sock`; the earlier-build loop is empty | `term/hold.rs:50,239`, `term/held.rs:320` |
 | Starting a program | `moqui term-exec` (`MOQUI_TERM_EXEC`): `setsid`, `TIOCSCTTY`, `exec`; the server's environment less `MOQUI_*` | `term/exec.rs:74-213`, `term/host.rs:274` |
-| Services | `get#TerminalOptions`, `find#TerminalSessions`, `open#TerminalSession` (with `input`), `update#`, `close#`, `confirm#TerminalUser`, `find#AllTerminalSessions`, `end#TerminalSessionOf`, `clean#TerminalSessions` | `term/services.rs`, `fw/service/org/moqui/terminal/TerminalServices.xml` |
+| Services | `get#TerminalOptions`, `find#TerminalSessions`, `open#TerminalSession` (with `input`), `update#`, `close#`, `confirm#TerminalUser`, `find#AllTerminalSessions`, `end#TerminalSessionOf` (Rust); `clean#TerminalSessions` (a script). All `allow-remote="false"`, reached through the Terminal screen's transitions only: no REST resource | `term/services.rs`, `fw/service/org/moqui/terminal/TerminalServices.xml`, `apps/Terminal.xml`, `TerminalWeb.js` |
+| Build | `exec`, `held`, `hold`, `host`, `audit`, `notice` are `cfg(all(feature = "devtools", unix))`; a component crate depends on moqui-core, never on moqui-host | `term/mod.rs:39-50`, [Practices-Rust](../docs/dev/Practices-Rust.md) |
+| Adoption | The adopted session's pump starts its count at 0 and takes the holder's replay as output, so a page's `have` from before the restart is in another numbering | `term/registry.rs:395`, `term/held.rs:310` |
 | Audit | `moqui.terminal.TerminalSession`, a row per command and host session; "what is typed and shown is never recorded" | `fw/entity/TerminalEntities.xml`, `term/audit.rs:16` |
 | SSH attach | `attach <id>` at the prompt: an ordinary single client, Ctrl+\ detaches | `command/attach.rs` |
-| Client | `moqui.terminal`; `m-terminal-view` with its `q-menu context-menu touch-position`; a long press of 550 ms copies a line; a float holds the bare terminal element, not the view | `js/WebrootTerminal.js:451,1135,1350` |
-| Floats | `moqui.floats.register(kind, def)`; kinds `terminal`, `assist`, `tray`; no `screen` kind yet | `js/WebrootFloats.js:98`, `js/WebrootAssist.js:1674`, `js/WebrootVue.qvt.js:10593` |
+| Client | `moqui.terminal`; `m-terminal-view` with its `q-menu context-menu touch-position`; a long press of 550 ms copies a line; a float holds the bare terminal element, not the view | `js/WebrootTerminal.js:452,1136,1351` |
+| Floats | `moqui.floats.register(kind, def)`; kinds `terminal`, `assist`, `tray`; no `screen` kind yet; Close and Dock both end the window, with no hook of the kind's for Close | `js/WebrootFloats.js:98,188`, `js/WebrootAssist.js:1675`, `js/WebrootVue.qvt.js:10595` |
 | The call window | `m-call-dock`'s small window: a fixed card at the bottom right, not moved or resized | `js/WebrootCall.js:3188-3203` |
 | Record panels | `m-chatter` and `m-record-files`, an `m-dynamic-container` on `moqui.recordPanelUrl`, inline in the screen | `js/WebrootVue.qvt.js:8497-8577` |
-| Agent tools | The dev tools' agent tools, with approvals (`moqui_llm::approval`) | `runtime/components/dev/dev-aide/src/agent/` |
+| Agent tools | The dev tools' agent tools, with approvals (`moqui_llm::approval`): each approval is used once and bound to a hash of its arguments; an MCP write call is a run of its own | `runtime/components/dev/dev-aide/src/agent/`, `crates/moqui-llm/src/approval/mod.rs`, `crates/moqui-llm/src/mcp/tools.rs:520` |
+| Precompiled templates | `m-terminal-view`, `m-float` and the shell in `WebrootVue.qvt.render.js`; the call's in `WebrootCall.render.js` (`UPDATE_GOLDEN=1 cargo test -p moqui-core --lib client_components_are_precompiled`, `call_components_are_precompiled`) | `crates/moqui-core/src/screen/tests/qvt.rs:1107,1150` |
 
 Nothing in the repository switches OS user, keeps a screen, records output or lets two clients see one session.
 
@@ -74,7 +78,12 @@ Nothing in the repository switches OS user, keeps a screen, records output or le
 | D9 | The `thread` kind is the framework's; who may open one is a policy the Agent Code component registers. With none registered, `thread` is not available. | The pty, ring, holder, history, viewers and audit are written once; Agent Code supplies its permission, its work roots and its run-as. |
 | D10 | Agent Code's history is a bounded recording (TF5's history mode), not a store of its own. | One writer, one format, one place for the query filter. |
 | D11 | A `screen` float loads its screen anew: the one exception to Terminal-Fancy D17. | A screen has no other place to be moved from. |
-| D12 | One phase a commit, with its focused tests; `./moq test-framework` once at the end. | AGENTS.md; the phased-work practice. |
+| D12 | One phase a commit, with its focused tests and the pre-commit checks (`cargo lint`, `cargo lint-min`, `./moq test-framework`; `scripts/check-packages.sh` for a dependency). | AGENTS.md: CI runs them on every push. |
+| D13 | **The `thread` kind needs a build with the dev tools**, as `host` does: the pty, holder and audit code stay under `devtools`. It does not need a dev *instance* (`host-sessions="dev"`); its policy says who may open one. | Decided with the user, Nov 27, 2026. |
+| D14 | **A session's token reaches by its kind.** A command or host session's token reaches its user's command and host sessions; a thread session's only the thread sessions of its own conversation. | Decided with the user. A thread terminal may run as Agent Code's `run-as` account; its agent must not type into the person's own shell. |
+| D15 | Shares are the entity's: `TerminalSessionShare` rows, read again when a held session is adopted. The holder's `meta` is written once at `open` and has no request to change it. | No protocol change for TF4. |
+| D16 | The `thread` policy is a trait in moqui-core that a crate gives through an `Extension` field, as `chat_bridge_adapters` does (`crates/moqui-core/src/extension.rs:55`). The dev tools' `terminal` tool calls TF3's services. | A component crate cannot reach moqui-host. |
+| D17 | TF5's protocol change also carries the count: the holder's `attach` answers the count where its replay starts, and the adopted pump starts there. | A page that comes back after a restart then resumes or resets rightly, and viewers and event numbers keep one numbering. |
 
 ---
 
@@ -96,36 +105,48 @@ TF2 comes before TF3, and TF5 before TF7's history. TF1 and TF8 are client only 
 ### 4.1 TF1: one long press, and the full terminal view in a float
 
 **The cause.** On touch, Quasar's `context-menu` opens `m-terminal-view`'s q-menu after 300 ms of holding
-(`js/WebrootTerminal.js:1350`), and the terminal's own timer selects and copies the line at 550 ms
-(`touchGestures`, `:451-486`). Both run.
+(`js/WebrootTerminal.js:1351`; Quasar binds its touch hold on every platform, and Android's own `contextmenu` too),
+and the terminal's own timer selects and copies the line at 550 ms (`touchGestures`, `:452-486`). Both run, and on
+iOS the copy from a timer is refused, so the "did not allow the copy" dialog opens as well.
 
-- On touch the q-menu takes no `context-menu` binding; the 550 ms handler selects the line under the finger and opens
-  that menu at the finger. Copy is first, then Paste, Select all, Find and Clear. Nothing is copied until Copy is
-  tapped: the tap is the user gesture a clipboard write wants, on iOS too.
+- The q-menu opens only by its `v-model`: a right click (`contextmenu` from a mouse) opens it at the pointer, and the
+  550 ms handler selects the line under the finger and opens it at the finger. Touch is told by the event (a
+  `touchstart`, or a `contextmenu` that follows one), not by the view's `touch` computed, which misses a touch laptop.
+  Copy is first, then Paste, Select all, Find and Clear. Nothing is copied until Copy is tapped: the tap is the user
+  gesture a clipboard write wants, on iOS too.
 - `-webkit-touch-callout: none` on the terminal's element and its helper textarea, so iOS shows no callout of its own.
-- **A float shows the whole view.** `showFloating` (`:1135`) puts the bare terminal element in the float, so a floating
-  terminal has no menu, find bar, closed or taken banner, or key bar. The float's body holds an `m-terminal-view` by
-  teleport (`floats.target`), as Assist and the tray do, and the view holds the element. TF4's viewer banner needs it.
+- **A float shows the whole view.** `showFloating` (`:1136`) puts the bare terminal element in the float, so a floating
+  terminal has no menu, find bar, closed or taken banner, or key bar. A component that is always mounted while the
+  terminal is on (beside `m-terminal-copy`) holds a teleport for each floating session into `floats.target`, as Assist
+  (`js/WebrootAssist.js:2807`) and the tray do, each with an `m-terminal-view`; the view's own mount attaches the
+  element. `showFloating`, the kind's `focus` and `dock` no longer move the element. TF4's viewer banner needs it.
+- `WebrootVue.qvt.render.js` holds these templates and is rebuilt.
 - Tests (`webroot/test/client/pages/WebrootTerminal.page.js`): a long press of synthetic touch events opens the menu
   once, with the line selected and the clipboard untouched; Copy copies it; a floating terminal's body has the menu.
+  The spec loads only the template compiler today; these need Vue and Quasar loaded, as `WebrootFloats.spec.js` does,
+  and are the first to synthesize a `TouchEvent`. The floating-element check (`:232`) changes with the view.
 
 ### 4.2 TF2: the screen model
 
-- **The crate.** `vt100` (0.18.1, MIT): a parser and screen with the alternate screen, scrollback, and the screen
-  written back as escape sequences. `avt` (0.21.0, Apache-2.0) is the second choice. Both are checked again on
-  crates.io when TF2 starts; the choice and its size go in this section then. `term/screen.rs` wraps it.
+- **The crate.** `vt100` (0.18.1, MIT, checked on crates.io Nov 27, 2026; it brings `vte` 0.15, and `unicode-width`
+  and `itoa`, already in the tree): a parser and screen with the alternate screen, scrollback, and the screen written
+  back as escape sequences. `term/screen.rs` wraps it.
 - **Made on first use.** A session gets a screen the first time something reads text (TF3, the list's preview). It is
   built by feeding the replay a new client would get (`Ring::replay_from_rest`, `term/ring.rs:80`, after the modes'
   preamble), then fed in `Pump::output` (`term/session.rs:606`) beside the tracker. It follows each resize. It is
   dropped after 10 minutes with no reader, and made again when asked.
 - **Held sessions.** The screen is in the server's pump only; after an adoption it is rebuilt from the holder's replay
   (D6). An apps session has no ring and no screen.
+- **Rebuilt.** A screen made from the ring was written across the session's resizes, so a full-screen program's may
+  be partial until it draws again; `get#TerminalScreen` says `rebuilt` until a resize or a clear of the screen.
+- **The build.** `vt100` is an optional dependency under `devtools`, the feature the sessions with a ring are built
+  with (`scripts/check-packages.sh`).
 - **What it answers.** The visible rows, the scrollback (up to `terminal@screen-scrollback`, 1000 lines), the last
   *n* lines, the cursor, whether the alternate screen is on, and the screen as escape sequences for a preview.
 - **The list's preview.** The session list shows the last three lines of a session on hover, read through TF3's
   service, which makes the screen.
-- **Memory.** The size of a screen of 200 by 50 with 1000 lines of scrollback is measured when TF2 is built and written
-  here.
+- **Memory.** A cell is 32 bytes, so a screen of 200 by 50 with its 1000 lines of scrollback full is about 6.7 MB
+  (measured Nov 27, 2026), held only while something reads it (D6) and dropped after 10 minutes unread.
 
 ### 4.3 TF3: sessions driven by a program
 
@@ -140,40 +161,62 @@ TF2 comes before TF3, and TF5 before TF7's history. TF1 and TF8 are client only 
 
 - **Keys.** A table maps each named key to its bytes, honoring application cursor mode from the tracker. Text with a
   newline is sent as a bracketed paste when the program set mode 2004. At most 64 KiB in one call, and no NUL.
-- **Events.** Each session keeps its last 256 events in `Info`: a change of title, directory or status, a prompt mark,
-  a command's end with its exit status, a bell or notification, an attach or detach, the end. They come from the
-  tracker's `Changes` (`term/track.rs:74`).
+- **Events.** Each session keeps its last 256 events, numbered, in a list of their own beside `Info` (which is cloned
+  for every list and state message): a change of title, directory or status, a prompt mark, a command's end with its
+  exit status, a bell or notification, an attach or detach, the end. The program's come from the tracker's `Changes`
+  (`term/track.rs:74`); attach, detach and the end are the pump's.
+- **Waiting.** A Rust service holds its worker thread while it waits, so a user has at most 4 waits at once, and
+  `moqui term wait` waits in calls of 25 s at most, which proxies let through.
 - **Who.** Command, host and thread sessions, not apps sessions. The checks are an attach's: the owner, or a share
   holder (TF4) with write for `send#TerminalInput`; `access::check` for the kind and the place (`term/access.rs:318`,
-  and `may_attach` in `termws.rs:316`). Input a program sends never renews the HTTP session.
+  and `may_attach` in `termws.rs:316`). A caller by login key from a remote place brings a ticket of
+  `confirm#TerminalUser` for the recent sign-in, as a socket attached by key does (`termws.rs:337`). Input a program
+  sends never renews the HTTP session.
+- **Reached.** The screen's transitions (`apps/Terminal.xml`, `TerminalWeb.js`) for the page; for a program, a REST
+  resource `terminal` in `moqui.rest.xml` with these four services and `find#DrivableTerminalSessions` (what
+  `moqui term list` and the tool's `list` read, under a token too), `key-scope="terminal"` (a new scope in
+  `KEY_SCOPES`, `moqui-core/src/user/login.rs:1399`). The paths ask for no sign-in, since a token's program has none;
+  each service decides its caller. A GET only reads and is taken as the request's own origin, as listing is; a call
+  with no request (the agent tool's) is this machine. A token is taken from a loopback peer on the server's own
+  listener with no forwarding header, whatever its origin (`Facts::loopback_direct`).
+- **Patterns** of a wait match at each line's ends (`^`, `$` multi-line), at most 1024 characters.
 
 **`moqui term`**, a command of the `moqui` binary: `moqui term list`, `capture <id>`, `send <id> [--keys …] [text]`,
 `wait <id> …`, `events <id>`.
 
-- Against a server, it signs in with a login key, as `moqui tui --server` does.
-- Inside a host session it finds `MOQUI_TERMINAL_SESSION` and a new `MOQUI_TERMINAL_TOKEN`: random, held by the
-  registry, good only for these four services on that user's sessions, and gone when the session ends. It is set in
+- Against a server, it signs in with a login key, as `moqui tui --server` does, and finds it as
+  `devtools_remote::Remote::connect` does (`MOQUI_LOGIN_KEY` or the tui key file).
+- Inside a host session it finds `MOQUI_TERMINAL_SESSION`, `MOQUI_TERMINAL_URL` and a new `MOQUI_TERMINAL_TOKEN`: an
+  HMAC of the session id under a key generated into `runtime/.env` (as `git_server@lfs-token-key` is), so a held
+  session's token still holds after the server restarts, with no row. It is good only for these four services, from
+  the loopback address only, while the session runs, and reaches by the session's kind (D14). It is set in
   `host::environment` (`term/host.rs:274`). An agent run in one terminal can then read and drive the user's others.
-- The `moqui>` prompt gets `capture`, `send` and `wait` beside `sessions` and `attach` (`command/`).
+- The `moqui>` prompt gets `capture`, `send` and `wait` beside `sessions` and `attach` (`command/mod.rs:40`).
 
 **The agent tool `terminal`**, in the dev tools (`runtime/components/dev/dev-aide/src/agent/terminal.rs`, beside
-`hosting.rs`): `list`, `read`, `send`, `wait`, `events`.
+`hosting.rs`): `list`, `read`, `send`, `wait`, `events`, by TF3's services (D16).
 
 - The first `read` or `send` on a session in a run is an approval (`moqui_llm::approval::ApprovalRequest`) whose card
-  names the session: its title, kind, profile and directory. Approved, the run may read and send on that session until
-  it ends. Ending a session is an approval every time (D4).
-- What the screen shows reaches the model as untrusted data, never instructions.
-- MCP clients reach it through the dev tools' catalog, under the same approvals.
+  names the session: its title, kind, profile and directory, with the target `terminal:<sessionId>`. An approval is
+  used once and bound to its arguments, so the tool looks first for an executed `AgentApproval` of the same run and
+  target: found, the run reads and sends on that session without asking. Ending a session is an approval every time
+  (D4).
+- What the screen shows reaches the model as untrusted data, never instructions (`moqui_llm::prompt::untrusted`).
+- MCP clients reach it through the dev tools' catalog (`spec.mcp`, `Classification::Read` with `may_pause`), under
+  the same approvals. An MCP write call is a run of its own, so there each `send` asks.
 
 ### 4.4 TF4: mirrored viewers and sharing
 
 **In the pump** (`term/session.rs`):
 
-- `client` stays the one writer; beside it `observers`, each with its own sent and acknowledged counts.
+- `client` stays the one writer; beside it `observers`, each with its own sent and acknowledged counts. A frame is
+  made once and shared (`Out::Bytes` holds `bytes::Bytes`).
 - A viewer never pauses the program and never resizes it, and what it types is dropped. A viewer more than 500,000
   bytes behind is let go with "behind", and its page comes back by its `have`.
-- A second writer's attach makes the first a viewer, told "opened elsewhere", with Take it back (D7). A viewer's Take
-  it back is a writer's attach.
+- A second writer's attach makes the first a viewer, told by `{"type":"role","role":"viewer"}` rather than a close,
+  with Take it back (D7). A viewer's Take it back is a writer's attach.
+- Only the owner's own viewer keeps the session from its detach timeout; another user watching does not.
+- An ended session's kept output (`keep_ended`) answers a viewer as it answers a writer.
 - Viewers are for command, host and thread sessions: an apps session has no ring to come back by.
 
 **The socket.** `/termws?session=<id>&observe=1` attaches a viewer. `state` gains the session's `cols` and `rows`; a
@@ -187,10 +230,10 @@ viewer's terminal takes the session's size and scrolls in its box instead of fit
 | `share#TerminalSession` | `sessionId`, `username`, `write` (`N` by default) |
 | `revoke#TerminalSessionShare` | `sessionId`, `username` |
 
-- A share is kept in the session's `Info` and in the holder's `meta`, so it outlives an adoption, and recorded in a new
-  entity, `moqui.terminal.TerminalSessionShare`: the session, the user, who shared it, `write`, from and thru.
-- `Registry::find` (`term/registry.rs:105`) admits the owner or a user with a share; `find#TerminalSessions` lists the
-  sessions shared with the user, with their owner.
+- A share is a row of a new entity, `moqui.terminal.TerminalSessionShare` (the session, the user, who shared it,
+  `write`, from and thru), and kept on the session while it runs; an adoption reads the open rows again (D15).
+- `Registry::find_for` beside `find` (`term/registry.rs:105`) admits the owner or a user with a share;
+  `find#TerminalSessions` lists the sessions shared with the user, with their owner.
 - A user with a share passes the same rules as the owner for the place (a remote client needs `terminal@remote` and a
   recent sign-in) and the purpose (a dev instance for command and host sessions). Write needs the kind's permission:
   `SSH_SHELL` for a command line, `TERMINAL_HOST` for a host session (D3).
@@ -208,14 +251,17 @@ are listed apart. SSH gets `attach --view <id>` (`command/attach.rs`).
   same filter and gives it one if so.
 - **The writer.** `term/record.rs`, used by the server's pump for a session in process and by the holder's pump
   (`term/hold.rs:395-427`) for a held one, so a restart of the server loses nothing. The holder's `open` gains
-  `record` (a path and a size limit), and a new request `record` starts and stops it (D8).
+  `record` (a path and a size limit), a new request `record` starts and stops it, and `attach` answers the count
+  where its replay starts (D17): `PROTOCOL` becomes 2 (D8), and `adopt`'s loop over earlier versions
+  (`term/held.rs:320`) runs for version 1.
 - **The conf.** `<terminal recording="offer" recording-days="30" recording-max-mb="256">`, in `mr-moqui-conf.xsd` and
   the conf schema; a profile's `record="true"` starts its sessions recorded. At its size limit a recording stops,
   with a note in the session.
 - **The files.** `runtime/terminal/recordings/<username>/<sessionId>-<n>.cast`, the directory 0700 and the files 0600,
   owned by the server's OS user, whatever account the session runs as (TF6). A new entity,
   `moqui.terminal.TerminalRecording`: the session, the user, the location, from and thru, the bytes, and whether it
-  was forced. `clean#TerminalSessions` also removes recordings past `recording-days`, file and row.
+  was forced. A new Rust service, `clean#TerminalRecordings`, removes recordings past `recording-days`, file and row;
+  `clean#TerminalSessions`, a script, calls it.
 - **Shown.** A REC mark on the pane, the float, the tab and the session list (`state.recording`), and a line in the
   session's output when recording starts or stops.
 - **Played.** The Terminal's Recordings list, the owner's alone: a player (xterm.js fed by the events' times, with
@@ -223,7 +269,8 @@ are listed apart. SSH gets `attach --view <id>` (`command/attach.rs`).
   › Terminal Sessions lists every recording's row and deletes them; it does not play them (D2).
 - **The rule changes.** The audit's comment (`term/audit.rs:16`), the entity's comment and Attack-Surface say what is
   recorded, when, and who reads it.
-- **History mode**, for the `thread` kind (D10): rolling segments of at most 8 MiB in all, at code-point edges, not
+- **History mode**, for the `thread` kind (D10): rolling segments of at most 8 MiB of output in all (counted in the
+  output's bytes, not the escaped `.cast` text), at code-point edges, not
   listed under Recordings and removed with the session's row. When a thread terminal is started again after its
   program is gone, its history is shown first.
 
@@ -255,16 +302,21 @@ are listed apart. SSH gets `attach --view <id>` (`command/attach.rs`).
    `setsid` and `TIOCSCTTY` (`term/exec.rs:93-96`) and `exec`s the program.
 6. The root parent stays as the supervisor: a SIGHUP or SIGTERM, which sudo relays from the server, goes to the
    program's process group; SIGKILL follows 5 s later; it exits with the program's status. The server signals sudo's
-   pid instead of the program's group, which it may not signal across accounts.
+   pid instead of the program's group, which it may not signal across accounts. The session's kill, 5 s after its
+   hang-up, is a SIGTERM to sudo for such a session, never a SIGKILL: a killed sudo would leave the supervisor and the
+   program running, and sudo cannot relay a SIGKILL.
 
 - **No new `unsafe`** (Practices-Rust §7). The child is one thread, so rustix's thread-level credential calls drop it
-  whole; the supervisor's signals are tokio's. TF6 proves this first. Linux first; macOS when the same calls are there.
+  whole; the supervisor's signals are tokio's. TF6 proves this first. Linux only: rustix has these calls on Linux
+  alone.
+- **The holder** starts the helper with the spec as an argument for such a session, since sudo clears the
+  environment that carries it now: with the account in `open`, `PROTOCOL` becomes 3.
 - **The environment** is not the server's: `HOME`, `USER`, `LOGNAME`, `SHELL` and a `PATH` from the account's passwd
   entry, `TERM` and the others of Terminal-Fancy §7.3, and the profile's env; a login shell, so the account's profile
   does the rest.
 - **The directory** is the profile's, else the account's home.
 - **Shell integration** scripts (`term/host.rs:323`) are written readable by all: they hold nothing secret.
-- **The holder** stays the server's user and keeps `peer_is_own_user`; its `open` carries the account (D8).
+- **The holder** stays the server's user and keeps `peer_is_own_user`.
 - **Setting it up.** `moqui term-exec --print-setup` prints the sudoers line and a `run-as.conf` for the
   administrator to install. Run-Deploy and the Terminal guide say how; Attack-Surface says what a server compromise
   then reaches: any account the file allows, never root.
@@ -273,12 +325,14 @@ are listed apart. SSH gets `attach --view <id>` (`command/attach.rs`).
 
 - **`Kind::Thread`** (`term/session.rs:64`): a host session in every way (a pty, the ring, the holder, the tracker,
   viewers, the audit), and also opened, attached and listed by its conversation. It touches `access::built_with`,
-  `offered` and `check` (`term/access.rs:294-329`), the dispatch in `open#TerminalSession` (`term/services.rs:239`),
-  and the audit.
-- **The policy** (D9). A `term::kinds` registry where a component registers the thread kind's policy: who may open one
+  `offered` and `check` (`term/access.rs:294-329`), the dispatch in `open#TerminalSession` (`term/services.rs:240`),
+  and the audit. It is built where `host` is (D13).
+- **The policy** (D9, D16). A trait in moqui-core, given by a crate through an `Extension` field: who may open one
   (Agent Code: `AgentCodeHost`, the user's conversation, its work root), the directory check (inside the work root),
-  the run-as account (TF6), the env it adds, and whether a dev instance is needed (no). With no policy registered
-  `thread` answers `notAvailable`. TF7's tests register one of their own.
+  the run-as account (TF6), the env it adds, and whether a dev instance is needed (no). With no policy given
+  `thread` answers `notAvailable`. TF7's tests give one of their own.
+- **One id, a new program.** A restart runs a new session under the same id, so `Registry::remove` removes only the
+  session it is given (`Arc::ptr_eq`): the ended one's pump must not take the new one out of the list.
 - **`open#TerminalSession` gains:**
   - `conversationId` and `clientTerminalId` (128 characters at most). A live session of the same user, conversation
     and client id is answered instead of a new one, so an open is idempotent.
@@ -299,15 +353,17 @@ are listed apart. SSH gets `attach --view <id>` (`command/attach.rs`).
 **`call`.** Where floats can be (600 px and wider), the live call's small window (`js/WebrootCall.js:3188-3203`)
 becomes a `call` float holding the compact `m-call` by teleport. TF8 first proves that a moved `<video>` keeps playing
 (a `play()` after the move). Its home is the right edge: Dock opens the side panel when the page is wide, else the Call
-screen. Close minimizes and the call goes on; Leave is a title-bar action. Not in Assist's reach. Picture-in-picture
-is unchanged. Below 600 px the small card stays as it is.
+screen. Close minimizes and the call goes on, through a new `close(key)` of the kind's def (Close and Dock both end
+the window today); Leave is a title-bar action. Not in Assist's reach. Picture-in-picture is unchanged. Below 600 px
+the small card stays as it is. `m-call-compact` sets its height for the side panel (`js/WebrootCall.js:3632`); the
+float has a variant of its own. `WebrootCall.render.js` is rebuilt.
 
 **`screen`.** `m-float-screen`, a component of the layer (`js/WebrootFloats.js`), holds an `m-dynamic-container`
 (`js/WebrootVue.qvt.js:1880`) of its own, keyed by the screen's URL and restored at a load. It loads its screen anew
 (D11). Its links open in the page, as a tray tab's do. In Assist's reach. Offered as "Open in a window" in the screen
 title menu (`#m-app-screens`) and in the palette.
 
-**Record panels.** Chatter and Files (`recordPanel`, `js/WebrootVue.qvt.js:8521`) get a header button that opens a
+**Record panels.** Chatter and Files (`recordPanel`, `js/WebrootVue.qvt.js:8525`) get a header button that opens a
 `screen` float on the panel's URL (`moqui.recordPanelUrl`) with the record's name as its title. The float provides
 `mRecordPanel`, so mr-boss's `Shared/Chatter.qvue` and `RecordFiles.qvue` work unchanged. The panel in the page stays.
 

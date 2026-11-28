@@ -68,6 +68,7 @@ fn session(kind: Kind, replay: usize, detached_for: Duration) -> (Arc<Registry>,
         agent: false,
         attend: None,
         origin: crate::term::Origin::default(),
+        adopted: false,
     };
     let session = spawn(&registry, spec, program_value);
     (
@@ -203,4 +204,40 @@ async fn a_session_with_no_window_for_its_time_ends_and_leaves_the_registry() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert!(session.info().ended.unwrap().1.contains("with no window"));
+}
+
+#[cfg(feature = "devtools")]
+#[tokio::test]
+async fn the_screen_reads_as_text_after_output_a_resize_and_the_alternate_screen() {
+    use crate::term::screen::Scope;
+    let (_registry, session, mut fake) = session(Kind::Command, 4096, Duration::from_secs(60));
+    fake.program.write_all(b"one\r\ntwo\r\n$ ").await.unwrap();
+    // made on this first read, from what a new window would be sent
+    let mut read = None;
+    for _ in 0..50 {
+        read = session.screen(Scope::Last(3), false).await;
+        if read
+            .as_ref()
+            .is_some_and(|read| read.lines.last().is_some_and(|line| line == "$"))
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let read = read.unwrap();
+    assert_eq!(read.lines, ["one", "two", "$"]);
+    assert_eq!((read.cols, read.rows), (80, 24));
+    assert!(!read.rebuilt, "the whole output, at one size");
+    // fed from then on, and following the window's size
+    let client = session.attach(None, 100, 30).await.unwrap();
+    fake.program.write_all(b"\x1b[?1049h\x1b[Hfull").await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let read = session.screen(Scope::Visible, false).await.unwrap();
+    assert_eq!((read.cols, read.rows), (100, 30));
+    assert!(read.alternate);
+    assert_eq!(read.lines[0], "full");
+    session.detach(client.client).await;
+    // an apps session keeps no ring, and no screen
+    let (_registry, apps, _fake) = self::session(Kind::Apps, 0, Duration::from_secs(60));
+    assert!(apps.screen(Scope::Visible, false).await.is_none());
 }

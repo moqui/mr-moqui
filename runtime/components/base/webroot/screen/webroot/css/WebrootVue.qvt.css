@@ -1364,6 +1364,10 @@ body.m-terminal-solo .q-page-container { padding:0 !important; }
 .m-terminal-search { border-bottom:1px solid var(--m-border, rgba(0,0,0,.12)); }
 /* a terminal's text off the window's edge; the fit addon takes the padding off its size */
 .m-float-body .m-terminal-screen .xterm, .m-terminal-host .m-terminal-screen .xterm { padding:2px 4px; }
+/* the session list's preview of a session's last lines (Terminal-Fancy2 §4.2) */
+.m-terminal-preview { margin:0; font-family:ui-monospace, monospace; font-size:12px; white-space:pre; overflow:hidden; }
+/* a long press is the terminal's own (its menu at the finger, Terminal-Fancy2 §4.1): no callout of iOS's */
+.m-terminal-screen, .m-terminal-screen textarea { -webkit-touch-callout:none; }
 .m-terminal-bell { outline:2px solid color-mix(in srgb, var(--q-warning) 70%, transparent); outline-offset:-2px; }
 /* the phone's key bar of the terminal (Terminal-Fancy §12) */
 .m-terminal-keys { overflow-x:auto; gap:2px; padding:2px 0; border-top:1px solid var(--m-border, rgba(0,0,0,.12)); }

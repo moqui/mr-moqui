@@ -36,7 +36,7 @@ const DETACH: u8 = 0x1c;
 const RESET_MODES: &[u8] = b"\x1b[?1049l\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1l\x1b>";
 
 /// The user's session that `id` names: the whole id, or the start of one id only. `Err` says why there is none.
-fn find(factory: &Arc<ExecutionContextFactory>, id: &str, username: &str) -> Result<Arc<Session>, String> {
+pub(super) fn find(factory: &Arc<ExecutionContextFactory>, id: &str, username: &str) -> Result<Arc<Session>, String> {
     let registry = Registry::of(factory);
     if let Some(session) = registry.find(id, username) {
         return Ok(session);
@@ -68,7 +68,7 @@ pub(crate) fn session_ids(factory: &Weak<ExecutionContextFactory>, username: &st
 }
 
 /// Whether the user may attach to a session of `kind` from where the prompt was opened: run on the pool as the user.
-async fn may_attach(access: &HostAccess, kind: Kind) -> Result<(), String> {
+pub(super) async fn may_attach(access: &HostAccess, kind: Kind) -> Result<(), String> {
     if kind == Kind::Apps {
         return Ok(());
     }
