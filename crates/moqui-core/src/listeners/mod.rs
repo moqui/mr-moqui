@@ -23,7 +23,8 @@
 //! upgrade warning ([`upgrade_warnings`], §8.2), the test server's ports and the readers that list them.
 //!
 //! [`rows`] and [`change`] (`manage`) list the listeners with the settings behind each, and switch one as a person asks,
-//! for `org.moqui.admin.ListenerServices` and the operator socket (§3.6).
+//! for `org.moqui.admin.ListenerServices` and the operator socket (§3.6); [`recent`] lists the changes people made
+//! since the server started, for System › Conf › Services and ports (§3.7).
 
 use std::cell::OnceCell;
 use std::fmt;
@@ -39,8 +40,8 @@ use crate::startup::State;
 
 mod manage;
 pub use manage::{
-    audit_refused, change, origin, rows, Actor, Answer, Applied, Change, OwnSetting, Refusal, RefusalKind, SettingSet,
-    OWN_SETTINGS, WAYS_IN,
+    audit_refused, change, origin, recent, rows, Actor, Answer, Applied, Change, OwnSetting, RecentChange, Refusal,
+    RefusalKind, SettingSet, SubService, OWN_SETTINGS, SUB_SERVICES, WAYS_IN,
 };
 
 /// A listener's switch and the settings that turned it on before it had one (plans/Runtime-Config.md §3.2).

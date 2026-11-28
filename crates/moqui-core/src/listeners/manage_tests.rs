@@ -754,6 +754,71 @@ fn a_change_kept_is_audited_then_asks_for_one_pass_or_defers_it() {
             "Listener TURN unchanged (pass asked) by admin: asked off; reason: \"incident 7\"; end now: true; persist: false",
         ]
     );
+    // the two that changed a setting are the recent changes, the newest first; the one that changed nothing is not
+    let recent = recent(ec.factory());
+    assert_eq!(recent.len(), 2, "{recent:?}");
+    assert_eq!(
+        (
+            &recent[0]["name"],
+            &recent[0]["who"],
+            &recent[0]["reason"],
+            &recent[0]["applied"]
+        ),
+        (
+            &json!("TURN"),
+            &json!("admin"),
+            &json!("incident 7"),
+            &json!("deferred")
+        )
+    );
+    assert_eq!((&recent[0]["to"], &recent[0]["endNow"]), (&json!("off"), &json!(true)));
+    assert!(recent[0]["outcome"]
+        .as_str()
+        .unwrap()
+        .starts_with("it applies in a second"));
+    assert_eq!(
+        (
+            &recent[1]["who"],
+            &recent[1]["from"],
+            &recent[1]["to"],
+            &recent[1]["applied"]
+        ),
+        (
+            &json!("operator socket (uid 7)"),
+            &json!("off"),
+            &json!("on"),
+            &json!("now")
+        )
+    );
+    assert_eq!(recent[1]["outcome"], "the listeners did not change");
+    assert!(recent[1]["time"].as_str().unwrap().parse::<jiff::Timestamp>().is_ok());
+}
+
+#[test]
+fn the_recent_changes_keep_the_last_ones() {
+    let ec = ExecutionContextFactory::test_context();
+    assert!(recent(ec.factory()).is_empty());
+    for number in 0..RECENT_KEPT + 3 {
+        remember(
+            ec.factory(),
+            RecentChange {
+                time: jiff::Timestamp::now(),
+                name: "SSH",
+                who: "admin".to_string(),
+                from: "on".to_string(),
+                to: "off".to_string(),
+                reason: format!("change {number}"),
+                applied: "now",
+                outcome: "stopped".to_string(),
+                end_now: false,
+                persist: true,
+            },
+        );
+    }
+    let kept = recent(ec.factory());
+    assert_eq!(kept.len(), RECENT_KEPT);
+    assert_eq!(kept[0]["reason"], format!("change {}", RECENT_KEPT + 2));
+    assert_eq!(kept[RECENT_KEPT - 1]["reason"], "change 3");
 }
 
 fn outcome(selector: &str, kept: Kept, class: Class, previous: Option<&str>) -> SetOutcome {
@@ -904,8 +969,45 @@ fn the_rows_come_from_the_conf_without_listeners_and_from_the_registry_with_them
     assert_eq!(ssh["settingList"][1]["value"], "2222");
     assert_eq!(ssh["settingList"][1]["envName"], "moqui_conf__ssh_server__port");
     assert!(ssh["settingList"][1]["source"].is_string());
+    // what a form needs to change it: its port, its address and its own settings with their values
+    assert_eq!(
+        (&ssh["portSelector"], &ssh["port"]),
+        (&json!("ssh-server@port"), &json!("2222"))
+    );
+    assert_eq!(
+        (&ssh["hostSelector"], &ssh["host"]),
+        (&json!("ssh-server@host"), &json!("127.0.0.1"))
+    );
+    assert_eq!(
+        ssh["ownSettingList"],
+        json!([{"name": "access", "selector": "ssh-server@access", "value": "open", "values": ["open", "login", "key"]}])
+    );
+    // its services, each with its switch, on when the conf leaves it at its default
+    let services = ssh["subServiceList"].as_array().unwrap();
+    assert_eq!(services.len(), 4);
+    assert_eq!(services[1]["selector"], "ssh-server@sftp-enabled");
+    assert_eq!(services[1]["title"], "SFTP");
+    assert!(services[1]["source"].is_string());
     let http = found.iter().find(|row| row["name"] == "HTTP").unwrap();
     assert_eq!(http["enabled"], false);
+    assert_eq!(http["hostSelector"], "webapp-list/webapp[webroot]@http-bind");
+    // where the ways in reach, as the lockout guard counts them: SSH on loopback does not, HTTPS on every address does
+    assert_eq!(
+        (&ssh["reachable"], &http["reachable"], &http["plainPublic"]),
+        (&json!(false), &json!(false), &json!(false))
+    );
+    let https = found.iter().find(|row| row["name"] == "HTTPS").unwrap();
+    assert_eq!(https["reachable"], true);
+    assert_eq!(https.get("plainPublic"), None, "HTTP's alone");
+    assert_eq!(
+        (&http["ownSettingList"], &http["subServiceList"]),
+        (&json!([]), &json!([]))
+    );
+    let turn = found.iter().find(|row| row["name"] == "TURN").unwrap();
+    assert_eq!(
+        (&turn["portSelector"], &turn["hostSelector"]),
+        (&json!("media-server/turn-server@port"), &json!(null))
+    );
 
     let stub = Arc::new(Stub::default());
     let mut cluster = row_at("Cluster", Some("0.0.0.0:8444"));
@@ -913,6 +1015,8 @@ fn the_rows_come_from_the_conf_without_listeners_and_from_the_registry_with_them
     cluster.selectors = vec!["cluster-member@https-port".to_string()];
     *lock(&stub.rows) = vec![row_at("HTTPS", Some("0.0.0.0:8443")), cluster];
     install(ec.factory(), Arc::clone(&stub) as Arc<dyn ListenerControl>);
+    // TURN rides on call media: the registry has no entry of it, its startup report row says what it is doing
+    crate::startup::listener(ec.factory(), "TURN", State::off("call media is not running"));
     let found = rows(ec.factory(), Some("HTTPS"));
     assert_eq!(found.len(), SWITCHES.len() + 1);
     let https = found.iter().find(|row| row["name"] == "HTTPS").unwrap();
@@ -922,6 +1026,15 @@ fn the_rows_come_from_the_conf_without_listeners_and_from_the_registry_with_them
     );
     let ssh = found.iter().find(|row| row["name"] == "SSH").unwrap();
     assert_eq!(ssh["state"], "not-running", "not in this registry");
+    assert_eq!(ssh["reachable"], false, "it does not run here");
+    let turn = found.iter().find(|row| row["name"] == "TURN").unwrap();
+    assert_eq!(
+        (&turn["state"], &turn["detail"], &turn["live"]),
+        (&json!("off"), &json!("call media is not running"), &json!(false))
+    );
+    assert!(turn["since"].is_string());
+    let https = found.iter().find(|row| row["name"] == "HTTPS").unwrap();
+    assert_eq!(https["reachable"], true, "running on every address");
     let last = found.last().unwrap();
     assert_eq!((&last["name"], &last["switchable"]), (&json!("Cluster"), &json!(false)));
     assert_eq!(last["settingList"][0]["selector"], "cluster-member@https-port");

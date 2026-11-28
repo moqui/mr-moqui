@@ -145,6 +145,10 @@ feature("a protocol that is not built, one kept off, one that did not start and 
         out.xmpp.state === "failing"
         out.dav.state === "ready"
         out.dav.listener === "tcp 0.0.0.0:8080"
+        // the listener with a switch a protocol runs on, for Conf › Services and ports; none for one on the web address
+        out.ssh.listenerName === "SSH"
+        out.smtp.listenerName === "SMTP"
+        out.dav.listenerName === null
         out.quiet.state === "notStarted"
         out.sshOff.state === "disabled"
         out.sshOff.reason === "ssh-server@enabled is false"

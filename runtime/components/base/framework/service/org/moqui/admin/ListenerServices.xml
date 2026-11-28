@@ -27,13 +27,23 @@ along with this software (see the LICENSE.md file). If not, see
             the edge node's SSH tunnel, the cluster's SSH transport), switchable, wayIn (HTTPS, HTTP and SSH), enabled
             (its switch in the running conf), ownRequest (the caller's request came over it) and settingList: each
             setting behind it with selector, envName, value, source (conf file with file, fileLabel and line;
-            runtime/.env; the environment; -D; or set while running and not kept past a restart). Also running
-            (listeners run in this process) and origin (the listener the caller's request came over). Needs the ADMIN
-            group.</description>
+            runtime/.env; the environment; -D; or set while running and not kept past a restart). A listener with a
+            switch also has portSelector and port, hostSelector and host (null where it has none), ownSettingList
+            (each own setting a change takes: name, selector, value, values) and subServiceList (the services carried
+            on it that a switch of their own turns off for everyone, SSH's terminal client, SFTP, git and admin shell:
+            each a setting with title and on). HTTPS, HTTP and SSH also have reachable (on, at an address clients reach,
+            as the lockout guard counts it) and HTTP plainPublic (on at a public address with no proxy believed in front,
+            as the public HTTP guard sees it). While listeners run, one the registry has no entry of (TURN, which call
+            media starts) is its startup report row. Also running (listeners run in this process), origin (the listener the
+            caller's request came over) and recentChanges: the changes people made on this server since it started,
+            from set#Listener and the operator socket, newest first, at most 20, each with time, name, who, from, to,
+            reason, applied, outcome, endNow and persist (a change that changed no setting is not listed). Needs the
+            ADMIN group.</description>
         <out-parameters>
             <parameter name="listenerList" type="List"><parameter name="listener" type="Map"/></parameter>
             <parameter name="running" type="Boolean"/>
             <parameter name="origin"/>
+            <parameter name="recentChanges" type="List"><parameter name="change" type="Map"/></parameter>
         </out-parameters>
     </service>
     <service verb="set" noun="Listener" type="rust" location="moqui_core::service::listeners::set_listener"
@@ -51,7 +61,8 @@ along with this software (see the LICENSE.md file). If not, see
             over the operator socket, then runtime/.env and systemctl reload, or a restart);
             publicHttp (it turns plain HTTP on at a public address, http-bind empty or not loopback, while
             trusted-proxies is empty); dependents (it turns SSH off while the edge tunnel or the cluster's SSH transport
-            uses it). A guard's refusal names in confirm the parameter that lets it through. Only the settings whose value
+            uses it). A guard's refusal asks for the confirmation in words and names in confirm the parameter that lets
+            it through. Only the settings whose value
             changes are kept, as persist says (runtime/.env, or this process until a restart when the environment names one; persist=false
             sets them until the process ends) and one pass of the listener registry applies them, with the user and the
             reason as its cause; endNow ends the connections of a listener turned off at once instead of after 5 seconds,

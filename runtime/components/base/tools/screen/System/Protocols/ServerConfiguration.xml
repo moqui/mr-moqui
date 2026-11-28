@@ -22,9 +22,13 @@ along with this software (see the LICENSE.md file). If not, see
     address (the name clients are given is looked up and connected to from this server), which leaves the server and so asks
     for a confirmation that says what it does. The target is always the configuration's own: none is entered here. No
     setting is changed here, no file path is edited and nothing is restarted: the deployment's configuration stays the
-    operator's. Narrowed to one protocol by protocolKey. A readiness and support summary is linked where the mount has a
-    route for one (supportSummary; template/AdminMount.js). Reading needs ADMIN_CONNECTION_VIEW, ADMIN_SETTINGS_VIEW or
-    ADMIN_OPERATION_VIEW and a check ADMIN_CONNECTION_MANAGE, checked by the services. -->
+    operator's. A protocol on a listener with a switch (its listenerName) links to System › Conf › Services and ports,
+    where that listener is turned on and off while the server runs (plans/Runtime-Config.md §3.7): beside System, and
+    under a mount only where it has a servicesPorts route; a setting that applies while the server runs says so, so a
+    live listener's (SSH's) shows no restart. Narrowed to one protocol by protocolKey. A readiness and support summary is
+    linked where the mount has a route for one (supportSummary; template/AdminMount.js). Reading needs
+    ADMIN_CONNECTION_VIEW, ADMIN_SETTINGS_VIEW or ADMIN_OPERATION_VIEW and a check ADMIN_CONNECTION_MANAGE, checked by
+    the services. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Server configuration" default-menu-index="4" menu-image="sym_o_dns" menu-image-type="icon">
     <parameter name="protocolKey"/>
@@ -62,13 +66,14 @@ along with this software (see the LICENSE.md file). If not, see
                 .map(row => Object.assign({}, row, {
                     groupText: row.settingGroup.charAt(11).toUpperCase() + row.settingGroup.slice(12),
                     shownValue: shownValue(row),
-                    restartText: row.restartRequired ? ec.l10n.localize('After a restart') : ''}))
+                    restartText: row.restartRequired ? ec.l10n.localize('After a restart') : ec.l10n.localize('While it runs')}))
             const states = Object.fromEntries(all.map(row => [row.protocolKey, row]))
             checks = Array.from(found?.checkList || []).filter(row => !chosen || row.protocolKey === chosen.protocolKey).map(row => Object.assign({}, row, {
                 resultColor: row.lastCheckPassed == null ? 'grey-7' : row.lastCheckPassed ? 'positive' : 'negative',
                 resultState: row.lastCheckPassed == null ? ec.l10n.localize('Not run') : row.lastCheckPassed ? ec.l10n.localize('Passed') : ec.l10n.localize('Did not pass'),
                 resultText: [row.lastResultText, row.lastCheckDate ? ec.l10n.format(Date.parse(row.lastCheckDate), 'yyyy-MM-dd HH:mm') : ''].filter(Boolean).join(' · '),
                 protocolStateText: states[row.protocolKey]?.stateText || '',
+                listenerName: states[row.protocolKey]?.listenerName || '',
                 dialogKey: (row.protocolKey + '_' + row.checkKey).replace(/\W/g, '_')}))
             canTest = !!found?.canTest
             // the readiness and support summary, where the mount has one, for a reader of the overview
@@ -77,6 +82,12 @@ along with this software (see the LICENSE.md file). If not, see
             supportHref = supportLink.plain ? supportLink.href : ''
             supportUrl = supportLink.plain ? '' : supportLink.url || ''
             supportParameters = supportLink.plain ? {} : supportLink.parameters || {}
+            // where a listener is turned on and off: System's Conf › Services and ports, or the mount's servicesPorts route
+            const servicesLink = mount.mounted ? ec.resource.script('component://tools/template/AdminMount.js').link(mount.routes, 'servicesPorts') || {}
+                : {url: '../../Conf/ServicesPorts', parameters: {}}
+            servicesHref = servicesLink.plain ? servicesLink.href : ''
+            servicesUrl = servicesLink.plain ? '' : servicesLink.url || ''
+            servicesParameters = servicesLink.plain ? {} : servicesLink.parameters || {}
             findValues = {protocolKey: protocolKey}
         ]]></script>
     </actions>
@@ -108,6 +119,10 @@ along with this software (see the LICENSE.md file). If not, see
                 <section name="ChosenProtocol" condition="chosenState">
                     <widgets>
                         <label type="p" text="${chosenState.title}: ${chosenState.stateText}${chosenState.reason ? ' · ' + chosenState.reason : ''}${chosenState.listener ? ' · listening on ' + chosenState.listener : ''}"/>
+                        <link url="${servicesUrl}" text="Turn ${chosenState.listenerName} on or off in Services and ports" link-type="anchor"
+                                parameter-map="servicesParameters" condition="chosenState.listenerName &amp;&amp; servicesUrl"/>
+                        <link url="${servicesHref}" url-type="plain" text="Turn ${chosenState.listenerName} on or off in Services and ports" link-type="anchor"
+                                condition="chosenState.listenerName &amp;&amp; servicesHref"/>
                         <label type="p" style="text-warning" condition="chosenState.trustState === 'mismatch'"
                                 text="Reception is not trusted: ${chosenState.trustProblems.join('; ')}"/>
                         <label type="p" style="m-muted" condition="chosenState.trustState &amp;&amp; chosenState.trustState !== 'mismatch'" text="${chosenState.trustText}"/>
@@ -117,7 +132,14 @@ along with this software (see the LICENSE.md file). If not, see
                     <box-header title="Checks"/>
                     <box-body-nopad>
                         <form-list name="ProtocolChecks" list="checks" skip-form="true" paginate="false">
-                            <field name="protocolTitle"><default-field title="Protocol"><display text="${protocolTitle} (${protocolStateText})"/></default-field></field>
+                            <field name="protocolTitle"><default-field title="Protocol">
+                                <!-- a protocol on a listener with a switch links to where it is turned on and off -->
+                                <link url="${servicesUrl}" text="${protocolTitle} (${protocolStateText})" link-type="anchor" parameter-map="servicesParameters"
+                                        condition="listenerName &amp;&amp; servicesUrl" tooltip="Turn ${listenerName} on or off in Services and ports"/>
+                                <link url="${servicesHref}" url-type="plain" text="${protocolTitle} (${protocolStateText})" link-type="anchor"
+                                        condition="listenerName &amp;&amp; servicesHref" tooltip="Turn ${listenerName} on or off in Services and ports"/>
+                                <label text="${protocolTitle} (${protocolStateText})" condition="!listenerName || !(servicesUrl || servicesHref)"/>
+                            </default-field></field>
                             <field name="title"><default-field title="Check"><display/></default-field></field>
                             <field name="expected"><default-field title="Expected"><display/></default-field></field>
                             <field name="resultState">

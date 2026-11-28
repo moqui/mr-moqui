@@ -21,9 +21,10 @@
 //! for one pass that carries who, why and what was set. A way in counts only where clients reach it: SSH not on
 //! loopback, HTTP and HTTPS not on loopback unless a proxy on this machine is trusted. Who may ask, and whether they signed in
 //! recently, the caller checks ([`Actor`]); the operator socket is itself a way back, so no lockout guard applies to it.
-//! A switch has no timer: what is turned off stays off until someone turns it on (§6).
+//! A switch has no timer: what is turned off stays off until someone turns it on (§6). [`recent`] keeps the last changes
+//! on the factory for System › Conf › Services and ports (§3.7).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -98,6 +99,108 @@ pub const OWN_SETTINGS: [OwnSetting; 1] = [OwnSetting {
     selector: "ssh-server@access",
     values: &["open", "login", "key"],
 }];
+
+/// A service carried on a listener that a switch of its own turns off for everyone (§3.4), listed beside the listener
+/// ([`rows`]). It is changed in the conf: it is not one of the settings a [`Change`] takes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SubService {
+    /// The listener's row name.
+    pub listener: &'static str,
+    pub selector: &'static str,
+    /// What it serves, in a person's words.
+    pub title: &'static str,
+}
+
+/// SSH's services, each with its switch (`true` by default); the `SSH_*` permissions still decide per user.
+pub const SUB_SERVICES: [SubService; 4] = [
+    SubService {
+        listener: "SSH",
+        selector: "ssh-server@tui-enabled",
+        title: "Terminal client and its sign-in dialog",
+    },
+    SubService {
+        listener: "SSH",
+        selector: "ssh-server@sftp-enabled",
+        title: "SFTP",
+    },
+    SubService {
+        listener: "SSH",
+        selector: "ssh-server@git-enabled",
+        title: "Git over SSH",
+    },
+    SubService {
+        listener: "SSH",
+        selector: "ssh-server@shell-enabled",
+        title: "Admin shell",
+    },
+];
+
+/// How many changes [`recent`] keeps on a factory.
+const RECENT_KEPT: usize = 20;
+
+/// One change of a listener that a person made and that changed its settings, as [`recent`] lists it: kept in memory on
+/// this server until it restarts (the audit log is the record).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecentChange {
+    pub time: jiff::Timestamp,
+    /// The listener's row name.
+    pub name: &'static str,
+    /// Who asked ([`Actor::who`]).
+    pub who: String,
+    /// Its state before and after, as the audit line has them (`on (port 2222)`).
+    pub from: String,
+    pub to: String,
+    pub reason: String,
+    /// [`Applied::word`].
+    pub applied: &'static str,
+    /// What the pass did to the listener, or when the change applies.
+    pub outcome: String,
+    pub end_now: bool,
+    pub persist: bool,
+}
+
+impl RecentChange {
+    /// `time` (RFC 3339), `name`, `who`, `from`, `to`, `reason`, `applied`, `outcome`, `endNow` and `persist`.
+    #[must_use]
+    pub fn to_json(&self) -> Json {
+        json!({
+            "time": self.time.to_string(),
+            "name": self.name,
+            "who": self.who,
+            "from": self.from,
+            "to": self.to,
+            "reason": self.reason,
+            "applied": self.applied,
+            "outcome": self.outcome,
+            "endNow": self.end_now,
+            "persist": self.persist,
+        })
+    }
+}
+
+/// The last [`RECENT_KEPT`] changes on a factory, oldest first.
+#[derive(Default)]
+struct Recent(Mutex<VecDeque<RecentChange>>);
+
+/// Keep `change` among the factory's recent changes, dropping the oldest past [`RECENT_KEPT`].
+fn remember(factory: &ExecutionContextFactory, change: RecentChange) {
+    let recent = factory.extension(|_| Recent::default());
+    let mut kept = lock(&recent.0);
+    kept.push_back(change);
+    while kept.len() > RECENT_KEPT {
+        kept.pop_front();
+    }
+}
+
+/// The listener changes people made on this server since it started (from the services and the operator socket), the
+/// newest first, at most [`RECENT_KEPT`]: each [`RecentChange::to_json`]. A change that changed no setting is not one.
+#[must_use]
+pub fn recent(factory: &ExecutionContextFactory) -> Vec<Json> {
+    factory
+        .extension_if_present::<Recent>()
+        .map(|recent| lock(&recent.0).iter().rev().map(RecentChange::to_json).collect())
+        .unwrap_or_default()
+}
 
 /// One listener switched as a person asks.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -301,20 +404,7 @@ impl Answer {
     #[must_use]
     pub fn message(&self) -> String {
         let state = if self.enabled { "on" } else { "off" };
-        let applied = match &self.applied {
-            Applied::Now(outcomes) => match outcomes.iter().find(|outcome| outcome.name == self.name) {
-                Some(outcome) if outcome.detail.is_empty() => outcome.action.word().to_string(),
-                Some(outcome) => format!("{}: {}", outcome.action, outcome.detail),
-                None => "the listeners did not change".to_string(),
-            },
-            Applied::Later => {
-                "it applies in a second, after this answer, since it closes the connection this request came over"
-                    .to_string()
-            }
-            Applied::NoListeners => "no listeners run in this process: they read it when they start".to_string(),
-            Applied::Failed(err) => format!("the listeners did not answer: {err}"),
-        };
-        format!("{} set {state}; {applied}", self.name)
+        format!("{} set {state}; {}", self.name, outcome_text(self.name, &self.applied))
     }
 
     /// The answer as `set#Listener` gives it: `name`, `enabled`, `applied` ([`Applied::word`]), `message`,
@@ -365,6 +455,23 @@ impl Answer {
             "outcomeList": outcomes,
             "noteList": self.notes,
         })
+    }
+}
+
+/// What the change's pass did to the listener `name` (its action, with the detail), or when the change applies.
+fn outcome_text(name: &str, applied: &Applied) -> String {
+    match applied {
+        Applied::Now(outcomes) => match outcomes.iter().find(|outcome| outcome.name == name) {
+            Some(outcome) if outcome.detail.is_empty() => outcome.action.word().to_string(),
+            Some(outcome) => format!("{}: {}", outcome.action, outcome.detail),
+            None => "the listeners did not change".to_string(),
+        },
+        Applied::Later => {
+            "it applies in a second, after this answer, since it closes the connection this request came over"
+                .to_string()
+        }
+        Applied::NoListeners => "no listeners run in this process: they read it when they start".to_string(),
+        Applied::Failed(err) => format!("the listeners did not answer: {err}"),
     }
 }
 
@@ -824,8 +931,8 @@ fn public_http(on_after: bool, turned_on: bool, bind_moved: bool, bind: &str, pr
     };
     Some(format!(
         "HTTP at {shown} ({HTTP_BIND}) with no proxy believed in front ({TRUSTED_PROXIES} is empty) serves plain HTTP to \
-         every network that reaches this server: sign-ins, sessions and data go unencrypted. Send confirmPublicHttp to \
-         turn it on anyway; or bind it to 127.0.0.1 for a proxy on this machine, or name the proxy in trusted-proxies"
+         every network that reaches this server: sign-ins, sessions and data go unencrypted. Confirm it to turn it on \
+         anyway; or bind it to 127.0.0.1 for a proxy on this machine, or name the proxy in trusted-proxies"
     ))
 }
 
@@ -836,13 +943,14 @@ fn dependents(name: &str, enabled: bool, row: Option<&ListenerInfo>) -> Option<S
     }
     let row = row.filter(|row| !row.dependents.is_empty())?;
     Some(format!(
-        "Turning SSH off ends what depends on it: {}. Send confirmDependents to turn it off anyway",
+        "Turning SSH off ends what depends on it: {}. Confirm it to turn it off anyway",
         row.dependents.join("; ")
     ))
 }
 
 /// The guards in order, each unless confirmed: the last way in (not for the operator socket, itself a way back), plain
-/// HTTP in public, SSH's dependents.
+/// HTTP in public, SSH's dependents. Each message asks for the confirmation in words; the parameter that gives it is
+/// the kind's ([`RefusalKind::confirmation`]), which each caller names in its own terms (a screen's checkbox, a flag).
 fn guard(now: &Now, plan: &Plan, change: &Change, affected: &[&str], actor: &Actor) -> Result<(), Refusal> {
     let name = plan.entry.name;
     if !change.confirm_lockout && actor.lockout_applies() {
@@ -854,7 +962,7 @@ fn guard(now: &Now, plan: &Plan, change: &Change, affected: &[&str], actor: &Act
                 format!(
                     "This change leaves no way in over the network: none of HTTPS, HTTP and SSH would be on at an address \
                      clients reach (SSH on loopback does not count, nor HTTP or HTTPS on loopback with no trusted proxy). \
-                     Send confirmLockout to make it anyway. {}",
+                     Confirm it to make it anyway. {}",
                     ways_back_of(now.factory, plan, change.persist)
                 ),
             ));
@@ -1068,7 +1176,7 @@ fn apply(factory: &Arc<ExecutionContextFactory>, change: &Change, actor: &Actor)
             outcome,
         })
         .collect();
-    record(factory, name, &settings, change, actor, was_on);
+    let states = record(factory, name, &settings, change, actor, was_on);
 
     // the listeners whose connections end now as they stop: the one named, and those the change affects (a stop
     // already draining is cut short too), but never the one this request came over, so that its answer gets out
@@ -1107,6 +1215,23 @@ fn apply(factory: &Arc<ExecutionContextFactory>, change: &Change, actor: &Actor)
             Err(err) => Applied::Failed(err),
         },
     };
+    if let Some((from, to)) = states {
+        remember(
+            factory,
+            RecentChange {
+                time: jiff::Timestamp::now(),
+                name,
+                who: actor.who(),
+                from,
+                to,
+                reason: for_log(&change.reason),
+                applied: applied.word(),
+                outcome: outcome_text(name, &applied),
+                end_now: change.end_now,
+                persist: change.persist,
+            },
+        );
+    }
     let after = match (&control, &applied) {
         (Some(control), Applied::Now(_)) => control.listeners().into_iter().find(|row| row.name == name),
         _ => None,
@@ -1180,7 +1305,8 @@ pub fn audit_refused(name: &str, actor: &Actor, enabled: Option<bool>, code: &st
 
 /// Log a change on the audit log (who, the listener, from, to, the reason, end now, persist), as conf saves are, and
 /// as a `config` annotation on the Monitor charts, as Monitor › Settings writes one, the annotation on a thread of its
-/// own so the change's pass is not held up by it.
+/// own so the change's pass is not held up by it. Answers the listener's state before and after, for [`recent`]; none
+/// when nothing changed in the conf.
 fn record(
     factory: &Arc<ExecutionContextFactory>,
     name: &'static str,
@@ -1188,7 +1314,7 @@ fn record(
     change: &Change,
     actor: &Actor,
     was_on: bool,
-) {
+) -> Option<(String, String)> {
     let who = actor.who();
     // nothing changed in the conf: the pass is still asked for (it tries a failed listener again), and no chart marks it
     if settings.is_empty() {
@@ -1200,7 +1326,7 @@ fn record(
             change.end_now,
             change.persist
         );
-        return;
+        return None;
     }
     let enabled = switch(name).map_or("", |entry| entry.enabled);
     let others = || {
@@ -1231,6 +1357,7 @@ fn record(
             "the listener change's Monitor annotation was not written: {err}"
         );
     }
+    Some((from, to))
 }
 
 /// A `config` annotation on the Monitor charts (the document `moqui-report` writes for a runtime override), tagged
@@ -1273,8 +1400,14 @@ fn annotate(factory: &ExecutionContextFactory, name: &str, text: &str, user_id: 
 /// Each listener with a switch in the startup report's order, then the registry's others (the cluster port), as
 /// `get#Listeners` answers them: its row ([`ListenerInfo::to_json`]) while listeners run in this process, else the
 /// conf's alone with `state` `not-running`; with `running` (listeners run in this process), `switchable`, `wayIn`,
-/// `enabled` (its switch in the running conf), `ownRequest` (the caller's request came over it, by `origin`) and
-/// `settingList`: each setting behind it with its running value and where that comes from ([`setting_row`]).
+/// `enabled` (its switch in the running conf), `ownRequest` (the caller's request came over it, by `origin`),
+/// `settingList` (each setting behind it with its running value and where that comes from, [`setting_row`]), and for
+/// a listener with a switch `portSelector` and `port`, `hostSelector` and `host` (the running conf's; null for one it
+/// has none of), `ownSettingList` (each [`OWN_SETTINGS`] entry's `name`, `selector`, `value` and `values`) and
+/// `subServiceList` (each of its [`SUB_SERVICES`] as a setting row with its `title` and `on`). A way in also answers
+/// `reachable` (on, and where clients reach it, as the lockout guard counts it: [`reachable`]) and HTTP `plainPublic`
+/// (on at a public address with no proxy believed in front, as the public HTTP guard sees it). While listeners run, a
+/// listener the registry has no entry of (TURN, which call media starts) is its startup report row.
 #[must_use]
 pub fn rows(factory: &ExecutionContextFactory, origin: Option<&str>) -> Vec<Json> {
     let infos = control(factory).map(|control| control.listeners());
@@ -1286,6 +1419,13 @@ pub fn rows(factory: &ExecutionContextFactory, origin: Option<&str>) -> Vec<Json
         }
     };
     let running = infos.is_some();
+    // where the ways in reach, as the lockout guard sees them
+    let now = Now {
+        factory,
+        rows: infos.as_deref(),
+    };
+    let proxies = conf(factory, TRUSTED_PROXIES);
+    let local_proxy = proxy_on_loopback(&proxies);
     let mut rows = Vec::new();
     for entry in &SWITCHES {
         let info = infos
@@ -1294,13 +1434,14 @@ pub fn rows(factory: &ExecutionContextFactory, origin: Option<&str>) -> Vec<Json
         let enabled = switch_on(&conf(factory, entry.enabled));
         let mut row = match info {
             Some(info) => info.to_json(),
+            // a listener another one starts (TURN rides on call media): its own startup report row
+            None if running => reported(factory, entry.name).unwrap_or_else(|| {
+                json!({"name": entry.name, "state": NOT_RUNNING,
+                    "detail": "this server's registry has no such listener (not in this build)"})
+            }),
             None => {
-                let detail = if running {
-                    "this server's registry has no such listener (not in this build)".to_string()
-                } else {
-                    let state = if enabled { "on" } else { "off" };
-                    format!("this process runs no listeners; the conf turns it {state}")
-                };
+                let state = if enabled { "on" } else { "off" };
+                let detail = format!("this process runs no listeners; the conf turns it {state}");
                 json!({"name": entry.name, "state": NOT_RUNNING, "detail": detail})
             }
         };
@@ -1308,13 +1449,53 @@ pub fn rows(factory: &ExecutionContextFactory, origin: Option<&str>) -> Vec<Json
             .iter()
             .map(|selector| setting_row(factory, view.as_ref(), selector))
             .collect();
+        let port = entry.port();
+        let host = host_selector(entry.name);
+        let own: Vec<Json> = OWN_SETTINGS
+            .iter()
+            .filter(|own| own.listener == entry.name)
+            .map(|own| {
+                json!({"name": own.name, "selector": own.selector, "value": conf(factory, own.selector),
+                    "values": own.values})
+            })
+            .collect();
+        let services: Vec<Json> = SUB_SERVICES
+            .iter()
+            .filter(|service| service.listener == entry.name)
+            .map(|service| {
+                let mut found = setting_row(factory, view.as_ref(), service.selector);
+                if let Json::Object(fields) = &mut found {
+                    fields.insert("title".to_string(), json!(service.title));
+                    fields.insert("on".to_string(), json!(switch_on(&conf(factory, service.selector))));
+                }
+                found
+            })
+            .collect();
         if let Json::Object(fields) = &mut row {
             fields.insert("running".to_string(), json!(running));
             fields.insert("switchable".to_string(), json!(true));
             fields.insert("wayIn".to_string(), json!(WAYS_IN.contains(&entry.name)));
             fields.insert("enabled".to_string(), json!(enabled));
             fields.insert("ownRequest".to_string(), json!(origin == Some(entry.name)));
+            fields.insert("portSelector".to_string(), json!(port));
+            fields.insert("port".to_string(), json!(port.map(|port| conf(factory, port))));
+            fields.insert("hostSelector".to_string(), json!(host));
+            fields.insert("host".to_string(), json!(host.map(|host| conf(factory, host))));
+            fields.insert("ownSettingList".to_string(), json!(own));
+            fields.insert("subServiceList".to_string(), json!(services));
             fields.insert("settingList".to_string(), json!(settings));
+            if WAYS_IN.contains(&entry.name) {
+                let way = Way {
+                    name: entry.name,
+                    on: now.on(entry.name),
+                    host: now.host(entry.name),
+                };
+                fields.insert("reachable".to_string(), json!(reachable(&way, local_proxy)));
+            }
+            if entry.name == HTTP_SWITCH.name {
+                let plain = now.on(entry.name) && public_bind(&now.host(entry.name)) && proxies.is_empty();
+                fields.insert("plainPublic".to_string(), json!(plain));
+            }
         }
         rows.push(row);
     }
@@ -1332,11 +1513,36 @@ pub fn rows(factory: &ExecutionContextFactory, origin: Option<&str>) -> Vec<Json
             fields.insert("wayIn".to_string(), json!(false));
             fields.insert("enabled".to_string(), Json::Null);
             fields.insert("ownRequest".to_string(), json!(origin == Some(info.name.as_str())));
+            fields.insert("ownSettingList".to_string(), json!([]));
+            fields.insert("subServiceList".to_string(), json!([]));
             fields.insert("settingList".to_string(), json!(settings));
         }
         rows.push(row);
     }
     rows
+}
+
+/// The startup report's row of the listener `name`, as a listener row answers it, for one the registry has no entry of
+/// (TURN, which call media starts): its state, detail, since and cause, and nothing it does not know.
+fn reported(factory: &ExecutionContextFactory, name: &str) -> Option<Json> {
+    let entry = crate::startup::report(factory)
+        .entries()
+        .into_iter()
+        .find(|entry| entry.section == crate::startup::Section::Listener && entry.name == name)?;
+    Some(json!({
+        "name": name,
+        "state": entry.state.word(),
+        "detail": entry.state.detail(),
+        "since": entry.since.to_string(),
+        "cause": entry.cause,
+        "address": null,
+        "live": false,
+        "pending": null,
+        "lastError": null,
+        "connections": null,
+        "dependents": [],
+        "selectors": [],
+    }))
 }
 
 /// The attribute at `path` in the conf view, with its element: looked up in the view's tree, which the view's walk

@@ -2,7 +2,7 @@
 
 Status 2026-11-27: reviewed against the code and being built, RC0 to RC10 in one run. Its open points were decided
 with the user the same day (§6). The review's corrections are in place below, and the implementation design is §8.
-Built so far: RC0 to RC4.
+Built so far: RC0 to RC5.
 
 Goal: an administrator turns services and ports on and off while the server runs, from a dialog on System Home, from
 the terminal, or by editing the conf, and no listener setting waits for a restart. It serves two tasks: setting a
@@ -278,6 +278,35 @@ change is visible.
   needed for it.
 - **Needs attention** (`get#SystemAttention`): a listener that failed after a live change, the self-signed
   certificate, HTTP open on a public address, and both HTTPS and SSH off.
+
+As built (RC5): `System/Conf/ServicesPorts.xml` is the one definition; Home's dialog includes it with `share-scope`
+(its names start with `services`, and it links no sibling screen) and takes in `setListener`, which is conditioned on
+`LISTENER_CONTROL` as the controls are. A row offers Turn on (a link with a confirmation), Turn off… (reason, End
+connections now, kept after a restart) and Change… (port, address, SSH's access; Turn on… for a listener with no port).
+A refusal for want of a recent sign-in is the service's error and `X-Moqui-Reauth`, which the browser's form answers
+with "Confirm it is you" and sends again. A guarded refusal, and a busy port, are not errors: the transition keeps what
+was asked with the refusal in the session for one render (`listenerConfirm`) and opens Home's dialog, and the form comes
+back at the top with exactly what was asked and the confirmation the answer named (the others already given carried
+along), or for a busy port the port and address to change. Only what the user changed is sent: the Change form carries
+each value it shows as a `*Was` field and the transition leaves out one left as it was, since `Plan::changed` still
+writes a same-valued setting that is held or kept elsewhere. A guard's message asks for the confirmation in words, and
+the screen names its checkbox (the operator socket its flag). Every response, an error's too, opens Home's dialog again.
+The answer's message, each setting's note and the notes are messages. The recent changes are the last 20 that changed a
+setting, kept in memory per server by `change()` (`listeners::recent`, `get#Listeners` `recentChanges`), from the services
+and the operator socket; the audit log stays the record. `get#Listeners` also answers each switched row's port, host and
+own settings with their selectors and values, and its sub-services (SSH's four switches) with where each comes from.
+`get#Listeners` answers `reachable` for each way in and `plainPublic` for HTTP from the guards' own rules, and while
+listeners run TURN (which call media starts, so the registry has no entry of it) as its startup report row. Needs
+attention: a failed row whose cause is not `boot` is its own critical item; `plainPublic` a warning; no way in reachable
+critical, only when a way in's row was changed while running (not a server started with none: the desktop node, a dev
+instance on loopback, a node reached through its edge link); each, and the start's listener failures, link to Services
+and ports. With HTTP off, the `Listening on` line names the HTTPS listener as a URL (before RC2 and since, it named
+127.0.0.1:0), and the Dev AIDE warning names the web listeners turned on. Protocols › Server
+configuration links the protocols on a switched listener (`get#ProtocolReadiness` `listenerName`) under System, and under
+a mount only through its `servicesPorts` route (mr-boss has none, so its wrapper is unchanged); a setting that is not
+restart-class says "While it runs". The `InstanceSetting` rows needed no change here: HTTP, HTTPS and gRPC have none,
+SSH's lost `restartRequired` in RC3, and the others stay restart-class until RC8. Conf › Changes lists no live listener
+setting as waiting for a restart, since they are `Apply(Listeners)`.
 
 ### 3.8 Services carried on a listener
 

@@ -176,7 +176,8 @@ function mailRelays() {
 
 // ===== the protocols =====
 // on(facts): {on, reason} whether the conf turns it on, and when it does not, the setting that would. entry: its line of the
-// startup report (a listener or an integration); web: it is served by the web listener. feature null: no build has it.
+// startup report (a listener or an integration); switched: that line is a listener with a switch of its own, which
+// System › Conf › Services and ports turns on and off; web: it is served by the web listener. feature null: no build has it.
 const set = (facts, name) => !!facts.prop(name)
 const protocols = [
     {
@@ -204,6 +205,7 @@ const protocols = [
         description: ec.l10n.localize("The SMTP listener that takes mail for hosted and shared accounts from the edge gateway"),
         feature: "inbound-smtp",
         entry: "SMTP",
+        switched: true,
         settingGroup: "Protocols: mail reception",
         on: facts => ({
             on: switchOn(facts.conf("smtp-server/@enabled")),
@@ -236,6 +238,7 @@ const protocols = [
         description: ec.l10n.localize("The built-in SSH server: SFTP, the terminal client and git over SSH"),
         feature: "ssh",
         entry: "SSH",
+        switched: true,
         settingGroup: "Protocols: SSH and Git",
         on: facts => ({
             on: switchOn(facts.conf("ssh-server/@enabled")),
@@ -260,6 +263,7 @@ const protocols = [
         description: ec.l10n.localize("XMPP for the users' own chat apps"),
         feature: "xmpp",
         entry: "XMPP",
+        switched: true,
         settingGroup: "Protocols: chat",
         on: facts => ({
             on: switchOn(facts.prop("xmpp-server@enabled")) && set(facts, "xmpp-server@domain"),
@@ -277,6 +281,7 @@ const protocols = [
         description: ec.l10n.localize("The media of audio and video calls (WebRTC)"),
         feature: "rtc",
         entry: "Call media",
+        switched: true,
         settingGroup: "Protocols: calls",
         on: facts => ({on: switchOn(facts.prop("media-server@enabled")), reason: ec.l10n.localize("media-server@enabled is false")}),
         checks: ["configuration"]
@@ -287,6 +292,7 @@ const protocols = [
         description: ec.l10n.localize("TURN, for browsers that cannot reach the call media directly"),
         feature: "rtc",
         entry: "TURN",
+        switched: true,
         settingGroup: "Protocols: calls",
         on: facts => ({
             on: switchOn(facts.prop("media-server/turn-server@enabled")) || set(facts, "media-server/turn-server@external-urls"),
@@ -302,6 +308,7 @@ const protocols = [
         description: "SIP trunks and desk phones; the phone system itself is set up in Voice",
         feature: "sip",
         entry: "SIP",
+        switched: true,
         settingGroup: "Protocols: phone",
         ownerKey: "voice",
         on: facts => ({on: switchOn(facts.prop("sip-server@enabled")), reason: ec.l10n.localize("sip-server@enabled is false")}),
@@ -460,6 +467,7 @@ function described(definition, facts, stored, canTest) {
         stateText: stateTexts[state],
         reason,
         listener: found.listener,
+        listenerName: definition.switched ? definition.entry : null,
         source: found.source,
         settingGroup: definition.settingGroup || null,
         ownerKey: definition.ownerKey || null,

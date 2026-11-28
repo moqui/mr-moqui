@@ -490,11 +490,23 @@ and the admin shell off for everyone, each checked when a channel asks for it; t
 user. `ssh-server@login-dialog` is retired: a conf that sets it is
 refused at boot, naming `access` (`true` was `open`, `false` was `login`).
 
+**Listeners switched from a screen** ([plan](../plans/Runtime-Config.md), §3.7). System › Conf › Services and ports,
+also a dialog on System Home's Listeners and integrations box, is the first way: it lists each listener with its state,
+address, connections and the settings behind it with where each comes from, SSH's services and their switches, and the
+changes people made since the start. A holder of `LISTENER_CONTROL` turns one on or off there (turning one off asks a
+reason and offers "End connections now"), moves it, or sets SSH's access, after "Confirm it is you" when the last sign-in
+is older than five minutes. A change a guard refuses (the last way in, plain HTTP in public, what depends on SSH) comes
+back as its form with the refusal and the confirmation it needs, and a busy port as its form to choose another. System
+Home's Needs attention lists a listener that failed after a change, plain HTTP on a public address with no proxy, and no
+way in over the network left by a change while running (a server started with none, such as the desktop node, is not
+listed), each linked there. The screen calls the service below.
+
 **Listeners switched from a service** ([plan](../plans/Runtime-Config.md), §3.6). `org.moqui.admin.ListenerServices`
 changes the same settings as the conf, `runtime/.env` and SIGHUP, and the listener registry applies them.
 `get#Listeners` (the `ADMIN` group) lists each listener with its state, address, connections, what depends on it,
 whether the caller's own request came over it, and the settings behind it with where each value comes from: a conf file
-and line, `runtime/.env`, the environment, a `-D`, or set while running and not kept. `set#Listener` turns one on or off
+and line, `runtime/.env`, the environment, a `-D`, or set while running and not kept; and the last 20 changes people
+made on this server since it started (from the services and the operator socket; the audit log keeps them all). `set#Listener` turns one on or off
 and can move it (`port`, `host`) or set SSH's `access`. It needs the `ADMIN` group, the sealed `LISTENER_CONTROL`
 permission (seeded on `ADMIN_ADV`; apart from `CONF_EDIT`, so an incident responder switches services without editing
 the conf) and a sign-in within the last five minutes ("Confirm it is you"). Turning a listener off needs a reason (one

@@ -75,8 +75,9 @@ fn refused(code: &str, confirm: Option<&str>) -> BTreeMap<String, Value> {
     out
 }
 
-/// `get#Listeners`: `listenerList` ([`crate::listeners::rows`]), `running` (listeners run in this process) and `origin`
-/// (the listener the caller's request came over). Needs the `ADMIN` group.
+/// `get#Listeners`: `listenerList` ([`crate::listeners::rows`]), `running` (listeners run in this process), `origin`
+/// (the listener the caller's request came over) and `recentChanges` (the changes people made since the server started,
+/// newest first, [`crate::listeners::recent`]). Needs the `ADMIN` group.
 fn get_listeners(
     _parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
@@ -91,10 +92,15 @@ fn get_listeners(
         return Err(LibError::new("get#Listeners needs an execution context"));
     };
     let rows = crate::listeners::rows(&factory, origin.as_deref());
+    let recent = crate::listeners::recent(&factory);
     Ok(BTreeMap::from([
         (
             "listenerList".to_string(),
             moqui_lib::json::from_json(&serde_json::Value::Array(rows)),
+        ),
+        (
+            "recentChanges".to_string(),
+            moqui_lib::json::from_json(&serde_json::Value::Array(recent)),
         ),
         (
             "running".to_string(),
