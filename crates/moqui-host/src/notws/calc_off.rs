@@ -28,3 +28,22 @@ pub(super) fn handle(_factory: &Arc<ExecutionContextFactory>, _slot: &Arc<Slot>,
 pub(super) fn socket_closed(_factory: &ExecutionContextFactory, _slot_id: u64) {}
 
 pub(crate) fn install(_factory: &Arc<ExecutionContextFactory>, _shutdown: tokio::sync::watch::Receiver<bool>) {}
+
+/// No rooms, so an in-process terminal link takes no frames and its sheets poll.
+#[cfg_attr(not(feature = "tui"), allow(dead_code))]
+pub(crate) struct LinkFrames;
+
+#[cfg_attr(not(feature = "tui"), allow(dead_code))]
+impl LinkFrames {
+    pub(crate) fn start(
+        _factory: std::sync::Weak<ExecutionContextFactory>,
+        _user: Arc<std::sync::Mutex<Option<String>>>,
+        _deliver: Box<dyn Fn(&serde_json::Value) + Send + Sync>,
+    ) -> Option<Self> {
+        None
+    }
+
+    pub(crate) fn send(&self, _frame: serde_json::Value) -> bool {
+        false
+    }
+}

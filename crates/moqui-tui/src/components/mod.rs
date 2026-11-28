@@ -134,6 +134,16 @@ pub struct ComponentState {
     pub rows: u16,
     /// It holds the focus as it is drawn: what only then applies (a report's key hint) shows.
     pub focused: bool,
+    /// The session sends its frames and gives it its topics' pushes ([`Component::topics`]); else it polls.
+    pub pushed: bool,
+}
+
+/// A push topic a component wants, with the frames that join and leave it: a CalcGrid room's `calc:<room>`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Topic {
+    pub name: String,
+    pub join: Value,
+    pub leave: Value,
 }
 
 /// What a key asks of the session.
@@ -166,6 +176,9 @@ pub enum Act {
     Message(String),
     /// Put text on the terminal's clipboard (OSC 52), as a drag's selection is.
     Copy(String),
+    /// A frame for the push channel, after the joins of the component's topics: a CalcGrid room's `select`. Dropped
+    /// while the session sends no frames ([`ComponentState::pushed`]).
+    Frame(Value),
 }
 
 /// A client component.
@@ -206,6 +219,18 @@ pub trait Component: Sync {
     /// Whether the component asks for the whole terminal, without the app's chrome: a dashboard's kiosk mode.
     fn kiosk(&self, _props: &Value, _state: &ComponentState) -> bool {
         false
+    }
+
+    /// The push topics it wants while it is on screen, when its state is `pushed`: the session sends each one's join
+    /// once it is wanted and its leave once it is not (the component gone, or the topic changed), and gives the
+    /// component the frames pushed on it ([`Self::push`]).
+    fn topics(&self, _props: &Value, _state: &ComponentState) -> Vec<Topic> {
+        Vec::new()
+    }
+
+    /// A frame pushed on one of its topics, as the server sent it.
+    fn push(&self, _props: &Value, _state: &mut ComponentState, _frame: &Value) -> Vec<Act> {
+        Vec::new()
     }
 
     /// A scheduled component tick. Most polling widgets simply read their source again.

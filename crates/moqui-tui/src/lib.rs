@@ -37,7 +37,8 @@ mod ui;
 
 pub use assist::{state as assist_state, Act as AssistAct, Area as AssistArea, Assist, PANE_WIDTH};
 pub use components::{
-    find as find_component, line_text, names as component_names, Act, Component, ComponentState, Line, Registered, Span,
+    find as find_component, line_text, names as component_names, Act, Component, ComponentState, Line, Registered,
+    Span, Topic,
 };
 pub use decode::{Decoded, Decoder};
 pub use edit::{row_col, Edited, Limits};
@@ -56,8 +57,8 @@ pub use layout::{
 };
 pub use link::{
     counts_of, gallery_link, row_link, row_link_target, AdminAccount, AdminSetup, CodeAsk, FakeLink, LinkCall,
-    LinkError, MenuItem, Push, PushSink, RawBody, Reply, ScreenLink, Sendable, ShellAction, ShellInfo, Subscription,
-    TransitionOutcome, GALLERY_DETAIL_JSON, GALLERY_DETAIL_PATH, GALLERY_LIST_JSON, GALLERY_LIST_PATH,
+    LinkError, MenuItem, Push, PushSink, Pushes, RawBody, Reply, ScreenLink, Sendable, ShellAction, ShellInfo,
+    Subscription, TransitionOutcome, GALLERY_DETAIL_JSON, GALLERY_DETAIL_PATH, GALLERY_LIST_JSON, GALLERY_LIST_PATH,
 };
 pub use markdown::blocks as markdown_blocks;
 pub use model::{

@@ -296,6 +296,12 @@ pub struct Session {
     numbering: bool,
     /// The link pushes notifications, so the counters are read on a push rather than each minute.
     pushed: bool,
+    /// The loop sends the components' frames on the push channel ([`Self::take_frames`]), so they push rather than
+    /// poll; the topics joined, each with the component that wants it and its leave frame; and the frames the
+    /// components asked to send since the loop last took them.
+    frames: bool,
+    joined: BTreeMap<String, (String, serde_json::Value)>,
+    frames_out: Vec<serde_json::Value>,
     /// The view each list with views shows (`v`), by list id, once the user chose one.
     views: BTreeMap<String, String>,
     /// A list put aside while its board or calendar shows, by list id.
@@ -401,6 +407,9 @@ impl Session {
             shell: ShellInfo::default(),
             numbering: false,
             pushed: false,
+            frames: false,
+            joined: BTreeMap::new(),
+            frames_out: Vec::new(),
             views: BTreeMap::new(),
             view_lists: BTreeMap::new(),
             typed_number: String::new(),

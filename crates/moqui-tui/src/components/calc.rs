@@ -20,8 +20,12 @@
 //! viewer); `editable`; `profileId`, the access profile each call is made under. The cells come from `calcCells` (the
 //! rows and columns on screen), a cell's content as typed from `calcContent`, the room's state from `calcState`, and an
 //! edit is posted to `calcEdit` ([`Act::Call`]); `calcRefresh`, `calcSave`, `calcRevert` and `calcExport` (as JSON)
-//! are the menu's. A saved document's room is read again every second and a half for the others' edits and places:
-//! the reads ask `since` the view's last edit, and a room that did not change answers only who is where.
+//! are the menu's. A saved document's room is followed on its topic `calc:<roomId>` when the session's link pushes
+//! frames ([`ComponentState::pushed`]): the sheet joins the room as the browser's does, sends its place as it moves,
+//! shows who comes and goes, and on another's edit reads the room's state again, and the cells only when the edit
+//! changed one it holds (docs/ui/Qvt-Client.md, CalcGrid rooms). It is read again every 15 seconds then, in case a
+//! frame was missed; a link that cannot push reads it every second and a half for the others' edits and places. The
+//! reads ask `since` the view's last edit, and a room that did not change answers only who is where.
 //!
 //! The charts are drawn below the sheet (`c`); an author adds one of the selection from the menu, and changes the
 //! chosen one's (`C`) title, labels, series and type or removes it, each sent as the `charts` edit of the whole list,
@@ -38,7 +42,7 @@ use std::collections::{BTreeMap, HashMap};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::{Act, Component, ComponentState, Line, Span};
+use super::{Act, Component, ComponentState, Line, Span, Topic};
 use crate::keys::{Key, KeyPress};
 use crate::layout::{display_width, truncate_width};
 use crate::theme::{parse_color, Rgb, Role};
@@ -61,6 +65,9 @@ const LAST_COLUMN: i32 = 16_384;
 const MAX_FROZEN_ROWS: i32 = 200;
 const MAX_FROZEN_COLUMNS: i32 = 100;
 const POLL_MILLIS: u64 = 1_500;
+/// While the room's frames are pushed, it is read again this often in case one was missed, which also keeps the view's
+/// place among the others' (`together::PRESENCE_TTL` is a minute).
+const PUSHED_POLL_MILLIS: u64 = 15_000;
 /// A column's width in characters is its width in pixels over this, as a browser's average character.
 const PIXELS_PER_CHARACTER: f64 = 8.0;
 const ROOM_GONE: &str = "ROOM_GONE";
@@ -146,6 +153,11 @@ struct View {
     message: String,
     /// The room is no longer on the server: Enter draws the screen again, which opens it.
     gone: bool,
+    /// The session joined the room's topic and the server said `joined`: its frames come pushed, and the poll is only
+    /// a fallback.
+    live: bool,
+    /// Another's edit changed only values outside the cells held: the room's state at this edit keeps them.
+    keep_cells_at: Option<i64>,
 }
 
 /// One cell as drawn.
@@ -194,139 +206,6 @@ const MENU: &[&str] = &[
 
 /// The menu's items drawn at once, around the one chosen.
 const MENU_SHOWN: usize = 12;
-/// The chart types the menu offers, from its first chart type item on, as the browser's dialog names them.
-const CHART_TYPES: [&str; 5] = ["column", "bar", "line", "area", "pie"];
-/// The menu's first chart item.
-const CHART_MENU: usize = 16;
-
-/// A range as a formula names it, as the browser's `calc.rangeName` does: `Sheet!A2:A8`, the sheet's name quoted
-/// when it is not a plain name.
-fn range_name(sheet: &str, row: i32, column: i32, last_row: i32, last_column: i32) -> String {
-    let mut cells = format!("{}{row}", column_name(column));
-    if last_row > row || last_column > column {
-        cells.push_str(&format!(":{}{last_row}", column_name(last_column)));
-    }
-    let plain = sheet
-        .chars()
-        .next()
-        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
-        && sheet.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
-    if plain {
-        format!("{sheet}!{cells}")
-    } else {
-        format!("'{}'!{cells}", sheet.replace('\'', "''"))
-    }
-}
-
-/// The document's charts as the `charts` edit takes them, the whole list (as the browser's `chartDefinitions`): each
-/// chart's `title`, `type`, `categories` and `series` of `name` and `values`, without what the room read for them.
-fn chart_definitions(view: &View) -> Vec<Value> {
-    view.room["charts"]
-        .as_array()
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-        .iter()
-        .map(|chart| {
-            let series: Vec<Value> = chart["series"]
-                .as_array()
-                .map(Vec::as_slice)
-                .unwrap_or_default()
-                .iter()
-                .map(|one| json!({"name": one["name"], "values": one["values"]}))
-                .collect();
-            json!({"title": chart["title"], "type": chart["type"], "categories": chart["categories"], "series": series})
-        })
-        .collect()
-}
-
-/// A chart of the selection, as the browser's toolbar Chart makes one: its first column the labels and each other
-/// column a series when it has more than one column, else the one column a series with no labels. None when the
-/// selection is one row.
-fn chart_of_selection(view: &View) -> Option<Value> {
-    let (row, column, last_row, last_column) = view.area();
-    if last_row <= row {
-        return None;
-    }
-    let sheet = view.layout()["name"].as_str().unwrap_or("").to_string();
-    let several = last_column > column;
-    let first = if several { column + 1 } else { column };
-    let series: Vec<Value> = (first..=last_column)
-        .enumerate()
-        .map(|(at, each)| {
-            json!({"name": format!("Series {}", at + 1), "values": range_name(&sheet, row, each, last_row, each)})
-        })
-        .collect();
-    let categories = if several {
-        range_name(&sheet, row, column, last_row, column)
-    } else {
-        String::new()
-    };
-    Some(json!({"title": "", "type": "column", "categories": categories, "series": series}))
-}
-
-/// The charts edit: the whole list, with `change` applied to the chart the menu acts on.
-fn chart_edit(view: &mut View, props: &Value, change: impl FnOnce(&mut Vec<Value>, usize)) -> Vec<Act> {
-    let mut charts = chart_definitions(view);
-    if charts.is_empty() {
-        view.message = "No chart yet: add one of the selection first".to_string();
-        return Vec::new();
-    }
-    let at = view.chart.min(charts.len() - 1);
-    change(&mut charts, at);
-    view.chart = at.min(charts.len().saturating_sub(1));
-    edit(view, props, vec![json!({"op": "charts", "charts": charts})])
-}
-
-/// Text typed for a chart (its title, labels or series), set: a new chart's title adds it.
-fn chart_text(view: &mut View, props: &Value, target: &str, text: &str) -> Vec<Act> {
-    let text = text.trim().to_string();
-    if target == "chartTitle" {
-        if let Some(mut chart) = view.new_chart.take() {
-            chart["title"] = json!(text);
-            let mut charts = chart_definitions(view);
-            charts.push(chart);
-            view.chart = charts.len() - 1;
-            view.charts = true;
-            return edit(view, props, vec![json!({"op": "charts", "charts": charts})]);
-        }
-    }
-    chart_edit(view, props, |charts, at| match target {
-        "chartTitle" => charts[at]["title"] = json!(text),
-        "chartLabels" => charts[at]["categories"] = json!(text),
-        _ => {
-            let names: Vec<Value> = charts[at]["series"]
-                .as_array()
-                .map(|series| series.iter().map(|one| one["name"].clone()).collect())
-                .unwrap_or_default();
-            let series: Vec<Value> = text
-                .split(',')
-                .map(str::trim)
-                .filter(|values| !values.is_empty())
-                .enumerate()
-                .map(|(index, values)| {
-                    let name = names
-                        .get(index)
-                        .filter(|name| name.as_str().is_some_and(|name| !name.is_empty()))
-                        .cloned()
-                        .unwrap_or_else(|| json!(format!("Series {}", index + 1)));
-                    json!({"name": name, "values": values})
-                })
-                .collect();
-            charts[at]["series"] = Value::Array(series);
-        }
-    })
-}
-
-/// Start typing a chart's text in the formula bar, with what it has now.
-fn chart_prompt(view: &mut View, target: &str, text: String) {
-    view.editing = Some(Editing {
-        cursor: text.chars().count(),
-        text,
-        target: target.to_string(),
-        choice: 0,
-    });
-}
-
 /// 1 is A, 27 is AA.
 fn column_name(number: i32) -> String {
     let mut name = String::new();
@@ -709,6 +588,18 @@ impl View {
         self.need_cells |= !self.covers(terminal_rows);
     }
 
+    /// A frame of the room for the push channel, `join`, `select` or `leave`, as the browser's sheet sends it.
+    fn frame(&self, kind: &str) -> Value {
+        let room = self.room_id().unwrap_or_default();
+        let mut frame = json!({"calc": kind, "room": room, "client": self.client});
+        if kind == "select" {
+            let (top, left, bottom, right) = self.area();
+            frame["sheet"] = json!(self.sheet);
+            frame["area"] = json!({"row": top, "column": left, "width": right - left + 1, "height": bottom - top + 1});
+        }
+        frame
+    }
+
     fn show_sheet(&mut self, index: u32) {
         self.sheet = index;
         self.row = 1;
@@ -814,7 +705,7 @@ fn editing_key(view: &mut View, props: &Value, press: &KeyPress, terminal_rows: 
     };
     view.editing = None;
     if editing.target.starts_with("chart") {
-        return chart_text(view, props, &editing.target, &editing.text);
+        return charts::chart_text(view, props, &editing.target, &editing.text);
     }
     if editing.target == "rename" {
         let name = editing.text.trim().to_string();
@@ -912,47 +803,7 @@ fn menu_choice(view: &mut View, props: &Value, choice: usize) -> Vec<Act> {
             view.message = "This document is read only for you".to_string();
             Vec::new()
         }
-        CHART_MENU => {
-            if let Some(chart) = chart_of_selection(view) {
-                view.new_chart = Some(chart);
-                chart_prompt(view, "chartTitle", String::new());
-            } else {
-                view.message =
-                    "Select the chart's cells first: a column of labels, then a column for each series".into();
-            }
-            Vec::new()
-        }
-        choice if choice <= CHART_MENU + 3 => {
-            let charts = chart_definitions(view);
-            let Some(chart) = charts.get(view.chart.min(charts.len().saturating_sub(1))) else {
-                view.message = "No chart yet: add one of the selection first".to_string();
-                return Vec::new();
-            };
-            let (target, text) = match choice - CHART_MENU {
-                1 => ("chartTitle", chart["title"].as_str().unwrap_or("").to_string()),
-                2 => ("chartLabels", chart["categories"].as_str().unwrap_or("").to_string()),
-                _ => (
-                    "chartSeries",
-                    chart["series"]
-                        .as_array()
-                        .map(Vec::as_slice)
-                        .unwrap_or_default()
-                        .iter()
-                        .filter_map(|one| one["values"].as_str())
-                        .collect::<Vec<&str>>()
-                        .join(", "),
-                ),
-            };
-            chart_prompt(view, target, text);
-            Vec::new()
-        }
-        choice if choice < CHART_MENU + 4 + CHART_TYPES.len() => {
-            let kind = CHART_TYPES[choice - CHART_MENU - 4];
-            chart_edit(view, props, |charts, at| charts[at]["type"] = json!(kind))
-        }
-        _ => chart_edit(view, props, |charts, at| {
-            charts.remove(at);
-        }),
+        choice => charts::menu_choice(view, props, choice),
     }
 }
 
@@ -1024,7 +875,11 @@ impl Component for CalcGrid {
         }
         if value["roomId"].is_string() && value["sheets"].is_array() {
             let functions = view.room["functions"].clone();
-            let kept = changed_outside_block(&view, &value);
+            let pushed_kept = view
+                .keep_cells_at
+                .take()
+                .is_some_and(|seq| value["seq"].as_i64() == Some(seq));
+            let kept = changed_outside_block(&view, &value) || pushed_kept;
             view.room = value;
             if !view.room["functions"].is_array() {
                 view.room["functions"] = functions;
@@ -1103,7 +958,7 @@ impl Component for CalcGrid {
             }
         }
         if view.charts {
-            chart_lines(&view, width, &mut lines);
+            charts::chart_lines(&view, width, &mut lines);
         }
         lines
     }
@@ -1116,6 +971,7 @@ impl Component for CalcGrid {
         }
         view.room_id()?;
         view.message.clear();
+        let place = (view.sheet, view.area());
         let acts = if view.editing.is_some() {
             editing_key(&mut view, props, press, rows)
         } else if let Some(chosen) = view.menu {
@@ -1284,6 +1140,11 @@ impl Component for CalcGrid {
                 }
             }
         };
+        let mut acts = acts;
+        // where the view is now, to the others at once, while the room's frames are pushed
+        if state.pushed && view.live && (view.sheet, view.area()) != place {
+            acts.push(Act::Frame(view.frame("select")));
+        }
         view.store(state);
         Some(acts)
     }
@@ -1315,7 +1176,94 @@ impl Component for CalcGrid {
 
     fn poll_millis(&self, props: &Value, state: &ComponentState) -> Option<u64> {
         let view = View::of(props, state);
-        (view.room["shared"] == true && !view.gone).then_some(POLL_MILLIS)
+        let every = if state.pushed && view.live {
+            PUSHED_POLL_MILLIS
+        } else {
+            POLL_MILLIS
+        };
+        (view.room["shared"] == true && !view.gone).then_some(every)
+    }
+
+    /// A saved document's room, `calc:<roomId>`, while the session sends frames, once the view is kept: its client id
+    /// is made with it, and the join and the view's later frames name the same one.
+    fn topics(&self, props: &Value, state: &ComponentState) -> Vec<Topic> {
+        if state.local.get("client").is_none() {
+            return Vec::new();
+        }
+        let view = View::of(props, state);
+        match view.room_id() {
+            Some(room) if state.pushed && view.room["shared"] == true => vec![Topic {
+                name: format!("calc:{room}"),
+                join: view.frame("join"),
+                leave: view.frame("leave"),
+            }],
+            _ => Vec::new(),
+        }
+    }
+
+    /// The room's frames (docs/ui/Qvt-Client.md, CalcGrid rooms), as the browser's `calc.receive` takes them: who is
+    /// there and where, and another's edit, after which the room's state is read again and the cells only when the
+    /// edit changed one held or changed more than values.
+    fn push(&self, props: &Value, state: &mut ComponentState, frame: &Value) -> Vec<Act> {
+        let mut view = View::of(props, state);
+        if view.gone {
+            return Vec::new();
+        }
+        let client = frame["client"].as_str().unwrap_or_default();
+        let at = view
+            .peers
+            .iter()
+            .position(|peer| peer["client"].as_str() == Some(client));
+        let mut acts = Vec::new();
+        match frame["type"].as_str().unwrap_or_default() {
+            "joined" if client == view.client => {
+                view.live = true;
+                view.peers = frame["peers"].as_array().cloned().unwrap_or_default();
+                // the place it had before the join, for the others
+                acts.push(Act::Frame(view.frame("select")));
+            }
+            "error" if client == view.client => view.live = false,
+            "peer" if frame["joined"] == false => {
+                if let Some(at) = at {
+                    view.peers.remove(at);
+                }
+            }
+            kind @ ("peer" | "select") if client != view.client && !client.is_empty() => {
+                let mut peer = at.map_or_else(|| json!({}), |at| view.peers[at].clone());
+                peer["client"] = json!(client);
+                peer["userId"] = frame["userId"].clone();
+                peer["name"] = frame["name"].clone();
+                if kind == "select" {
+                    peer["sheet"] = frame["sheet"].clone();
+                    peer["area"] = frame["area"].clone();
+                }
+                match at {
+                    Some(at) => view.peers[at] = peer,
+                    None => view.peers.push(peer),
+                }
+            }
+            "changed" if frame["reopen"] == true => {
+                view.gone = true;
+                view.live = false;
+                view.message = "This document is no longer open here: Enter opens it again".to_string();
+            }
+            "changed" => {
+                let seq = frame["seq"].as_i64().unwrap_or(0);
+                let kind = frame["kind"].as_str().unwrap_or_default();
+                if seq > view.seq || kind == "refresh" || kind == "save" {
+                    // values only, from the edit after the view's, outside the cells held: those cells stay
+                    let values_only = frame["changed"].is_array() && frame["from"].as_i64() == Some(view.seq);
+                    if values_only && changed_outside_block(&view, &json!({"changed": frame["changed"]})) {
+                        view.keep_cells_at = Some(seq);
+                    }
+                    view.need_state = true;
+                    acts.push(Act::Reload);
+                }
+            }
+            _ => {}
+        }
+        view.store(state);
+        acts
     }
 
     fn kiosk(&self, props: &Value, state: &ComponentState) -> bool {
@@ -1662,44 +1610,8 @@ fn status_line(view: &View, props: &Value, lines: &mut Vec<Line>) {
     lines.push(line);
 }
 
-/// The document's charts as the chart component draws a dataset: a table with a bar for the first series.
-fn chart_lines(view: &View, width: usize, lines: &mut Vec<Line>) {
-    let charts = view.room["charts"].as_array().map(Vec::as_slice).unwrap_or_default();
-    if charts.is_empty() {
-        lines.push(vec![Span::new(
-            "No chart: select its cells, then m and Chart: add one of the selection",
-            Role::Muted,
-        )]);
-        return;
-    }
-    let chosen = view.chart.min(charts.len() - 1);
-    for (at, chart) in charts.iter().enumerate() {
-        let title = chart["title"]
-            .as_str()
-            .filter(|title| !title.is_empty())
-            .map_or_else(|| format!("Chart {}", at + 1), str::to_string);
-        let kind = chart["type"].as_str().unwrap_or("line");
-        let head = Span::new(
-            format!("{} {title} · {kind}", if at == chosen { ">" } else { " " }),
-            Role::Text,
-        )
-        .bold();
-        lines.push(vec![if at == chosen { head.reverse() } else { head }]);
-        if let Some(error) = chart["error"].as_str() {
-            lines.push(vec![Span::new(format!("! {error}"), Role::Negative)]);
-            continue;
-        }
-        let props = json!({"labels": chart["labels"],
-            "series": chart["series"].as_array().map(|series| series.iter()
-                .map(|one| json!({"name": one["name"], "data": one["data"]})).collect::<Vec<Value>>())});
-        lines.extend(super::chart::Chart.lines(
-            &props,
-            &ComponentState::default(),
-            u16::try_from(width).unwrap_or(u16::MAX),
-            false,
-        ));
-    }
-}
+#[path = "calc_charts.rs"]
+mod charts;
 
 #[cfg(test)]
 #[path = "calc_tests.rs"]

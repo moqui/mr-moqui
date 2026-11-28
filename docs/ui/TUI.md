@@ -639,7 +639,10 @@ post, follow, a message), and its help. Its state's `rows` is the terminal's row
 fits on screen; `Act::Call` posts to a transition that answers JSON and gives the answer to `receive`, as a read's is
 (a sheet's edit); `Act::SetFormField` sets a field of a form; `Act::Copy` puts text on the terminal's clipboard;
 `paste` takes text pasted while it has the focus; `poll_millis` and `tick` run it on a timer (the editor's check after the
-typing stops); and a `receive` that sets the state's
+typing stops); `topics` names the push topics it wants (a sheet's `calc:<room>`, with its join and leave frames),
+which the session joins and leaves as the component comes and goes while the loop sends frames (its state's `pushed`;
+SSH, the browser's terminal and `--server` do, an agent's session does not), giving it each frame on the topic
+(`push`) without reading the counters; `Act::Frame` sends one more (a sheet's place); and a `receive` that sets the state's
 `reload_pending` asks for its source again at once (the next read of a component whose `source` changes with what it
 received).
 

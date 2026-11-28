@@ -12,6 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
+use super::charts::{range_name, CHART_MENU};
 use super::*;
 use crate::components::line_text;
 
@@ -389,6 +390,74 @@ fn the_status_line_has_the_calculation_time_and_warns_when_it_is_slow() {
         .any(|span| span.text.ends_with("300 ms, slow") && span.role == Role::Warning));
     let allowed = status(json!({"evaluateMs": 300.0, "slowMs": 500}));
     assert!(allowed.iter().all(|span| span.role != Role::Warning), "{allowed:?}");
+}
+
+/// CG3.4: a sheet whose session sends frames joins its room, polls only as a fallback once joined, and on another's
+/// edit reads the room's state again, and its cells only when the edit changed one held.
+#[test]
+fn a_pushed_sheet_reads_again_only_what_anothers_edit_changed() {
+    let (props, mut state) = loaded(true);
+    assert!(
+        CalcGrid.topics(&props, &state).is_empty(),
+        "a session that sends no frames polls"
+    );
+    state.pushed = true;
+    let topics = CalcGrid.topics(&props, &state);
+    let client = View::of(&props, &state).client;
+    assert_eq!(topics[0].name, "calc:d1");
+    assert_eq!(topics[0].join, json!({"calc": "join", "room": "d1", "client": client}));
+    assert_eq!(topics[0].leave["calc"], "leave");
+    assert_eq!(
+        CalcGrid.poll_millis(&props, &state),
+        Some(POLL_MILLIS),
+        "until the server says joined"
+    );
+    let acts = CalcGrid.push(
+        &props,
+        &mut state,
+        &json!({"type": "joined", "client": client, "peers": []}),
+    );
+    assert!(matches!(&acts[..], [Act::Frame(frame)] if frame["calc"] == "select"));
+    assert_eq!(CalcGrid.poll_millis(&props, &state), Some(PUSHED_POLL_MILLIS));
+    // the view's own edit is not read again
+    assert!(CalcGrid
+        .push(
+            &props,
+            &mut state,
+            &json!({"type": "changed", "seq": 3, "kind": "edit"})
+        )
+        .is_empty());
+    // values below the rows held: the state is read, then the cells are kept
+    let below = json!({"type": "changed", "seq": 4, "from": 3, "kind": "edit",
+        "changed": [{"sheet": 0, "row": 500, "column": 1, "width": 1, "height": 1}]});
+    assert_eq!(CalcGrid.push(&props, &mut state, &below), [Act::Reload]);
+    assert_eq!(CalcGrid.source(&props, &state).unwrap().0, "calcState");
+    let room = json!({"roomId": "d1", "shared": true, "seq": 4, "sheets": props["room"]["sheets"]});
+    CalcGrid.receive(&props, &mut state, room.clone());
+    assert!(!View::of(&props, &state).need_cells, "the cells held stay");
+    // a value held changed: the cells are read again
+    let held = json!({"type": "changed", "seq": 5, "from": 4, "kind": "edit",
+        "changed": [{"sheet": 0, "row": 3, "column": 2, "width": 1, "height": 1}]});
+    CalcGrid.push(&props, &mut state, &held);
+    let mut room = room;
+    room["seq"] = json!(5);
+    CalcGrid.receive(&props, &mut state, room);
+    assert!(View::of(&props, &state).need_cells);
+    // someone came and went
+    CalcGrid.push(
+        &props,
+        &mut state,
+        &json!({"type": "peer", "client": "b1", "name": "Bea", "joined": true}),
+    );
+    assert!(texts(&props, &state, 100)
+        .iter()
+        .any(|line| line.contains("Bea has it open")));
+    CalcGrid.push(
+        &props,
+        &mut state,
+        &json!({"type": "peer", "client": "b1", "joined": false}),
+    );
+    assert!(View::of(&props, &state).peers.is_empty());
 }
 
 /// The menu's item `at` chosen.

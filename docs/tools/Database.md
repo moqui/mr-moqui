@@ -174,7 +174,9 @@ workbook on the server's spreadsheet engine (IronCalc; plan [IronCalc-DB](../../
 - **In the terminal** (`moqui tui`, over SSH, the browser's terminal): the grid's list of records has a link to Calc,
   and `?mode=calc` (or a document's `definitionId`) shows the workbook as a sheet, the `calcgrid` component
   ([TUI](../ui/TUI.md#components)): the cells that fit, the formula bar, the sheet tabs and who else has it open,
-  edited with the keys of the browser's toolbar. It reads the others' edits every second and a half.
+  edited with the keys of the browser's toolbar. It follows the room as the browser does, its edits and who is where
+  pushed (in the server's process, and over `--server` on the notification socket), and reads it every second and a
+  half where its link cannot push.
 - **On a schedule.** A saved document is scheduled as its workbook, an Excel file with its data and calculated
   values, as a dashboard is scheduled (Dashboards › Reports, Scheduled reports): the run reads the saved version as
   its owner, under their current access, and a data sheet that is not available or over the row cap refuses the run.

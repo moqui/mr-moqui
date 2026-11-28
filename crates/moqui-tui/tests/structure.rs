@@ -551,7 +551,9 @@ fn a_card_opens_a_relative_url_under_its_screen() {
     focus(&mut session, &link, "Queue");
     press(&mut session, &link, Key::Enter);
     assert!(
-        link.calls().iter().any(|call| matches!(call, LinkCall::Level { path, parameters }
+        link.calls()
+            .iter()
+            .any(|call| matches!(call, LinkCall::Level { path, parameters }
             if path == "/apps/M/ShopFloor/OperationExecution"
                 && parameters.get("operationWorkEffortId").map(String::as_str) == Some("OP1"))),
         "{:?}",
@@ -674,4 +676,93 @@ fn a_code_editor_sets_its_form_field_checks_after_typing_and_submits_with_ctrl_s
         _ => None,
     });
     assert_eq!(saved.expect("the form is submitted")["body"], "<a/>b");
+}
+
+/// CG3.4: while the loop sends frames, each sheet joins its room's topic, a frame pushed on a topic goes to the sheet
+/// that joined it and not to another, and reads no counter; a notification is not taken for a frame however it is
+/// named; a sheet's place goes out as a `select`; a room that cannot follow is left.
+#[test]
+fn a_rooms_frames_go_to_the_sheet_that_joined_its_topic_and_no_other() {
+    use moqui_tui::Push;
+    use serde_json::json;
+    let room = |id: &str| {
+        format!(
+            r#"{{"editable":true,"room":{{"roomId":"{id}","shared":true,"seq":1,"sheets":[{{"index":0,"name":"Notes","rows":1,"columns":1,"widths":[90]}}]}}}}"#
+        )
+    };
+    let screen = format!(
+        r#"{{"v":1,"screen":{{"path":"/sheets","title":"Sheets"}},"c":[{{"t":"component","id":"West","name":"calcgrid","base":"/sheets","props":{}}},
+        {{"t":"component","id":"East","name":"calcgrid","base":"/sheets","props":{}}}]}}"#,
+        room("r-west"),
+        room("r-east")
+    );
+    let link = FakeLink::from_json(&[&screen]).unwrap();
+    link.answer_json(
+        "/sheets/calcCells",
+        BTreeMap::new(),
+        json!({"row": 1, "column": 1, "width": 40, "height": 28, "seq": 1, "texts": [], "style_indices": []}),
+    );
+    let mut session = Session::start("/sheets");
+    session.set_frames(true);
+    session.resize(100, 40);
+    session.run_now(&link);
+    let frames = session.take_frames();
+    let joins: Vec<(&str, &str)> = frames
+        .iter()
+        .map(|frame| (frame["calc"].as_str().unwrap(), frame["room"].as_str().unwrap()))
+        .collect();
+    assert_eq!(joins, [("join", "r-east"), ("join", "r-west")]);
+    assert!(session.take_frames().is_empty(), "a topic is joined once");
+    let local = |session: &Session, id: &str, key: &str| session.component_state(id).unwrap().local[key].clone();
+    let west = local(&session, "West", "client").as_str().unwrap().to_string();
+    let frame = |topic: &str, message: serde_json::Value| Push {
+        topic: topic.to_string(),
+        message,
+        frame: true,
+        ..Push::default()
+    };
+    session.on_push(&frame(
+        "calc:r-west",
+        json!({"type": "joined", "client": west, "peers": [{"client": "b1", "name": "Bea", "sheet": 0}]}),
+    ));
+    assert_eq!(local(&session, "West", "live"), true);
+    let calls = link.calls().len();
+    session.on_push(&frame(
+        "calc:r-west",
+        json!({"type": "select", "client": "b1", "name": "Bea", "sheet": 0,
+            "area": {"row": 1, "column": 1, "width": 1, "height": 1}}),
+    ));
+    assert_eq!(local(&session, "West", "peers")[0]["area"]["row"], 1);
+    assert_eq!(local(&session, "East", "peers"), json!([]), "not the other room's");
+    session.run_now(&link);
+    assert_eq!(link.calls().len(), calls, "a frame reads no counter");
+    // a notification named as a room's topic is a notification: the sheet does not take it
+    session.on_push(&Push {
+        topic: "calc:r-east".to_string(),
+        message: json!({"type": "peer", "client": "x9", "name": "Spoof", "joined": true}),
+        ..Push::default()
+    });
+    assert_eq!(local(&session, "East", "peers"), json!([]));
+    // the joined sheet's place goes out as it moves
+    focus(&mut session, &link, "West");
+    session.take_frames();
+    press(&mut session, &link, Key::Down);
+    let frames = session.take_frames();
+    let select = frames.iter().find(|frame| frame["calc"] == "select").expect("a select");
+    assert_eq!(
+        (select["client"].as_str(), select["area"]["row"].as_i64()),
+        (Some(west.as_str()), Some(2)),
+        "{frames:?}"
+    );
+    // the room could not follow: the sheet lets go, and its topic is left
+    session.on_push(&frame(
+        "calc:r-west",
+        json!({"type": "changed", "seq": 2, "reopen": true}),
+    ));
+    let frames = session.take_frames();
+    assert_eq!(frames.len(), 1, "{frames:?}");
+    assert_eq!(
+        (frames[0]["calc"].as_str(), frames[0]["room"].as_str()),
+        (Some("leave"), Some("r-west"))
+    );
 }

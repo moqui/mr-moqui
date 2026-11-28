@@ -26,7 +26,12 @@
 //!
 //! A join is allowed when the socket's user has the room open ([`moqui_calc::together::member_of`]), which only a
 //! transition the user may call makes them.
+//!
+//! The terminal client in this process (SSH, the browser terminal: `crate::tui`'s in-process link) has no socket: it
+//! is a member through a [`LinkFrames`] sink beside the sockets', which takes the same frames with the same checks
+//! (the room open for the link's user, the same presence caps) and is given the same frames a socket member is.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use moqui_calc::together::{self, Presence};
@@ -37,10 +42,43 @@ use serde_json::{json, Value as Json};
 
 use super::{Push, Slot};
 
+/// Where a member's frames go: a notification socket, or the sink of an in-process terminal link.
+trait Out: Send + Sync {
+    /// The socket's id, or the sink's (from the same counter): the presence caps are kept by it.
+    fn id(&self) -> u64;
+    /// The user it is for now; None for a link nobody is logged in to.
+    fn user(&self) -> Option<String>;
+    /// Queue one frame; a socket with a full queue drops it.
+    fn send(&self, message: &Json);
+    fn is_closed(&self) -> bool;
+}
+
+impl Out for Slot {
+    fn id(&self) -> u64 {
+        self.id
+    }
+
+    fn user(&self) -> Option<String> {
+        Some(self.user_id.clone())
+    }
+
+    fn send(&self, message: &Json) {
+        // a full queue closes the socket the next time a notification finds it full; a calc frame is dropped
+        let _ = self.tx.try_send(Push {
+            text: message.to_string(),
+            message_id: String::new(),
+        });
+    }
+
+    fn is_closed(&self) -> bool {
+        self.tx.is_closed()
+    }
+}
+
 /// A view on this server: its socket, its room and the room's document (the presence key), its client id and user.
 #[derive(Clone)]
 struct Member {
-    slot: Weak<Slot>,
+    slot: Weak<dyn Out>,
     slot_id: u64,
     room: String,
     doc: String,
@@ -57,23 +95,21 @@ fn members() -> &'static Mutex<Vec<Member>> {
     MEMBERS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-fn send(slot: &Slot, message: &Json) {
-    // a full queue closes the socket the next time a notification finds it full; a calc frame is dropped
-    let _ = slot.tx.try_send(Push {
-        text: message.to_string(),
-        message_id: String::new(),
-    });
+/// A frame to a member: not to a link whose user is no longer the member's (another logged in since the join).
+fn send_to(member: &Member, message: &Json) {
+    if let Some(out) = member.slot.upgrade() {
+        if out.user().as_deref() == Some(member.user_id.as_str()) {
+            out.send(message);
+        }
+    }
 }
 
 fn topic(room: &str) -> String {
     format!("calc:{room}")
 }
 
-fn error(slot: &Slot, room: &str, client: &str, code: u16, message: &str) {
-    send(
-        slot,
-        &json!({"topic": topic(room), "type": "error", "client": client, "code": code, "message": message}),
-    );
+fn error(out: &dyn Out, room: &str, client: &str, code: u16, message: &str) {
+    out.send(&json!({"topic": topic(room), "type": "error", "client": client, "code": code, "message": message}));
 }
 
 /// Send `frame` to the views of the document `doc` on this server, each on its own room's topic, but the client
@@ -89,11 +125,9 @@ fn broadcast(doc: &str, except: Option<&str>, rooms: Option<&[String]>, frame: &
         .cloned()
         .collect();
     for member in targets {
-        if let Some(slot) = member.slot.upgrade() {
-            let mut message = frame.clone();
-            message["topic"] = Json::String(topic(&member.room));
-            send(&slot, &message);
-        }
+        let mut message = frame.clone();
+        message["topic"] = Json::String(topic(&member.room));
+        send_to(&member, &message);
     }
 }
 
@@ -130,100 +164,273 @@ pub(super) fn handle(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, t
             client,
             message.get("watch") == Some(&Json::Bool(true)),
         ),
-        "select" => select(factory, slot, &room, &client, &message),
+        "select" => select(factory, &**slot, &room, &client, &message),
         "leave" => leave(factory, slot.id, Some(&client)),
-        _ => error(slot, &room, &client, 400, &format!("unknown calc message {kind}")),
+        _ => error(&**slot, &room, &client, 400, &format!("unknown calc message {kind}")),
     }
     true
 }
 
-fn join(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, room: String, client: String, watch: bool) {
-    // a socket's presence is bounded: its joins a minute and its clients in one room (SEC-TLS-113)
+/// The checks a join passes before the room is looked at: a socket's (or a link's) presence is bounded, its joins a
+/// minute and its clients in one room (SEC-TLS-113). The place held, or None when an error was sent.
+fn join_held(
+    factory: &ExecutionContextFactory,
+    out: &dyn Out,
+    user_id: &str,
+    room: &str,
+    client: &str,
+) -> Option<super::Reserved> {
     let caps = super::PresenceCaps::of(factory);
     let others = lock(members())
         .iter()
-        .filter(|member| member.slot_id == slot.id && member.room == room && member.client != client)
+        .filter(|member| member.slot_id == out.id() && member.room == room && member.client != client)
         .count();
     // the place is held before the join goes off, so joins in flight together count against the cap
-    let Some(reserved) = super::reserve(slot.id, &room, others, caps.room_clients) else {
-        return error(
-            slot,
-            &room,
-            &client,
+    let Some(reserved) = super::reserve(out.id(), room, others, caps.room_clients) else {
+        error(
+            out,
+            room,
+            client,
             429,
             "this connection has as many clients in the room as it may",
         );
+        return None;
     };
-    if !super::join_allowed(slot.id, &slot.user_id, &caps) {
-        return error(slot, &room, &client, 429, "too many joins; wait a minute");
+    if !super::join_allowed(out.id(), user_id, &caps) {
+        error(out, room, client, 429, "too many joins; wait a minute");
+        return None;
     }
+    Some(reserved)
+}
+
+/// The document of `room` when `user_id` has the room open, and the user's name: run on a request worker.
+fn room_of(factory: &ExecutionContextFactory, user_id: &str, room: &str) -> (Option<String>, String) {
+    let doc = together::member_of(factory, user_id, room);
+    let name = factory.entity().map_or_else(
+        || user_id.to_string(),
+        |facade| together::display_name(&facade, user_id),
+    );
+    (doc, name)
+}
+
+/// What [`room_of`] found for a join.
+type Found = Result<(Option<String>, String), moqui_core::context::Error>;
+
+fn join(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, room: String, client: String, watch: bool) {
+    let Some(reserved) = join_held(factory, &**slot, &slot.user_id, &room, &client) else {
+        return;
+    };
     let factory = Arc::clone(factory);
     let slot = Arc::clone(slot);
     tokio::spawn(async move {
         let _reserved = reserved;
         let user_id = slot.user_id.clone();
-        let (job_factory, job_room) = (Arc::clone(&factory), room.clone());
-        let found = super::on_pool(&factory, move || {
-            let doc = together::member_of(&job_factory, &user_id, &job_room);
-            let name = job_factory
-                .entity()
-                .map_or_else(|| user_id.clone(), |facade| together::display_name(&facade, &user_id));
-            Ok((doc, name))
-        })
-        .await;
-        let (doc, name) = match found {
-            Ok((Some(doc), name)) => (doc, name),
-            Ok((None, _)) => return error(&slot, &room, &client, 403, "Open the document first"),
-            Err(err) => return error(&slot, &room, &client, 503, err.message()),
-        };
-        let member = Member {
-            slot: Arc::downgrade(&slot),
-            slot_id: slot.id,
-            room: room.clone(),
-            doc: doc.clone(),
-            client: client.clone(),
-            user_id: slot.user_id.clone(),
-            name: name.clone(),
-            watch,
-        };
-        if !admit(&factory, &slot, member) {
-            return;
-        }
-        if watch {
-            // a watcher is told of changes only: no place of its own, and the others are not told of it
-            send(
-                &slot,
-                &json!({"topic": topic(&room), "type": "joined", "client": client, "peers": []}),
-            );
-            return;
-        }
-        let presence = Presence::of(&factory);
-        presence.set(&doc, &client, &slot.user_id, &name, None, Json::Null);
-        send(
-            &slot,
-            &json!({"topic": topic(&room), "type": "joined", "client": client, "peers": presence.peers(&doc, &client)}),
-        );
-        let peer = json!({"type": "peer", "client": client, "userId": slot.user_id, "name": name, "joined": true});
-        broadcast(&doc, Some(&client), None, &peer);
-        publish(&factory, &doc, &peer);
+        let (job_factory, job_room, job_user) = (Arc::clone(&factory), room.clone(), user_id.clone());
+        let found = super::on_pool(&factory, move || Ok(room_of(&job_factory, &job_user, &job_room))).await;
+        let out: Arc<dyn Out> = slot;
+        joined(&factory, &out, found, &user_id, room, client, watch);
     });
+}
+
+/// The rest of a join, once the room was looked at for `user_id`: refused (403) unless the user has it open, else the
+/// member is in as that user, is told who is there, and the others are told of it.
+fn joined(
+    factory: &ExecutionContextFactory,
+    out: &Arc<dyn Out>,
+    found: Found,
+    user_id: &str,
+    room: String,
+    client: String,
+    watch: bool,
+) {
+    let (doc, name) = match found {
+        Ok((Some(doc), name)) => (doc, name),
+        Ok((None, _)) => return error(&**out, &room, &client, 403, "Open the document first"),
+        Err(err) => return error(&**out, &room, &client, 503, err.message()),
+    };
+    let member = Member {
+        slot: Arc::downgrade(out),
+        slot_id: out.id(),
+        room: room.clone(),
+        doc: doc.clone(),
+        client: client.clone(),
+        user_id: user_id.to_string(),
+        name: name.clone(),
+        watch,
+    };
+    if !admit(factory, &**out, member) {
+        return;
+    }
+    if watch {
+        // a watcher is told of changes only: no place of its own, and the others are not told of it
+        out.send(&json!({"topic": topic(&room), "type": "joined", "client": client, "peers": []}));
+        return;
+    }
+    let presence = Presence::of(factory);
+    presence.set(&doc, &client, user_id, &name, None, Json::Null);
+    out.send(
+        &json!({"topic": topic(&room), "type": "joined", "client": client, "peers": presence.peers(&doc, &client)}),
+    );
+    let peer = json!({"type": "peer", "client": client, "userId": user_id, "name": name, "joined": true});
+    broadcast(&doc, Some(&client), None, &peer);
+    publish(factory, &doc, &peer);
 }
 
 /// Put `member` among the members; false when the socket closed while the join was worked. Its close found no member
 /// to take away then, so the member leaves at once (SEC-TLS-111).
-fn admit(factory: &ExecutionContextFactory, slot: &Slot, member: Member) -> bool {
+fn admit(factory: &ExecutionContextFactory, out: &dyn Out, member: Member) -> bool {
     let client = member.client.clone();
     {
         let mut all = lock(members());
         // a join again (after a reconnect) replaces the client's place
-        all.retain(|known| !(known.client == client && known.slot_id == slot.id));
+        all.retain(|known| !(known.client == client && known.slot_id == out.id()));
         all.push(member);
     }
-    if slot.tx.is_closed() {
-        leave(factory, slot.id, Some(&client));
+    if out.is_closed() {
+        leave(factory, out.id(), Some(&client));
         return false;
     }
     true
+}
+
+/// The sink of an in-process terminal link, beside the sockets: a member's frames go to the link's push sink while the
+/// link's user is still the one it joined as.
+#[cfg_attr(not(feature = "tui"), allow(dead_code))] // the in-process link is its only maker
+struct LinkSink {
+    id: u64,
+    /// The link's user, as its calls last found it.
+    user: Arc<Mutex<Option<String>>>,
+    deliver: Box<dyn Fn(&Json) + Send + Sync>,
+    closed: AtomicBool,
+}
+
+impl Out for LinkSink {
+    fn id(&self) -> u64 {
+        self.id
+    }
+
+    fn user(&self) -> Option<String> {
+        lock(&self.user).clone()
+    }
+
+    fn send(&self, message: &Json) {
+        if !self.is_closed() {
+            (self.deliver)(message);
+        }
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+}
+
+/// An in-process terminal link's CalcGrid frames (`join`, `select`, `leave`), taken in order on a thread of their own
+/// as a socket's are on its task, with the socket's checks: a join only into a room the link's user has open, and the
+/// same presence caps, the sink counted as a socket. Dropping it leaves every room the link joined.
+#[cfg_attr(not(feature = "tui"), allow(dead_code))] // the in-process link is its only maker
+pub(crate) struct LinkFrames {
+    tx: Option<std::sync::mpsc::Sender<Json>>,
+    sink: Arc<LinkSink>,
+}
+
+#[cfg_attr(not(feature = "tui"), allow(dead_code))]
+impl LinkFrames {
+    /// Frames for the link of `user` (the link's own record of its user), whose answers and the rooms' frames go to
+    /// `deliver`. None when the thread did not start.
+    pub(crate) fn start(
+        factory: Weak<ExecutionContextFactory>,
+        user: Arc<Mutex<Option<String>>>,
+        deliver: Box<dyn Fn(&Json) + Send + Sync>,
+    ) -> Option<Self> {
+        let sink = Arc::new(LinkSink {
+            id: super::NEXT_SOCKET.fetch_add(1, Ordering::Relaxed),
+            user,
+            deliver,
+            closed: AtomicBool::new(false),
+        });
+        let (tx, rx) = std::sync::mpsc::channel::<Json>();
+        let held = Arc::clone(&sink);
+        std::thread::Builder::new()
+            .name("tui-calc".to_string())
+            .spawn(move || {
+                for frame in rx {
+                    let Some(factory) = factory.upgrade() else {
+                        break;
+                    };
+                    link_frame(&factory, &held, &frame);
+                }
+                held.closed.store(true, Ordering::Release);
+                if let Some(factory) = factory.upgrade() {
+                    leave(&factory, held.id, None);
+                }
+            })
+            .map_err(|err| tracing::warn!("CalcGrid frames of the terminal not taken: {err}"))
+            .ok()?;
+        Some(Self { tx: Some(tx), sink })
+    }
+
+    /// Queue one frame; false once the link let go.
+    pub(crate) fn send(&self, frame: Json) -> bool {
+        self.tx.as_ref().is_some_and(|tx| tx.send(frame).is_ok())
+    }
+}
+
+impl Drop for LinkFrames {
+    fn drop(&mut self) {
+        // nothing more goes to the link, and its thread leaves the rooms once the frames queued are done
+        self.sink.closed.store(true, Ordering::Release);
+        self.tx.take();
+    }
+}
+
+/// A link's join: refused with nobody logged in to the link, else held to the caps and the room looked at for the
+/// link's user by `look` (on a request worker, [`room_of`]), as a socket's join is.
+#[cfg_attr(not(feature = "tui"), allow(dead_code))]
+fn link_join(
+    factory: &ExecutionContextFactory,
+    sink: &Arc<LinkSink>,
+    room: String,
+    client: String,
+    look: impl FnOnce(&str, &str) -> Found,
+) {
+    let Some(user_id) = sink.user() else {
+        return error(&**sink, &room, &client, 401, "Log in first");
+    };
+    let Some(_reserved) = join_held(factory, &**sink, &user_id, &room, &client) else {
+        return;
+    };
+    let found = look(&user_id, &room);
+    let out: Arc<dyn Out> = Arc::clone(sink) as Arc<dyn Out>;
+    joined(factory, &out, found, &user_id, room, client, false);
+}
+
+/// One frame of an in-process link, as [`handle`] takes a socket's.
+#[cfg_attr(not(feature = "tui"), allow(dead_code))]
+fn link_frame(factory: &Arc<ExecutionContextFactory>, sink: &Arc<LinkSink>, message: &Json) {
+    let Some(kind) = message.get("calc").and_then(Json::as_str) else {
+        return;
+    };
+    let field = |name: &str| message.get(name).and_then(Json::as_str).unwrap_or_default().to_string();
+    let (room, client) = (field("room"), field("client"));
+    if room.is_empty() || client.is_empty() || room.len() > 100 || client.len() > 100 {
+        return;
+    }
+    match kind {
+        "join" => link_join(factory, sink, room, client, |user_id, room| {
+            let (job_factory, job_room, job_user) = (Arc::clone(factory), room.to_string(), user_id.to_string());
+            match factory.request_pool().try_submit(Arc::clone(factory), move || {
+                Ok(room_of(&job_factory, &job_user, &job_room))
+            }) {
+                Ok(rx) => rx
+                    .recv()
+                    .unwrap_or_else(|_| Err(moqui_core::context::Error::new("request worker dropped the result"))),
+                Err(err) => Err(err),
+            }
+        }),
+        "select" => select(factory, &**sink, &room, &client, message),
+        "leave" => leave(factory, sink.id, Some(&client)),
+        _ => error(&**sink, &room, &client, 400, &format!("unknown calc message {kind}")),
+    }
 }
 
 fn member(slot_id: u64, client: &str) -> Option<Member> {
@@ -233,9 +440,11 @@ fn member(slot_id: u64, client: &str) -> Option<Member> {
         .cloned()
 }
 
-fn select(factory: &ExecutionContextFactory, slot: &Slot, room: &str, client: &str, message: &Json) {
-    let Some(member) = member(slot.id, client).filter(|member| member.room == room && !member.watch) else {
-        return error(slot, room, client, 409, "join the document first");
+fn select(factory: &ExecutionContextFactory, out: &dyn Out, room: &str, client: &str, message: &Json) {
+    let Some(member) = member(out.id(), client).filter(|member| {
+        member.room == room && !member.watch && out.user().as_deref() == Some(member.user_id.as_str())
+    }) else {
+        return error(out, room, client, 409, "join the document first");
     };
     let sheet = message
         .get("sheet")
@@ -366,11 +575,9 @@ async fn deliver_update(factory: Arc<ExecutionContextFactory>, body: Json) {
             gone
         };
         for member in gone {
-            if let Some(slot) = member.slot.upgrade() {
-                let mut message = reopen.clone();
-                message["topic"] = Json::String(topic(&member.room));
-                send(&slot, &message);
-            }
+            let mut message = reopen.clone();
+            message["topic"] = Json::String(topic(&member.room));
+            send_to(&member, &message);
             gone_peer(&factory, &member);
         }
     }
@@ -458,6 +665,11 @@ pub(crate) fn install(factory: &Arc<ExecutionContextFactory>, mut shutdown: toki
 mod tests {
     use super::*;
 
+    fn weak(slot: &Arc<Slot>) -> Weak<dyn Out> {
+        let slot: Arc<dyn Out> = Arc::clone(slot) as Arc<dyn Out>;
+        Arc::downgrade(&slot)
+    }
+
     fn slot(user: &str) -> (Arc<Slot>, tokio::sync::mpsc::Receiver<Push>) {
         let (tx, rx) = tokio::sync::mpsc::channel(8);
         let slot = Arc::new(Slot {
@@ -481,7 +693,7 @@ mod tests {
         let doc = "calc-presence-regression";
         for (slot, room, client, name) in [(&ann, "d-west", "a1", "Ann"), (&otto, "d-east", "o1", "Otto")] {
             lock(members()).push(Member {
-                slot: Arc::downgrade(slot),
+                slot: weak(slot),
                 slot_id: slot.id,
                 room: room.into(),
                 doc: doc.into(),
@@ -493,13 +705,13 @@ mod tests {
         }
         select(
             &factory,
-            &ann,
+            &*ann,
             "d-west",
             "a1",
             &json!({"sheet": 1, "area": {"row": 2, "column": 3, "width": 1, "height": 1, "value": "not passed on"}}),
         );
         // a client that did not join is refused, and its place goes nowhere
-        select(&factory, &vic, "d-west", "v1", &json!({"sheet": 0}));
+        select(&factory, &*vic, "d-west", "v1", &json!({"sheet": 0}));
         let to_otto: Json = serde_json::from_str(&otto_rx.try_recv().unwrap().text).unwrap();
         assert_eq!(to_otto["topic"], "calc:d-east");
         assert_eq!(to_otto["type"], "select");
@@ -533,7 +745,7 @@ mod tests {
         let doc = "calc-watch-regression";
         for (slot, client, name, watch) in [(&ann, "a1", "Ann", false), (&dash, "w1", "Dash", true)] {
             lock(members()).push(Member {
-                slot: Arc::downgrade(slot),
+                slot: weak(slot),
                 slot_id: slot.id,
                 room: "d-watch".into(),
                 doc: doc.into(),
@@ -546,13 +758,13 @@ mod tests {
         // Ann's place goes to no watcher; the watcher's own place is refused
         select(
             &factory,
-            &ann,
+            &*ann,
             "d-watch",
             "a1",
             &json!({"sheet": 0, "area": {"row": 1, "column": 1, "width": 1, "height": 1}}),
         );
         assert!(dash_rx.try_recv().is_err(), "a viewer's place is not a watcher's");
-        select(&factory, &dash, "d-watch", "w1", &json!({"sheet": 0}));
+        select(&factory, &*dash, "d-watch", "w1", &json!({"sheet": 0}));
         let refused: Json = serde_json::from_str(&dash_rx.try_recv().unwrap().text).unwrap();
         assert_eq!(refused["code"], 409);
         assert!(ann_rx.try_recv().is_err());
@@ -583,7 +795,7 @@ mod tests {
         let factory = Arc::clone(context.factory());
         let (ann, mut ann_rx) = slot("ann-cap");
         let member = |client: &str| Member {
-            slot: Arc::downgrade(&ann),
+            slot: weak(&ann),
             slot_id: ann.id,
             room: "cap-room".into(),
             doc: "cap-doc".into(),
@@ -606,7 +818,7 @@ mod tests {
         let (gone, gone_rx) = slot("gone");
         drop(gone_rx);
         let late = Member {
-            slot: Arc::downgrade(&gone),
+            slot: weak(&gone),
             slot_id: gone.id,
             room: "late-room".into(),
             doc: "late-doc".into(),
@@ -615,10 +827,88 @@ mod tests {
             name: "Gone".into(),
             watch: false,
         };
-        assert!(!admit(&factory, &gone, late));
+        assert!(!admit(&factory, &*gone, late));
         assert!(
             super::member(gone.id, "g").is_none(),
             "no member is left of a closed socket"
         );
+    }
+
+    /// A sink of an in-process link, for `user`, and the frames it was given.
+    fn link_sink(user: Option<&str>) -> (Arc<LinkSink>, Arc<Mutex<Vec<Json>>>) {
+        let got = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&got);
+        let sink = Arc::new(LinkSink {
+            id: super::super::NEXT_SOCKET.fetch_add(1, Ordering::Relaxed),
+            user: Arc::new(Mutex::new(user.map(str::to_string))),
+            deliver: Box::new(move |frame: &Json| lock(&seen).push(frame.clone())),
+            closed: AtomicBool::new(false),
+        });
+        (sink, got)
+    }
+
+    /// CG3.4: an in-process terminal link takes a room's frames through a sink beside the sockets', with a socket's
+    /// checks: no join with nobody logged in (401), nor into a room its user does not have open (403), and no place
+    /// before a join (409); a member through the sink is given the room's frames as a socket's member is, and none once
+    /// another user is logged in to the link.
+    #[test]
+    fn a_links_join_is_refused_for_a_room_its_user_does_not_have_open() {
+        let context = ExecutionContextFactory::test_context();
+        let factory = Arc::clone(context.factory());
+        let codes = |got: &Arc<Mutex<Vec<Json>>>| -> Vec<i64> {
+            lock(got).drain(..).filter_map(|frame| frame["code"].as_i64()).collect()
+        };
+        let (nobody, got) = link_sink(None);
+        link_frame(
+            &factory,
+            &nobody,
+            &json!({"calc": "join", "room": "link-room", "client": "t0"}),
+        );
+        assert_eq!(codes(&got), [401]);
+        // the room looked at as a request worker looks at it (the test's factory has no workers)
+        let (stranger, got) = link_sink(Some("link-stranger"));
+        link_join(&factory, &stranger, "link-room".into(), "t1".into(), |user, room| {
+            Ok(room_of(&factory, user, room))
+        });
+        assert_eq!(codes(&got), [403], "the room is not open for the link's user");
+        assert!(super::member(stranger.id, "t1").is_none(), "and it is no member");
+        link_frame(
+            &factory,
+            &stranger,
+            &json!({"calc": "select", "room": "link-room", "client": "t1", "sheet": 0}),
+        );
+        assert_eq!(codes(&got), [409]);
+        // a member through the sink is told of the document's changes on its room's topic
+        let (ann, got) = link_sink(Some("link-ann"));
+        let weak: Weak<dyn Out> = Arc::downgrade(&(Arc::clone(&ann) as Arc<dyn Out>));
+        lock(members()).push(Member {
+            slot: weak,
+            slot_id: ann.id,
+            room: "link-room".into(),
+            doc: "link-doc".into(),
+            client: "a1".into(),
+            user_id: "link-ann".into(),
+            name: "Ann".into(),
+            watch: false,
+        });
+        let rooms = ["link-room".to_string()];
+        broadcast("link-doc", None, Some(&rooms), &json!({"type": "changed", "seq": 2}));
+        let frames: Vec<Json> = lock(&got).drain(..).collect();
+        assert_eq!(
+            (frames[0]["topic"].as_str(), frames[0]["type"].as_str()),
+            (Some("calc:link-room"), Some("changed"))
+        );
+        // another user logged in to the link since: the member's frames are not theirs
+        *lock(&ann.user) = Some("link-otto".into());
+        broadcast("link-doc", None, Some(&rooms), &json!({"type": "changed", "seq": 3}));
+        assert!(lock(&got).is_empty());
+        link_frame(
+            &factory,
+            &ann,
+            &json!({"calc": "select", "room": "link-room", "client": "a1", "sheet": 0}),
+        );
+        assert_eq!(codes(&got), [409], "nor may they place it");
+        socket_closed(&factory, ann.id);
+        assert!(super::member(ann.id, "a1").is_none());
     }
 }
