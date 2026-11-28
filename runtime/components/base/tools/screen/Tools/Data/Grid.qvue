@@ -352,7 +352,7 @@ module.exports = {
                 this.calc.busy = false;
                 if (!out || !out.roomId) return null;
                 // a workbook's sheets that could not be read and were left out
-                if (out.messages) moqui.notifyMessages(out.messages);
+                if (out.messages) moqui.notifyMessages([{ type: 'warning', message: out.messages }]);
                 this.calc.room = out; this.calc.unavailable = '';
                 this.calc.opened = out.definitionId ? { definitionId: out.definitionId } : params;
                 return out;

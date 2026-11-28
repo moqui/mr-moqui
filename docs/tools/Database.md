@@ -125,8 +125,10 @@ workbook on the server's spreadsheet engine (IronCalc; plan [IronCalc-DB](../../
   source has more. Encrypted and binary columns are left out.
 - **A spreadsheet file** opens as a workbook from the File dialog (Open as a workbook): every sheet, and for an xlsx
   its formulas, styles and names, calculated by the engine. An xls, xlsb or ods, and an xlsx the engine does not
-  take, open as values; a sheet of one that cannot be read (or is over the cell cap) is left out, logged and named to
-  the opener, and the file is refused only when no sheet can be read.
+  take, open as values; a sheet of one that cannot be read (or spans more than 10 million cells) is left out, logged
+  and named to the opener, and the file is refused only when no sheet can be read. The sheets are written into the
+  workbook one at a time; an xlsx or xlsb sheet is also read from the file only then, while an xls or ods file is
+  parsed whole when it opens.
 - **The view** (`js/WebrootCalc.js`) holds no data: the server answers the cells in view and a margin
   (`get#CalcCells`, at most 20,000 cells a request), so a jump to a far row loads nothing between. Sheet tabs are
   below the sheet, a data sheet marked; the document's charts are below those.

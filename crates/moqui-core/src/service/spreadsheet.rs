@@ -135,9 +135,11 @@ pub fn read_book_bytes(bytes: &[u8]) -> Result<BookSheets, LibError> {
     Ok(BookSheets { book, names, next: 0 })
 }
 
-/// The sheets of an open spreadsheet, each read when it is asked for, so one is used and dropped before the next is
-/// read: each sheet's name and what [`read_sheet_bytes`] answers for it, a sheet that cannot be read or is too large as
-/// its error. A sheet's `sheet_names` is left empty: [`BookSheets::names`] has them once.
+/// The sheets of an open spreadsheet, each turned into rows when it is asked for, so one is used and dropped before the
+/// next: each sheet's name and what [`read_sheet_bytes`] answers for it, a sheet that cannot be read or is too large as
+/// its error. An xlsx or xlsb sheet is also parsed only then; calamine parses an xls or ods book whole when it opens,
+/// so for those only the rows are made a sheet at a time. A sheet's `sheet_names` is left empty: [`BookSheets::names`]
+/// has them once.
 pub struct BookSheets {
     book: Sheets<Cursor<Vec<u8>>>,
     names: Vec<String>,
@@ -248,9 +250,9 @@ fn read_sheet(parameters: &BTreeMap<String, Value>) -> Result<Sheet, LibError> {
     Ok(Sheet { names, headers, rows })
 }
 
-/// The used area of sheet `name`. An xlsx or xlsb sheet is read cell by cell, and refused when its used area spans more
-/// than [`MAX_SHEET_CELLS`]. An xls sheet is at most 65,536 rows by 256 columns, and calamine caps the cells of an ods
-/// sheet.
+/// The used area of sheet `name`, refused when it spans more than [`MAX_SHEET_CELLS`]. An xlsx or xlsb sheet is read
+/// cell by cell and refused as soon as it spans more; calamine reads an xls or ods sheet whole (an xls sheet is at most
+/// 65,536 rows by 256 columns, and calamine caps the cells of an ods one), and its range is checked after.
 fn sheet_range(book: &mut Sheets<Cursor<Vec<u8>>>, name: &str) -> Result<Range<Data>, LibError> {
     let failed = |err: &dyn std::fmt::Display| LibError::new(format!("Could not read sheet {name}: {err}"));
     match book {
@@ -266,8 +268,26 @@ fn sheet_range(book: &mut Sheets<Cursor<Vec<u8>>>, name: &str) -> Result<Range<D
             let mut reader = xlsb.worksheet_cells_reader(name).map_err(|err| failed(&err))?;
             bounded_range(name, || reader.next_cell().map_err(|err| failed(&err)))
         }
-        _ => book.worksheet_range(name).map_err(|err| failed(&err)),
+        _ => {
+            let range = book.worksheet_range(name).map_err(|err| failed(&err))?;
+            match span_refusal(name, range.get_size()) {
+                Some(refusal) => Err(refusal),
+                None => Ok(range),
+            }
+        }
     }
+}
+
+/// The refusal of a sheet whose used area of `(rows, columns)` spans more than [`MAX_SHEET_CELLS`], else none.
+fn span_refusal(name: &str, (rows, columns): (usize, usize)) -> Option<LibError> {
+    let span = u64::try_from(rows)
+        .unwrap_or(u64::MAX)
+        .saturating_mul(u64::try_from(columns).unwrap_or(u64::MAX));
+    (span > MAX_SHEET_CELLS).then(|| {
+        LibError::new(format!(
+            "Sheet {name} spans more than {MAX_SHEET_CELLS} cells: {rows} rows by {columns} columns"
+        ))
+    })
 }
 
 /// The non-empty cells `next` reads, as calamine's `worksheet_range` makes them, or an error once their area spans
@@ -736,6 +756,16 @@ mod tests {
         prefixed.extend_from_slice(&bytes);
         let refused = super::check_expanded_size(&prefixed, 4 * 1024 * 1024).unwrap_err();
         assert!(refused.to_string().contains("bytes in front"), "{refused}");
+    }
+
+    /// An xls or ods sheet, which calamine reads whole, is held to the same cell cap as an xlsx one after it is read.
+    #[test]
+    fn a_whole_read_sheet_past_the_cell_cap_is_refused() {
+        // an xls sheet at its largest: 65,536 rows by 256 columns
+        let refused = super::span_refusal("Huge", (65_536, 256)).expect("past the cap");
+        assert!(refused.to_string().contains("Sheet Huge spans more than"), "{refused}");
+        assert!(super::span_refusal("Small", (1_000, 26)).is_none());
+        assert!(super::span_refusal("Empty", (0, 0)).is_none());
     }
 
     #[test]

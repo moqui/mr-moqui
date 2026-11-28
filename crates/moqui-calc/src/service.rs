@@ -701,7 +701,8 @@ fn room_out(facade: &EntityFacade, room: &Room, user_id: &str) -> BTreeMap<Strin
 
 /// A workbook file as a model: the engine's reader for an xlsx it takes, else the cells of each sheet as values
 /// (`read#Spreadsheet`'s reader: xls, xlsb, ods, and an xlsx without the parts the engine needs), read from the file
-/// once and a sheet at a time, each value in its own cell: a sheet's rows start at its used area's first column, which
+/// once and written a sheet at a time (an xlsx or xlsb sheet is also parsed only then; calamine parses an xls or ods
+/// book whole when it opens), each value in its own cell: a sheet's rows start at its used area's first column, which
 /// is not always A. A sheet that cannot be read, or is over the cell cap, is logged and left out, and its name is in
 /// the answer's second part; the workbook is refused only when no sheet could be read.
 fn workbook_model(
