@@ -721,12 +721,30 @@ form.q-form.m-status-form, .m-status-form { display: inline-flex; width: auto; }
 /* Message actions are available from the keyboard as well as pointer hover. Keep the focus ring inside the timeline. */
 .m-chat-msg:focus-visible { outline:2px solid var(--m-link); outline-offset:-2px; }
 
-/* Bubbles (ChatRoom useBubbles: the phone home, the stacked Chat, a narrow room): mine on the right in the primary tone, the
-   others on the left; a direct room shows no avatars or names, a group shows them on the first message of a run. */
-.m-chat-bubble .m-chat-body { flex:0 1 auto; max-width:min(80%, 560px); padding:6px 12px; border-radius:18px; background:rgba(127,127,127,0.13); }
+/* Bubbles (ChatRoom useBubbles: the phone home, the stacked Chat, a narrow room, the single-room mode), in the layout of a
+   phone's messages app: mine on the right in the accent, the others' on the left in a grey, 17px text, round corners that
+   are tight where two bubbles of one run meet; a direct room shows no avatars or names, a group shows them on the first
+   message of a run. The time is in the lines between the runs (the day's with its time, and a line of the time alone after
+   an hour), and on a run's last bubble. The colors are tokens a color scheme may set: --m-chat-mine-bg and -fg (the accent,
+   --q-primary, which THEME_PRIMARY_COLOR sets), --m-chat-theirs-bg and -fg, --m-chat-field-bg (the composer's pill) and
+   --m-chat-send-bg and -fg (the round Send). */
+:root { --m-chat-mine-bg:var(--q-primary); --m-chat-mine-fg:#fff; --m-chat-theirs-bg:#e9eef6; --m-chat-theirs-fg:inherit;
+    --m-chat-field-bg:rgba(127,127,127,0.12); --m-chat-send-bg:var(--q-primary); --m-chat-send-fg:#fff;
+    --m-chat-radius:20px; --m-chat-radius-join:4px; --m-chat-text:17px; }
+.body--dark { --m-chat-theirs-bg:#2a2c30; --m-chat-field-bg:#2a2c30; }
+.m-chat-bubble .m-chat-body { flex:0 1 auto; max-width:min(80%, 560px); padding:9px 14px; border-radius:var(--m-chat-radius);
+    background:var(--m-chat-theirs-bg); color:var(--m-chat-theirs-fg); font-size:var(--m-chat-text); line-height:1.4; }
+.m-chat-bubble .m-chat-body .text-body2, .m-chat-bubble .m-chat-body .m-rich-text-content { font-size:inherit; line-height:inherit; }
 .m-chat-bubble.m-chat-grouped { margin-top:2px; }
 .m-chat-bubble.m-chat-mine { flex-direction:row-reverse; }
-.m-chat-bubble.m-chat-mine .m-chat-body { background:color-mix(in srgb, var(--q-primary) 20%, transparent); }
+.m-chat-bubble.m-chat-mine .m-chat-body { background:var(--m-chat-mine-bg); color:var(--m-chat-mine-fg); }
+.m-chat-bubble.m-chat-mine .m-chat-body .m-muted, .m-chat-bubble.m-chat-mine .m-chat-body a { color:inherit; }
+.m-chat-bubble.m-chat-mine .m-chat-stamp { opacity:0.78; }
+/* a run of one sender's bubbles: tight corners on the sender's side where two meet */
+.m-chat-bubble.m-chat-grouped:not(.m-chat-mine) .m-chat-body { border-top-left-radius:var(--m-chat-radius-join); }
+.m-chat-bubble.m-chat-join-next:not(.m-chat-mine) .m-chat-body { border-bottom-left-radius:var(--m-chat-radius-join); }
+.m-chat-bubble.m-chat-mine.m-chat-grouped .m-chat-body { border-top-right-radius:var(--m-chat-radius-join); }
+.m-chat-bubble.m-chat-mine.m-chat-join-next .m-chat-body { border-bottom-right-radius:var(--m-chat-radius-join); }
 .m-chat-bubble.m-chat-mine .m-chat-avatar, .m-chat-bubble.m-chat-mine .m-chat-name,
 .m-chat-bubble.m-chat-in-direct .m-chat-avatar, .m-chat-bubble.m-chat-in-direct .m-chat-name { display:none; }
 .m-chat-bubble.m-chat-mine .m-chat-head, .m-chat-bubble.m-chat-in-direct .m-chat-head { justify-content:flex-end; }
@@ -734,21 +752,51 @@ form.q-form.m-status-form, .m-status-form { display: inline-flex; width: auto; }
 .m-chat-bubble .m-chat-body img { max-width:100%; }
 .m-chat-stamp { display:none; }
 .m-chat-bubble .m-chat-stamp { display:block; text-align:right; font-size:11px; line-height:14px; margin-top:2px; }
+.m-chat-bubble.m-chat-join-next .m-chat-stamp { display:none; }
 .m-chat-bubble .m-chat-head .text-caption, .m-chat-bubble .m-chat-body > span.text-caption { display:none; }
 .m-chat-bubble.m-chat-mine .m-chat-head, .m-chat-bubble.m-chat-in-direct .m-chat-head { display:none; }
-/* the phone composer: one row of attach, emoji and poll, a round text box, and a round send button */
+/* the time lines: small, grey and centred, with no rule */
+.m-chat-phone .m-chat-day { justify-content:center; margin:18px 0 6px; }
+.m-chat-phone .m-chat-day .q-separator { display:none; }
+.m-chat-phone .m-chat-day .text-caption { font-size:12px; font-weight:500; letter-spacing:0.01em; }
+/* the room's E2EE note: a quiet line, centred, as a system note; the intro does not say it again */
+.m-chat-phone .m-chat-e2ee-banner { justify-content:center; background:transparent; padding:6px 16px 2px; color:var(--m-text-muted, #80868b); }
+.m-chat-phone .m-chat-e2ee-banner .m-chat-e2ee-banner-text { flex:0 1 auto; max-width:320px; text-align:center; font-size:12px; line-height:1.35; }
+.m-chat-phone .m-chat-e2ee-banner .q-icon { color:inherit !important; }
+.m-chat-phone:has(.m-chat-e2ee-banner) .m-chat-e2ee-intro { display:none; }
+/* the phone composer: one row of attach and emoji (and the others), a pill to write in, and a round Send in the accent */
 .m-chat-phone .m-chat-composer { display:flex; flex-wrap:wrap; align-items:flex-end; gap:2px; }
 .m-chat-phone .m-chat-composer > :not(.m-rich-text):not(.m-chat-composer-actions) { flex-basis:100%; }
 .m-chat-phone .m-chat-composer-actions { display:contents; }
-.m-chat-phone .m-chat-composer-actions > .q-btn { order:1; margin-bottom:6px; }
+.m-chat-phone .m-chat-composer-actions > .q-btn { order:1; margin-bottom:10px; }
 .m-chat-phone .m-chat-composer > .m-rich-text { order:2; flex:1 1 0; min-width:0; }
-.m-chat-phone .m-chat-composer-actions > .m-chat-send { order:3; border-radius:50%; width:40px; height:40px; margin:0 0 2px 4px; }
+.m-chat-phone .m-chat-composer-actions > .m-chat-send { order:3; border-radius:50%; width:48px; height:48px; margin:0 0 0 6px;
+    background:var(--m-chat-send-bg) !important; color:var(--m-chat-send-fg) !important; }
+.m-chat-phone .m-chat-composer-actions > .m-chat-send.disabled { opacity:0.45 !important; }
 /* the voice note's microphone takes Send's place; while it records, its time, Cancel and Send do */
-.m-chat-phone .m-chat-composer-actions > .m-chat-voice { order:3; width:40px; height:40px; margin:0 0 2px 4px; }
+.m-chat-phone .m-chat-composer-actions > .m-chat-voice { order:3; width:48px; height:48px; margin:0 0 0 6px;
+    background:var(--m-chat-send-bg) !important; color:var(--m-chat-send-fg) !important; }
 .m-chat-phone .m-chat-composer-actions > .m-chat-recording { order:3; margin:0 0 2px 4px; }
 .m-chat-phone .m-chat-composer-actions > .q-space, .m-chat-phone .m-chat-mention-btn { display:none; }
 .m-chat-phone .m-chat-composer .m-rich-text-toolbar, .m-chat-phone .m-chat-composer .m-rich-text-label { display:none; }
-.m-chat-phone .m-chat-composer .m-rich-text-box { border-radius:20px; }
+.m-chat-phone .m-chat-composer .m-rich-text-box, .m-chat-phone .m-chat-composer .m-rich-text-box:hover,
+.m-chat-phone .m-chat-composer .m-rich-text-focused .m-rich-text-box { min-height:48px; border:0; border-radius:24px; background:var(--m-chat-field-bg);
+    box-shadow:none; font-size:var(--m-chat-text); }
+.m-chat-phone .m-chat-composer .m-rich-text-focused .m-rich-text-box { box-shadow:inset 0 0 0 1.5px color-mix(in srgb, var(--m-chat-send-bg) 60%, transparent); }
+/* one line of text in the middle of the pill, with room at its round ends */
+.m-chat-phone .m-chat-composer .m-rich-text-content { min-height:0; padding:11px 18px; }
+.m-chat-phone .m-chat-composer .m-rich-text-editor { min-height:0; }
+
+/* The single-room mode (Chat's single=true): the page is the room. No header, drawer or footer of the page (m-qapps-root's or
+   the client's shell), no padding round it, and a composer of attach, emoji and Send. */
+body.m-chat-single .q-header, body.m-chat-single .q-footer, body.m-chat-single .q-drawer-container { display:none !important; }
+body.m-chat-single .q-page-container { padding:0 !important; }
+body.m-chat-single .q-page-container > .q-page { padding:0 !important; }
+.m-chat-single-room .m-chat-sticker-btn, .m-chat-single-room .m-chat-poll-btn, .m-chat-single-room .m-chat-card-btn-open,
+.m-chat-single-room .m-chat-more-btn { display:none; }
+.m-chat-single-room .m-chat-phone > .row:first-child { min-height:64px !important; padding:8px 4px 8px 12px; }
+.m-chat-single-room .m-chat-phone > .row:first-child .text-subtitle1 { font-size:18px; }
+.m-chat-single-room .m-chat-phone > .q-separator:first-of-type { display:none; }
 /* the phone home's room list and Start chat */
 .m-chat-home-row { min-height:68px; }
 .m-chat-home .m-chat-start { position:absolute; right:16px; bottom:16px; z-index:3; }

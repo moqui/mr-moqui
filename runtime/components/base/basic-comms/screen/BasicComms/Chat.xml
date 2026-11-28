@@ -21,7 +21,8 @@ along with this software (see the LICENSE.md file). If not, see
     while offline, forwards, link previews, room settings), with the live parts from the page's chat store (moqui.chat). The
     user's activity across rooms is activity. The room
     is in the URL (chatRoomId, eventSeq to open at a message, thread; dm to start a direct message with a user;
-    recordEntity and recordId to open a record's room, made on first use), so a room is a link. The tray's Chat tab
+    recordEntity and recordId to open a record's room, made on first use), so a room is a link. single=true is the
+    single-room mode: the room (or the user's first) alone, in bubbles, with no rail and no page chrome (docs/tools/Comms.md). The tray's Chat tab
     (Panel/Chat, ChatPanel.qvue) uses these transitions and the same room view.
 
     Each transition is a JSON answer of org.moqui.comms.ChatScreenServices or of org.moqui.chat.ChatServices, which checks the

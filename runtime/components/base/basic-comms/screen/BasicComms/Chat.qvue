@@ -67,9 +67,9 @@ along with this software (see the LICENSE.md file). If not, see
     video may go view-once (the toggle on its chip), which each recipient opens once in a full-screen viewer, kept in no
     cache, with the Android app's FLAG_SECURE while it is open. The room's call shows in the shell (Calls/Call, bundled). Brand
     color names and Quasar classes only (style-guide §4.8, §5); the m-* inputs for what is typed. -->
-<template><div class="m-chat-root"><div class="m-chat row no-wrap" :style="{height: height + 'px'}">
-    <!-- the rail -->
-    <div v-show="!stacked || !(roomId || pendingDirect)" class="column no-wrap" :style="stacked ? 'width:100%' : 'width:300px;min-width:300px'">
+<template><div class="m-chat-root" :class="single ? 'm-chat-single-room' : ''"><div class="m-chat row no-wrap" :style="{height: height + 'px'}">
+    <!-- the rail (none in the single-room mode) -->
+    <div v-show="!single && (!stacked || !(roomId || pendingDirect))" class="column no-wrap" :style="stacked ? 'width:100%' : 'width:300px;min-width:300px'">
         <div class="row items-center no-wrap q-px-sm q-pt-sm q-pb-xs">
             <q-btn flat dense no-caps align="left" class="col q-px-xs" :aria-label="t('My status')">
                 <div class="row items-center no-wrap full-width" style="min-width:0">
@@ -244,12 +244,12 @@ along with this software (see the LICENSE.md file). If not, see
             </div>
         </div>
     </div>
-    <q-separator v-if="!stacked" vertical></q-separator>
+    <q-separator v-if="!stacked && !single" vertical></q-separator>
 
     <!-- the room -->
-    <div v-show="!stacked || roomId || pendingDirect" class="col column no-wrap" style="min-width:0">
-        <chat-room v-if="roomId && loaded" :key="roomId" ref="room" :bubbles="stacked" :base="base" :room-id="roomId" :me="me" :prefs="prefs" :seq="seq" :thread="thread"
-                :can-go-back="stacked" :link-base="linkBase" :rooms="rooms" :first-message="firstMessage && firstMessage.roomId === roomId ? firstMessage.body : ''"
+    <div v-show="single || !stacked || roomId || pendingDirect" class="col column no-wrap" style="min-width:0">
+        <chat-room v-if="roomId && loaded" :key="roomId" ref="room" :bubbles="stacked || single" :single="single" :base="base" :room-id="roomId" :me="me" :prefs="prefs" :seq="seq" :thread="thread"
+                :can-go-back="stacked && !single" :link-base="linkBase" :rooms="rooms" :first-message="firstMessage && firstMessage.roomId === roomId ? firstMessage.body : ''"
                 @back="closeRoom" @thread="setThread" @changed="scheduleRooms" @left="onLeft" @read="onRoomRead" @first-sent="firstMessage = null"></chat-room>
         <!-- a dm link to people with no direct chat (the palette's People to message): an unsaved message; the direct chat is
             made with its first send, so a link followed by mistake makes nothing the other person sees -->
@@ -275,6 +275,10 @@ along with this software (see the LICENSE.md file). If not, see
                 <q-btn unelevated round color="primary" icon="sym_o_send" class="m-chat-pending-send" :aria-label="t('Send')" :loading="pendingDirect.busy"
                         :disable="!String(pendingDirect.text || '').trim()" @click="sendPendingDirect"></q-btn>
             </div>
+        </div>
+        <div v-else-if="single" class="col column items-center justify-center q-pa-lg text-center m-muted m-chat-single-empty">
+            <q-icon name="sym_o_chat" size="56px"></q-icon>
+            <div class="text-subtitle1 q-mt-sm">{{loaded ? t('No conversation yet') : ''}}</div>
         </div>
         <div v-else class="col column items-center justify-center q-pa-lg text-center m-muted">
             <q-icon name="sym_o_chat" size="56px"></q-icon>
@@ -368,6 +372,8 @@ along with this software (see the LICENSE.md file). If not, see
 const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
 const DAY = 86400000;
 const GROUP_MILLIS = 5 * 60000;
+// in bubbles, a time line between two messages an hour or more apart
+const TIME_BREAK_MILLIS = 3600000;
 // how far a bubble is swiped to the right to reply to it
 const SWIPE_REPLY_PX = 64;
 const EDIT_WINDOW = 24 * 3600000;
@@ -523,7 +529,7 @@ const chime = () => {
 // ---- a message of the timeline or of a thread (room is the chat-room component) ----
 const messageTemplate = `
 <div class="row no-wrap relative-position q-pl-xs q-pr-sm m-chat-msg" :class="[item.grouped ? 'm-chat-grouped' : 'q-mt-sm', room.useBubbles ? 'm-chat-bubble' : '',
-            room.useBubbles && item.mine ? 'm-chat-mine' : '', room.useBubbles && room.isDirect ? 'm-chat-in-direct' : '']" :id="room.domId(item.eventSeq, inThread)"
+            room.useBubbles && item.mine ? 'm-chat-mine' : '', room.useBubbles && room.isDirect ? 'm-chat-in-direct' : '', item.joinNext ? 'm-chat-join-next' : '']" :id="room.domId(item.eventSeq, inThread)"
         :data-seq="item.eventSeq" role="article" :tabindex="actionsAvailable ? 0 : -1" :aria-label="messageLabel"
         @focusin="actionFocus = true" @focusout="actionFocus = $event.currentTarget.contains($event.relatedTarget)"
         @mouseenter="room.hover(item, inThread)" @mouseleave="room.unhover(item, inThread)" @click="room.tap(item, inThread)"
@@ -1512,7 +1518,7 @@ const composerTemplate = `
             </q-popup-proxy>
         </q-btn>
         <q-btn flat round dense size="sm" icon="sym_o_alternate_email" class="m-chat-mention-btn" :aria-label="room.t('Mention someone')" @click="insert('@')"><q-tooltip>{{room.t('Mention someone')}}</q-tooltip></q-btn>
-        <q-btn v-if="!room.sealed" flat round dense size="sm" icon="sym_o_ballot" :aria-label="room.t('Make a poll')" :disable="room.offline" @click="room.openPoll(threadRoot || null, '')">
+        <q-btn v-if="!room.sealed" flat round dense size="sm" icon="sym_o_ballot" class="m-chat-poll-btn" :aria-label="room.t('Make a poll')" :disable="room.offline" @click="room.openPoll(threadRoot || null, '')">
             <q-tooltip>{{room.t('Make a poll')}}</q-tooltip></q-btn>
         <q-btn v-if="!room.sealed" flat round dense size="sm" icon="sym_o_view_agenda" class="m-chat-card-btn-open" :aria-label="room.t('Make a card')" :disable="room.offline"
                 @click="room.openCard(threadRoot || null)"><q-tooltip>{{room.t('Make a card with buttons')}}</q-tooltip></q-btn>
@@ -1971,8 +1977,8 @@ const roomTemplate = `
     <div class="row items-center no-wrap q-px-sm q-py-xs" style="min-height:52px">
         <q-btn v-if="canGoBack" flat round dense icon="sym_o_arrow_back" :aria-label="t('Back to chats')" class="q-mr-xs m-chat-back" @click="$emit('back')"><q-tooltip>{{t('Back to chats')}}</q-tooltip></q-btn>
         <template v-if="room">
-            <m-avatar v-if="isDirect && room.otherUserId" :name="displayName" :user-id="room.otherUserId" size="34px"></m-avatar>
-            <q-avatar v-else size="34px" rounded class="m-tonal text-primary" :icon="roomIcon"></q-avatar>
+            <m-avatar v-if="isDirect && room.otherUserId" :name="displayName" :user-id="room.otherUserId" :size="single ? '40px' : '34px'"></m-avatar>
+            <q-avatar v-else :size="single ? '40px' : '34px'" rounded class="m-tonal text-primary" :icon="roomIcon"></q-avatar>
             <div class="col q-ml-sm" style="min-width:0">
                 <div class="row items-center no-wrap">
                     <span class="text-subtitle1 text-weight-medium ellipsis" :title="displayName">{{displayName}}</span>
@@ -2025,10 +2031,10 @@ const roomTemplate = `
                         <q-item clickable v-close-popup @click="toggleMute">
                             <q-item-section avatar><q-icon :name="member && member.isMuted ? 'sym_o_volume_up' : 'sym_o_volume_off'"></q-icon></q-item-section>
                             <q-item-section>{{member && member.isMuted ? t('Unmute') : t('Mute')}}</q-item-section></q-item>
-                        <q-item clickable v-close-popup @click="togglePin">
+                        <q-item v-if="!single" clickable v-close-popup @click="togglePin">
                             <q-item-section avatar><q-icon name="sym_o_keep"></q-icon></q-item-section>
                             <q-item-section>{{member && member.isPinned ? t('Unpin from my rooms') : t('Pin to the top of my rooms')}}</q-item-section></q-item>
-                        <q-item clickable v-close-popup @click="toggleArchive">
+                        <q-item v-if="!single" clickable v-close-popup @click="toggleArchive">
                             <q-item-section avatar><q-icon :name="archivedByMe ? 'sym_o_unarchive' : 'sym_o_archive'"></q-icon></q-item-section>
                             <q-item-section>{{archivedByMe ? t('Unarchive') : t('Archive')}}</q-item-section></q-item>
                         <q-item clickable v-close-popup @click="markRead(true)">
@@ -2079,11 +2085,18 @@ const roomTemplate = `
                     <q-item v-if="encryptOffered" clickable v-close-popup class="m-chat-start-encrypted-item" @click="startEncrypted">
                         <q-item-section avatar><q-icon name="sym_o_lock"></q-icon></q-item-section>
                         <q-item-section>{{encryptedSibling ? t('Open the encrypted chat') : t('Start an encrypted chat')}}</q-item-section></q-item>
-                    <template v-if="isMember">
+                    <template v-if="isMember && !single">
                         <q-separator></q-separator>
                         <q-item clickable v-close-popup @click="leave">
                             <q-item-section avatar><q-icon name="sym_o_logout" color="negative"></q-icon></q-item-section>
                             <q-item-section class="text-negative">{{isDirect ? t('Hide this conversation') : t('Leave the room')}}</q-item-section></q-item>
+                    </template>
+                    <!-- the single-room mode has no other chrome, so the account's Sign out is here -->
+                    <template v-if="single">
+                        <q-separator></q-separator>
+                        <q-item clickable v-close-popup tag="a" :href="logoutUrl" class="m-chat-sign-out" @click="signOut">
+                            <q-item-section avatar><q-icon name="sym_o_logout"></q-icon></q-item-section>
+                            <q-item-section>{{t('Sign out')}}</q-item-section></q-item>
                     </template>
                 </q-list></q-menu>
             </q-btn>
@@ -2170,7 +2183,7 @@ const roomTemplate = `
                                 <q-btn flat dense no-caps size="sm" color="primary" :label="t('Open')" @click="go(linkBase + '?chatRoomId=' + encodeURIComponent(plainSibling))"></q-btn></div>
                         </div>
                         <template v-for="item in items" :key="item.key">
-                            <div v-if="item.kind === 'day'" class="row items-center no-wrap q-my-sm q-px-sm">
+                            <div v-if="item.kind === 'day'" class="row items-center no-wrap q-my-sm q-px-sm m-chat-day" :class="item.time ? 'm-chat-day-time' : ''">
                                 <q-separator class="col"></q-separator><span class="text-caption text-weight-medium m-muted q-px-sm">{{item.label}}</span><q-separator class="col"></q-separator></div>
                             <div v-else-if="item.kind === 'unread'" :id="domId('unread', false)" class="row items-center no-wrap q-my-xs q-px-sm text-negative">
                                 <q-separator class="col" color="negative"></q-separator><span class="text-caption text-weight-medium q-px-sm">{{t('New messages')}}</span></div>
@@ -2261,7 +2274,7 @@ const roomTemplate = `
                 <div ref="threadScroller" class="col scroll q-pb-sm" style="min-height:0">
                     <q-linear-progress v-if="threadView.loading" indeterminate color="primary"></q-linear-progress>
                     <template v-for="(item, index) in threadItems" :key="item.key">
-                        <div v-if="item.kind === 'day'" class="row items-center no-wrap q-my-sm q-px-sm">
+                        <div v-if="item.kind === 'day'" class="row items-center no-wrap q-my-sm q-px-sm m-chat-day" :class="item.time ? 'm-chat-day-time' : ''">
                             <q-separator class="col"></q-separator><span class="text-caption m-muted q-px-sm">{{item.label}}</span><q-separator class="col"></q-separator></div>
                         <template v-else-if="item.kind === 'message'">
                             <chat-message :item="item" :room="self" in-thread></chat-message>
@@ -2873,6 +2886,9 @@ const chatRoom = {
     name: 'ChatRoom',
     props: { base: String, roomId: String, me: Object, prefs: { type: Object, default: () => ({}) }, seq: [Number, String], thread: [Number, String],
         compact: Boolean, canGoBack: Boolean, bubbles: Boolean, linkBase: { type: String, default: '/qapps/BasicComms/Chat' },
+        // the single-room mode (Chat's single): the room is the whole app, so its menu has Sign out and not what leaves or files
+        // the room among others (pin, archive, leave)
+        single: Boolean,
         // the user's rooms (find#Rooms), for a direct room's other one with the same people; a first message to send once the
         // room is shown (a dm link's unsaved message, sealed here in an encrypted room)
         rooms: { type: Array, default: () => [] }, firstMessage: String },
@@ -3078,6 +3094,8 @@ const chatRoom = {
             return fill(t('This is the start of {name}.'), { name: this.displayName }) + (this.room.topic ? ' ' + this.room.topic : '');
         },
         narrow() { return this.compact || (this.width > 0 && this.width < moqui.chat.NARROW_PX); },
+        // the account's logout link (m-qapps-root's shell.logoutUrl; the client's shell signs out itself)
+        logoutUrl() { return String((this.$root.shell && this.$root.shell.logoutUrl) || '/Login/logout'); },
         // a phone messaging layout: mine on the right, the others on the left, each in a bubble (the phone home, the stacked Chat, a narrow room)
         useBubbles() { return this.bubbles || this.narrow; },
         // the attach choice of a phone (camera, gallery, file): bubbles on a mobile platform, not the desktop's narrow tray
@@ -3455,6 +3473,13 @@ const chatRoom = {
             if (moqui.call) moqui.call.startCall(Object.assign({ chatRoomId: this.roomId, video: video !== false }, this.sealed ? { requireE2ee: true } : {}));
         },
         go(target) { if (target) this.$root.setUrl(target); },
+        // Sign out (the single-room mode): the client's shell signs the account out itself (its confirm, what waits unsent);
+        // the web page follows the logout link, through m-qapps-root's logoutClick (the push, crypto and screens' hooks first)
+        signOut(event) {
+            const root = this.$root;
+            if (typeof root.signOut === 'function') { if (event) event.preventDefault(); root.signOut(); return; }
+            if (typeof root.logoutClick === 'function' && event) root.logoutClick(event);
+        },
         domId(seq, inThread) { return 'chat-' + this.uid + (inThread ? '-t-' : '-m-') + seq; },
         nameOf(userId, fallback) {
             if (!userId) return fallback || t('Someone');
@@ -3479,11 +3504,22 @@ const chatRoom = {
             const out = [];
             let prev = null;
             let lastDay = null;
+            let lastSent = 0;
             let dividerPlaced = false;
+            // bubbles, as a phone's messages app: the day's line has the time too ("Thursday, October 15 • 8:43 PM"), and a
+            // line of the time alone breaks a day where an hour or more passed (TIME_BREAK_MILLIS)
+            const timed = this.useBubbles;
             for (const event of events) {
                 const sent = Number(event.sentDate || 0);
                 const day = moqui.l10n.dayKey(sent);
-                if (day !== lastDay) { out.push({ kind: 'day', key: 'd' + event.eventSeq, label: dayLabel(sent) }); lastDay = day; prev = null; }
+                if (day !== lastDay) {
+                    out.push({ kind: 'day', key: 'd' + event.eventSeq, label: timed ? dayLabel(sent) + ' • ' + timeText(sent) : dayLabel(sent) });
+                    lastDay = day; prev = null;
+                } else if (timed && lastSent && sent - lastSent >= TIME_BREAK_MILLIS) {
+                    out.push({ kind: 'day', key: 't' + event.eventSeq, label: timeText(sent), time: true });
+                    prev = null;
+                }
+                lastSent = sent;
                 if (opts.divider && !dividerPlaced && this.dividerSeq != null && Number(event.eventSeq) > this.dividerSeq && event.type === 'message' && event.senderUserId !== me) {
                     out.push({ kind: 'unread', key: 'unread' });
                     dividerPlaced = true;
@@ -3518,6 +3554,8 @@ const chatRoom = {
                     replyTo: event.replyToEventSeq != null ? this.replyOf(event) : null, threadReplyCount: Number(event.threadReplyCount || 0),
                     threadLastDate: event.threadLastDate, pinned: !!event.pinned, grouped, mine: event.senderUserId === me,
                     highlight: this.highlightSeq === Number(event.eventSeq), readers: opts.readers ? (this.readersBySeq[event.eventSeq] || null) : null };
+                // the run goes on below the one before: its bubble's lower corner on the sender's side is tight
+                if (grouped) prev.joinNext = true;
                 out.push(item);
                 prev = item;
             }
@@ -5701,6 +5739,12 @@ module.exports = {
     },
     computed: {
         params() { return this.$root.currentParameters || {}; },
+        // the single-room mode (single=true in the URL, for example a client's start-path): one room full screen, with no
+        // rail and no app chrome (the body's m-chat-single class hides the page's header, drawer and footer); the room is
+        // chatRoomId, else the first of the user's rooms
+        single() { return ['true', 'Y', '1'].includes(String(this.params.single || '')); },
+        // the query that keeps the single-room mode on a room's link
+        singleQuery() { return this.single ? '&single=true' : ''; },
         // the unsaved direct chat's label: the room its first send makes, once encryptionDefault answered
         pendingLabel() {
             const pending = this.pendingDirect;
@@ -5817,7 +5861,9 @@ module.exports = {
         // Activity and Threads read their feed when shown
         filter(value) { if (value === 'activity' || value === 'threads') this.loadFeed(false); if (value === 'spam') this.loadSpam(); },
         // a room change opens that room; the screen is not remounted for it
-        '$root.currentParameters': { handler() { if (this.isCurrent()) this.applyParams(); }, deep: true }
+        '$root.currentParameters': { handler() { if (this.isCurrent()) this.applyParams(); }, deep: true },
+        // the single-room mode hides the page's chrome while it is on (the m-chat-single class of the body, in WebrootVue.qvt.css)
+        single: { immediate: true, handler(on) { this.setSingleChrome(on); this.$nextTick(() => this.measure()); } }
     },
     methods: {
         t,
@@ -6037,21 +6083,30 @@ module.exports = {
             this.roomId = p.chatRoomId || null;
             this.seq = p.eventSeq ? Number(p.eventSeq) : null;
             this.thread = p.thread ? Number(p.thread) : null;
+            if (this.single && !this.roomId) this.openFirstRoom();
+        },
+        // the single-room mode with no chatRoomId: the first room of the user's (their order: pinned, then the latest)
+        openFirstRoom() {
+            (this.roomsReady || Promise.resolve()).then(() => {
+                if (!this.single || this.roomId || this.params.chatRoomId) return;
+                const first = this.rooms.find((room) => room.isMember);
+                if (first) this.replaceRoom(first.chatRoomId);
+            });
         },
         openRoom(id) {
             if (!id) return;
             if (id === this.roomId && !this.seq) return;
-            this.$root.setUrl(this.linkBase + '?chatRoomId=' + encodeURIComponent(id));
+            this.$root.setUrl(this.linkBase + '?chatRoomId=' + encodeURIComponent(id) + this.singleQuery);
         },
         // the room a dm or record link found, in place of that link in the history
         replaceRoom(id) {
-            const target = this.linkBase + (id ? '?chatRoomId=' + encodeURIComponent(id) : '');
+            const target = this.linkBase + (id ? '?chatRoomId=' + encodeURIComponent(id) + this.singleQuery : (this.single ? '?single=true' : ''));
             // a root with a history of its own (the desktop client's shell) replaces its entry itself
             if (this.$root.replaceUrl) { this.$root.replaceUrl(target); return; }
             this.$root.setUrl(target, null, null, false);
             try { window.history.replaceState(null, document.title, target); } catch (err) { /* the history stays */ }
         },
-        closeRoom() { this.$root.setUrl(this.linkBase); },
+        closeRoom() { this.$root.setUrl(this.linkBase + (this.single ? '?single=true' : '')); },
         setThread(seq) { this.$root.setParameters({ thread: seq || null }); },
         onLeft(id) { if (this.roomId === id) this.closeRoom(); this.scheduleRooms(); },
         onRoomRead(id) {
@@ -6318,6 +6373,7 @@ module.exports = {
                 if (over > 0 && over < 80 && this.height - over >= (this.stacked ? 420 : 480)) this.height -= over;
             });
         },
+        setSingleChrome(on) { if (document.body && document.body.classList) document.body.classList.toggle('m-chat-single', !!on); },
         escape() { const room = this.$refs.room; return room ? room.onEscape() : false; },
         registerKeys() {
             if (!moqui.keymap || !moqui.keymap.registerScope) return;
@@ -6363,6 +6419,7 @@ module.exports = {
         setTimeout(() => this.measure(), 300);
     },
     beforeUnmount() {
+        this.setSingleChrome(false);
         window.removeEventListener('resize', this.onResize);
         window.removeEventListener('boss-chat-draft', this.onDraft);
         (this.unsubscribe || []).forEach((off) => off());
