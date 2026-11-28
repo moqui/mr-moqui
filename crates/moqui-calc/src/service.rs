@@ -679,6 +679,8 @@ fn room_out(facade: &EntityFacade, room: &Room, user_id: &str) -> BTreeMap<Strin
         "evaluateMs".to_string(),
         Value::F64((room.evaluate_ms * 10.0).round() / 10.0),
     );
+    // past it an author is shown the time as a warning (calc@slow-ms)
+    out.insert("slowMs".to_string(), Value::F64(crate::room::slow_ms()));
     out.insert(
         "memoryBytes".to_string(),
         Value::I64(i64::try_from(room.memory_bytes()).unwrap_or(i64::MAX)),
