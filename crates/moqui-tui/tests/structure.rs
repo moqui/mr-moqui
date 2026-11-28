@@ -551,9 +551,7 @@ fn a_card_opens_a_relative_url_under_its_screen() {
     focus(&mut session, &link, "Queue");
     press(&mut session, &link, Key::Enter);
     assert!(
-        link.calls()
-            .iter()
-            .any(|call| matches!(call, LinkCall::Level { path, parameters }
+        link.calls().iter().any(|call| matches!(call, LinkCall::Level { path, parameters }
             if path == "/apps/M/ShopFloor/OperationExecution"
                 && parameters.get("operationWorkEffortId").map(String::as_str) == Some("OP1"))),
         "{:?}",
@@ -754,6 +752,30 @@ fn a_rooms_frames_go_to_the_sheet_that_joined_its_topic_and_no_other() {
         (Some(west.as_str()), Some(2)),
         "{frames:?}"
     );
+    // the same screen opened again before the frames were taken: its sheets have new clients for the same rooms, so
+    // each old client leaves before its new one joins
+    let east = local(&session, "East", "client");
+    session.navigate("/sheets", true);
+    session.run_now(&link);
+    let frames = session.take_frames();
+    let steps: Vec<(&str, &str, &str)> = frames
+        .iter()
+        .map(|frame| {
+            let text = |name: &str| frame[name].as_str().unwrap();
+            (text("calc"), text("room"), text("client"))
+        })
+        .collect();
+    let again = local(&session, "East", "client");
+    assert_ne!(again, east, "a new client");
+    assert_eq!(
+        steps[..2],
+        [
+            ("leave", "r-east", east.as_str().unwrap()),
+            ("join", "r-east", again.as_str().unwrap())
+        ],
+        "{frames:?}"
+    );
+    assert_eq!(steps.len(), 4, "and the same for the other room: {frames:?}");
     // the room could not follow: the sheet lets go, and its topic is left
     session.on_push(&frame(
         "calc:r-west",

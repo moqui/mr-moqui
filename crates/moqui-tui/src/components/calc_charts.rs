@@ -33,6 +33,9 @@ pub(super) fn range_name(sheet: &str, row: i32, column: i32, last_row: i32, last
     if last_row > row || last_column > column {
         cells.push_str(&format!(":{}{last_row}", column_name(last_column)));
     }
+    if sheet.is_empty() {
+        return cells;
+    }
     let plain = sheet
         .chars()
         .next()

@@ -419,6 +419,17 @@ fn a_pushed_sheet_reads_again_only_what_anothers_edit_changed() {
     );
     assert!(matches!(&acts[..], [Act::Frame(frame)] if frame["calc"] == "select"));
     assert_eq!(CalcGrid.poll_millis(&props, &state), Some(PUSHED_POLL_MILLIS));
+    // a place refused before its join was in leaves the view joined; a join refused does not
+    let refused = |code: i64| json!({"type": "error", "client": client, "code": code});
+    CalcGrid.push(&props, &mut state, &refused(409));
+    assert!(View::of(&props, &state).live);
+    CalcGrid.push(&props, &mut state, &refused(403));
+    assert_eq!(CalcGrid.poll_millis(&props, &state), Some(POLL_MILLIS));
+    CalcGrid.push(
+        &props,
+        &mut state,
+        &json!({"type": "joined", "client": client, "peers": []}),
+    );
     // the view's own edit is not read again
     assert!(CalcGrid
         .push(
@@ -536,6 +547,7 @@ fn the_menu_adds_a_chart_of_the_selection_changes_its_type_and_removes_it() {
     );
     assert_eq!(charts_sent(&menu(&props, &mut state, MENU.len() - 1)), json!([]));
     assert_eq!(range_name("Q 4", 1, 1, 2, 1), "'Q 4'!A1:A2");
+    assert_eq!(range_name("", 1, 1, 1, 1), "A1", "as calc.rangeName with no sheet");
     // a reader is refused
     let (props, mut state) = loaded(false);
     assert!(menu(&props, &mut state, CHART_MENU + 4).is_empty());

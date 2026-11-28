@@ -1222,7 +1222,11 @@ impl Component for CalcGrid {
                 // the place it had before the join, for the others
                 acts.push(Act::Frame(view.frame("select")));
             }
-            "error" if client == view.client => view.live = false,
+            // a join refused (not logged in, the room not open, a cap, the server busy) leaves the view polling; a
+            // place refused before its join is in (409) does not
+            "error" if client == view.client && matches!(frame["code"].as_i64(), Some(401 | 403 | 429 | 503)) => {
+                view.live = false;
+            }
             "peer" if frame["joined"] == false => {
                 if let Some(at) = at {
                     view.peers.remove(at);

@@ -302,7 +302,29 @@ struct LinkSink {
     user: Arc<Mutex<Option<String>>>,
     deliver: Box<dyn Fn(&Json) + Send + Sync>,
     closed: AtomicBool,
+    /// The frames it may still be handed now, and when that was counted ([`LinkSink::send`]); whether a drop was
+    /// logged.
+    budget: Mutex<(f64, std::time::Instant)>,
+    dropped: AtomicBool,
 }
+
+#[cfg_attr(not(feature = "tui"), allow(dead_code))]
+impl LinkSink {
+    fn new(user: Arc<Mutex<Option<String>>>, deliver: Box<dyn Fn(&Json) + Send + Sync>) -> Self {
+        Self {
+            id: super::NEXT_SOCKET.fetch_add(1, Ordering::Relaxed),
+            user,
+            deliver,
+            closed: AtomicBool::new(false),
+            budget: Mutex::new((LINK_FRAMES, std::time::Instant::now())),
+            dropped: AtomicBool::new(false),
+        }
+    }
+}
+
+/// The frames a link is handed at once, as many as a socket's queue holds (`SOCKET_QUEUE`), given back at that many a
+/// second: past it a frame is dropped, as a socket with a full queue drops one.
+const LINK_FRAMES: f64 = super::SOCKET_QUEUE as f64;
 
 impl Out for LinkSink {
     fn id(&self) -> u64 {
@@ -314,8 +336,25 @@ impl Out for LinkSink {
     }
 
     fn send(&self, message: &Json) {
-        if !self.is_closed() {
+        if self.is_closed() {
+            return;
+        }
+        // the session takes the frames on an unbounded channel, so they are bounded here
+        let taken = {
+            let mut budget = lock(&self.budget);
+            let now = std::time::Instant::now();
+            let tokens = (budget.0 + now.duration_since(budget.1).as_secs_f64() * LINK_FRAMES).min(LINK_FRAMES);
+            let taken = tokens >= 1.0;
+            *budget = (if taken { tokens - 1.0 } else { tokens }, now);
+            taken
+        };
+        if taken {
             (self.deliver)(message);
+        } else if !self.dropped.swap(true, Ordering::Relaxed) {
+            tracing::warn!(
+                link = self.id,
+                "CalcGrid: a terminal's room frames come faster than {LINK_FRAMES} a second; the rest are dropped"
+            );
         }
     }
 
@@ -326,30 +365,43 @@ impl Out for LinkSink {
 
 /// An in-process terminal link's CalcGrid frames (`join`, `select`, `leave`), taken in order on a thread of their own
 /// as a socket's are on its task, with the socket's checks: a join only into a room the link's user has open, and the
-/// same presence caps, the sink counted as a socket. Dropping it leaves every room the link joined.
+/// same presence caps, the sink counted as a socket. The thread starts with the first frame. Dropping it leaves every
+/// room the link joined.
 #[cfg_attr(not(feature = "tui"), allow(dead_code))] // the in-process link is its only maker
 pub(crate) struct LinkFrames {
-    tx: Option<std::sync::mpsc::Sender<Json>>,
+    factory: Weak<ExecutionContextFactory>,
+    tx: Mutex<Option<std::sync::mpsc::Sender<Json>>>,
     sink: Arc<LinkSink>,
 }
 
 #[cfg_attr(not(feature = "tui"), allow(dead_code))]
 impl LinkFrames {
     /// Frames for the link of `user` (the link's own record of its user), whose answers and the rooms' frames go to
-    /// `deliver`. None when the thread did not start.
+    /// `deliver`.
     pub(crate) fn start(
         factory: Weak<ExecutionContextFactory>,
         user: Arc<Mutex<Option<String>>>,
         deliver: Box<dyn Fn(&Json) + Send + Sync>,
     ) -> Option<Self> {
-        let sink = Arc::new(LinkSink {
-            id: super::NEXT_SOCKET.fetch_add(1, Ordering::Relaxed),
-            user,
-            deliver,
-            closed: AtomicBool::new(false),
-        });
+        Some(Self {
+            factory,
+            tx: Mutex::new(None),
+            sink: Arc::new(LinkSink::new(user, deliver)),
+        })
+    }
+
+    /// Queue one frame, starting the thread for the first; false once the link let go or the thread did not start.
+    pub(crate) fn send(&self, frame: Json) -> bool {
+        let mut tx = lock(&self.tx);
+        if tx.is_none() && !self.sink.is_closed() {
+            *tx = self.spawn();
+        }
+        tx.as_ref().is_some_and(|tx| tx.send(frame).is_ok())
+    }
+
+    fn spawn(&self) -> Option<std::sync::mpsc::Sender<Json>> {
         let (tx, rx) = std::sync::mpsc::channel::<Json>();
-        let held = Arc::clone(&sink);
+        let (factory, held) = (Weak::clone(&self.factory), Arc::clone(&self.sink));
         std::thread::Builder::new()
             .name("tui-calc".to_string())
             .spawn(move || {
@@ -366,12 +418,7 @@ impl LinkFrames {
             })
             .map_err(|err| tracing::warn!("CalcGrid frames of the terminal not taken: {err}"))
             .ok()?;
-        Some(Self { tx: Some(tx), sink })
-    }
-
-    /// Queue one frame; false once the link let go.
-    pub(crate) fn send(&self, frame: Json) -> bool {
-        self.tx.as_ref().is_some_and(|tx| tx.send(frame).is_ok())
+        Some(tx)
     }
 }
 
@@ -379,7 +426,7 @@ impl Drop for LinkFrames {
     fn drop(&mut self) {
         // nothing more goes to the link, and its thread leaves the rooms once the frames queued are done
         self.sink.closed.store(true, Ordering::Release);
-        self.tx.take();
+        lock(&self.tx).take();
     }
 }
 
@@ -838,13 +885,72 @@ mod tests {
     fn link_sink(user: Option<&str>) -> (Arc<LinkSink>, Arc<Mutex<Vec<Json>>>) {
         let got = Arc::new(Mutex::new(Vec::new()));
         let seen = Arc::clone(&got);
-        let sink = Arc::new(LinkSink {
-            id: super::super::NEXT_SOCKET.fetch_add(1, Ordering::Relaxed),
-            user: Arc::new(Mutex::new(user.map(str::to_string))),
-            deliver: Box::new(move |frame: &Json| lock(&seen).push(frame.clone())),
-            closed: AtomicBool::new(false),
-        });
+        let sink = Arc::new(LinkSink::new(
+            Arc::new(Mutex::new(user.map(str::to_string))),
+            Box::new(move |frame: &Json| lock(&seen).push(frame.clone())),
+        ));
         (sink, got)
+    }
+
+    /// The member `client` of the link sink `sink` in `room`, as a join makes it.
+    fn link_member(sink: &Arc<LinkSink>, room: &str, client: &str, user: &str) -> Member {
+        let out: Arc<dyn Out> = Arc::clone(sink) as Arc<dyn Out>;
+        Member {
+            slot: Arc::downgrade(&out),
+            slot_id: sink.id,
+            room: room.into(),
+            doc: format!("{room}-doc"),
+            client: client.into(),
+            user_id: user.into(),
+            name: user.into(),
+            watch: false,
+        }
+    }
+
+    /// CG3.4: a link is handed at most a socket's queue of frames at once, as a socket with a full queue drops them.
+    #[test]
+    fn a_link_is_handed_no_more_frames_at_once_than_a_sockets_queue_holds() {
+        let (sink, got) = link_sink(Some("link-burst"));
+        for seq in 0..super::super::SOCKET_QUEUE + 50 {
+            sink.send(&json!({"type": "changed", "seq": seq}));
+        }
+        let handed = lock(&got).len();
+        assert!(
+            (super::super::SOCKET_QUEUE..super::super::SOCKET_QUEUE + 10).contains(&handed),
+            "{handed} handed"
+        );
+    }
+
+    /// CG3.4: a link's frames thread starts with its first frame, and letting go of the link leaves its rooms.
+    #[test]
+    fn letting_go_of_a_link_leaves_its_rooms() {
+        let context = ExecutionContextFactory::test_context();
+        let factory = Arc::clone(context.factory());
+        let (seen_tx, seen_rx) = std::sync::mpsc::channel::<Json>();
+        let seen_tx = Mutex::new(seen_tx);
+        let frames = LinkFrames::start(
+            Arc::downgrade(&factory),
+            Arc::new(Mutex::new(Some("link-leaver".to_string()))),
+            Box::new(move |frame: &Json| {
+                let _ = lock(&seen_tx).send(frame.clone());
+            }),
+        )
+        .expect("the link's frames");
+        assert!(lock(&frames.tx).is_none(), "no thread before a frame");
+        let id = frames.sink.id;
+        lock(members()).push(link_member(&frames.sink, "leave-room", "l1", "link-leaver"));
+        // a frame starts the thread: a place of a client not joined, refused
+        assert!(frames.send(json!({"calc": "select", "room": "leave-room", "client": "l9", "sheet": 0})));
+        let refused = seen_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("an answer");
+        assert_eq!(refused["code"], 409);
+        drop(frames);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while super::member(id, "l1").is_some() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(super::member(id, "l1").is_none(), "the link left its room");
     }
 
     /// CG3.4: an in-process terminal link takes a room's frames through a sink beside the sockets', with a socket's
@@ -880,19 +986,14 @@ mod tests {
         assert_eq!(codes(&got), [409]);
         // a member through the sink is told of the document's changes on its room's topic
         let (ann, got) = link_sink(Some("link-ann"));
-        let weak: Weak<dyn Out> = Arc::downgrade(&(Arc::clone(&ann) as Arc<dyn Out>));
-        lock(members()).push(Member {
-            slot: weak,
-            slot_id: ann.id,
-            room: "link-room".into(),
-            doc: "link-doc".into(),
-            client: "a1".into(),
-            user_id: "link-ann".into(),
-            name: "Ann".into(),
-            watch: false,
-        });
+        lock(members()).push(link_member(&ann, "link-room", "a1", "link-ann"));
         let rooms = ["link-room".to_string()];
-        broadcast("link-doc", None, Some(&rooms), &json!({"type": "changed", "seq": 2}));
+        broadcast(
+            "link-room-doc",
+            None,
+            Some(&rooms),
+            &json!({"type": "changed", "seq": 2}),
+        );
         let frames: Vec<Json> = lock(&got).drain(..).collect();
         assert_eq!(
             (frames[0]["topic"].as_str(), frames[0]["type"].as_str()),
@@ -900,7 +1001,12 @@ mod tests {
         );
         // another user logged in to the link since: the member's frames are not theirs
         *lock(&ann.user) = Some("link-otto".into());
-        broadcast("link-doc", None, Some(&rooms), &json!({"type": "changed", "seq": 3}));
+        broadcast(
+            "link-room-doc",
+            None,
+            Some(&rooms),
+            &json!({"type": "changed", "seq": 3}),
+        );
         assert!(lock(&got).is_empty());
         link_frame(
             &factory,

@@ -19,7 +19,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
-use super::{shell, Editor, Overlay, Session, Timer};
+use super::{shell, Editor, Joined, Overlay, Session, Timer};
 use crate::components::{Act, ComponentState};
 use crate::edit::{self, Limits};
 use crate::forms::FocusKind;
@@ -826,27 +826,38 @@ impl Session {
     }
 
     /// The frames to send now, in order: the joins of the topics the components on screen want and the session has
-    /// not joined, the frames the components asked to send, then the leaves of the topics no component wants any
-    /// more. Empty while the loop sends no frames.
+    /// not joined (or joined with another frame, as a sheet opened again with a new client: its old leave first), the
+    /// frames the components asked to send, then the leaves of the topics no component wants any more. Empty while
+    /// the loop sends no frames.
     pub fn take_frames(&mut self) -> Vec<serde_json::Value> {
         if !self.frames {
             return Vec::new();
         }
-        let mut wanted: BTreeMap<String, (String, serde_json::Value, serde_json::Value)> = BTreeMap::new();
+        let mut wanted: BTreeMap<String, Joined> = BTreeMap::new();
         for (id, info) in &self.index.components {
             let (Some(component), Some(state)) = (crate::components::find(&info.name), self.components.get(id)) else {
                 continue;
             };
             for topic in component.topics(&info.props, state) {
-                wanted.insert(topic.name, (id.clone(), topic.join, topic.leave));
+                let joined = Joined {
+                    id: id.clone(),
+                    join: topic.join,
+                    leave: topic.leave,
+                };
+                wanted.insert(topic.name, joined);
             }
         }
         let mut out = Vec::new();
-        for (name, (id, join, leave)) in &wanted {
-            if self.joined.get(name).is_none_or(|(had, _)| had != id) {
-                out.push(join.clone());
-                self.joined.insert(name.clone(), (id.clone(), leave.clone()));
+        for (name, want) in &wanted {
+            let had = self.joined.get(name);
+            if had.is_some_and(|had| had.id == want.id && had.join == want.join) {
+                continue;
             }
+            if let Some(had) = had {
+                out.push(had.leave.clone());
+            }
+            out.push(want.join.clone());
+            self.joined.insert(name.clone(), want.clone());
         }
         out.append(&mut self.frames_out);
         let gone: Vec<String> = self
@@ -856,8 +867,8 @@ impl Session {
             .cloned()
             .collect();
         for name in gone {
-            if let Some((_, leave)) = self.joined.remove(&name) {
-                out.push(leave);
+            if let Some(had) = self.joined.remove(&name) {
+                out.push(had.leave);
             }
         }
         out
@@ -866,7 +877,7 @@ impl Session {
     /// A frame pushed on a topic: given to the component that joined it, whose answer is acted on. A frame of a topic
     /// no component holds now (one left a moment ago) is dropped.
     pub(super) fn component_push(&mut self, push: &crate::link::Push) {
-        let Some((id, _)) = self.joined.get(&push.topic).cloned() else {
+        let Some(id) = self.joined.get(&push.topic).map(|joined| joined.id.clone()) else {
             return;
         };
         let Some(info) = self.index.components.get(&id).cloned() else {

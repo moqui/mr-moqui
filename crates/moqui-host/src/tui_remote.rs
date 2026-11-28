@@ -348,16 +348,17 @@ impl Pushes for RemotePushes {
     }
 }
 
-/// The rooms the client joined, by room and client, each with its join frame and its last place: sent again on each
-/// new socket, as the browser's sheet joins again when its socket opens (the server let the old socket's go).
+/// The rooms the client joined, by room and client, each with its join frame: sent again on each new socket, as the
+/// browser's sheet joins again when its socket opens (the server let the old socket's go). No place is sent with
+/// them: the server takes a join after looking at the room and a place at once, so a place sent behind its join would
+/// be refused; the component sends its place again when the server says `joined`.
 #[derive(Debug, Default)]
 pub(crate) struct Rooms {
     joined: BTreeMap<(String, String), serde_json::Value>,
-    placed: BTreeMap<(String, String), serde_json::Value>,
 }
 
 impl Rooms {
-    /// Keep what a frame the client sends changes: a join, a place, a leave.
+    /// Keep what a frame the client sends changes: a join, a leave.
     pub(crate) fn note(&mut self, frame: &serde_json::Value) {
         let field = |name: &str| frame[name].as_str().unwrap_or_default().to_string();
         let key = (field("room"), field("client"));
@@ -365,20 +366,16 @@ impl Rooms {
             Some("join") => {
                 self.joined.insert(key, frame.clone());
             }
-            Some("select") if self.joined.contains_key(&key) => {
-                self.placed.insert(key, frame.clone());
-            }
             Some("leave") => {
                 self.joined.remove(&key);
-                self.placed.remove(&key);
             }
             _ => {}
         }
     }
 
-    /// The frames that put the client back in its rooms on a new socket: the joins, then the places.
+    /// The frames that put the client back in its rooms on a new socket: the joins.
     pub(crate) fn again(&self) -> Vec<serde_json::Value> {
-        self.joined.values().chain(self.placed.values()).cloned().collect()
+        self.joined.values().cloned().collect()
     }
 }
 
